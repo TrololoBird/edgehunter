@@ -1,0 +1,18 @@
+# runtime data (journal, state, models, logs) - not source
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.log.*
+*.pkl
+*.lock
+scanner_state.json
+hl_accounts.json
+history_cache/
+pretrain_rows/
+archive/
+# local overrides may hold secrets (Telegram token)
+config.local.toml

@@ -1,0 +1,1568 @@
+import asyncio
+import bisect
+import gc
+import logging
+import time
+import zlib
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, Optional, Tuple
+
+import ccxt.async_support as ccxt
+import polars as pl
+
+from config import CONFIG
+from depth import DepthBook
+from strategies import confirm
+from flow import SPOT_VENUES, Footprint, FlowStore, Sweep, SweepTracker, WhaleBook, absorption_in
+from indicators import RAW_SCHEMA, TIMEFRAME_MS, empty_raw_frame, merge_live_candle
+from ratelimit import RATE_LIMIT_ERRORS, BanState, RestGate
+from symbols import SymbolMap, VenueMarket
+from venues import BinanceStream, VENUE_MARKETS, VENUE_STREAMS, venue_market_rows
+
+logger = logging.getLogger(__name__)
+
+MARKETS = ('spot', 'futures')
+
+
+@dataclass
+class MarketData:
+    symbol: str
+    spot_df: "pl.DataFrame" = field(default=None)
+    futures_df: "pl.DataFrame" = field(default=None)
+    funding_rate: float = 0.0
+    predicted_funding: float = 0.0
+    open_interest: float = 0.0
+    trades_subscribed: bool = False  # order book (hot symbol) subscription active
+    current_long_score: int = 0
+    current_short_score: int = 0
+    volume_multiplier: float = 1.0
+    spot_symbol: str = ""
+    # Tier-0 raw samples: (ts_ms, last_price, rolling_24h_quote_volume) from the futures miniTicker (1/s),
+    # and (ts_ms, open_interest). A few minutes deep.
+    ticker_samples: deque = field(default_factory=lambda: deque(maxlen=400))
+    oi_samples: deque = field(default_factory=lambda: deque(maxlen=64))
+    tier0: dict = field(default_factory=dict)
+    is_tier_0_anomaly: bool = False
+    tier2_wanted_at: float = 0.0
+    tier2_since: float = 0.0
+    tier0_last_trigger: float = 0.0
+    tier2_denied: bool = False
+    # Kline stream state per market: latest in-progress candle, finalized candles waiting to be merged,
+    # and the open time of the newest candle known to be final
+    live_klines: dict = field(default_factory=dict)
+    closed_klines: dict = field(default_factory=lambda: {m: [] for m in MARKETS})
+    finalized_until: dict = field(default_factory=lambda: {m: 0 for m in MARKETS})
+    # 1m candles [open_time_ms, open, high, low, close, quote_volume, taker_buy_quote], latest last: futures (Tier-0
+    # RVOL_1m, the LTF trigger, absorption) and spot (live spot CVD)
+    minute_klines: deque = field(default_factory=lambda: deque(maxlen=240))
+    # Open time of the newest FINAL futures 1m candle (kline x=true): the last deque entry may still be running
+    minute_closed_until: int = 0
+    spot_minute_klines: deque = field(default_factory=lambda: deque(maxlen=60))
+    avg_minute_usd: float = 0.0
+    quote_volume_24h: float = 0.0
+    # 15m candles built from closed 1m candles per market: the bucket being filled, and markets whose last bucket
+    # missed minutes (stream gap) and needs a REST backfill
+    minute_bucket: dict = field(default_factory=dict)
+    backfill_wanted: dict = field(default_factory=dict)   # market -> open time of the candle REST must replace
+    # market -> open times of candles built from an incomplete set of minutes, not yet replaced by REST: scoring
+    # sees the history only up to the first of them
+    incomplete: dict = field(default_factory=lambda: {m: set() for m in MARKETS})
+    # market -> (frame key, the frame cut before the first incomplete candle): see Scanner._merge_rows
+    scored_cut: dict = field(default_factory=dict)
+    # Listing time (futures onboardDate, ms): a listing younger than 24h spreads its 24h volume over fewer minutes
+    listed_ms: int = 0
+    # Last kline row merged per market (skip re-merging an unchanged live candle)
+    last_merged: dict = field(default_factory=dict)
+    # Finalized 15m rows recently received per market, re-applied after a backfill snapshot replaces the frame
+    recent_closed: dict = field(default_factory=lambda: {m: deque(maxlen=8) for m in MARKETS})
+    # Set once the REST candle history is loaded; until then only Tier-0 runs for the symbol
+    baseline_ready: bool = False
+    # Bumped whenever the REST history of a frame is (re)loaded: the scanner's heavy pass must rerun
+    history_version: int = 0
+    # Typical 15m move of price / OI (std of 15m changes, from the last heavy scan): Tier-0 z-scores
+    ret_std: Optional[float] = None
+    oi_std: Optional[float] = None
+    # Mark / index price and basis from !markPrice@arr@1s
+    mark_price: float = 0.0
+    index_price: float = 0.0
+    # Largest whale sweep / visible depth it hit (> 1 = it ate the book), with its time
+    book_eaten: float = 0.0
+    book_eaten_ts: float = 0.0
+    # Observed liquidations (ts_ms, price in Binance units, usd, side liquidated, venue): swept pools (zones.py)
+    liq_events: deque = field(default_factory=lambda: deque(maxlen=2000))
+    # Last Coinbase (USD) trade price in Binance units and its time: the Coinbase premium
+    coinbase_price: float = 0.0
+    coinbase_ts: float = 0.0
+    # Coinbase's last price from the bulk products call (a coin without a recent live trade still has a premium)
+    coinbase_rest_price: float = 0.0
+    coinbase_rest_ts: float = 0.0
+    # Level-map inputs loaded only for coins with cards: 1h klines (raw Binance rows) and 1h OI (ts_ms, oi_usd)
+    htf_klines: list = field(default_factory=list)
+    htf_oi: list = field(default_factory=list)
+    # 4 days of 5m candles for the 4-day volume profile (card coins only)
+    htf_5m: list = field(default_factory=list)
+    htf_loaded: float = 0.0
+    # 1h candles of EVERY universe coin (~8 days, hourly): liquidity pools of the higher timeframes (previous day /
+    # week, sessions, 1h swings) and the coin's own trend for the strategies; [ts, o, h, l, c, quote_vol, taker_buy]
+    h1: list = field(default_factory=list)
+    h1_loaded: float = 0.0
+
+    def frame(self, market: str) -> Optional[pl.DataFrame]:
+        return self.spot_df if market == 'spot' else self.futures_df
+
+    def set_frame(self, market: str, df: pl.DataFrame):
+        if market == 'spot':
+            self.spot_df = df
+        else:
+            self.futures_df = df
+
+    @property
+    def basis(self) -> float:
+        return self.mark_price / self.index_price - 1 if self.mark_price and self.index_price else 0.0
+
+    def record_ticker(self, ticker: dict, now_ms: Optional[float] = None):
+        """ticker: {'last', 'quoteVolume'} (ccxt shape: the REST 24h tickers every few minutes)."""
+        quote_vol = ticker.get('quoteVolume')
+        now_ms = now_ms or time.time() * 1000
+        if quote_vol is not None:
+            self.quote_volume_24h = float(quote_vol)
+            minutes_listed = (now_ms - self.listed_ms) / 60_000 if self.listed_ms else 1440
+            self.avg_minute_usd = self.quote_volume_24h / min(1440.0, max(1.0, minutes_listed))
+        if ticker.get('last'):
+            self.record_price(float(ticker['last']), now_ms)
+
+    def record_price(self, price: float, now_ms: float):
+        """Last futures trade price, one sample per second (Tier-0 5m price change)."""
+        if self.ticker_samples and now_ms - self.ticker_samples[-1][0] < 1000:
+            self.ticker_samples[-1] = (self.ticker_samples[-1][0], price, self.quote_volume_24h)
+            return
+        self.ticker_samples.append((now_ms, price, self.quote_volume_24h))
+
+    def record_oi(self, ts_ms: float, open_interest: float):
+        if not open_interest or open_interest <= 0:
+            return
+        if self.oi_samples and self.oi_samples[-1][0] >= ts_ms:
+            return
+        self.oi_samples.append((ts_ms, float(open_interest)))
+
+    def seed_minutes(self, market: str, rows: List[List[float]], now_ms: int):
+        """
+        Closed 1m candles from REST merged under the streamed ones (a streamed candle wins): flows, RVOL, absorption,
+        the entry trigger and its confirmations work right after a start instead of after an hour of streaming.
+        The futures closes also seed the price samples of Tier-0's 5m price change.
+        """
+        target = self.minute_klines if market == 'futures' else self.spot_minute_klines
+        closed = [r for r in rows if r[0] + 60_000 <= now_ms]
+        if not closed:
+            return
+        merged = {r[0]: r for r in closed}
+        merged.update({c[0]: c for c in target})
+        candles = sorted(merged.values(), key=lambda c: c[0])[-target.maxlen:]
+        target.clear()
+        target.extend(candles)
+        if market == 'futures':
+            self.minute_closed_until = max(self.minute_closed_until, closed[-1][0])
+            samples = {ts: (ts, price, qv) for ts, price, qv in self.ticker_samples}
+            for c in closed[-10:]:
+                samples.setdefault(c[0] + 59_999, (c[0] + 59_999, c[4], self.quote_volume_24h))
+            ordered = sorted(samples.values())[-self.ticker_samples.maxlen:]
+            self.ticker_samples.clear()
+            self.ticker_samples.extend(ordered)
+
+    def seed_oi(self, samples: List[Tuple[float, float]]):
+        """Older OI samples (REST history) merged under the live ones: the 5m OI change is known right after start."""
+        merged = {ts: oi for ts, oi in list(self.oi_samples) + [(float(t), float(v)) for t, v in samples if v]}
+        self.oi_samples.clear()
+        self.oi_samples.extend(sorted(merged.items()))
+
+    @property
+    def last_price(self) -> Optional[float]:
+        return self.ticker_samples[-1][1] if self.ticker_samples else None
+
+    def apply_kline(self, market: str, k: dict):
+        if k.get('i') == '1m':
+            candle = [int(k['t']), float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['q']), float(k['Q'])]
+            target = self.minute_klines if market == 'futures' else self.spot_minute_klines
+            if target and target[-1][0] == candle[0]:
+                target[-1] = candle
+            elif not target or candle[0] > target[-1][0]:
+                target.append(candle)
+            if k.get('x'):
+                if market == 'futures':
+                    self.minute_closed_until = max(self.minute_closed_until, candle[0])
+                self._add_closed_minute(market, candle, float(k['v']))
+            return
+
+        quote_vol = float(k['q'])
+        row = {
+            'timestamp': int(k['t']),
+            'open': float(k['o']),
+            'high': float(k['h']),
+            'low': float(k['l']),
+            'close': float(k['c']),
+            'volume': float(k['v']),
+            'quote_volume': quote_vol,
+            'taker_delta': 2 * float(k['Q']) - quote_vol,
+            'open_interest': None,
+        }
+        if k.get('x'):
+            self.closed_klines[market].append(row)
+            if k.get('complete', True):
+                self.recent_closed[market].append(dict(row))
+                self.finalized_until[market] = max(self.finalized_until[market], row['timestamp'])
+            # else: built from an incomplete set of minutes (stream gap / start mid-candle). It sits in the frame
+            # but is NOT final: scoring skips it until the REST candle replaces it (request_backfill)
+            live = self.live_klines.get(market)
+            if live and live['timestamp'] <= row['timestamp']:
+                del self.live_klines[market]
+        else:
+            self.live_klines[market] = row
+
+    def _add_closed_minute(self, market: str, c: List[float], base_volume: float):
+        """
+        Build the 15m candle from closed 1m candles (open of the first, high / low extremes, close of the last,
+        summed quote and taker-buy volume): exactly the exchange's 15m candle, without a second kline stream per
+        symbol (the 15m stream pushed as often as the 1m one and doubled the bandwidth).
+        """
+        start = int(c[0]) // TIMEFRAME_MS * TIMEFRAME_MS
+        bucket = self.minute_bucket.get(market)
+        if bucket is not None and bucket['timestamp'] != start:
+            self._finalize_bucket(market, bucket)   # its last minute never closed (stream gap)
+            bucket = None
+        if bucket is None:
+            bucket = self.minute_bucket[market] = {
+                'timestamp': start, 'open': c[1], 'high': c[2], 'low': c[3], 'close': c[4], 'volume': 0.0,
+                'quote_volume': 0.0, 'taker_buy': 0.0, 'minutes': 0, 'first_minute': int(c[0]),
+            }
+        bucket['high'] = max(bucket['high'], c[2])
+        bucket['low'] = min(bucket['low'], c[3])
+        bucket['close'] = c[4]
+        bucket['volume'] += base_volume
+        bucket['quote_volume'] += c[5]
+        bucket['taker_buy'] += c[6]
+        bucket['minutes'] += 1
+        if int(c[0]) == start + TIMEFRAME_MS - 60_000:
+            self._finalize_bucket(market, bucket)
+
+    def _finalize_bucket(self, market: str, bucket: dict):
+        self.minute_bucket.pop(market, None)
+        complete = bucket['minutes'] == TIMEFRAME_MS // 60_000 and bucket['first_minute'] == bucket['timestamp']
+        if not complete:
+            # Started mid-candle or missed minutes: the REST candle replaces it
+            self.backfill_wanted[market] = max(self.backfill_wanted.get(market, 0), bucket['timestamp'])
+            self.incomplete[market].add(bucket['timestamp'])
+        self.apply_kline(market, {
+            't': bucket['timestamp'], 'o': bucket['open'], 'h': bucket['high'], 'l': bucket['low'],
+            'c': bucket['close'], 'v': bucket['volume'], 'q': bucket['quote_volume'], 'Q': bucket['taker_buy'],
+            'x': True, 'i': CONFIG.timeframe.rest_timeframe, 'complete': complete,
+        })
+
+    def live_candle(self, market: str) -> Optional[dict]:
+        """The in-progress 15m candle: the closed minutes of the bucket plus the live minute."""
+        minutes = self.minute_klines if market == 'futures' else self.spot_minute_klines
+        if not minutes:
+            return None
+        live = minutes[-1]
+        start = int(live[0]) // TIMEFRAME_MS * TIMEFRAME_MS
+        bucket = self.minute_bucket.get(market)
+        if bucket is not None and bucket['timestamp'] == start:
+            return {'timestamp': start, 'open': bucket['open'], 'high': max(bucket['high'], live[2]),
+                    'low': min(bucket['low'], live[3]), 'close': live[4]}
+        return {'timestamp': start, 'open': live[1], 'high': live[2], 'low': live[3], 'close': live[4]}
+
+    def drain_kline_rows(self, market: str, include_live: bool = True) -> List[dict]:
+        """Finalized candles since the last scan, then (optionally) the in-progress one."""
+        rows = self.closed_klines[market]
+        self.closed_klines[market] = []
+        live = self.live_klines.get(market) if include_live else None
+        if live and (not rows or live['timestamp'] > rows[-1]['timestamp']):
+            rows.append(dict(live))
+        return rows
+
+    @property
+    def closed_until(self) -> int:
+        """Open time of the newest finalized candle of the base market (spot when listed, else futures)."""
+        return self.finalized_until['spot' if self.spot_symbol else 'futures']
+
+
+@dataclass
+class VenueDeriv:
+    oi_usd: float = 0.0
+    funding_8h: Optional[float] = None
+    mark: float = 0.0
+    ts: float = 0.0
+    # (ts_ms, oi_usd), sampled at most every 10s, ~70 min deep
+    samples: deque = field(default_factory=lambda: deque(maxlen=420))
+
+
+def _pct_change(samples: deque, now_ms: float, window_ms: float) -> Optional[float]:
+    """Change of the last sample vs the first one at least ~window old (time-ordered samples, bisect lookup)."""
+    if len(samples) < 2 or now_ms - samples[-1][0] > 3 * 60_000:
+        return None
+    last_ts, last = samples[-1]
+    target = last_ts - window_ms
+    # Prefer the newest sample at or before the window start (sparse samples: Binance OI once a minute) as long
+    # as it is not much older; else the first one inside the window if it still spans >= 80% of it
+    idx = bisect.bisect_right(samples, target, key=lambda s: s[0]) - 1
+    if idx >= 0 and samples[idx][0] >= target - 0.5 * window_ms:
+        base_ts, base = samples[idx]
+    elif idx + 1 < len(samples) and samples[idx + 1][0] <= last_ts - 0.8 * window_ms:
+        base_ts, base = samples[idx + 1]
+    else:
+        return None
+    return last / base - 1 if base else None
+
+
+class DataFetcher:
+    """
+    Binance REST (ccxt, through RestGate) for candle history, OI and journal outcomes; own WebSocket clients
+    (venues.py) for everything live:
+    - Binance spot + futures klines (15m, 1m), futures aggTrade for every symbol (CVD, sweeps / whales,
+      footprint), !forceOrder@arr (liquidations), !markPrice@arr@1s (funding, mark, basis), !miniTicker@arr
+      (price + 24h volume, Tier-0) and <sym>@depth20@500ms for hot symbols (dynamic);
+    - Bybit / OKX / Hyperliquid / Bitget futures and Coinbase spot: trades, liquidations, OI and funding mapped
+      onto the Binance universe (symbols.SymbolMap), aggregated in flow.FlowStore.
+    """
+
+    FUNDING_INFO_REFRESH_SEC = 3600
+
+    def __init__(self):
+        self.spot_exchange: Optional[ccxt.Exchange] = None
+        # Universe selection inputs (fetch_candidates) and the market baseline's mark prices (every USDT perpetual)
+        self.spreads: Dict[str, float] = {}
+        self.baseline_ids: set = set()
+        self.market_marks: Dict[str, float] = {}
+        self.futures_exchange: Optional[ccxt.Exchange] = None
+        self.venue_exchanges: Dict[str, ccxt.Exchange] = {}
+        self.markets: Dict[str, MarketData] = {}
+        self._running = False
+        self._tasks: List[asyncio.Task] = []
+        self._background_tasks: set = set()
+        self._binance_streams: List[BinanceStream] = []
+        # Order books of the hot symbols, spread over several sockets (one depth20 stream is ~1.5 KB every 500ms:
+        # twenty on one socket reached its ~60 KB/s limit and Binance dropped it)
+        self._depth_streams: List[BinanceStream] = []
+        self.venue_streams: Dict[str, object] = {}
+        # (market type, exchange id upper-case) -> futures symbol key of MarketData
+        self._binance_keys: Dict[Tuple[str, str], str] = {}
+        self._backfill_pending: set = set()
+        self._backfill_retry_at: Dict[Tuple[str, str], float] = {}
+        self._backfill_semaphore = asyncio.Semaphore(3)
+        self.funding_interval_hours: Dict[str, int] = {}
+        self.reference_prices: Dict[str, float] = {}
+        self._htf_loading: set = set()
+        self._deriv_cache: Dict[str, Tuple[float, Dict[str, float]]] = {}
+        self.funding_info_updated: float = 0.0
+        self.oi_last_updated: Dict[str, float] = {}
+
+        ban = BanState()  # one IP: a ban on spot also stops futures calls
+        self.gates = {
+            'futures': RestGate('binance futures', CONFIG.rest.futures_weight_limit, ban, 'X-MBX-USED-WEIGHT-1M'),
+            'spot': RestGate('binance spot', CONFIG.rest.spot_weight_limit, ban, 'X-MBX-USED-WEIGHT-1M'),
+        }
+        self._positioning_calls: deque = deque()
+
+        # Order flow state (flow.py) and the cross-venue symbol map
+        self.symbol_map = SymbolMap()
+        self.flow = FlowStore()
+        self.whales = WhaleBook()
+        self.sweeps = SweepTracker(self._on_sweep)
+        self.footprint = Footprint()
+        self.depth = DepthBook()
+        # Live liquidations of every venue since the scanner last journaled them: (symbol, ts_ms, price, usd, side, venue)
+        self.liq_log: List[tuple] = []
+        self.log_liquidations = False     # set by the scanner when a journal takes them
+        self.venue_derivs: Dict[str, Dict[str, VenueDeriv]] = {}
+        self._zone_atr: Dict[str, float] = {}
+
+    # ------------------------------------------------------------------ setup
+
+    async def initialize(self) -> None:
+        logger.info("Initializing REST exchanges...")
+        # Each instance loads only its own market type: by default both load spot + linear + inverse (~280 MB)
+        spot_config = {'enableRateLimit': True, 'options': {'defaultType': 'spot', 'fetchMarkets': {'types': ['spot']}}}
+        futures_config = {'enableRateLimit': True, 'options': {'defaultType': 'future', 'fetchMarkets': {'types': ['linear']}}}
+        self.spot_exchange = getattr(ccxt, CONFIG.exchange.exchange_id)(spot_config)
+        self.futures_exchange = getattr(ccxt, CONFIG.exchange.exchange_id)(futures_config)
+        await asyncio.gather(self._load_markets_off_loop(self.spot_exchange, spot_config),
+                             self._load_markets_off_loop(self.futures_exchange, futures_config))
+        logger.info(f"Loaded {len(self.spot_exchange.markets)} spot, {len(self.futures_exchange.markets)} futures markets")
+
+    @staticmethod
+    async def _load_markets_off_loop(exchange, config: dict):
+        """
+        ccxt parses market lists (thousands of dicts) synchronously; on the event loop that blocked everything for
+        ~2s at start. A synchronous ccxt instance loads them in a worker thread and the async one receives the result.
+        """
+        def load():
+            import ccxt as ccxt_sync   # imported in the worker thread: the import alone takes ~1s
+            sync = getattr(ccxt_sync, exchange.id)(config)
+            sync.load_markets()
+            return sync.markets, sync.currencies
+
+        for attempt in range(1, 4):
+            try:
+                markets, currencies = await asyncio.to_thread(load)
+                exchange.set_markets(markets, currencies)
+                return
+            except Exception as e:
+                if attempt == 3:
+                    raise
+                logger.info(f"{exchange.id} market list failed ({type(e).__name__}); retry {attempt}")
+                await asyncio.sleep(3 * attempt)
+
+    async def load_venues(self):
+        """
+        Instrument lists and last prices of the other venues, loaded and parsed in worker threads (synchronous ccxt:
+        parsing thousands of markets on the event loop blocked it); failures only disable that venue. Mappings
+        whose price shows a different token under the same ticker are dropped before anything is subscribed.
+        """
+        def fetch(venue: str):
+            import ccxt as ccxt_sync   # imported in the worker thread: the import alone takes ~1s
+            eid, options, _ = VENUE_MARKETS[venue]
+            exchange = getattr(ccxt_sync, eid)({'enableRateLimit': True, 'options': options, 'timeout': 30_000})
+            exchange.load_markets()
+            rows = venue_market_rows(venue, exchange.markets)
+            prices: Dict[str, float] = {}
+            try:
+                for symbol, t in exchange.fetch_tickers().items():
+                    market = exchange.markets.get(symbol) or {}
+                    native = (market.get('info') or {}).get('name') if venue == 'hyperliquid' else market.get('id')
+                    price = t.get('last') or t.get('close') or t.get('bid')
+                    if native and price:
+                        prices[native] = float(price)
+            except Exception as e:
+                logger.info(f"{venue}: tickers unavailable for the price check ({type(e).__name__}); "
+                            f"live trades are checked instead")
+            return rows, prices
+
+        async def load(venue: str):
+            for attempt in range(1, 4):
+                try:
+                    rows, prices = await asyncio.wait_for(asyncio.to_thread(fetch, venue), timeout=90)
+                    break
+                except Exception as e:
+                    if attempt == 3:
+                        logger.warning(f"{venue}: market list unavailable ({type(e).__name__} {e}); venue disabled")
+                        return
+                    await asyncio.sleep(3 * attempt)
+            self.symbol_map.add_venue(venue, rows, spot=venue == 'coinbase')
+            dropped = self.symbol_map.verify_prices(venue, prices, self.reference_prices)
+            if dropped:
+                logger.info(f"Symbol map: {venue} {', '.join(dropped)} dropped (a different token under the same ticker)")
+
+        await asyncio.gather(*[load(v) for v in CONFIG.venues.enabled if v in VENUE_MARKETS])
+
+    # ------------------------------------------------------------------ REST
+
+    def _gate_for(self, exchange) -> RestGate:
+        if exchange is self.spot_exchange:
+            return self.gates['spot']
+        if exchange is self.futures_exchange:
+            return self.gates['futures']
+        for venue, ex in self.venue_exchanges.items():
+            if ex is exchange:
+                return self.gates[venue]
+        return self.gates['futures']
+
+    async def _rest_call(self, exchange, method: str, *args, priority: int = 1, weight: float = 1, **kwargs):
+        """Every REST call: proactive weight budget per priority, shared pause on 429/418 (ratelimit.RestGate)."""
+        return await self._gate_for(exchange).call(exchange, method, *args, weight=weight, priority=priority, **kwargs)
+
+    # ------------------------------------------------------------------ funding / OI
+
+    async def _refresh_funding_info(self):
+        """Funding interval per symbol (/fapi/v1/fundingInfo lists only non-default ones; default is 8h)."""
+        if time.time() - self.funding_info_updated < self.FUNDING_INFO_REFRESH_SEC:
+            return
+        try:
+            info = await self._rest_call(self.futures_exchange, 'fapiPublicGetFundingInfo', priority=1)
+        except Exception as e:
+            logger.warning(f"Failed to fetch funding info: {e}")
+            return
+        intervals = {}
+        for item in info:
+            ccxt_symbol = self._binance_to_ccxt_symbol(item.get('symbol') or '')
+            hours = int(item.get('fundingIntervalHours') or 8)
+            if ccxt_symbol and hours > 0:
+                intervals[ccxt_symbol] = hours
+        self.funding_interval_hours = intervals
+        self.funding_info_updated = time.time()
+
+    async def _funding_info_loop(self):
+        while self._running:
+            await self._refresh_funding_info()
+            await asyncio.sleep(300)
+
+    async def fetch_open_interest(self, symbol: str) -> Optional[float]:
+        binance_symbol = self._ccxt_to_binance_symbol(symbol)
+        if not binance_symbol:
+            return None
+        try:
+            res = await self._rest_call(self.futures_exchange, 'fapiPublicGetOpenInterest', {'symbol': binance_symbol},
+                                        priority=1)
+        except Exception as e:
+            logger.debug(f"OI fetch failed for {symbol}: {e}")
+            return None
+        self.oi_last_updated[symbol] = time.time()
+        return float(res.get('openInterest', 0.0))
+
+    async def _oi_loop(self):
+        """
+        Binance has no OI stream: poll every symbol once per oi_update_interval_sec, each at its own evenly spread
+        slot, with a few requests in flight. Sequential polling took ~0.4s per request over this link, so one pass
+        over 300 symbols took ~2 minutes and the 5m OI change often found no baseline sample.
+        """
+        interval = CONFIG.timeframe.oi_update_interval_sec
+        in_flight = asyncio.Semaphore(8)
+
+        async def poll(symbol: str, delay: float):
+            await asyncio.sleep(delay)
+            async with in_flight:
+                oi = await self.fetch_open_interest(symbol)
+            md = self.markets.get(symbol)
+            if oi and md is not None:
+                now_ms = time.time() * 1000
+                md.open_interest = oi
+                md.record_oi(now_ms, oi)
+                if md.last_price:
+                    self._record_venue_oi(symbol, 'binance', oi * md.last_price, now_ms)
+
+        while self._running:
+            symbols = list(self.markets)
+            if not symbols:
+                await asyncio.sleep(1)
+                continue
+            started = time.time()
+            step = interval / len(symbols)
+            await asyncio.gather(*[poll(s, i * step) for i, s in enumerate(symbols)], return_exceptions=True)
+            await asyncio.sleep(max(0.0, interval - (time.time() - started)))
+
+    def _record_venue_oi(self, key: str, venue: str, oi_usd: float, ts_ms: float):
+        state = self.venue_derivs.setdefault(key, {}).setdefault(venue, VenueDeriv())
+        state.oi_usd, state.ts = oi_usd, ts_ms
+        if not state.samples or ts_ms - state.samples[-1][0] >= 10_000:
+            state.samples.append((ts_ms, oi_usd))
+
+    async def _binance_rest_tickers_loop(self):
+        """
+        Funding / mark / index for every contract (premiumIndex, weight 10) every 30s and the 24h volumes (weight 40)
+        every 5 min: the same numbers the whole-market streams pushed every second, at a tiny share of the bandwidth.
+        """
+        last_volumes = 0.0
+        while self._running:
+            try:
+                await self._update_premium_index()
+                if time.time() - last_volumes >= 300:
+                    await self._update_24h_volumes()
+                    last_volumes = time.time()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Binance REST tickers failed ({type(e).__name__}): {e}")
+            await asyncio.sleep(CONFIG.timeframe.bulk_funding_interval_sec)
+
+    async def _update_premium_index(self):
+        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetPremiumIndex', priority=1, weight=10)
+        now_ms = time.time() * 1000
+        # Mark prices of every USDT perpetual (the market baseline of the journal: universe snapshots)
+        self.market_marks = {m['symbol']: float(m.get('markPrice') or 0.0) for m in rows
+                             if m.get('symbol') in self.baseline_ids and float(m.get('markPrice') or 0.0) > 0}
+        for m in rows:
+            key = self._binance_keys.get(('futures', m.get('symbol')))
+            md = self.markets.get(key)
+            if md is None:
+                continue
+            md.mark_price, md.index_price = float(m.get('markPrice') or 0.0), float(m.get('indexPrice') or 0.0)
+            # lastFundingRate: the live estimate of the next funding; settlements run every 1/4/8h -> 8h-equivalent
+            rate = float(m.get('lastFundingRate') or 0.0) * 8 / self.funding_interval_hours.get(key, 8)
+            md.funding_rate = md.predicted_funding = rate
+            state = self.venue_derivs.setdefault(key, {}).setdefault('binance', VenueDeriv())
+            state.funding_8h, state.mark, state.ts = rate, md.mark_price, now_ms
+
+    async def _update_24h_volumes(self):
+        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetTicker24hr', priority=1, weight=40)
+        now_ms = time.time() * 1000
+        for t in rows:
+            md = self.markets.get(self._binance_keys.get(('futures', t.get('symbol'))))
+            if md is not None:
+                md.record_ticker({'quoteVolume': float(t.get('quoteVolume') or 0.0)}, now_ms)
+
+    BULK_DERIV_URLS = {
+        'bybit': 'https://api.bybit.com/v5/market/tickers?category=linear',
+        'bitget': 'https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES',
+        'bitget_funding': 'https://api.bitget.com/api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES',
+    }
+    BULK_DERIV_INTERVAL_SEC = 30
+
+    async def _bulk_deriv_loop(self):
+        """
+        OI and funding of every Bybit / Bitget contract in one public REST call per venue every 30s (2 requests a
+        minute, far below their limits), instead of ticker streams pushing thousands of messages a second.
+        """
+        import aiohttp
+        venues = [v for v in self.BULK_DERIV_URLS if v.split('_')[0] in CONFIG.venues.enabled]
+        if not venues:
+            return
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            while self._running:
+                for venue in venues:
+                    try:
+                        async with session.get(self.BULK_DERIV_URLS[venue]) as resp:
+                            payload = await resp.json(content_type=None)
+                        self._apply_bulk_deriv(venue, payload)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.debug(f"{venue} bulk tickers failed: {e}")
+                await asyncio.sleep(self.BULK_DERIV_INTERVAL_SEC)
+
+    COINBASE_PRODUCTS_URL = 'https://api.coinbase.com/api/v3/brokerage/market/products?product_type=SPOT'
+    COINBASE_PRODUCTS_INTERVAL_SEC = 60
+
+    async def _coinbase_prices_loop(self):
+        """
+        Last prices of every Coinbase spot product in one public call a minute: the Coinbase premium of a coin whose
+        live trades are older than coinbase_max_age_sec (thin USD books trade minutes apart) comes from it.
+        """
+        import aiohttp
+        if 'coinbase' not in CONFIG.venues.enabled:
+            return
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+            while self._running:
+                # only the universe's products (the full list is ~1.2 MB: 20 KB/s of a link that is the constraint)
+                ids = self.symbol_map.natives('coinbase')
+                if not ids:
+                    await asyncio.sleep(self.COINBASE_PRODUCTS_INTERVAL_SEC)
+                    continue
+                try:
+                    async with session.get(self.COINBASE_PRODUCTS_URL, params=[('product_ids', i) for i in ids]) as resp:
+                        payload = await resp.json(content_type=None)
+                    now_ms = time.time() * 1000
+                    for p in payload.get('products') or []:
+                        market = self.symbol_map.lookup('coinbase', p.get('product_id', ''))
+                        md = self.markets.get(market.key) if market is not None else None
+                        try:
+                            price = float(p.get('price') or 0)
+                        except (TypeError, ValueError):
+                            price = 0.0
+                        if md is None or price <= 0 or p.get('trading_disabled'):
+                            continue
+                        md.coinbase_rest_price = price / market.multiplier * self.symbol_map.key_multiplier.get(market.key, 1.0)
+                        md.coinbase_rest_ts = now_ms
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.info(f"Coinbase products failed ({type(e).__name__} {e})")
+                await asyncio.sleep(self.COINBASE_PRODUCTS_INTERVAL_SEC)
+
+    def _apply_bulk_deriv(self, venue: str, payload: dict):
+        def num(value) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+        if venue == 'bybit':
+            for t in (payload.get('result') or {}).get('list', []):
+                market = self.symbol_map.lookup('bybit', t.get('symbol', ''))
+                if market is None:
+                    continue
+                hours = num(t.get('fundingIntervalHour')) or 8.0
+                funding = t.get('fundingRate')
+                # singleOpenInterestValue: one side, comparable with the other venues
+                oi = num(t.get('singleOpenInterestValue')) or num(t.get('openInterestValue'))
+                self.on_deriv(market, oi_usd=oi or None, mark=num(t.get('markPrice')) or None,
+                              funding_8h=num(funding) * 8 / hours if funding not in (None, '') else None)
+        elif venue == 'bitget':
+            for t in payload.get('data') or []:
+                market = self.symbol_map.lookup('bitget', t.get('symbol', ''))
+                if market is None:
+                    continue
+                mark = num(t.get('markPrice'))
+                # holdingAmount is in coins; funding comes from current-fund-rate (it knows each interval)
+                self.on_deriv(market, oi_usd=num(t.get('holdingAmount')) * mark or None, mark=mark or None)
+        elif venue == 'bitget_funding':
+            for t in payload.get('data') or []:
+                market = self.symbol_map.lookup('bitget', t.get('symbol', ''))
+                funding = t.get('fundingRate')
+                if market is None or funding in (None, ''):
+                    continue
+                hours = num(t.get('fundingRateInterval')) or 8.0
+                self.on_deriv(market, funding_8h=num(funding) * 8 / hours)
+
+    DERIV_CACHE_MS = 10_000
+
+    def deriv_snapshot(self, key: str, now_ms: Optional[float] = None) -> Dict[str, float]:
+        """
+        Aggregated positioning across venues: OI change over 5m / 1h (each venue's % change weighted by its current
+        OI in USD, so unit and contract-size differences cancel), OI-weighted 8h funding, venues reporting.
+        Cached per coin for DERIV_CACHE_MS: the inputs update every 10-60s, and recomputing all venues' windows
+        for 300 coins on every 2s Tier-0 pass was a tenth of the event loop's busy time (profiled).
+        """
+        now_ms = now_ms or time.time() * 1000
+        cached = self._deriv_cache.get(key)
+        if cached is not None and now_ms - cached[0] < self.DERIV_CACHE_MS:
+            return cached[1]
+        out = self._deriv_snapshot(key, now_ms)
+        self._deriv_cache[key] = (now_ms, out)
+        return out
+
+    def _deriv_snapshot(self, key: str, now_ms: float) -> Dict[str, float]:
+        states = self.venue_derivs.get(key, {})
+        out = {'agg_oi_change_5m': 0.0, 'agg_oi_change_1h': 0.0, 'agg_funding_8h': 0.0, 'oi_venues': 0}
+        for label, window in (('agg_oi_change_5m', 300_000), ('agg_oi_change_1h', 3_600_000)):
+            num = den = 0.0
+            for state in states.values():
+                change = _pct_change(state.samples, now_ms, window)
+                if change is not None and state.oi_usd:
+                    num += change * state.oi_usd
+                    den += state.oi_usd
+            out[label] = num / den if den else 0.0
+        num = den = 0.0
+        for state in states.values():
+            if state.funding_8h is not None and state.oi_usd and now_ms - state.ts < 600_000:
+                num += state.funding_8h * state.oi_usd
+                den += state.oi_usd
+        out['agg_funding_8h'] = num / den if den else 0.0
+        out['oi_venues'] = sum(1 for s in states.values() if s.oi_usd and now_ms - s.ts < 600_000)
+        return out
+
+    def _binance_to_ccxt_symbol(self, binance_symbol: str) -> Optional[str]:
+        if binance_symbol.endswith('USDT'):
+            return f"{binance_symbol[:-4]}/USDT:USDT"
+        return None
+
+    def _ccxt_to_binance_symbol(self, ccxt_symbol: str) -> Optional[str]:
+        if ccxt_symbol.endswith(':USDT'):
+            return f"{ccxt_symbol.split('/')[0]}USDT"
+        return None
+
+    # ------------------------------------------------------------------ positioning (top trader ratio)
+
+    # ------------------------------------------------------------------ symbols / baselines
+
+    async def fetch_top_symbols(self) -> List[str]:
+        """The universe: the candidates' data-complete subset (fetch_candidates -> select_universe)."""
+        return self.select_universe(await self.fetch_candidates())
+
+    async def fetch_candidates(self) -> List[str]:
+        """
+        USD-M perpetuals above the volume floor, most liquid first; refreshes the reference prices (the other venues'
+        mapping check), the spreads (bookTicker, weight 5) and the ids of every USDT perpetual (market baseline).
+        """
+        tickers = await self._rest_call(self.futures_exchange, 'fetch_tickers', priority=0, weight=40)
+        quote = CONFIG.exchange.quote_currency
+        excluded_types = set(CONFIG.exchange.excluded_underlying_types)
+        excluded = 0
+
+        usdt_pairs = []
+        for s, t in tickers.items():
+            if not (s.endswith(f"/{quote}") or s.endswith(f"/{quote}:{quote}")):
+                continue
+            market = self.futures_exchange.markets.get(s) or {}
+            if market.get('info', {}).get('underlyingType') in excluded_types:
+                excluded += 1
+                continue
+            if market.get('swap') is False:
+                continue
+            info = t.get('info', {})
+            quote_vol_raw = (
+                t.get('quoteVolume') or t.get('quoteAssetVolume') or
+                info.get('quoteVolume') or info.get('quoteAssetVolume') or 0
+            )
+            try:
+                quote_vol = float(quote_vol_raw)
+            except (TypeError, ValueError):
+                quote_vol = 0.0
+            is_active = t.get('active', info.get('active', True))
+            if quote_vol >= CONFIG.exchange.min_24h_quote_volume_usd and is_active:
+                usdt_pairs.append((s, quote_vol))
+
+        # Last prices of the universe: the reference for the other venues' symbol mapping check
+        self.reference_prices = {s: float(t['last']) for s, t in tickers.items() if t.get('last')}
+        usdt_pairs.sort(key=lambda x: x[1], reverse=True)
+        by_id = {m.get('id'): s for s, m in self.futures_exchange.markets.items()}
+        # Every USDT perpetual except stocks / pre-IPO: the market baseline of the journal (universe snapshots)
+        self.baseline_ids = {m.get('id') for s, m in self.futures_exchange.markets.items()
+                             if s.endswith(f"/{quote}:{quote}") and m.get('swap') is not False
+                             and (m.get('info') or {}).get('underlyingType') not in excluded_types}
+        try:
+            book = await self._rest_call(self.futures_exchange, 'fapiPublicGetTickerBookTicker', priority=0, weight=5)
+            spreads = {}
+            for b in book or []:
+                bid, ask = float(b.get('bidPrice') or 0), float(b.get('askPrice') or 0)
+                if bid > 0 and ask >= bid and b.get('symbol') in by_id:
+                    spreads[by_id[b['symbol']]] = (ask - bid) / ((ask + bid) / 2)
+            self.spreads = spreads
+        except RATE_LIMIT_ERRORS:
+            raise
+        except Exception as e:
+            logger.warning(f"Spreads unavailable for the universe selection ({type(e).__name__} {e}); previous kept")
+        logger.info(f"Universe candidates: {len(usdt_pairs)} perpetuals >= ${CONFIG.exchange.min_24h_quote_volume_usd:,.0f} "
+                    f"24h volume (excluded {excluded} stock / pre-IPO contracts)")
+        return [s for s, _ in usdt_pairs]
+
+    def select_universe(self, candidates: List[str]) -> List[str]:
+        """
+        The most liquid candidates with complete data (CONFIG.exchange): a Binance spot pair, enough other futures
+        venues, enough history, a tradable spread; at most max_pairs. Venue coverage comes from every venue's
+        instrument list (SymbolMap.coverage), so it is known for coins that are not in the universe yet.
+        """
+        cfg = CONFIG.exchange
+        markets = {s: self.futures_exchange.markets[s] for s in candidates if s in self.futures_exchange.markets}
+        coverage = self.symbol_map.coverage(markets)
+        now_ms = time.time() * 1000
+        excluded: Dict[str, int] = {}
+        selected: List[str] = []
+        for s in candidates:
+            if s not in markets:
+                continue
+            futures_venues = [v for v in coverage.get(s, []) if v not in SPOT_VENUES]
+            listed = int((markets[s].get('info') or {}).get('onboardDate') or 0)
+            spread = self.spreads.get(s)
+            reason = None
+            if cfg.require_spot and not self._spot_symbol_for(s):
+                reason = 'no spot pair'
+            elif len(futures_venues) < cfg.min_futures_venues:
+                reason = f'< {cfg.min_futures_venues} other futures venues'
+            elif listed and now_ms - listed < cfg.min_listing_days * 86_400_000:
+                reason = f'listed < {cfg.min_listing_days}d'
+            elif spread is not None and spread > cfg.max_spread:
+                reason = f'spread > {cfg.max_spread:.2%}'
+            if reason:
+                excluded[reason] = excluded.get(reason, 0) + 1
+                continue
+            selected.append(s)
+            if len(selected) >= cfg.max_pairs:
+                break
+        self.whales.set_ranks(selected)
+        logger.info(f"Universe: {len(selected)} coins with complete data of {len(candidates)} candidates; "
+                    f"excluded {excluded}")
+        return selected
+
+    def _to_spot_symbol(self, futures_symbol: str) -> str:
+        """Convert futures symbol (BTC/USDT:USDT) to spot symbol (BTC/USDT)."""
+        if ':' in futures_symbol:
+            return futures_symbol.split(':')[0]
+        return futures_symbol
+
+    def _normalize_1000x_symbol(self, futures_symbol: str) -> str:
+        """Normalize 1000x futures symbol to spot equivalent, e.g. 1000PEPE/USDT:USDT -> PEPE/USDT."""
+        base = self._to_spot_symbol(futures_symbol)
+        if base.startswith('1000') and '/' in base:
+            return base[4:]
+        return base
+
+    def _spot_symbol_for(self, futures_symbol: str) -> Optional[str]:
+        """Spot pair for a futures symbol: same name, else the un-prefixed 1000x name (1000PEPE -> PEPE)."""
+        for candidate in (self._to_spot_symbol(futures_symbol), self._normalize_1000x_symbol(futures_symbol)):
+            market = self.spot_exchange.markets.get(candidate)
+            if market and market.get('active', True):
+                return candidate
+        return None
+
+    def get_volume_multiplier(self, symbol: str) -> float:
+        """Returns 1000.0 for 1000x tokens, 1.0 otherwise."""
+        base = self._to_spot_symbol(symbol)
+        if base.startswith('1000') and '/' in base:
+            return 1000.0
+        return 1.0
+
+    async def _fetch_klines(self, market: str, symbol: Optional[str], interval: Optional[str] = None,
+                            limit: Optional[int] = None) -> List:
+        # Raw Binance klines (not fetch_ohlcv): they carry quote volume and taker buy quote volume
+        exchange = self.spot_exchange if market == 'spot' else self.futures_exchange
+        if not symbol or symbol not in exchange.markets:
+            return []
+        method = 'publicGetKlines' if market == 'spot' else 'fapiPublicGetKlines'
+        limit = limit or CONFIG.timeframe.rest_lookback_candles
+        try:
+            return await self._rest_call(exchange, method, {
+                'symbol': exchange.market(symbol)['id'],
+                'interval': interval or CONFIG.timeframe.rest_timeframe,
+                'limit': limit,
+            }, priority=0, weight=2 if market == 'spot' or limit >= 100 else 1)
+        except RATE_LIMIT_ERRORS:
+            raise
+        except Exception as e:
+            logger.debug(f"Klines fetch skipped for {symbol}: {e}")
+            return []
+
+    async def fetch_minute_klines(self, futures_symbol: str, start_ms: int, count: int) -> Optional[List]:
+        """
+        `count` futures 1m klines starting with the first full minute after start_ms (journal outcomes), so the
+        signal's own minute never leaks into the outcome. None when the request failed (retry later), [] when the
+        exchange has no data.
+        """
+        try:
+            return await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines', {
+                'symbol': self.futures_exchange.market(futures_symbol)['id'],
+                'interval': '1m',
+                'startTime': -(-start_ms // 60_000) * 60_000,
+                'limit': count,
+            }, priority=2, weight=1 if count < 100 else 2)
+        except Exception as e:
+            logger.debug(f"Minute klines failed for {futures_symbol}: {e}")
+            return None
+
+    async def _fetch_oi_history(self, futures_symbol: str) -> List:
+        # /futures/data/openInterestHist: weight 0, own limit of 1000 requests / 5 min
+        try:
+            return await self._rest_call(
+                self.futures_exchange, 'fetch_open_interest_history', futures_symbol,
+                CONFIG.timeframe.rest_timeframe, None, CONFIG.timeframe.rest_lookback_candles, priority=0, weight=0,
+            )
+        except RATE_LIMIT_ERRORS:
+            raise
+        except Exception as e:
+            logger.debug(f"OI history skipped for {futures_symbol}: {e}")
+            return []
+
+    async def _seed_minutes(self, symbol: str, md: MarketData):
+        """The streams' 1m history (futures 4h, spot 1h) from REST at start-up / when a coin joins (MarketData.seed_minutes)."""
+        now_ms = int(time.time() * 1000)
+        spot_symbol = self._spot_symbol_for(symbol)
+        jobs = [('futures', symbol, md.minute_klines.maxlen)]
+        if spot_symbol:
+            jobs.append(('spot', spot_symbol, md.spot_minute_klines.maxlen))
+        for market, sym, limit in jobs:
+            rows = await self._fetch_klines(market, sym, '1m', limit + 1)
+            md.seed_minutes(market, [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
+                                      float(k[10])] for k in rows or []], now_ms)
+
+    async def _seed_oi(self, symbol: str, md: MarketData):
+        """
+        The last hour of 5m OI history (13 points, weight 0): Tier-0's 5m OI change and the entries' 1h OI
+        confirmation work from the start (with 3 points every confirmation of the first hour had no OI reading).
+        """
+        binance_symbol = self._ccxt_to_binance_symbol(symbol)
+        if not binance_symbol:
+            return
+        try:
+            rows = await self._rest_call(self.futures_exchange, 'fapiDataGetOpenInterestHist',
+                                         {'symbol': binance_symbol, 'period': '5m', 'limit': 13}, priority=1, weight=0)
+        except RATE_LIMIT_ERRORS:
+            raise
+        except Exception as e:
+            logger.debug(f"OI history seed skipped for {symbol}: {e}")
+            return
+        # openInterestHist timestamps are period END times: the OI at that moment
+        md.seed_oi([(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in rows or []])
+
+    def load_htf_background(self, symbol: str):
+        """load_htf without waiting for it (at most one request set per coin in flight)."""
+        if symbol in self._htf_loading:
+            return
+        self._htf_loading.add(symbol)
+        task = self._spawn(self.load_htf(symbol))
+        task.add_done_callback(lambda _t: self._htf_loading.discard(symbol))
+
+    async def load_htf(self, symbol: str) -> bool:
+        """
+        1h klines (~4 days) and 1h open-interest history of one card coin for the level map (zones.py), refreshed at
+        most every zones.htf_refresh_sec. Klines weigh 1 (limit < 100), openInterestHist 0 (own 1000 / 5 min limit).
+        """
+        md = self.markets.get(symbol)
+        binance_symbol = self._ccxt_to_binance_symbol(symbol)
+        if md is None or not binance_symbol or time.time() - md.htf_loaded < CONFIG.zones.htf_refresh_sec:
+            return False
+        n = CONFIG.zones.htf_candles
+        try:
+            klines, oi, k5 = await asyncio.gather(
+                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                {'symbol': binance_symbol, 'interval': '1h', 'limit': n}, priority=1, weight=1),
+                self._rest_call(self.futures_exchange, 'fapiDataGetOpenInterestHist',
+                                {'symbol': binance_symbol, 'period': '1h', 'limit': min(n, 500)}, priority=2, weight=0),
+                # 4 days of 5m candles (limit > 1000 weighs 10; card coins only, hourly)
+                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                {'symbol': binance_symbol, 'interval': '5m', 'limit': 4 * 288}, priority=1, weight=10),
+            )
+        except Exception as e:
+            logger.debug(f"1h history failed for {symbol}: {e}")
+            md.htf_loaded = time.time() - CONFIG.zones.htf_refresh_sec + 300  # retry in 5 min
+            return False
+        md.htf_klines = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
+                         for k in self._closed_only(klines or [])]
+        md.htf_oi = [(int(r['timestamp']), float(r.get('sumOpenInterestValue') or 0.0)) for r in (oi or [])]
+        md.htf_5m = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
+                     for k in self._closed_only(k5 or [])]
+        md.htf_loaded = time.time()
+        return True
+
+    async def chart_candles(self, symbol: str) -> Optional[Dict]:
+        """15m and 5m candles of any futures symbol for the web chart (coins no longer in the universe)."""
+        binance_symbol = self._ccxt_to_binance_symbol(symbol)
+        if not binance_symbol:
+            return None
+        try:
+            k15, k5, k1h = await asyncio.gather(*[
+                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                {'symbol': binance_symbol, 'interval': tf, 'limit': 99}, priority=0, weight=1)
+                for tf in ('15m', '5m', '1h')])
+        except Exception as e:
+            logger.debug(f"Chart candles failed for {symbol}: {e}")
+            return None
+        rows = lambda ks: [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
+                           for k in ks or []]
+        c15 = rows(k15)
+        return {'symbol': symbol, 'price': c15[-1][4] if c15 else None, 'atr': None, 'candles_15m': c15,
+                'candles_5m': rows(k5), 'candles_1h': rows(k1h), 'zones': [], 'cards': [], 'liquidations': [], 'htf_loaded': 0,
+                'note': 'coin is not in the current universe: no level map'}
+
+    @staticmethod
+    def _closed_only(klines: List) -> List:
+        """
+        Drop the in-progress candle (and one that closed < 3s ago, which REST may still be completing): frames hold
+        closed candles only; a partial REST row taken for a closed one gave candles with a few seconds of volume.
+        """
+        cutoff = time.time() * 1000 - 3000
+        return [k for k in klines if int(k[6]) < cutoff]
+
+    async def _load_frame(self, market: str, futures_symbol: str) -> Tuple[pl.DataFrame, int]:
+        """REST candles (closed only) for one market as RAW_SCHEMA plus the open time of the newest one."""
+        if market == 'spot':
+            klines = self._closed_only(await self._fetch_klines('spot', self._spot_symbol_for(futures_symbol)))
+            return self._klines_to_df(klines), self._last_closed_open_time(klines)
+
+        klines, oi_history = await asyncio.gather(
+            self._fetch_klines('futures', futures_symbol), self._fetch_oi_history(futures_symbol)
+        )
+        klines = self._closed_only(klines)
+        df = self._attach_oi_history(self._klines_to_df(klines), oi_history)
+        return df, self._last_closed_open_time(klines)
+
+    def _new_market_data(self, s: str) -> MarketData:
+        return MarketData(
+            symbol=s,
+            spot_df=empty_raw_frame(),
+            futures_df=empty_raw_frame(),
+            volume_multiplier=self.get_volume_multiplier(s),
+            spot_symbol=self._spot_symbol_for(s) or "",
+            listed_ms=int((self.futures_exchange.markets.get(s) or {}).get('info', {}).get('onboardDate') or 0),
+        )
+
+    def create_market_data(self, symbols: List[str]) -> Dict[str, MarketData]:
+        """Empty MarketData per symbol so streams can start before the REST history arrives."""
+        self.markets = {s: self._new_market_data(s) for s in symbols}
+        self.flow.register(symbols)
+        self.symbol_map.set_universe({s: self.futures_exchange.markets[s] for s in symbols})
+        return self.markets
+
+    def apply_universe(self, symbols: List[str], keep: Iterable[str] = ()) -> Tuple[List[str], List[str]]:
+        """
+        Switch to a new universe: new symbols get MarketData, dropped ones are removed unless listed in `keep`
+        (open cards finish on the old data). Returns (added, removed); the caller restarts streams and loads history.
+        """
+        keep = set(keep)
+        added = [s for s in symbols if s not in self.markets]
+        removed = [s for s in self.markets if s not in symbols and s not in keep]
+        for s in added:
+            self.markets[s] = self._new_market_data(s)
+        for s in removed:
+            self.markets.pop(s, None)
+            self.flow.unregister(s)
+            self.depth.forget(s)
+            self.footprint.disable(s)
+            self.venue_derivs.pop(s, None)
+        self.flow.register(added)
+        self.symbol_map.set_universe({s: self.futures_exchange.markets[s] for s in self.markets
+                                      if s in self.futures_exchange.markets})
+        return added, removed
+
+    async def _hourly_candles_loop(self):
+        """
+        1h candles (limit 200 = ~8 days, weight 2) of every universe coin, refreshed a minute after each hour: the
+        pools of previous day / week / sessions and the coins' trends must exist for all 300 coins, not only for card
+        coins (~600 weight per hour against a ~1400 / minute budget). Waits for the 15m history first (priority).
+        """
+        cfg = CONFIG.strategies
+        while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
+            await asyncio.sleep(10)
+        while self._running:
+            started = time.time()
+            symbols = [s for s, md in self.markets.items() if started - md.h1_loaded >= cfg.h1_refresh_sec - 120]
+            sem = asyncio.Semaphore(8)
+
+            async def one(symbol: str):
+                binance_symbol = self._ccxt_to_binance_symbol(symbol)
+                md = self.markets.get(symbol)
+                if not binance_symbol or md is None:
+                    return
+                async with sem:
+                    try:
+                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                                     {'symbol': binance_symbol, 'interval': '1h', 'limit': cfg.h1_candles},
+                                                     priority=1, weight=2)
+                    except Exception as e:
+                        logger.debug(f"1h candles failed for {symbol}: {e}")
+                        return
+                md.h1 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
+                         for k in self._closed_only(rows or [])]
+                md.h1_loaded = time.time()
+
+            await asyncio.gather(*(one(s) for s in symbols))
+            if symbols:
+                logger.info(f"1h candles loaded for {sum(1 for s in symbols if self.markets.get(s) and self.markets[s].h1)} "
+                            f"of {len(symbols)} symbols in {time.time() - started:.0f}s")
+            # The histories loaded so far are long-lived: move them out of the cyclic GC's reach. Full (gen 2)
+            # collections scanned millions of candle lists and stalled the loop 1-3s (watchdog: 'gc 3.1s (gen 2)');
+            # frozen objects are still freed by reference counting when dropped
+            gc.freeze()
+            logger.debug(f"gc: {gc.get_freeze_count()} objects frozen")
+            # next pass one minute after the next full hour (the new 1h candle is closed then)
+            now = time.time()
+            await asyncio.sleep(max(60.0, 3600 - now % 3600 + 60))
+
+    def baselines_loaded(self) -> int:
+        return sum(1 for md in self.markets.values() if md.baseline_ready)
+
+    async def fetch_rest_baselines(self, symbols: List[str]):
+        """
+        Background cold start: fill candle history symbol by symbol (highest volume first) with bounded
+        concurrency plus a fixed delay; the RestGate budget keeps the burst below Binance's weight limit.
+        Streams and Tier-0 already run meanwhile; a symbol joins phase scoring once its history is in.
+        """
+        semaphore = asyncio.Semaphore(CONFIG.rest.baseline_concurrency)
+        started = time.time()
+        await self._refresh_funding_info()
+        try:
+            await self._update_24h_volumes()
+        except Exception as e:
+            logger.warning(f"24h volumes unavailable: {e}")
+
+        async def fetch_symbol(futures_symbol: str):
+            md = self.markets.get(futures_symbol)
+            if md is None:
+                return
+            async with semaphore:
+                try:
+                    (spot_df, spot_final), (futures_df, futures_final) = await asyncio.gather(
+                        self._load_frame('spot', futures_symbol), self._load_frame('futures', futures_symbol)
+                    )
+                    md.spot_df, md.futures_df = spot_df, futures_df
+                    md.history_version += 1
+                    await asyncio.gather(self._seed_oi(futures_symbol, md), self._seed_minutes(futures_symbol, md))
+                    md.finalized_until = {'spot': max(md.finalized_until['spot'], spot_final),
+                                          'futures': max(md.finalized_until['futures'], futures_final)}
+                except Exception as e:
+                    # Frames stay empty; the first kline row flags a backfill that retries the download
+                    logger.warning(f"Failed to fetch baselines for {futures_symbol}: {e}")
+                finally:
+                    md.baseline_ready = True
+                    done = sum(1 for s in symbols if s in self.markets and self.markets[s].baseline_ready)
+                    if done % 50 == 0 or done == len(symbols):
+                        logger.info(f"REST baselines: {done}/{len(symbols)}")
+                    await asyncio.sleep(CONFIG.rest.baseline_delay_sec)
+
+        await asyncio.gather(*[fetch_symbol(s) for s in symbols])
+        logger.info(f"REST baselines loaded for {len(symbols)} symbols in {time.time() - started:.0f}s")
+        # Long-lived start-up objects (frames' Python side, market lists, deques) leave the cyclic GC's scope: a
+        # full collection over them paused the event loop for ~1s (watchdog: 'gc 1.1s (gen 2)'). No gc.collect()
+        # first: that full collection on the loop was itself the ~1s pause
+        gc.freeze()
+
+    BACKFILL_DELAYS_SEC = (0, 5, 15, 45, 120, 300)
+
+    def request_backfill(self, symbol: str, market: str, need_ts: int = 0):
+        """
+        Re-download a symbol's candles after a stream gap (reconnect, missed candle close); `need_ts` = open time of
+        a candle the snapshot must contain (REST publishes a closed candle a few seconds late: retry until it does).
+        """
+        key = (symbol, market)
+        if key in self._backfill_pending or not self._running or time.time() < self._backfill_retry_at.get(key, 0):
+            return
+        self._backfill_pending.add(key)
+        self._spawn(self._backfill(symbol, market, need_ts))
+
+    def _spawn(self, coro):
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    async def _backfill(self, symbol: str, market: str, need_ts: int = 0):
+        key = (symbol, market)
+        try:
+            for delay in self.BACKFILL_DELAYS_SEC:
+                await asyncio.sleep(delay)
+                try:
+                    async with self._backfill_semaphore:
+                        df, final = await self._load_frame(market, symbol)
+                        await asyncio.sleep(CONFIG.rest.baseline_delay_sec)
+                except Exception as e:
+                    logger.debug(f"Backfill attempt failed for {symbol} ({market}): {e}")
+                    continue
+                md = self.markets.get(symbol)
+                if md is None:
+                    return
+                if df.is_empty() or final < need_ts:
+                    continue   # the candle to replace is not published yet: next attempt
+                # REST is the authority for the candles it has; only complete stream candles NEWER than the snapshot
+                # (closed while it was in flight) are applied on top. Re-applying older stream rows put an incomplete
+                # candle back over the correct REST one.
+                for row in list(md.recent_closed[market]):
+                    if row['timestamp'] > final:
+                        df, _ = merge_live_candle(df, dict(row), row['timestamp'])
+                md.set_frame(market, df)
+                md.incomplete[market] = {ts for ts in md.incomplete[market] if ts > final}
+                md.history_version += 1
+                md.last_merged.pop(market, None)  # re-apply the live candle on top of the new snapshot
+                md.finalized_until[market] = max(md.finalized_until[market], final)
+                logger.debug(f"Backfilled {market} candles for {symbol}")
+                return
+            logger.warning(f"Backfill failed for {symbol} ({market}) after {len(self.BACKFILL_DELAYS_SEC)} attempts")
+            self._backfill_retry_at[key] = time.time() + 600
+        finally:
+            self._backfill_pending.discard(key)
+
+    @staticmethod
+    def _last_closed_open_time(klines: List) -> int:
+        now_ms = time.time() * 1000
+        closed = [int(k[0]) for k in klines if int(k[6]) < now_ms]
+        return max(closed) if closed else 0
+
+    def _klines_to_df(self, klines: List) -> pl.DataFrame:
+        """Binance kline rows -> RAW_SCHEMA (base volume in the instrument's own units)."""
+        if not klines:
+            return empty_raw_frame()
+        # [openTime, open, high, low, close, volume, closeTime, quoteVolume, trades, takerBuyBase, takerBuyQuote, ignore]
+        return pl.DataFrame({
+            'timestamp': [int(k[0]) for k in klines],
+            'open': [float(k[1]) for k in klines],
+            'high': [float(k[2]) for k in klines],
+            'low': [float(k[3]) for k in klines],
+            'close': [float(k[4]) for k in klines],
+            'volume': [float(k[5]) for k in klines],
+            'quote_volume': [float(k[7]) for k in klines],
+            'taker_delta': [2 * float(k[10]) - float(k[7]) for k in klines],
+            'open_interest': [None] * len(klines),
+        }, schema=RAW_SCHEMA)
+
+    def _attach_oi_history(self, df: pl.DataFrame, oi_history: List) -> pl.DataFrame:
+        """Put OI snapshots onto candles: openInterestHist timestamps are period END times, so 12:15:00 closes the 12:00 candle."""
+        points = [
+            ((int(h['timestamp']) - 1) // TIMEFRAME_MS * TIMEFRAME_MS, float(h['openInterestAmount']))
+            for h in oi_history if h.get('timestamp') and h.get('openInterestAmount') is not None
+        ]
+        if df.is_empty() or not points:
+            return df
+        oi_df = pl.DataFrame(points, schema={'timestamp': pl.Int64, 'oi_hist': pl.Float64}, orient='row')
+        oi_df = oi_df.unique(subset='timestamp', keep='last')
+        return (
+            df.join(oi_df, on='timestamp', how='left')
+            .with_columns(pl.col('oi_hist').alias('open_interest'))
+            .select(list(RAW_SCHEMA))
+        )
+
+    # ------------------------------------------------------------------ websockets
+
+    async def start_websockets(self, symbols: List[str]):
+        self._running = True
+        await self._start_binance_streams(symbols)
+        await self._start_venue_streams()
+        self._tasks.append(asyncio.create_task(self._oi_loop()))
+        self._tasks.append(asyncio.create_task(self._funding_info_loop()))
+        self._tasks.append(asyncio.create_task(self._bulk_deriv_loop()))
+        self._tasks.append(asyncio.create_task(self._coinbase_prices_loop()))
+        self._tasks.append(asyncio.create_task(self._deep_books_loop()))
+        self._tasks.append(asyncio.create_task(self._binance_rest_tickers_loop()))
+        self._tasks.append(asyncio.create_task(self._hourly_candles_loop()))
+
+    async def _start_binance_streams(self, symbols: List[str]):
+        ids = {'spot': [], 'futures': []}
+        self._binance_keys = {}
+        for symbol in symbols:
+            fut_id = self.futures_exchange.market(symbol)['id']
+            ids['futures'].append(fut_id)
+            self._binance_keys[('futures', fut_id)] = symbol
+            spot_symbol = self._spot_symbol_for(symbol)
+            if spot_symbol:
+                spot_id = self.spot_exchange.market(spot_symbol)['id']
+                ids['spot'].append(spot_id)
+                self._binance_keys[('spot', spot_id)] = symbol
+        logger.info(f"Starting Binance streams for {len(ids['spot'])} spot, {len(ids['futures'])} futures symbols")
+        # Bandwidth matters more than message counts here: the link to Binance measured ~150 KB/s in total and a
+        # single socket ~40-70 KB/s, beyond which the server's buffer fills and it drops the connection. So:
+        # only 1m klines (15m candles are built from them), no whole-market ticker arrays (funding / mark / 24h
+        # volume come from REST), and every stream group split over several sockets.
+        plans = [
+            ('spot', 'Binance spot klines', [f"{i.lower()}@kline_1m" for i in ids['spot']], 120),
+            ('futures', 'Binance futures klines', [f"{i.lower()}@kline_1m" for i in ids['futures']], 120),
+            # Every taker order (CVD, sweeps, footprint, price) and all liquidations
+            ('futures', 'Binance futures trades', [f"{i.lower()}@aggTrade" for i in ids['futures']] + ['!forceOrder@arr'], 40),
+        ]
+        for market, name, streams, per_socket in plans:
+            stream = BinanceStream(self, self.symbol_map, market, streams, name)
+            stream.subs_per_connection = per_socket
+            self._binance_streams.append(stream)
+            await stream.start()
+        if not self._depth_streams:
+            for k in range(CONFIG.depth.sockets):
+                stream = BinanceStream(self, self.symbol_map, 'futures', [], f'Binance order books {k + 1}', 'futures_public')
+                self._depth_streams.append(stream)
+                await stream.start(dynamic=True)
+
+    async def _start_venue_streams(self):
+        for venue in CONFIG.venues.enabled:
+            cls = VENUE_STREAMS.get(venue)
+            if cls is None or not self.symbol_map.natives(venue):
+                continue
+            stream = cls(self, self.symbol_map)
+            self.venue_streams[venue] = stream
+            await stream.start(dynamic=venue == 'hyperliquid')
+
+    async def restart_streams(self, symbols: List[str]):
+        """After a universe change: re-subscribe every static stream to the new symbol set."""
+        for stream in self._binance_streams:
+            await stream.stop()
+        self._binance_streams = []
+        await self._start_binance_streams(symbols)
+        for venue, stream in list(self.venue_streams.items()):
+            await stream.restart(dynamic=venue == 'hyperliquid')
+
+    # ------------------------------------------------------------------ stream sinks (hot path)
+
+    def on_binance(self, market_type: str, stream: str, data, recv_ms: float):
+        if isinstance(data, list):
+            if stream.startswith('!miniTicker'):
+                for t in data:
+                    md = self.markets.get(self._binance_keys.get(('futures', t.get('s'))))
+                    if md is not None:
+                        md.record_ticker({'last': float(t['c']), 'quoteVolume': float(t['q'])}, t.get('E'))
+            elif stream.startswith('!markPrice'):
+                for m in data:
+                    key = self._binance_keys.get(('futures', m.get('s')))
+                    md = self.markets.get(key)
+                    if md is None:
+                        continue
+                    md.mark_price, md.index_price = float(m['p']), float(m.get('i') or 0.0)
+                    # r: the live estimate of the next funding rate; settlements run every 1/4/8h -> 8h-equivalent
+                    rate = float(m.get('r') or 0.0) * 8 / self.funding_interval_hours.get(key, 8)
+                    md.funding_rate = md.predicted_funding = rate
+                    state = self.venue_derivs.setdefault(key, {}).setdefault('binance', VenueDeriv())
+                    state.funding_8h, state.mark, state.ts = rate, md.mark_price, recv_ms
+            return
+
+        event = data.get('e')
+        if event == 'aggTrade':
+            key = self._binance_keys.get(('futures', data['s']))
+            if key is None:
+                return
+            price = float(data['p'])
+            usd = price * float(data['q'])
+            side = -1 if data['m'] else 1  # m: buyer is maker -> taker SELL
+            ts = int(data['T'])
+            self.flow.trade('binance', key, ts, usd, side, recv_ms)
+            self.sweeps.add('binance', key, ts, price, usd, side)
+            md = self.markets.get(key)
+            if md is not None:
+                md.record_price(price, ts)
+            if key in self.footprint.bucket:
+                self.footprint.add(key, ts, price, usd, side)
+        elif event == 'kline':
+            md = self.markets.get(self._binance_keys.get((market_type, data.get('s'))))
+            if md is not None:
+                md.apply_kline(market_type, data['k'])
+        elif event == 'forceOrder':
+            o = data['o']
+            key = self._binance_keys.get(('futures', o.get('s')))
+            if key is not None:
+                price = float(o.get('ap') or o.get('p') or 0)
+                usd = price * float(o.get('z') or o.get('q') or 0)
+                # S = the liquidation order's side: a forced SELL closes a long
+                side_liq = 1 if o['S'] == 'SELL' else -1
+                self.flow.liquidation('binance', key, int(o['T']), usd, side_liq, recv_ms)
+                md = self.markets.get(key)
+                if md is not None and price:
+                    md.liq_events.append((int(o['T']), price, usd, side_liq, 'binance'))
+                    if self.log_liquidations:
+                        self.liq_log.append((key, int(o['T']), price, usd, side_liq, 'binance'))
+        elif event == 'depthUpdate':
+            key = self._binance_keys.get(('futures', data.get('s')))
+            if key is not None:
+                self.depth.update(key, data.get('b') or [], data.get('a') or [], int(data.get('E') or recv_ms))
+
+    def _binance_price(self, key: str) -> Optional[float]:
+        md = self.markets.get(key)
+        return md.last_price if md else None
+
+    def on_trade(self, market: VenueMarket, ts_ms: int, price: float, size: float, side: int, recv_ms: float):
+        if not market.verified and not self.symbol_map.check_price(market, price, self._binance_price(market.key)):
+            return
+        usd = self.symbol_map.usd(market, price, size)
+        self.flow.trade(market.venue, market.key, ts_ms, usd, side, recv_ms)
+        if market.venue == 'coinbase':
+            md = self.markets.get(market.key)
+            if md is not None:
+                md.coinbase_price = price / market.multiplier * self.symbol_map.key_multiplier.get(market.key, 1.0)
+                md.coinbase_ts = ts_ms
+        if not market.spot:
+            self.sweeps.add(market.venue, market.key, ts_ms, price, usd, side)
+
+    def on_liquidation(self, market: VenueMarket, ts_ms: int, price: float, size: float, side_liq: int, recv_ms: float):
+        usd = self.symbol_map.usd(market, price, size)
+        self.flow.liquidation(market.venue, market.key, ts_ms, usd, side_liq, recv_ms)
+        md = self.markets.get(market.key)
+        if md is not None and price:
+            binance_price = price / market.multiplier * self.symbol_map.key_multiplier.get(market.key, 1.0)
+            md.liq_events.append((ts_ms, binance_price, usd, side_liq, market.venue))
+            if self.log_liquidations:
+                self.liq_log.append((market.key, ts_ms, binance_price, usd, side_liq, market.venue))
+
+    def on_deriv(self, market: VenueMarket, oi_usd: Optional[float] = None, funding_8h: Optional[float] = None,
+                 mark: Optional[float] = None, ts_ms: Optional[float] = None):
+        if mark and not market.verified and not self.symbol_map.check_price(market, mark, self._binance_price(market.key)):
+            return
+        now_ms = time.time() * 1000
+        state = self.venue_derivs.setdefault(market.key, {}).setdefault(market.venue, VenueDeriv())
+        if funding_8h is not None:
+            state.funding_8h = funding_8h
+        if mark:
+            state.mark = mark
+        state.ts = now_ms
+        if oi_usd:
+            self._record_venue_oi(market.key, market.venue, oi_usd, now_ms)
+
+    def _on_sweep(self, sweep: Sweep):
+        whale, _ = self.whales.thresholds(sweep.symbol)
+        self.whales.add(sweep)
+        if sweep.usd >= whale and sweep.venue == 'binance':
+            ratio = self.depth.sweep_vs_depth(sweep.symbol, sweep.usd, sweep.side)
+            md = self.markets.get(sweep.symbol)
+            if ratio is not None and md is not None and ratio >= md.book_eaten:
+                md.book_eaten, md.book_eaten_ts = ratio, time.time()
+
+    def maintain(self, now: Optional[float] = None):
+        """Periodic housekeeping from the Tier-0 loop: close finished sweeps, decay whale histograms."""
+        now = now or time.time()
+        self.sweeps.flush(now * 1000)
+        self.whales.maintain(now)
+        for md in self.markets.values():
+            if md.book_eaten and now - md.book_eaten_ts > CONFIG.tier0.display_hold_sec:
+                md.book_eaten = 0.0
+
+    # ------------------------------------------------------------------ hot symbols: order books, footprint
+
+    async def set_hot(self, symbols: Iterable[str]):
+        """Order books (Binance) and Hyperliquid trades for the hot symbols only."""
+        symbols = [s for s in symbols if s in self.markets]
+        if self._depth_streams:
+            # A symbol always goes to the same socket (stable hash): changing the hot set moves no other subscription
+            n = len(self._depth_streams)
+            wanted: List[set] = [set() for _ in range(n)]
+            for s in symbols:
+                native = self.futures_exchange.market(s)['id'].lower()
+                wanted[zlib.crc32(native.encode()) % n].add(f"{native}@depth20@500ms")
+            for stream, subs in zip(self._depth_streams, wanted):
+                await stream.set_dynamic(subs)
+        for s, md in self.markets.items():
+            md.trades_subscribed = s in symbols
+        for s in list(self.depth.books):
+            if s not in symbols:
+                self.depth.drop(s)
+        hl = self.venue_streams.get('hyperliquid')
+        if hl is not None:
+            natives = [m.native for s in symbols if (m := self.symbol_map.by_key.get(s, {}).get('hyperliquid'))]
+            await hl.set_dynamic({('trades', n) for n in natives[:CONFIG.venues.hyperliquid_trades_max]})
+
+    async def _deep_books_loop(self):
+        """500-level REST order-book snapshots of the hot symbols (see depth.py), spread over the interval."""
+        interval = CONFIG.depth.deep_interval_sec
+        while self._running:
+            symbols = [s for s in self.depth.active() if s in self.markets]
+            started = time.time()
+            for symbol in symbols:
+                binance_symbol = self._ccxt_to_binance_symbol(symbol)
+                try:
+                    book = await self._rest_call(self.futures_exchange, 'fapiPublicGetDepth',
+                                                 {'symbol': binance_symbol, 'limit': 500}, priority=2, weight=10)
+                    if symbol in self.depth.active():
+                        self.depth.set_deep(symbol, book.get('bids') or [], book.get('asks') or [])
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug(f"Depth snapshot failed for {symbol}: {e}")
+                await asyncio.sleep(max(0.2, interval / max(1, len(symbols)) * 0.8))
+            await asyncio.sleep(max(1.0, interval - (time.time() - started)))
+
+    def set_footprint(self, zone: Dict[str, float]):
+        """Footprint accumulation for symbols waiting for an entry: symbol -> 15m ATR (bucket sizing)."""
+        for s in list(self.footprint.bucket):
+            if s not in zone:
+                self.footprint.disable(s)
+                self._zone_atr.pop(s, None)
+        for s, atr in zone.items():
+            if atr and s not in self.footprint.bucket:
+                self.footprint.enable(s, atr * CONFIG.orderflow.footprint_bucket_atr)
+            self._zone_atr[s] = atr
+
+    def orderflow_confirm(self, symbol: str, since_ms: int, until_ms: int, direction: int) -> Optional[str]:
+        """
+        Order-flow confirmation of an entry in the zone: 'imbalance' (stacked diagonal imbalances on the trade side
+        in the footprint) or 'absorption' (a heavy 1m delta AGAINST the trade that barely moved price: the
+        aggressive side was absorbed by resting orders). None when neither happened.
+        """
+        cfg = CONFIG.orderflow
+        if self.footprint.stacked_imbalance(symbol, since_ms, direction, until_ms) >= cfg.stacked_levels:
+            return 'imbalance'
+        md = self.markets.get(symbol)
+        atr = self._zone_atr.get(symbol)
+        if md is not None and atr and absorption_in(md.minute_klines, since_ms, until_ms, direction, atr):
+            return 'absorption'
+        return None
+
+    def confirmations(self, symbol: str, strategy: str, direction: int, since_ms: int, until_ms: int,
+                      extreme_ms: Optional[int] = None) -> Dict:
+        """Entry confirmations (strategies.confirm): flow, spot, OI, order flow at the extreme."""
+        md = self.markets.get(symbol)
+        if md is None:
+            return {}
+        orderflow = self.orderflow_confirm(symbol, extreme_ms or since_ms, until_ms, direction)
+        spot = list(md.spot_minute_klines) if self._spot_symbol_for(symbol) else None
+        # OI over the last hour: across venues (OI-weighted, as the phases' agg_oi_change_1h) when >= 2 report, else
+        # Binance's samples (seeded with the last hour at start-up); the entry is evaluated at its trigger, i.e. now
+        derivs = self.deriv_snapshot(symbol)
+        if derivs['oi_venues'] >= 2 and derivs['agg_oi_change_1h']:
+            oi = derivs['agg_oi_change_1h']
+        else:
+            oi = confirm.oi_change(list(md.oi_samples), until_ms - confirm.HOUR_MS, until_ms)
+        if oi is None and confirm.OI_EXPECT.get(strategy):
+            logger.warning(f"Confirmations: no OI history for {symbol} ({len(md.oi_samples)} samples)")
+        out = confirm.evaluate(strategy, direction, list(md.minute_klines), spot, oi, since_ms, until_ms,
+                               extreme_ms, orderflow)
+        # the window the readings were taken over (journaled: a REST check can recompute them exactly)
+        out['_window'] = [int(since_ms), int(until_ms), int(extreme_ms) if extreme_ms is not None else None]
+        return out
+
+    def venue_status(self) -> Dict[str, Dict]:
+        status = self.flow.venue_status()
+        for venue, stream in self.venue_streams.items():
+            status.setdefault(venue, {}).update(connected=stream.connected, bytes=stream.bytes)
+        binance = list(self._binance_streams) + self._depth_streams
+        status.setdefault('binance', {}).update(connected=sum(s.connected for s in self._binance_streams),
+                                                bytes=sum(s.bytes for s in binance))
+        return status
+
+    # ------------------------------------------------------------------ stop
+
+    async def stop(self):
+        self._running = False
+        streams = list(self._binance_streams) + self._depth_streams + \
+            list(self.venue_streams.values())
+        await asyncio.gather(*[s.stop() for s in streams], return_exceptions=True)
+        tasks = self._tasks + list(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        # Bounded waits: a hung socket must not keep the process from exiting
+        if tasks:
+            await asyncio.wait(tasks, timeout=10)
+        exchanges = [self.spot_exchange, self.futures_exchange, *self.venue_exchanges.values()]
+        closes = [asyncio.ensure_future(ex.close()) for ex in exchanges if ex]
+        if closes:
+            done, pending = await asyncio.wait(closes, timeout=10)
+            for task in pending:
+                task.cancel()
+            for task in done:
+                task.exception()  # retrieve, so failed closes are not reported as "never retrieved"
+        logger.info("DataFetcher stopped gracefully")

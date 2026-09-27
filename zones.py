@@ -1,0 +1,410 @@
+"""
+Level map of one coin: where price is likely to stall or where stops / liquidations sit, from several independent
+sources, merged into zones weighted by confluence. levels.py builds entry zones, stops and targets from it.
+
+Sources (CONFIG.zones.weights):
+- swing_15m / swing_1h: fractal highs and lows (a high with `width` lower highs on each side);
+- equal: equal highs / lows (>= 2 swings within equal_tolerance_atr) that were not swept since: stop pools;
+- pdhl: previous UTC day's / week's high and low, the current day's high / low and the last completed sessions'
+  (Asia / London / New York, UTC hours in CONFIG.strategies.sweep_sessions) highs / lows: where stops rest;
+- book: order-book liquidity that stayed (heatmap bands, depth.py);
+- poc / va / hvn: volume profile of 5m candles over ~4 days and of 15m candles over ~24h, each candle's volume spread evenly over its
+  range: point of control, value-area edges (CBOT method), high-volume nodes;
+- liq_est: ESTIMATED liquidation clusters: every 1h OI increase at price P opened as many longs as shorts (each
+  contract has both sides); each side is spread over leverage tiers, the aggressive (taker) side of the candle is
+  assumed to use more leverage (its weight shifts towards the high tiers); a position at leverage L is liquidated around
+  P * (1 -+ 1/L +- maintenance). OI decreases remove positions proportionally; clusters price already crossed are
+  gone. A model (like the public liquidation heatmaps), not data;
+- liq_hit: prices where liquidations were actually observed in the last 24h (a pool already swept);
+- wall: persistent order-book walls (hot coins only, depth.py);
+- liq_hl: REAL liquidation prices of large Hyperliquid accounts (positioning.py), summed per price bucket;
+- vwap: VWAP of the current UTC day and VWAP anchored at the measured leg's start;
+- fib / range: Fibonacci levels of a leg and a trading range's edges (added by the strategies' plans).
+
+Everything is a hypothesis: the journal stores which sources each target and stop came from, and stats.py measures
+how often each kind was reached.
+"""
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
+from config import CONFIG
+
+HOUR_MS = 3_600_000
+DAY_MS = 24 * HOUR_MS
+
+# Kinds that mark resting stops / liquidations: the stop goes beyond them, TP3 prefers them
+POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hit', 'liq_hl')
+
+
+@dataclass
+class RawLevel:
+    price: float
+    kind: str
+    label: str
+    side: int = 0          # +1 a high / resistance-type level, -1 a low / support-type, 0 either
+    size: float = 0.0      # USD for liquidation levels
+
+
+@dataclass
+class Zone:
+    price: float
+    lo: float
+    hi: float
+    kinds: List[str] = field(default_factory=list)
+    labels: List[str] = field(default_factory=list)
+    strength: float = 0.0
+
+    @property
+    def label(self) -> str:
+        return ' · '.join(self.labels[:4])
+
+    def as_dict(self) -> Dict:
+        return {'price': self.price, 'lo': self.lo, 'hi': self.hi, 'kinds': self.kinds, 'label': self.label,
+                'strength': round(self.strength, 2)}
+
+
+def _weights() -> Dict[str, float]:
+    return {k: float(w) for k, w in CONFIG.zones.weights}
+
+
+# ---------------------------------------------------------------------------------------------------- sources
+
+def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -> List[RawLevel]:
+    """
+    Fractal swing highs / lows of [ts, o, h, l, c, ...] candles that are still intact: no later candle CLOSED beyond
+    them (a broken swing is no longer where stops rest; wicks through it are sweeps and keep it alive).
+    """
+    out: List[RawLevel] = []
+    n = len(candles)
+    # Highest / lowest close after each index, to test "broken since" in one pass
+    max_after = [float('-inf')] * (n + 1)
+    min_after = [float('inf')] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        max_after[i] = max(max_after[i + 1], candles[i][4])
+        min_after[i] = min(min_after[i + 1], candles[i][4])
+    for i in range(width, n - width):
+        h, l = candles[i][2], candles[i][3]
+        around = candles[i - width:i] + candles[i + 1:i + 1 + width]
+        if all(c[2] < h for c in around) and max_after[i + 1] <= h:
+            out.append(RawLevel(h, kind, f"{tf} high", +1))
+        if all(c[3] > l for c in around) and min_after[i + 1] >= l:
+            out.append(RawLevel(l, kind, f"{tf} low", -1))
+    return out
+
+
+def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr: float) -> List[RawLevel]:
+    """Equal highs / lows: >= 2 swings within the tolerance, not traded through since the latest of them."""
+    tol = CONFIG.zones.equal_tolerance_atr * atr
+    out: List[RawLevel] = []
+    for side in (+1, -1):
+        prices = sorted(l.price for l in levels if l.side == side)
+        group: List[float] = []
+        for p in prices + [None]:
+            if p is not None and group and p - group[0] <= tol:
+                group.append(p)
+                continue
+            if len(group) >= 2:
+                edge = max(group) if side > 0 else min(group)
+                # Swept when a later candle traded beyond the pool (checked on the recent candles)
+                recent = candles[-12:]
+                swept = any(c[2] > edge + tol for c in recent) if side > 0 else any(c[3] < edge - tol for c in recent)
+                if not swept:
+                    out.append(RawLevel(edge, 'equal', f"{'EQH' if side > 0 else 'EQL'}×{len(group)}", side))
+            group = [p] if p is not None else []
+    return out
+
+
+WEEK_MS = 7 * DAY_MS
+# 1970-01-01 was a Thursday: ISO weeks (Monday 00:00 UTC) start 4 days after the epoch's week boundary
+WEEK_OFFSET_MS = 4 * DAY_MS
+
+
+def session_windows(now_ms: float) -> List[Tuple[str, int, int]]:
+    """The last COMPLETED occurrence of each session before now: (name, start ms, end ms)."""
+    out = []
+    today = int(now_ms) // DAY_MS * DAY_MS
+    for name, start_h, end_h in CONFIG.strategies.sweep_sessions:
+        for day in (today, today - DAY_MS):
+            start, end = day + start_h * HOUR_MS, day + end_h * HOUR_MS
+            if end <= now_ms:
+                out.append((name, start, end))
+                break
+    return out
+
+
+def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bool = False) -> List:
+    """
+    Previous UTC day's and week's high / low, the current day's high / low (>= 3 candles) and the last completed
+    sessions' highs / lows, from 1h candles. with_ts: also the time each level was complete [(RawLevel, formed ms)].
+    """
+    today = int(now_ms) // DAY_MS * DAY_MS
+    week = (int(now_ms) - WEEK_OFFSET_MS) // WEEK_MS * WEEK_MS + WEEK_OFFSET_MS
+    out: List[Tuple[RawLevel, int]] = []
+
+    def span(candles, label_hi, label_lo, formed):
+        if candles:
+            hi = max(candles, key=lambda c: c[2])
+            lo = min(candles, key=lambda c: c[3])
+            out.append((RawLevel(hi[2], 'pdhl', label_hi, +1), formed if formed else int(hi[0]) + HOUR_MS))
+            out.append((RawLevel(lo[3], 'pdhl', label_lo, -1), formed if formed else int(lo[0]) + HOUR_MS))
+
+    span([c for c in candles_1h if today - DAY_MS <= c[0] < today], 'PDH', 'PDL', today)
+    span([c for c in candles_1h if week - WEEK_MS <= c[0] < week], 'PWH', 'PWL', week)
+    cur = [c for c in candles_1h if c[0] >= today]
+    if len(cur) >= 3:
+        span(cur, 'day high', 'day low', 0)
+    for name, start, end in session_windows(now_ms):
+        span([c for c in candles_1h if start <= c[0] < end], f"{name} high", f"{name} low", end)
+    return out if with_ts else [level for level, _ in out]
+
+
+def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> List[RawLevel]:
+    """
+    Volume profile of [ts, o, h, l, c, quote_vol, ...] candles, each candle's quote volume spread evenly over its
+    range (no tick data), so the candles must be short relative to the window: the 24h profile of 15m candles matched
+    one built from 1m candles within one bucket, while 1h candles put a 4-day POC 3% off (the 4-day profile uses 5m).
+    - POC: the bucket with the most volume;
+    - value area (CBOT method): from the POC, repeatedly add the two buckets above or the two below, whichever pair
+      holds more volume, until `value_area` of the volume is inside; VAH / VAL = the area's outer edges;
+    - HVN: peaks of the 3-bucket smoothed profile (the highest within +-2 buckets) with >= hvn_ratio x the median.
+    """
+    cfg = CONFIG.zones
+    if len(candles) < 10 or not atr:
+        return []
+    step = atr / cfg.profile_buckets_per_atr
+    lo = min(c[3] for c in candles)
+    hi = max(c[2] for c in candles)
+    n = int((hi - lo) / step) + 1
+    if n < 5 or n > 5000:
+        return []
+    vol = [0.0] * n
+    for c in candles:
+        a, b = int((c[3] - lo) / step), int((c[2] - lo) / step)
+        share = c[5] / (b - a + 1)
+        for k in range(a, b + 1):
+            vol[k] += share
+    total = sum(vol)
+    if not total:
+        return []
+    center = lambda k: lo + (k + 0.5) * step  # noqa: E731
+    poc = max(range(n), key=vol.__getitem__)
+    out = [RawLevel(center(poc), 'poc', f"POC {tag}")]
+
+    a = b = poc
+    inside = vol[poc]
+    while inside < cfg.value_area * total and (a > 0 or b < n - 1):
+        up = sum(vol[b + 1:b + 3]) if b < n - 1 else -1.0
+        down = sum(vol[max(0, a - 2):a]) if a > 0 else -1.0
+        if up >= down:
+            step_up = min(2, n - 1 - b)
+            inside += sum(vol[b + 1:b + 1 + step_up])
+            b += step_up
+        else:
+            step_down = min(2, a)
+            inside += sum(vol[a - step_down:a])
+            a -= step_down
+    out += [RawLevel(lo + (b + 1) * step, 'va', f"VAH {tag}", +1), RawLevel(lo + a * step, 'va', f"VAL {tag}", -1)]
+
+    smooth = [sum(vol[max(0, k - 1):k + 2]) / len(vol[max(0, k - 1):k + 2]) for k in range(n)]
+    positive = sorted(v for v in smooth if v > 0)
+    median = positive[len(positive) // 2] if positive else 0.0
+    nodes = [k for k in range(n)
+             if smooth[k] >= cfg.hvn_ratio * median and abs(k - poc) > 2
+             and smooth[k] == max(smooth[max(0, k - 2):k + 3])]
+    for k in sorted(nodes, key=smooth.__getitem__, reverse=True)[:4]:
+        out.append(RawLevel(center(k), 'hvn', f"HVN {tag}"))
+    return out
+
+
+def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequence[Tuple[int, float]],
+                           atr: float) -> List[RawLevel]:
+    """Estimated liquidation clusters from 1h OI changes (see the module docstring). Sizes in USD."""
+    cfg = CONFIG.zones
+    if len(candles_1h) < 10 or len(oi_1h) < 10 or not atr:
+        return []
+    # openInterestHist timestamps are period END times: OI at the close of the candle opened one hour earlier
+    oi_at = {ts - HOUR_MS: v for ts, v in oi_1h}
+    step = max(atr / 2, candles_1h[-1][4] * cfg.liq_bucket)
+    clusters: Dict[Tuple[int, int], float] = {}   # (bucket, side liquidated: +1 longs, -1 shorts) -> USD
+    prev_oi = None
+    for c in candles_1h:
+        oi = oi_at.get(c[0])
+        if oi is None:
+            continue
+        # Positions whose liquidation price this candle traded through are gone
+        for key in [k for k in clusters if (k[1] > 0 and c[3] <= (k[0] + 1) * step) or (k[1] < 0 and c[2] >= k[0] * step)]:
+            del clusters[key]
+        if prev_oi:
+            change = oi - prev_oi
+            if change > 0:
+                p = (c[2] + c[3] + c[4]) / 3
+                buy_share = min(1.0, max(0.0, c[6] / c[5])) if c[5] else 0.5
+                tiers = len(cfg.liq_leverages)
+                for side, aggression in ((+1, buy_share), (-1, 1 - buy_share)):
+                    # Tilt the leverage mix: an aggressive side (share > 0.5) weighs the high tiers more
+                    tilt = [w * (1 + (aggression - 0.5) * (2 * i / (tiers - 1) - 1)) if tiers > 1 else w
+                            for i, w in enumerate(cfg.liq_leverage_weights)]
+                    norm = sum(tilt) or 1.0
+                    for lev, w in zip(cfg.liq_leverages, tilt):
+                        liq = p * (1 - side * (1 / lev - cfg.liq_maintenance))
+                        key = (int(liq / step), side)
+                        clusters[key] = clusters.get(key, 0.0) + change * w / norm
+            elif change < 0 and prev_oi > 0:
+                keep = max(0.0, oi / prev_oi)
+                for key in clusters:
+                    clusters[key] *= keep
+        prev_oi = oi
+    if not prev_oi:
+        return []
+    floor = cfg.liq_min_oi_share * prev_oi
+    out = []
+    ranked = sorted(clusters.items(), key=lambda kv: -kv[1])
+    for (bucket, side), usd in [kv for kv in ranked if kv[0][1] > 0][:cfg.liq_max_per_side] +             [kv for kv in ranked if kv[0][1] < 0][:cfg.liq_max_per_side]:
+        if usd >= floor:
+            who = 'longs' if side > 0 else 'shorts'
+            out.append(RawLevel((bucket + 0.5) * step, 'liq_est', f"liq est {who} {_usd(usd)}", -side, usd))
+    return out
+
+
+def observed_liquidations(events: Iterable[Tuple[float, float, float, int]], atr: float, now_ms: float) -> List[RawLevel]:
+    """Price buckets where >= liq_observed_min_usd was actually liquidated in the last 24h."""
+    if not atr:
+        return []
+    step = atr / 2
+    buckets: Dict[int, float] = {}
+    for event in events:
+        ts, price, usd = event[0], event[1], event[2]
+        if now_ms - ts <= DAY_MS and price:
+            k = int(price / step)
+            buckets[k] = buckets.get(k, 0.0) + usd
+    return [RawLevel((k + 0.5) * step, 'liq_hit', f"liq {_usd(usd)}", 0, usd)
+            for k, usd in buckets.items() if usd >= CONFIG.zones.liq_observed_min_usd]
+
+
+def vwap(candles: Sequence[Sequence[float]], since_ms: int, label: str) -> List[RawLevel]:
+    """VWAP of [ts, o, h, l, c, quote_vol, ...] candles opened at or after since_ms."""
+    num = den = 0.0
+    for c in candles:
+        if c[0] >= since_ms and c[5]:
+            typical = (c[2] + c[3] + c[4]) / 3
+            num += typical * c[5]
+            den += c[5]
+    return [RawLevel(num / den, 'vwap', label)] if den else []
+
+
+def _usd(v: float) -> str:
+    return f"${v / 1e6:.1f}M" if v >= 1e6 else f"${v / 1e3:.0f}k"
+
+
+# ---------------------------------------------------------------------------------------------------- map
+
+def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]],
+              oi_1h: Sequence[Tuple[int, float]], liq_events: Iterable, atr: float, now_ms: float,
+              candles_4d: Optional[Sequence[Sequence[float]]] = None) -> List[RawLevel]:
+    """
+    Card-independent levels of one coin (cached by the scanner; rebuilt on a new candle / new 1h history).
+    `candles_4d`: 4 days of 5m candles for the 4-day volume profile (1h candles are too coarse for it).
+    """
+    cfg = CONFIG.zones
+    s15 = swings(candles_15m, cfg.swing_width_15m, 'swing_15m', '15m')
+    s1h = swings(candles_1h, cfg.swing_width_1h, 'swing_1h', '1h')
+    today = int(now_ms) // DAY_MS * DAY_MS
+    levels = s15 + s1h
+    levels += equal_pools(s15 + s1h, candles_15m, atr)
+    levels += day_levels(candles_1h, now_ms)
+    levels += volume_profile(candles_4d or candles_1h, atr, '4d')
+    levels += volume_profile(candles_15m, atr, '24h')
+    levels += estimated_liquidations(candles_1h, oi_1h, atr)
+    levels += observed_liquidations(liq_events, atr, now_ms)
+    levels += vwap(candles_15m, today, 'VWAP day')
+    return levels
+
+
+def merge(levels: Iterable[RawLevel], atr: float) -> List[Zone]:
+    """Levels closer than merge_atr ATR become one zone; strength = sum of source weights (one kind counted <= 2x)."""
+    weights = _weights()
+    tol = CONFIG.zones.merge_atr * atr
+    zones: List[Zone] = []
+    group: List[RawLevel] = []
+
+    def close_group():
+        if not group:
+            return
+        per_kind: Dict[str, float] = {}
+        for l in group:
+            w = weights.get(l.kind, 0.5)
+            per_kind[l.kind] = min(per_kind.get(l.kind, 0.0) + w, 2 * w)
+        strength = sum(per_kind.values())
+        wsum = sum(weights.get(l.kind, 0.5) for l in group)
+        price = sum(l.price * weights.get(l.kind, 0.5) for l in group) / wsum
+        ordered = sorted(group, key=lambda l: -weights.get(l.kind, 0.5))
+        labels: List[str] = []
+        for l in ordered:
+            if l.label not in labels:
+                labels.append(l.label)
+        zones.append(Zone(price, min(l.price for l in group), max(l.price for l in group),
+                          sorted(per_kind, key=lambda k: -per_kind[k]), labels, strength))
+
+    for l in sorted(levels, key=lambda l: l.price):
+        if group and l.price - group[0].price > tol:
+            close_group()
+            group = []
+        group.append(l)
+    close_group()
+    return zones
+
+
+def is_pool(zone: Zone) -> bool:
+    return any(k in POOL_KINDS for k in zone.kinds)
+
+
+def targets(zones: List[Zone], entry: float, direction: int, atr: float) -> List[Tuple[float, str]]:
+    """
+    Up to three targets beyond `entry`: TP1 / TP2 = the first zones strong enough to stall price (min_strength),
+    TP3 = the next liquidity pool / liquidation cluster beyond TP2 (else the next strong zone). A target is the zone's
+    near edge (price reaches it first). Returns [(price, label)].
+    """
+    cfg = CONFIG.zones
+    ahead = [z for z in zones if direction * (z.price - entry) >= cfg.min_target_atr * atr]
+    ahead.sort(key=lambda z: direction * (z.price - entry))
+    strong = [z for z in ahead if z.strength >= cfg.min_strength]
+    near = lambda z: z.lo if direction > 0 else z.hi  # noqa: E731
+    out: List[Tuple[float, str]] = []
+    for z in strong:
+        if len(out) == 2:
+            break
+        if not out or direction * (near(z) - out[-1][0]) >= cfg.min_target_atr * atr:
+            out.append((near(z), z.label))
+    if len(out) == 2:
+        # TP3: the next resting-stop / liquidation pool beyond TP2 (such pools attract price even when they are not
+        # an obstacle), else the next strong zone
+        beyond = [z for z in ahead if direction * (near(z) - out[-1][0]) >= cfg.min_target_atr * atr]
+        pools = [z for z in beyond if is_pool(z)]
+        strong_beyond = [z for z in beyond if z.strength >= cfg.min_strength]
+        pick = pools[0] if pools else (strong_beyond[0] if strong_beyond else None)
+        if pick is not None:
+            out.append((near(pick), pick.label))
+    return out
+
+
+def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction: int, atr: float) -> Tuple[float, str]:
+    """
+    Stop base: the invalidation price, pushed beyond a stop pool / liquidation cluster that sits just behind it
+    (within stop_pool_atr ATR), so a routine sweep of that pool does not take the stop, as long as the risk stays
+    within max_stop_atr ATR. Returns (base price before the ATR buffer, label).
+    """
+    cfg = CONFIG.zones
+    behind = [z for z in zones if is_pool(z)
+              and 0 <= direction * (invalidation - (z.lo if direction > 0 else z.hi)) <= cfg.stop_pool_atr * atr]
+    if behind:
+        far = min(behind, key=lambda z: z.lo) if direction > 0 else max(behind, key=lambda z: z.hi)
+        base = far.lo if direction > 0 else far.hi
+        if abs(entry - base) <= cfg.max_stop_atr * atr:
+            return base, f"beyond {far.label}"
+    return invalidation, 'beyond the swing'
+
+
+def support_in(zones: List[Zone], lo: float, hi: float, direction: int) -> Optional[Zone]:
+    """Strongest zone inside [lo, hi] (a pullback's support for longs / resistance for shorts)."""
+    inside = [z for z in zones if lo <= z.price <= hi and z.strength >= CONFIG.zones.min_strength]
+    return max(inside, key=lambda z: z.strength) if inside else None

@@ -1,0 +1,201 @@
+"""
+Historical market data from Binance's public archive (data.binance.vision) for pretraining (pretrain.py):
+1m klines of USD-M futures and spot (quote volume + taker buy quote: the same fields as the live streams), the
+5-minute `metrics` (open interest, top-trader / global long-short ratios) and funding rates.
+
+Files are cached under CONFIG.pretrain.cache_dir (a second run downloads nothing), downloaded at a capped rate
+(the link also carries the live streams: an uncapped download made them lag before, see positioning.py) and
+retried on network errors; a 404 is "no data for that period" (not listed yet), not an error.
+Liquidations, order books, the other venues, Hyperliquid and Coinbase have no public archive: models learn those
+features live only.
+"""
+import calendar
+import csv
+import io
+import logging
+import os
+import time
+import urllib.error
+import urllib.request
+import zipfile
+from datetime import date, timedelta
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+
+from config import CONFIG
+
+logger = logging.getLogger(__name__)
+
+BASE_URL = 'https://data.binance.vision/data'
+MINUTE_MS = 60_000
+
+
+class RateLimiter:
+    """Caps the average download rate (bytes / s) across all requests of the process."""
+
+    def __init__(self, rate: float):
+        self.rate = rate
+        self.started = time.monotonic()
+        self.bytes = 0
+
+    def consumed(self, n: int):
+        self.bytes += n
+        ahead = self.bytes / self.rate - (time.monotonic() - self.started)
+        if ahead > 0:
+            time.sleep(ahead)
+
+
+class Archive:
+    def __init__(self, rate_bytes: Optional[float] = None, cache_dir: Optional[str] = None):
+        cfg = CONFIG.pretrain
+        self.cache_dir = cache_dir or cfg.cache_dir
+        self.limiter = RateLimiter(rate_bytes or cfg.download_bytes_per_sec)
+        self.downloaded = 0
+        self.cached = 0
+        self.missing = 0
+
+    # ------------------------------------------------------------------ files
+
+    def _fetch(self, path: str) -> Optional[bytes]:
+        """The zip at `path` (cached); None when the archive has no such file."""
+        local = os.path.join(self.cache_dir, *path.split('/'))
+        if os.path.exists(local):
+            self.cached += 1
+            with open(local, 'rb') as fh:
+                return fh.read()
+        if os.path.exists(local + '.none'):
+            self.missing += 1
+            return None
+        url = f"{BASE_URL}/{path}"
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(url, timeout=60) as resp:
+                    chunks = []
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                        self.limiter.consumed(len(chunk))
+                    data = b''.join(chunks)
+                os.makedirs(os.path.dirname(local), exist_ok=True)
+                with open(local + '.tmp', 'wb') as fh:
+                    fh.write(data)
+                os.replace(local + '.tmp', local)
+                self.downloaded += len(data)
+                return data
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    os.makedirs(os.path.dirname(local), exist_ok=True)
+                    open(local + '.none', 'wb').close()
+                    self.missing += 1
+                    return None
+                wait = 2 ** attempt
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+                wait = 2 ** attempt
+                logger.info(f"archive: {path} failed ({type(e).__name__} {e}), retry in {wait}s")
+            time.sleep(wait)
+        raise RuntimeError(f"archive: {path} failed 5 times")
+
+    @staticmethod
+    def _rows(data: bytes) -> List[List[str]]:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            text = zf.read(zf.namelist()[0]).decode('utf-8')
+        rows = list(csv.reader(io.StringIO(text)))
+        if rows and rows[0] and not rows[0][0].replace('.', '').replace('-', '').isdigit():
+            rows = rows[1:]     # header
+        return [r for r in rows if r]
+
+    # ------------------------------------------------------------------ periods
+
+    @staticmethod
+    def periods(start: date, end: date) -> Tuple[List[str], List[str]]:
+        """Complete months as monthly files ('YYYY-MM'), the rest of the range as daily files ('YYYY-MM-DD')."""
+        months, days = [], []
+        d = start
+        while d <= end:
+            month_end = (date(d.year + (d.month == 12), d.month % 12 + 1, 1) - timedelta(days=1))
+            if d.day == 1 and month_end <= end:
+                months.append(f"{d.year:04d}-{d.month:02d}")
+                d = month_end + timedelta(days=1)
+            else:
+                days.append(d.isoformat())
+                d += timedelta(days=1)
+        return months, days
+
+    # ------------------------------------------------------------------ datasets
+
+    def klines_1m(self, market: str, symbol: str, start: date, end: date) -> np.ndarray:
+        """
+        1m klines as float64 [open_time_ms, open, high, low, close, volume, quote_volume, taker_buy_quote], sorted,
+        de-duplicated. `market`: 'futures' (USD-M) or 'spot'.
+        """
+        root = 'futures/um' if market == 'futures' else 'spot'
+        months, days = self.periods(start, end)
+        paths = [f"{root}/monthly/klines/{symbol}/1m/{symbol}-1m-{m}.zip" for m in months]
+        paths += [f"{root}/daily/klines/{symbol}/1m/{symbol}-1m-{d}.zip" for d in days]
+        out = []
+        for path in paths:
+            data = self._fetch(path)
+            if data is None:
+                continue
+            for r in self._rows(data):
+                ts = float(r[0])
+                if ts > 1e14:       # spot switched to microseconds in 2025
+                    ts /= 1000.0
+                out.append((ts, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), float(r[7]),
+                            float(r[10])))
+        if not out:
+            return np.empty((0, 8))
+        arr = np.asarray(out, dtype=np.float64)
+        arr = arr[np.argsort(arr[:, 0], kind='stable')]
+        keep = np.concatenate(([True], np.diff(arr[:, 0]) > 0))
+        return arr[keep]
+
+    def metrics(self, symbol: str, start: date, end: date) -> Dict[str, np.ndarray]:
+        """
+        5-minute metrics: 'ts' (snapshot time ms), 'oi' (open interest, base units), 'oi_usd', 'top_pos' (top
+        traders' long/short position ratio), 'top_acc' (top accounts), 'global' (all accounts).
+        """
+        rows = []
+        d = start
+        while d <= end:
+            data = self._fetch(f"futures/um/daily/metrics/{symbol}/{symbol}-metrics-{d.isoformat()}.zip")
+            if data is not None:
+                for r in self._rows(data):
+                    try:
+                        rows.append((_utc_ms(r[0]), float(r[2] or 0), float(r[3] or 0), float(r[5] or 0),
+                                     float(r[4] or 0), float(r[6] or 0)))
+                    except (ValueError, IndexError):
+                        continue
+            d += timedelta(days=1)
+        if not rows:
+            return {k: np.empty(0) for k in ('ts', 'oi', 'oi_usd', 'top_pos', 'top_acc', 'global')}
+        arr = np.asarray(sorted(set(rows)), dtype=np.float64)
+        return {'ts': arr[:, 0], 'oi': arr[:, 1], 'oi_usd': arr[:, 2], 'top_pos': arr[:, 3], 'top_acc': arr[:, 4],
+                'global': arr[:, 5]}
+
+    def funding(self, symbol: str, start: date, end: date) -> np.ndarray:
+        """Funding settlements [calc_time_ms, rate normalized to 8h], sorted."""
+        months, days = self.periods(start, end)
+        months += sorted({d[:7] for d in days})
+        out = []
+        for m in months:
+            data = self._fetch(f"futures/um/monthly/fundingRate/{symbol}/{symbol}-fundingRate-{m}.zip")
+            if data is None:
+                continue
+            for r in self._rows(data):
+                try:
+                    out.append((float(r[0]), float(r[2]) * 8 / max(1.0, float(r[1] or 8))))
+                except (ValueError, IndexError):
+                    continue
+        if not out:
+            return np.empty((0, 2))
+        arr = np.asarray(sorted(set(out)), dtype=np.float64)
+        return arr
+
+
+def _utc_ms(text: str) -> float:
+    """'2026-09-25 01:30:00' (UTC) -> epoch ms."""
+    return calendar.timegm(time.strptime(text, '%Y-%m-%d %H:%M:%S')) * 1000.0

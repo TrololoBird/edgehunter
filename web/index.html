@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Microstructure Scanner</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<header id="top">
+  <div class="brand">Microstructure&nbsp;Scanner <span id="conn" class="dot off" title="связь с ботом"></span></div>
+  <div id="market" class="market"></div>
+  <div id="status" class="status"></div>
+  <button id="theme" class="ghost" title="тема">◐</button>
+</header>
+<nav id="tabs">
+  <button data-tab="trade">В сделке <b id="n-trade">0</b></button>
+  <button data-tab="wait">Ожидают <b id="n-wait">0</b></button>
+  <button data-tab="done">Завершённые <b id="n-done">0</b></button>
+  <button data-tab="anom">Аномалии <b id="n-anom">0</b></button>
+  <button data-tab="forming">Формируются <b id="n-forming">0</b></button>
+  <button data-tab="stats">Статистика</button>
+  <button data-tab="health">Здоровье</button>
+</nav>
+<main id="view"></main>
+<aside id="drawer" class="hidden">
+  <div class="drawer-head">
+    <div id="d-title"></div>
+    <div class="drawer-tools">
+      <button data-tf="60" class="tf">1h</button>
+      <button data-tf="15" class="tf active">15m</button>
+      <button data-tf="5" class="tf">5m</button>
+      <label class="heat-toggle" title="история стакана (500 уровней раз в 30с, только горячие монеты): где стояла ликвидность"><input type="checkbox" id="heat-on" checked> стакан</label>
+      <button id="d-close" class="ghost">✕</button>
+    </div>
+  </div>
+  <div id="chart"><canvas id="heat"></canvas></div>
+  <div id="legend" class="legend"></div>
+  <div id="d-body"></div>
+</aside>
+<footer>Механические правила и их измеренная статистика, не инвестиционные рекомендации.</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>
