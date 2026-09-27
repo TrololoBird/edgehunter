@@ -19,6 +19,15 @@ from zones import Zone, is_pool, stop_beyond
 MEAN_KINDS = ('vwap', 'poc', 'va', 'hvn')
 
 
+def cost_of(price: float) -> float:
+    """
+    Execution cost of a round trip in price units: the taker fees (0.05% a side at Binance VIP0) plus the slippage of
+    a market entry and of a stop exit (levels.slippage_bps each). Fees alone made a 1-ATR stop on a quiet coin look
+    ~0.3R cheaper than it trades.
+    """
+    return (CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4) * price
+
+
 def stop_floor(atr: float, recent_atr: Optional[float]) -> float:
     """Minimum stop distance: min_stop_atr x the larger of ATR14 and the last hour's ATR (ATR14 lags a waking market)."""
     return CONFIG.levels.min_stop_atr * max(atr, recent_atr or 0.0)
@@ -150,7 +159,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
     if not targets:
         return None
     tp1, tp2, tp3 = targets[:3]
-    fee = CONFIG.journal.fee_round_trip * entry
+    fee = cost_of(entry)
     rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
     return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3,
             'rr_tp1': rr1, 'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < CONFIG.levels.min_rr_tp1,
@@ -163,7 +172,7 @@ def cap_for_rr(tp1: float, stop_est: float, direction: int, atr: float, recent_a
     or the stop floor, whichever is wider: a waiting zone ends there.
     """
     rr = CONFIG.levels.min_rr_tp1
-    fee = CONFIG.journal.fee_round_trip * tp1          # R:R is net of the round-trip fee (entry_levels)
+    fee = cost_of(tp1)                                  # R:R is net of the execution cost (entry_levels)
     by_stop = (tp1 + rr * stop_est - direction * (1 + rr) * fee) / (1 + rr)
     by_floor = tp1 - direction * (rr * stop_floor(atr, recent_atr) + (1 + rr) * fee)
     return min(by_stop, by_floor) if direction > 0 else max(by_stop, by_floor)

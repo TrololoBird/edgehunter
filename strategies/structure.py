@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
-from zones import HOUR_MS, RawLevel, Zone, build_raw, day_levels, equal_pools, merge
+from zones import HOUR_MS, RawLevel, Zone, build_raw, day_levels, equal_pools, merge, round_levels
 
 QUARTER_MS = 900_000
 Pool = Tuple[float, int, str, int]          # (price, side +1 high / -1 low, label, formed at ms)
@@ -106,6 +106,13 @@ def liquidity_pools(h1_before: Sequence[Sequence[float]], c15_hour: Sequence[Seq
                        c15_hour[-1][4], 0.0, 0.0])
     for level, formed in day_levels(hourly, now_ms, with_ts=True):
         pools.append((level.price, level.side, level.label, formed))
+    # Round numbers: their stops re-gather after price last traded through them (that candle's end = "formed")
+    if hourly:
+        last = hourly[-1][4]
+        for price in round_levels(last, CONFIG.zones.round_span_atr * atr):
+            crossed = [c for c in hourly if c[3] <= price <= c[2]]
+            formed = int(crossed[-1][0]) + HOUR_MS if crossed else int(hourly[0][0])
+            pools.append((price, +1 if price > last else -1, f"round {price:g}", formed))
     # Taken since it formed: any later candle traded beyond it (a wick through is a sweep: the stops are gone)
     history = list(h1_before) + list(c15_hour)
     out = []
@@ -144,7 +151,7 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
         from strategies.breakout import breakout_at_close
         from strategies.level import sweep_at_close
         pools = pools_before(candles_15m, candles_1h, atr, last_open)
-        for event in (sweep_at_close(candles_15m, pools, atr, ctx.trend), breakout_at_close(candles_15m, atr)):
+        for event in (sweep_at_close(candles_15m, pools, atr, ctx.trend), breakout_at_close(candles_15m, atr, closed_1h)):
             if event:
                 ctx.events.append(event)
     return ctx

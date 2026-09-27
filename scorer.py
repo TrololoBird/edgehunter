@@ -280,11 +280,18 @@ class PhaseScorer:
         - Spot net buying over the last hour: spot absorbs the perp flush (+1)
         - Long liquidations cascading (observed, not inferred from OI) (+1)
         """
-        climax = (
-            (pl.col('rvol') > self.cfg.rvol_anomaly_threshold) &
-            (pl.col('price_change_flat') <= -self.cfg.capitulation_min_drop) &
-            (pl.col('oi_change_short') < self.cfg.capitulation_oi_drop)
-        )
+        # A decline / an OI flush in the coin's own volatility (a 3% drop in 2.5h is rare for BTC and routine for a
+        # small cap); the fixed % thresholds only while the coin's volatility is unknown (short history)
+        # (with an absolute floor: on a near-flat coin a 0.02% dip is "3 sigma" but no capitulation)
+        drop_z = pl.max_horizontal(pl.col('ret_std') * (self.cfg.price_flat_window ** 0.5) * self.cfg.capitulation_drop_z,
+                                   pl.lit(self.cfg.capitulation_drop_floor))
+        oi_z = pl.max_horizontal(pl.col('oi_std') * (self.cfg.oi_short_window ** 0.5) * self.cfg.capitulation_oi_z,
+                                 pl.lit(self.cfg.capitulation_oi_floor))
+        declined = pl.when(pl.col('ret_std') > 0).then(pl.col('price_change_flat') <= -drop_z) \
+            .otherwise(pl.col('price_change_flat') <= -self.cfg.capitulation_min_drop)
+        flushed = pl.when(pl.col('oi_std') > 0).then(pl.col('oi_change_short') <= -oi_z) \
+            .otherwise(pl.col('oi_change_short') < self.cfg.capitulation_oi_drop)
+        climax = (pl.col('rvol') > self.cfg.rvol_anomaly_threshold) & declined & flushed
         funding_negative = pl.col('predicted_funding') < self.cfg.funding_extreme_negative
         confirmation = climax & (pl.col('long_lower_wick') | (pl.col('delta_ratio') >= self.cfg.capitulation_confirm_flow))
         spot_absorbs = climax & pl.col('has_spot') & (pl.col('spot_delta_1h') > 0)

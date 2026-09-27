@@ -404,6 +404,29 @@ class SuccessModel:
             x['market_crowd_log'] = math.log1p(float(crowd))
         liq = (get('liq_long_5m') or 0.0) + (get('liq_short_5m') or 0.0)
         x['liq_log'] = math.log1p(liq)
+        # Directional readings in the signal's direction (a linear model cannot learn "crowded longs hurt a long,
+        # help a short" from the raw value): funding (all venues, else Binance), long/short ratios (log), the
+        # tracked Hyperliquid accounts, the Coinbase premium, which side was liquidated
+        if direction:
+            funding = get('agg_funding_8h') if get('agg_funding_8h') is not None else get('funding_8h')
+            if funding is not None:
+                x['funding_dir'] = float(funding) * 1e4 * direction
+            for key in ('top_ratio', 'ls_global', 'ls_top', 'ls_bybit', 'ls_okx'):
+                value = get(key)
+                if value and value > 0:
+                    x[key + '_dir'] = math.log(float(value)) * direction
+            hl = get('hl_net_usd')
+            if hl is not None:
+                x['hl_net_dir'] = math.copysign(math.log1p(abs(float(hl)) / 1e5), float(hl)) * direction
+            premium = get('cb_premium')
+            if premium is not None:
+                x['cb_premium_dir'] = float(premium) * 1e4 * direction
+            x['liq_net_dir'] = (math.log1p(get('liq_short_5m') or 0.0) - math.log1p(get('liq_long_5m') or 0.0)) * direction
+        ts = get('ts_ms')
+        if ts:
+            hour = (int(ts) // 3_600_000) % 24
+            x['hour_sin'], x['hour_cos'] = math.sin(2 * math.pi * hour / 24), math.cos(2 * math.pi * hour / 24)
+            x['weekend'] = 1.0 if (int(ts) // 86_400_000 + 4) % 7 >= 5 else 0.0      # 1970-01-01 was a Thursday
         x['perp_led'] = float(get('perp_led') or 0)
         x['cluster_dir'] = float((get('cluster') or 0) * direction)
         x['early_quarter'] = 1.0 if (get('sec_into_candle') or 0) < 60 else 0.0

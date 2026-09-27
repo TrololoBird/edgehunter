@@ -328,6 +328,19 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
     ('coin 1h trend vs the signal', lambda r: None if _col(r, 'coin_trend') is None or not _col(r, 'direction') else
         ('with' if _col(r, 'coin_trend') * _col(r, 'direction') > 0 else
          'against' if _col(r, 'coin_trend') * _col(r, 'direction') < 0 else 'none')),
+    # eng-4 (audit): time of day (volume / volatility peak at the US open), weekends (spreads x2, volume -20-40%),
+    # a pullback zone on a real map level vs Fibonacci alone, what the sweep candle liquidated, funding vs the signal
+    ('session (UTC)', lambda r: None if _col(r, 'hour_utc') is None else
+        ('Asia 0-7' if _col(r, 'hour_utc') < 7 else 'London 7-13' if _col(r, 'hour_utc') < 13 else
+         'NY 13-21' if _col(r, 'hour_utc') < 21 else 'late 21-24')),
+    ('weekend', lambda r: None if _col(r, 'weekend') is None else ('weekend' if _col(r, 'weekend') else 'weekday')),
+    ('pullback zone', lambda r: None if not _col(r, 'zone_src') or _col(r, 'kind') != 'entry' else
+        ('Fibonacci only' if 'fib only' in _col(r, 'zone_src') else 'map level')),
+    ('sweep: liquidations on the wick', lambda r: None if _col(r, 'liq_on_wick') is None else
+        ('>= $50k' if _col(r, 'liq_on_wick') >= 50_000 else '> 0' if _col(r, 'liq_on_wick') > 0 else 'none')),
+    ('funding vs the signal', lambda r: None if _col(r, 'agg_funding_8h') is None or not _col(r, 'direction') else
+        ('crowded with (>= +0.03%)' if _col(r, 'agg_funding_8h') * _col(r, 'direction') >= 0.0003 else
+         'crowded against (<= -0.03%)' if _col(r, 'agg_funding_8h') * _col(r, 'direction') <= -0.0003 else 'neutral')),
     ('coin 24h volume', lambda r: None if not _col(r, 'volume_24h') else
         ('< $10M' if _col(r, 'volume_24h') < 10e6 else '$10-50M' if _col(r, 'volume_24h') < 50e6 else
          '$50-250M' if _col(r, 'volume_24h') < 250e6 else '>= $250M')),

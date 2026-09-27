@@ -93,6 +93,12 @@ class MetricsConfig:
     # price_flat_window of at least capitulation_min_drop, confirmed by buyers >= 55% of the candle
     capitulation_oi_drop: float = -0.02
     capitulation_min_drop: float = 0.03
+    # ... measured in the coin's own volatility once known: the decline over price_flat_window >= this many standard
+    # deviations of 15m returns x sqrt(window), the OI drop over oi_short_window >= this many OI standard deviations
+    capitulation_drop_z: float = 3.0
+    capitulation_oi_z: float = 2.0
+    capitulation_drop_floor: float = 0.01
+    capitulation_oi_floor: float = 0.005
     capitulation_confirm_flow: float = 0.1
     # Phase D: OI must grow at least this much over oi_short_window (new shorts, not noise)
     dump_oi_min: float = 0.005
@@ -395,7 +401,9 @@ class ZonesConfig:
     # Source weights; a zone's strength is the sum of its sources
     weights: tuple = (('swing_1h', 1.5), ('swing_15m', 1.0), ('equal', 2.0), ('pdhl', 2.0), ('poc', 1.5),
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 1.5), ('liq_hit', 1.0), ('wall', 1.0),
-                      ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5))
+                      ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0))
+    # Round-number levels / pools within this many ATR of price (zones.round_levels)
+    round_span_atr: float = 3.0
     # Targets: a zone must be at least this strong to be an obstacle (TP1/TP2); TP3 prefers pools / liquidations
     min_strength: float = 2.5
     min_target_atr: float = 1.0
@@ -597,9 +605,11 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-3"
+    logic_version: str = "eng-4"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
-    universe_snapshot_sec: int = 900
+    # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
+    # baseline could be offset by ~7.5 min at each end)
+    universe_snapshot_sec: int = 300
     # Round-trip trading cost used by stats.py for net R / returns (taker 0.05% per side)
     fee_round_trip: float = 0.001
     # Open cards / sweep histograms survive restarts here

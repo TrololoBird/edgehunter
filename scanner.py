@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import platform
+import statistics
 import time
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
@@ -101,6 +102,7 @@ class Scanner:
         self._pretrain_proc = None
         self._pretrained_meta: Optional[Dict] = None
         self._pretrain_retry_at = 0.0
+        self._cb_median: Optional[float] = None        # the universe's median Coinbase premium (the USDT basis)
         self._futures_closed = pl.DataFrame()
         self._frame_parts: Dict[str, pl.DataFrame] = {}
         self._heavy_signature = None
@@ -519,6 +521,8 @@ class Scanner:
             logger.debug(f"Heavy pass: {len(rows)} symbols in {self.last_heavy_sec:.2f}s")
 
         signals = signals_from_rows(self._rows, tier0)
+        premiums = [p for md in self.market_data.values() if (p := self._coinbase_premium(md)) is not None]
+        self._cb_median = statistics.median(premiums) if len(premiums) >= 10 else None
         for md in self.market_data.values():
             md.current_long_score = md.current_short_score = 0
         for symbol, sig in signals:
@@ -581,10 +585,25 @@ class Scanner:
                 for key in ('spot_delta_1h', 'perp_delta_1h'):
                     if row.get(key) is not None:
                         sig[key] = row[key]
+                if setup['setup'].startswith('SWEEP'):
+                    self._sweep_wick(symbol, md, setup, sig)
                 self._enrich(symbol, md, sig)
                 logger.info(f"Setup detected: {symbol} {setup['setup']} - {setup['setup_note']}")
                 out.append((symbol, sig))
         return out
+
+    def _sweep_wick(self, symbol: str, md: MarketData, setup: Dict, sig: Dict):
+        """
+        What happened on the sweep candle (journal features; stats decide whether they matter): liquidations of the
+        swept side on every venue (the stops that ran are forced exits) and the Binance OI change across the candle.
+        """
+        from flow import LIQ_LONG, LIQ_SHORT
+        start = int(setup['anchor_ts']) // 1000
+        field = LIQ_LONG if setup['direction'] > 0 else LIQ_SHORT          # a sweep of lows took the longs' stops
+        sig['liq_on_wick'] = self.fetcher.flow.symbol_range(symbol, field, start, start + 900)
+        before = [v for t, v in md.oi_samples if t <= start * 1000]
+        after = [v for t, v in md.oi_samples if t <= (start + 900) * 1000]
+        sig['oi_change_sweep'] = after[-1] / before[-1] - 1 if before and after and before[-1] else None
 
     def _maps_executor(self):
         """
@@ -703,7 +722,11 @@ class Scanner:
         # is not listed on Hyperliquid (or before the first positions refresh)
         on_hl = 'hyperliquid' in self.fetcher.symbol_map.by_key.get(symbol, {}) and self.positioning.hl_ts > 0
         sig['hl_net_usd'] = hl['hl_long_usd'] - hl['hl_short_usd'] if on_hl else None
-        sig['cb_premium'] = self._coinbase_premium(md)
+        # relative to the universe median: the raw premium is USD vs USDT and carries the USDT basis (~a few bp)
+        premium = self._coinbase_premium(md)
+        sig['cb_premium'] = premium - self._cb_median if premium is not None and self._cb_median is not None else None
+        now = time.gmtime()
+        sig['hour_utc'], sig['weekend'] = now.tm_hour, int(now.tm_wday >= 5)
         sig['basis'] = md.basis
         sig['book_eaten'] = md.book_eaten
         depth = self.fetcher.depth.metrics(symbol)

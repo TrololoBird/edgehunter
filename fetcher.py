@@ -83,7 +83,7 @@ class MarketData:
     # Typical 15m move of price / OI (std of 15m changes, from the last heavy scan): Tier-0 z-scores
     ret_std: Optional[float] = None
     oi_std: Optional[float] = None
-    # Mark / index price and basis from !markPrice@arr@1s
+    # Mark / index price and basis from REST premiumIndex every 30s (no whole-market stream: bandwidth)
     mark_price: float = 0.0
     index_price: float = 0.0
     # Largest whale sweep / visible depth it hit (> 1 = it ate the book), with its time
@@ -292,7 +292,9 @@ class VenueDeriv:
     funding_8h: Optional[float] = None
     mark: float = 0.0
     ts: float = 0.0
-    # (ts_ms, oi_usd), sampled at most every 10s, ~70 min deep
+    # (ts_ms, open interest in COINS), sampled at most every 10s, ~70 min deep. Coins, not USD: the USD value moves
+    # with price, so "OI rising" on a rally was true without a single new position (the OI confirmation of a
+    # breakout read the price itself); oi_usd stays the venue's weight in the aggregate
     samples: deque = field(default_factory=lambda: deque(maxlen=420))
 
 
@@ -542,8 +544,9 @@ class DataFetcher:
     def _record_venue_oi(self, key: str, venue: str, oi_usd: float, ts_ms: float):
         state = self.venue_derivs.setdefault(key, {}).setdefault(venue, VenueDeriv())
         state.oi_usd, state.ts = oi_usd, ts_ms
-        if not state.samples or ts_ms - state.samples[-1][0] >= 10_000:
-            state.samples.append((ts_ms, oi_usd))
+        price = state.mark or self._binance_price(key)
+        if price and (not state.samples or ts_ms - state.samples[-1][0] >= 10_000):
+            state.samples.append((ts_ms, oi_usd / price))
 
     async def _binance_rest_tickers_loop(self):
         """
@@ -710,7 +713,8 @@ class DataFetcher:
 
     def _deriv_snapshot(self, key: str, now_ms: float) -> Dict[str, float]:
         states = self.venue_derivs.get(key, {})
-        out = {'agg_oi_change_5m': 0.0, 'agg_oi_change_1h': 0.0, 'agg_funding_8h': 0.0, 'oi_venues': 0}
+        # None, not 0, while no venue has the history for a window yet (0 would read "OI flat")
+        out = {'agg_oi_change_5m': None, 'agg_oi_change_1h': None, 'agg_funding_8h': None, 'oi_venues': 0}
         for label, window in (('agg_oi_change_5m', 300_000), ('agg_oi_change_1h', 3_600_000)):
             num = den = 0.0
             for state in states.values():
@@ -718,13 +722,13 @@ class DataFetcher:
                 if change is not None and state.oi_usd:
                     num += change * state.oi_usd
                     den += state.oi_usd
-            out[label] = num / den if den else 0.0
+            out[label] = num / den if den else None
         num = den = 0.0
         for state in states.values():
             if state.funding_8h is not None and state.oi_usd and now_ms - state.ts < 600_000:
                 num += state.funding_8h * state.oi_usd
                 den += state.oi_usd
-        out['agg_funding_8h'] = num / den if den else 0.0
+        out['agg_funding_8h'] = num / den if den else None
         out['oi_venues'] = sum(1 for s in states.values() if s.oi_usd and now_ms - s.ts < 600_000)
         return out
 
@@ -948,7 +952,13 @@ class DataFetcher:
             logger.debug(f"OI history seed skipped for {symbol}: {e}")
             return
         # openInterestHist timestamps are period END times: the OI at that moment
-        md.seed_oi([(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in rows or []])
+        points = [(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in rows or []]
+        md.seed_oi(points)
+        # the same hour (coins) under Binance's live samples in the venue aggregate: agg 1h OI works from the start
+        state = self.venue_derivs.setdefault(symbol, {}).setdefault('binance', VenueDeriv())
+        merged = dict(p for p in points if p[1]) | dict(state.samples)
+        state.samples.clear()
+        state.samples.extend(sorted(merged.items())[-state.samples.maxlen:])
 
     def load_htf_background(self, symbol: str):
         """load_htf without waiting for it (at most one request set per coin in flight)."""
@@ -1523,7 +1533,7 @@ class DataFetcher:
         # OI over the last hour: across venues (OI-weighted, as the phases' agg_oi_change_1h) when >= 2 report, else
         # Binance's samples (seeded with the last hour at start-up); the entry is evaluated at its trigger, i.e. now
         derivs = self.deriv_snapshot(symbol)
-        if derivs['oi_venues'] >= 2 and derivs['agg_oi_change_1h']:
+        if derivs['oi_venues'] >= 2 and derivs['agg_oi_change_1h'] is not None:
             oi = derivs['agg_oi_change_1h']
         else:
             oi = confirm.oi_change(list(md.oi_samples), until_ms - confirm.HOUR_MS, until_ms)

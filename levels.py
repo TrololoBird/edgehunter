@@ -284,7 +284,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         high, low = float(c[2]), float(c[3])
         stop = entry if be_armed else sl
         if (low <= stop) if direction > 0 else (high >= stop):
-            be_result = 0.0 if be_armed else -1.0
+            be_result = 0.0 if be_armed else -1.0 - (CONFIG.levels.slippage_bps / 1e4) * sl / risk
             break
         if (high >= targets[1]) if direction > 0 else (low <= targets[1]):
             be_result = abs(targets[1] - entry) / risk
@@ -294,12 +294,14 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
     if be_result is None:
         be_result = direction * (float(candles[-1][4]) - entry) / risk
         be_result = max(be_result, 0.0) if be_armed and be_result < 0 else be_result
+    # A stop is a market order: it fills beyond the stop price by the slippage (targets are limit orders)
+    stop_r = -1.0 - (CONFIG.levels.slippage_bps / 1e4) * sl / risk
     for c in candles:
         high, low = float(c[2]), float(c[3])
         if (low <= sl) if direction > 0 else (high >= sl):
             for k in exits:
                 if exits[k] is None:
-                    exits[k] = -1.0
+                    exits[k] = stop_r
             result['outcome'] = f"TP{best_target}" if best_target else 'SL'
             break
         for k, level in enumerate(targets, start=1):

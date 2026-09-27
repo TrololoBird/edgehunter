@@ -36,6 +36,17 @@ def _level_anchor(sig: Dict, tf: str) -> Dict:
 
 # ------------------------------------------------------------------------------------------------ sweep
 
+def pool_rank(label: str) -> int:
+    """Significance of a pool by its label: previous week > previous day / day > sessions, equal levels, round > 1h swing."""
+    if label.startswith('PW'):
+        return 5
+    if label.startswith(('PD', 'day ')):
+        return 4
+    if label.startswith(('Asia', 'London', 'New York', 'EQ', 'round')):
+        return 3
+    return 1
+
+
 def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], atr: float, trend: int) -> Optional[Dict]:
     """The candle that just closed took a pool and closed back beyond it on volume -> the sweep event."""
     cfg = CONFIG.strategies
@@ -54,7 +65,9 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
             depth, back = c[2] - price, c[4] < price
         else:
             depth, back = price - c[3], c[4] > price
-        if back and lo_depth <= depth <= hi_depth and (best is None or depth < best[0]):
+        # one candle can take several pools: the most significant one names the sweep (a week low taken with a
+        # minor 1h swing is a week-low sweep), the shallowest among equals
+        if back and lo_depth <= depth <= hi_depth and (best is None or (pool_rank(label), -depth) > (pool_rank(best[3]), -best[0])):
             best = (depth, price, side, label)
     if best is None:
         return None

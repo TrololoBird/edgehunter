@@ -19,7 +19,8 @@ from zones import RawLevel, merge
 QUARTER_MS = 900_000
 
 
-def breakout_at_close(candles_15m: Sequence[Sequence[float]], atr: float) -> Optional[Dict]:
+def breakout_at_close(candles_15m: Sequence[Sequence[float]], atr: float,
+                      candles_1h: Sequence[Sequence[float]] = ()) -> Optional[Dict]:
     """The previous candle broke out of the range on volume and flow, the one that just closed held beyond it."""
     cfg = CONFIG.strategies
     n = cfg.breakout_range_candles
@@ -28,11 +29,22 @@ def breakout_at_close(candles_15m: Sequence[Sequence[float]], atr: float) -> Opt
     rng, b, a = candles_15m[-n - 2:-2], candles_15m[-2], candles_15m[-1]
     hi, lo = max(c[2] for c in rng), min(c[3] for c in rng)
     width = hi - lo
-    if not cfg.breakout_min_width_atr * atr <= width <= cfg.breakout_max_width_atr * atr:
+    # Tightness against the ATR of the day BEFORE the range: ATR14 contains the range itself, so a quiet range
+    # shrank its own yardstick (NR-type contraction is measured against a longer baseline)
+    before = candles_15m[max(0, len(candles_15m) - n - 2 - 96):-n - 2]
+    base_atr = (sum(max(c[2] - c[3], abs(c[2] - p[4]), abs(c[3] - p[4])) for p, c in zip(before, before[1:]))
+                / (len(before) - 1)) if len(before) >= 25 else atr
+    if not cfg.breakout_min_width_atr * base_atr <= width <= cfg.breakout_max_width_atr * base_atr:
         return None
+    # Volume against the quiet range AND the same hour of the day (volume peaks at the US open: a break then cleared
+    # "1.5x the range" by the clock alone)
     avg_volume = sum(c[5] for c in rng) / n
+    hour = int(b[0]) // 3_600_000 % 24
+    same_hour = sorted(c[5] for c in candles_1h if int(c[0]) // 3_600_000 % 24 == hour and c[0] < b[0])[-7:]
+    hour_ref = same_hour[len(same_hour) // 2] / 4 if len(same_hour) >= 3 else 0.0
+    reference = max(avg_volume, hour_ref)
     flow = 2 * b[6] - b[5]
-    if not avg_volume or b[5] < cfg.breakout_min_rvol * avg_volume:
+    if not reference or b[5] < cfg.breakout_min_rvol * reference:
         return None
     if b[4] > hi and flow > 0 and a[4] > hi:
         direction = 1

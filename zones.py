@@ -25,6 +25,7 @@ Everything is a hypothesis: the journal stores which sources each target and sto
 how often each kind was reached.
 """
 from dataclasses import dataclass, field
+import math
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from config import CONFIG
@@ -33,7 +34,9 @@ HOUR_MS = 3_600_000
 DAY_MS = 24 * HOUR_MS
 
 # Kinds that mark resting stops / liquidations: the stop goes beyond them, TP3 prefers them
-POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hit', 'liq_hl')
+# Resting orders / stops still there. 'liq_hit' (liquidations that already happened) is a level, not a pool: the
+# stops there are gone, so stops are not pushed beyond it and TP3 does not aim for it
+POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
 
 
 @dataclass
@@ -117,6 +120,19 @@ def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr:
 WEEK_MS = 7 * DAY_MS
 # 1970-01-01 was a Thursday: ISO weeks (Monday 00:00 UTC) start 4 days after the epoch's week boundary
 WEEK_OFFSET_MS = 4 * DAY_MS
+
+
+def round_levels(price: float, span: float) -> List[float]:
+    """
+    Round prices within `span` of `price`: multiples of a tenth of the price's order of magnitude (84,000 for BTC,
+    3,100 for ETH, 0.23 for a 0.2345 coin). Stop-loss orders cluster just beyond round numbers and take-profits at
+    them (Osler, NY Fed Staff Report 150): the stop pools a sweep takes, and levels price reacts to.
+    """
+    if price <= 0 or span <= 0:
+        return []
+    step = 10 ** math.floor(math.log10(price)) / 10
+    lo, hi = math.ceil((price - span) / step), math.floor((price + span) / step)
+    return [round(k * step, 12) for k in range(lo, hi + 1) if k > 0 and abs(k * step - price) > 1e-12]
 
 
 def session_windows(now_ms: float) -> List[Tuple[str, int, int]]:
@@ -317,6 +333,10 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     levels += estimated_liquidations(candles_1h, oi_1h, atr)
     levels += observed_liquidations(liq_events, atr, now_ms)
     levels += vwap(candles_15m, today, 'VWAP day')
+    if candles_15m:
+        last = candles_15m[-1][4]
+        levels += [RawLevel(p, 'round', f"round {p:g}", +1 if p > last else -1)
+                   for p in round_levels(last, cfg.round_span_atr * atr)]
     return levels
 
 

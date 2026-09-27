@@ -188,6 +188,19 @@ class FlowStore:
             return 0.0
         return float(self.net(venues, seconds, now_sec)[row])
 
+    def symbol_range(self, symbol: str, field: int, start_sec: int, end_sec: int, now_sec: Optional[int] = None) -> float:
+        """One field summed over [start_sec, end_sec) across every venue for one symbol (seconds still buffered)."""
+        row = self.rows.get(symbol)
+        if row is None:
+            return 0.0
+        now_sec = int(now_sec if now_sec is not None else time.time())
+        total = 0.0
+        for flow in self.venues.values():
+            part = flow.range_sum(field, start_sec, end_sec, now_sec)
+            if row < part.shape[0]:
+                total += float(part[row])
+        return total
+
     def candle_net(self, venues: Sequence[str], start_sec: int, end_sec: int, now_sec: Optional[int] = None) -> np.ndarray:
         now_sec = int(now_sec if now_sec is not None else time.time())
         total = np.zeros(self.capacity)

@@ -54,7 +54,9 @@ def _strategy_of(group_key: str) -> Optional[str]:
 logger = logging.getLogger(__name__)
 
 # Horizon label -> minutes after the signal
-HORIZONS = {'15m': 15, '1h': 60, '4h': 240}
+# 8h = a trade's lifetime (levels.trade_ttl_sec): entries are replayed over it (a 4h replay marked every longer trade
+# to its 4h close)
+HORIZONS = {'15m': 15, '1h': 60, '4h': 240, '8h': 480}
 # Outcome windows start at the first FULL minute after the signal; a horizon is due once its last 1m candle has
 # closed, i.e. up to one minute + this margin after ts + horizon. Evaluated earlier, the last candle was still
 # running and its "close" was the live price (measured: 41 of 53 rows off by up to 0.2%).
@@ -133,6 +135,10 @@ EXTRA_COLUMNS = {
     'vol_ratio': 'REAL', 'r_be': 'REAL',
     # eng-2: the coin's 24h futures quote volume (liquidity: patterns on thin coins are one order's work)
     'volume_24h': 'REAL',
+    # eng-4: the 8h horizon (entries replayed over the trade's life), the other venues' funding and long/short
+    # ratios, time of day, the sweep candle's liquidations / OI change
+    'ret_8h': 'REAL', 'agg_funding_8h': 'REAL', 'ls_bybit': 'REAL', 'ls_okx': 'REAL', 'hour_utc': 'INTEGER',
+    'weekend': 'INTEGER', 'liq_on_wick': 'REAL', 'oi_change_sweep': 'REAL',
     # eng-3: entry confirmations (strategies/confirm.py, JSON {name: true / false / null | order-flow kind}) and how
     # many were positive
     'confirms': 'TEXT', 'conf_n': 'INTEGER',
@@ -148,6 +154,8 @@ FEATURE_KEYS = {
     'ls_global': 'ls_global', 'ls_top': 'ls_top', 'hl_net_usd': 'hl_net_usd', 'cb_premium': 'cb_premium',
     'market_crowd': 'market_crowd', 'mkt_1h': 'mkt_1h', 'mkt_4h': 'mkt_4h', 'btc_1h': 'btc_1h',
     'coin_trend': 'coin_trend', 'vol_ratio': 'vol_ratio', 'volume_24h': 'volume_24h',
+    'agg_funding_8h': 'agg_funding_8h', 'ls_bybit': 'ls_bybit', 'ls_okx': 'ls_okx', 'hour_utc': 'hour_utc',
+    'weekend': 'weekend', 'liq_on_wick': 'liq_on_wick', 'oi_change_sweep': 'oi_change_sweep',
 }
 
 # (setup, regime) -> (results, upper end of the 90% interval of its 4h Edge): refreshed hourly from the journal
@@ -673,12 +681,13 @@ class SignalJournal:
         now_ms = int(time.time() * 1000)
         # Conservative SQL bound (a whole extra minute); the exact check is horizon_due_ms in _evaluate_pass
         due = {label: now_ms - (minutes + 1) * 60_000 - CLOSE_MARGIN_MS for label, minutes in HORIZONS.items()}
+        rets = ', '.join(f"ret_{label}" for label in HORIZONS)
+        pending = ' OR '.join(f"(ret_{label} IS NULL AND ts_ms <= ?)" for label in HORIZONS)
         with self._lock:
             cursor = self.conn.execute(
-                "SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, ret_15m, ret_1h, ret_4h, kind FROM signals "
-                "WHERE eval_failed = 0 AND ((ret_15m IS NULL AND ts_ms <= ?) OR (ret_1h IS NULL AND ts_ms <= ?) "
-                "OR (ret_4h IS NULL AND ts_ms <= ?)) ORDER BY ts_ms LIMIT ?",
-                (due['15m'], due['1h'], due['4h'], limit),
+                f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind FROM signals "
+                f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
+                (*[due[label] for label in HORIZONS], limit),
             )
             columns = [c[0] for c in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -737,9 +746,9 @@ class SignalJournal:
         if label == '4h':
             updates['mfe_4h'] = max(float(k[2]) for k in window) / price - 1
             updates['mae_4h'] = min(float(k[3]) for k in window) / price - 1
-            if row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
-                # Entry rows: replay SL / TP on the 1m candles after the entry, filled like a human would
-                updates.update(simulate(row, row['direction'], window, use_fill=True))
+        if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
+            # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
+            updates.update(simulate(row, row['direction'], window, use_fill=True))
         sets = ', '.join(f"{col} = ?" for col in updates)
         with self._lock:
             self.conn.execute(f"UPDATE signals SET {sets} WHERE id = ?", (*updates.values(), signal_id))

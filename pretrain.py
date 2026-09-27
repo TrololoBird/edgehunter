@@ -278,10 +278,10 @@ def process_coin(job: tuple) -> Optional[Dict]:
         if not atr or atr != atr:
             continue
         window = c15_list[q - 98:q + 1]
-        events = [breakout_at_close(window, atr)]
+        h = int(np.searchsorted(h1_close_ts, cut, side='right'))
+        h1_window = h1_list[max(0, h - 200):h]
+        events = [breakout_at_close(window, atr, h1_window)]
         if sweep_possible[q]:
-            h = int(np.searchsorted(h1_close_ts, cut, side='right'))
-            h1_window = h1_list[max(0, h - 200):h]
             pools = pools_before(window, h1_window, atr, last_open)
             events.append(sweep_at_close(window, pools, atr, coin_trend(h1_window)))
         events = [e for e in events if e]

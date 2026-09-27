@@ -120,7 +120,7 @@ def test_journal_record_entry_veto_and_universe(tmp_path):
 def test_journal_outcomes_manual_fill_and_retry(tmp_path):
     from journal import SignalJournal
     j = SignalJournal(str(tmp_path / 'o.db'))
-    t_old = int((time.time() - 5 * 3600) * 1000)
+    t_old = int((time.time() - 9 * 3600) * 1000)      # every horizon due, 8h (the entry replay) included
     j.conn.execute("INSERT INTO signals (ts_ms, symbol, kind, group_key, direction, price, entry, sl, tp1, tp2, tp3, "
                    "logic_version) VALUES (?, 'E', 'entry', 'ENTRY IMPULSE UP', 1, 100, 100, 98, 104, 106, 108, 'mtf-4')",
                    (t_old,))
@@ -138,7 +138,7 @@ def test_journal_outcomes_manual_fill_and_retry(tmp_path):
     asyncio.run(j._evaluate_pass(Fetcher()))
     entry = j.conn.execute("SELECT outcome, entry_fill, r_tp1, filled FROM signals WHERE kind='entry'").fetchone()
     assert entry[0] == 'TP1' and entry[1] > 100 and entry[3] == 1 and 0 < entry[2] < 2
-    assert set(calls) == {240}
+    assert set(calls) == {480}
     row = j._pending(10)
     j.close()
 
