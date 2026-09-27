@@ -249,12 +249,28 @@ def fill_price(levels: Dict[str, float], direction: int, candles: List[List]) ->
     return float(candles[0][1]) * (1 + direction * slip)
 
 
-def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_fill: bool = True) -> Dict:
+FUNDING_MS = 8 * 3_600_000
+
+
+def funding_r(funding_8h: Optional[float], direction: int, entry: float, risk: float, t0: float, t1: float) -> float:
+    """
+    Funding the position pays over (t0, t1] in R: rate x the settlements crossed (every 8h at 00 / 08 / 16 UTC,
+    Binance's default; coins settling every 4h pay about twice this) x entry / risk. Longs pay a positive rate.
+    """
+    if not funding_8h or not risk:
+        return 0.0
+    settlements = int(t1 // FUNDING_MS) - int(t0 // FUNDING_MS)
+    return direction * funding_8h * max(0, settlements) * entry / risk
+
+
+def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_fill: bool = True,
+             funding_8h: Optional[float] = None) -> Dict:
     """
     Replay 1m candles [open_time, open, high, low, close, ...] after an entry. With use_fill the trade is entered at
     fill_price (manual execution) and R is measured from there; otherwise at levels['entry'] (the trigger close).
     SL and TPs are checked candle by candle; if one candle touches both SL and a TP, SL counts first (conservative); a
     target counts only once price traded target_through_bps THROUGH it (a limit order is not filled by a touch).
+    With funding_8h (the rate at the signal) each exit's R is net of the funding settlements it was held through.
     Returns the furthest target reached before the stop and the R result of exiting fully at TP1 / TP2
     (unfinished trades are marked to the last close). A fill already beyond the stop is 'SKIPPED' (not traded).
     """
@@ -285,6 +301,9 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
 
     best_target = 0
     exits = {1: None, 2: None}
+    t_open, t_last = float(candles[0][0]), float(candles[-1][0]) + MINUTE_MS
+    exit_t = {1: t_last, 2: t_last}
+    be_t = t_last
     # Variant D: once TP1 traded the stop moves to the entry (from the next candle), the rest exits at TP2
     be_result, be_armed = None, False
     for c in candles:
@@ -292,9 +311,11 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         stop = entry if be_armed else sl
         if (low <= stop) if direction > 0 else (high >= stop):
             be_result = 0.0 if be_armed else -1.0 - (CONFIG.levels.slippage_bps / 1e4) * sl / risk
+            be_t = float(c[0]) + MINUTE_MS
             break
         if reached(targets[1], high, low):
             be_result = abs(targets[1] - entry) / risk
+            be_t = float(c[0]) + MINUTE_MS
             break
         if reached(targets[0], high, low):
             be_armed = True
@@ -309,6 +330,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
             for k in exits:
                 if exits[k] is None:
                     exits[k] = stop_r
+                    exit_t[k] = float(c[0]) + MINUTE_MS
             result['outcome'] = f"TP{best_target}" if best_target else 'SL'
             break
         for k, level in enumerate(targets, start=1):
@@ -317,11 +339,12 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         for k in exits:
             if exits[k] is None and best_target >= k:
                 exits[k] = abs(targets[k - 1] - entry) / risk
+                exit_t[k] = float(c[0]) + MINUTE_MS
     else:
         result['outcome'] = f"TP{best_target}" if best_target else 'OPEN'
 
     mark = direction * (float(candles[-1][4]) - entry) / risk
-    result['r_tp1'] = exits[1] if exits[1] is not None else mark
-    result['r_tp2'] = exits[2] if exits[2] is not None else mark
-    result['r_be'] = be_result
+    result['r_tp1'] = (exits[1] if exits[1] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[1])
+    result['r_tp2'] = (exits[2] if exits[2] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[2])
+    result['r_be'] = be_result - funding_r(funding_8h, direction, entry, risk, t_open, be_t)
     return result

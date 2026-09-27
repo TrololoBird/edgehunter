@@ -128,6 +128,97 @@ class UniverseBaseline:
         return self._cache[key]
 
 
+class BetaEstimator:
+    """
+    Each coin's beta to the universe median from the snapshots of the 7 days BEFORE a signal (hourly returns, OLS,
+    Blume-adjusted toward 1: 0.67 x beta + 0.33). Signals are picked on volatile coins (impulses, cascades), and a coin
+    with beta 2 in a falling market "beats" the median on a short without any skill: Edge beta = the return in the
+    signal's direction minus beta x the median. None (plain Edge) with fewer than 48 hourly points.
+    """
+
+    HOUR_MS = 3_600_000
+    LOOKBACK_H = 7 * 24
+    MIN_POINTS = 48
+
+    def __init__(self, universe: 'UniverseBaseline'):
+        self.hours: List[int] = []
+        self.market: Dict[int, float] = {}               # hour -> median hourly return
+        self.coin: Dict[str, Dict[int, float]] = {}      # symbol id -> hour -> hourly return
+        self._cache: Dict[Tuple[str, int], Optional[float]] = {}
+        if not universe:
+            return
+        hourly: Dict[int, Dict[str, float]] = {}
+        for t in universe.times:                        # the first snapshot of each hour
+            h = t // self.HOUR_MS
+            if h not in hourly:
+                hourly[h] = universe.snapshots[t]
+        self.hours = sorted(hourly)
+        for prev, h in zip(self.hours, self.hours[1:]):
+            if h != prev + 1:
+                continue
+            a, b = hourly[prev], hourly[h]
+            changes = {sym: b[sym] / a[sym] - 1 for sym in a if sym in b and a[sym]}
+            if len(changes) < 20:
+                continue
+            self.market[h] = statistics.median(changes.values())
+            for sym, v in changes.items():
+                self.coin.setdefault(sym, {})[h] = v
+
+    @staticmethod
+    def symbol_id(symbol: str) -> str:
+        """'1000PEPE/USDT:USDT' -> '1000PEPEUSDT' (the snapshots store Binance ids)."""
+        return symbol.split('/')[0] + 'USDT' if '/' in symbol else symbol
+
+    def beta(self, symbol: str, ts_ms: int) -> Optional[float]:
+        sym, day = self.symbol_id(symbol), ts_ms // 86_400_000
+        key = (sym, day)                                  # one estimate per coin and day (cached)
+        if key in self._cache:
+            return self._cache[key]
+        end = day * 24                                    # hours before the signal's day: no overlap with the label
+        series = self.coin.get(sym, {})
+        pairs = [(self.market[h], series[h]) for h in range(end - self.LOOKBACK_H, end) if h in self.market and h in series]
+        value = None
+        if len(pairs) >= self.MIN_POINTS:
+            m = [x for x, _ in pairs]
+            c = [y for _, y in pairs]
+            mm, mc = statistics.fmean(m), statistics.fmean(c)
+            var = sum((x - mm) ** 2 for x in m)
+            if var > 0:
+                raw = sum((x - mm) * (y - mc) for x, y in zip(m, c)) / var
+                value = 0.67 * raw + 0.33
+        self._cache[key] = value
+        return value
+
+
+def bootstrap_p(values: List[float], clusters: Optional[List] = None, seed: int = 11) -> Optional[float]:
+    """Two-sided block-bootstrap p-value of "the mean is 0" (whole clusters resampled, like bootstrap_ci)."""
+    groups: Dict = {}
+    for i, v in enumerate(values):
+        groups.setdefault(clusters[i] if clusters is not None else i, []).append(v)
+    blocks = list(groups.values())
+    if len(blocks) < 5:
+        return None
+    rng = random.Random(seed)
+    k = len(blocks)
+    means = [statistics.fmean([v for _ in range(k) for v in blocks[rng.randrange(k)]]) for _ in range(BOOTSTRAP)]
+    below = sum(m <= 0 for m in means) / BOOTSTRAP
+    return min(1.0, 2 * min(below, 1 - below) + 1 / BOOTSTRAP)
+
+
+def bh_q(pvalues: List[Optional[float]]) -> List[Optional[float]]:
+    """Benjamini-Hochberg q-values of the p-values given (None stays None): the false discovery rate at which each
+    result would be called significant when all of them are looked at together."""
+    idx = sorted((p, i) for i, p in enumerate(pvalues) if p is not None)
+    m = len(idx)
+    q: List[Optional[float]] = [None] * len(pvalues)
+    running = 1.0
+    for rank in range(m, 0, -1):
+        p, i = idx[rank - 1]
+        running = min(running, p * m / rank)
+        q[i] = running
+    return q
+
+
 def market_baseline(rows: List) -> Dict[str, Dict[int, float]]:
     """Fallback: per horizon, the median raw return of all rows logged in the same hour."""
     baseline: Dict[str, Dict[int, float]] = {}
@@ -144,6 +235,8 @@ class Baseline:
     def __init__(self, rows: List, universe: Optional[UniverseBaseline] = None):
         self.universe = universe if universe else None
         self.fallback = market_baseline(rows)
+        # the coins' betas need the universe snapshots (the fallback baseline has no per-coin history)
+        self.betas = BetaEstimator(self.universe) if self.universe else None
 
     @property
     def source(self) -> str:
@@ -157,15 +250,17 @@ class Baseline:
 
 # ---------------------------------------------------------------------- per-group statistics
 
-def excess_pairs(rows: List, label: str, baseline: Baseline) -> Tuple[List[float], List]:
-    """Excess returns and their clusters (cluster_of)."""
+def excess_pairs(rows: List, label: str, baseline: Baseline, beta: bool = False) -> Tuple[List[float], List]:
+    """Excess returns and their clusters (cluster_of); beta: the baseline scaled by the coin's beta (BetaEstimator)."""
     values, clusters = [], []
+    betas = getattr(baseline, 'betas', None) if beta else None
     for r in rows:
         if r[f'ret_{label}'] is None or not r['direction']:
             continue
         base = baseline.of(r, label)
         if base is not None:
-            values.append(r['direction'] * (r[f'ret_{label}'] - base))
+            b = betas.beta(r['symbol'], r['ts_ms']) if betas is not None else None
+            values.append(r['direction'] * (r[f'ret_{label}'] - (b if b is not None else 1.0) * base))
             clusters.append(cluster_of(r))
     return values, clusters
 
@@ -197,6 +292,10 @@ def group_stats(rows: List, baseline) -> Dict:
             out[f'med_{label}'] = statistics.median(signed)
             ex, clusters = excess_pairs(rows, label, baseline)
             out[f'edge_{label}'] = statistics.fmean(ex) if ex else None
+            if label == '4h' and getattr(baseline, 'betas', None) is not None:
+                bx, bclusters = excess_pairs(rows, label, baseline, beta=True)
+                out['edge_beta_4h'] = statistics.fmean(bx) if bx else None
+                out['edge_beta_values_4h'], out['edge_beta_clusters_4h'] = bx, bclusters
             out[f'edge_values_{label}'] = ex
             out[f'edge_clusters_{label}'] = clusters
         else:
@@ -391,8 +490,9 @@ def features_table(console: Console, rows: List, baseline: Baseline):
     if not directional:
         return
     table = Table(title="Edge 4h by feature (directional signals)", header_style="bold magenta", border_style="blue")
-    for name in ("Feature", "Value", "N", "Edge 4h", "90% interval"):
+    for name in ("Feature", "Value", "N", "Edge 4h", "90% interval", "q"):
         table.add_column(name, justify="left" if name in ("Feature", "Value") else "right", no_wrap=True)
+    rows_out = []
     for feature, key in FEATURES:
         buckets: Dict[str, List] = {}
         for r in directional:
@@ -403,11 +503,18 @@ def features_table(console: Console, rows: List, baseline: Baseline):
             continue
         for value, members in sorted(buckets.items()):
             ex, clusters = excess_pairs(members, '4h', baseline)
-            edge = statistics.fmean(ex) if ex else None
-            table.add_row(feature, value, Text(str(len(ex)), style="dim" if len(ex) < MIN_SAMPLE else "white"),
-                          pct(edge), ci_text(ex, clusters=clusters))
+            rows_out.append((feature, value, ex, clusters))
             feature = ""
+    # q-values over every bucket of every feature: the splits are many tests at once
+    qs = bh_q([bootstrap_p(ex, clusters) for _, _, ex, clusters in rows_out])
+    for (feature, value, ex, clusters), q in zip(rows_out, qs):
+        edge = statistics.fmean(ex) if ex else None
+        table.add_row(feature, value, Text(str(len(ex)), style="dim" if len(ex) < MIN_SAMPLE else "white"),
+                      pct(edge), ci_text(ex, clusters=clusters),
+                      Text("—" if q is None else f"{q:.2f}", style="dim" if q is None or q > 0.10 else "bold"))
     console.print(table)
+    console.print("[dim]q = Benjamini-Hochberg q-value over every bucket above (bold: <= 0.10). A bucket with a green "
+                  "interval but a large q is what chance produces among this many splits.[/dim]")
 
 
 SOURCE_KINDS = (('EQH', 'equal highs/lows'), ('EQL', 'equal highs/lows'), ('PDH', 'day high/low'),
@@ -537,13 +644,20 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     for label in HORIZONS:
         table.add_column(label, justify="right", no_wrap=True, min_width=13)
     table.add_column("Edge 4h [90%]", justify="right", no_wrap=True, min_width=7)
+    table.add_column("q", justify="right", no_wrap=True)
+    table.add_column("Edge β 4h", justify="right", no_wrap=True, min_width=7)
     table.add_column("Med 4h", justify="right", no_wrap=True, min_width=7)
     table.add_column("Best 4h", justify="right", no_wrap=True)
     table.add_column("Worst 4h", justify="right", no_wrap=True, min_width=8)
 
     order = sorted(groups, key=lambda g: ({'structured': 0, 'setup': 1, 'anomaly': 2, 'entry': 3, 'card': 4}.get(groups[g][0]['kind'], 3), g))
+    all_stats = {key: group_stats(groups[key], baseline) for key in order}
+    # q-values over every setup row shown: dozens of intervals at 90% make a few "significant" ones by chance
+    keys_p = [k for k in order if all_stats[k]['direction']]
+    qs = dict(zip(keys_p, bh_q([bootstrap_p(all_stats[k]['edge_values_4h'], all_stats[k].get('edge_clusters_4h'))
+                               for k in keys_p])))
     for key in order:
-        st = group_stats(groups[key], baseline)
+        st = all_stats[key]
         n_label = Text(f"{st['n']}", style="dim" if st['n_4h'] < MIN_SAMPLE else "white")
         if st['n_4h'] < st['n']:
             n_label.append(f" ({st['n_4h']})", style="dim")
@@ -556,13 +670,22 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
         name = key + ("" if st['direction'] else " ↕")
         edge = pct(st['edge_4h'])
         edge.append_text(ci_text(st['edge_values_4h'], clusters=st.get('edge_clusters_4h')))
-        table.add_row(name, n_label, *cells, edge, pct(st['med_4h']), pct(st['mfe']), pct(st['mae']))
+        q = qs.get(key)
+        q_text = Text("—" if q is None else f"{q:.2f}", style="dim" if q is None or q > 0.10 else "bold")
+        beta_edge = pct(st.get('edge_beta_4h')) if st.get('edge_beta_values_4h') else Text("—", style="dim")
+        if st.get('edge_beta_values_4h'):
+            beta_edge.append_text(ci_text(st['edge_beta_values_4h'], clusters=st.get('edge_beta_clusters_4h')))
+        table.add_row(name, n_label, *cells, edge, q_text, beta_edge, pct(st['med_4h']), pct(st['mfe']), pct(st['mae']))
     console.print(table)
     console.print(
         "[dim]15m / 1h / 4h cells: win rate (net of the round-trip fee) / average return.\nWin = share of signals where "
         "price moved in the signal's direction by more than the fee (↕ rows: share of up moves; Avg = average move "
         "size either way).\nEdge 4h = average 4h return in the signal's direction minus the market baseline over the "
         "same window; [lo..hi] = 90% bootstrap interval (green: above 0, red: below 0, grey: can't tell yet).\n"
+        "q = Benjamini-Hochberg q-value of Edge 4h != 0 over every setup in the table (bold: <= 0.10; a green interval "
+        "with a large q is likely chance among many rows). Edge β = Edge with the baseline x the coin's beta (7 days "
+        "of hourly returns before the signal's day, Blume-adjusted): what is left once the coin's market sensitivity "
+        "is taken out.\n"
         "✗ = vetoed setups (not shown as cards). Best/Worst 4h = average largest favorable / adverse move within 4h.\n"
         f"N (x) = x signals already have a 4h result. Grey N = fewer than {MIN_SAMPLE} results.[/dim]"
     )

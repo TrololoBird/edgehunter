@@ -723,7 +723,7 @@ class SignalJournal:
         pending = ' OR '.join(f"(ret_{label} IS NULL AND ts_ms <= ?)" for label in HORIZONS)
         with self._lock:
             cursor = self.conn.execute(
-                f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind FROM signals "
+                f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h FROM signals "
                 f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
                 (*[due[label] for label in HORIZONS], limit),
             )
@@ -786,7 +786,7 @@ class SignalJournal:
             updates['mae_4h'] = min(float(k[3]) for k in window) / price - 1
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
             # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
-            updates.update(simulate(row, row['direction'], window, use_fill=True))
+            updates.update(simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h')))
         sets = ', '.join(f"{col} = ?" for col in updates)
         with self._lock:
             self.conn.execute(f"UPDATE signals SET {sets} WHERE id = ?", (*updates.values(), signal_id))

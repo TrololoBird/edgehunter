@@ -16,6 +16,7 @@ import logging
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from datetime import date, timedelta
@@ -67,7 +68,7 @@ class Archive:
         if os.path.exists(local + '.none'):
             self.missing += 1
             return None
-        url = f"{BASE_URL}/{path}"
+        url = f"{BASE_URL}/{urllib.parse.quote(path)}"          # non-ASCII tickers exist (e.g. Chinese names)
         for attempt in range(5):
             try:
                 with urllib.request.urlopen(url, timeout=60) as resp:
@@ -194,6 +195,69 @@ class Archive:
             return np.empty((0, 2))
         arr = np.asarray(sorted(set(out)), dtype=np.float64)
         return arr
+
+
+    def klines_1d(self, market: str, symbol: str, start: date, end: date) -> np.ndarray:
+        """
+        Daily klines [open_time_ms, close, quote_volume] of the COMPLETE months in [start, end] (monthly files only:
+        the running month has only daily files, and a daily 1d file per coin and day is thousands of requests).
+        """
+        root = 'futures/um' if market == 'futures' else 'spot'
+        months, _ = self.periods(date(start.year, start.month, 1), end)
+        out = []
+        for m in months:
+            data = self._fetch(f"{root}/monthly/klines/{symbol}/1d/{symbol}-1d-{m}.zip")
+            if data is None:
+                continue
+            for r in self._rows(data):
+                ts = float(r[0])
+                if ts > 1e14:
+                    ts /= 1000.0
+                out.append((ts, float(r[4]), float(r[7])))
+        if not out:
+            return np.empty((0, 3))
+        arr = np.asarray(sorted(set(out)), dtype=np.float64)
+        return arr
+
+    def list_symbols(self, market: str) -> List[str]:
+        """
+        Every symbol the archive has monthly klines for, INCLUDING delisted ones (the S3 listing of data.binance.vision,
+        paginated; cached for a day): pretraining picks its coins from the past, not from today's exchange.
+        """
+        import json
+        import re
+        root = 'futures/um' if market == 'futures' else 'spot'
+        cache = os.path.join(self.cache_dir, f"symbols_{market.replace('/', '_')}.json")
+        if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86_400:
+            with open(cache) as fh:
+                return json.load(fh)
+        prefix = f"data/{root}/monthly/klines/"
+        symbols: List[str] = []
+        marker = ''
+        while True:
+            url = (f"https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix={prefix}"
+                   + (f"&marker={urllib.parse.quote(marker)}" if marker else ''))
+            for attempt in range(5):
+                try:
+                    with urllib.request.urlopen(url, timeout=60) as resp:
+                        text = resp.read().decode('utf-8')
+                    break
+                except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+                    logger.info(f"archive: listing failed ({type(e).__name__} {e}), retry")
+                    time.sleep(2 ** attempt)
+            else:
+                raise RuntimeError('archive: symbol listing failed 5 times')
+            symbols += [p[len(prefix):].rstrip('/') for p in re.findall(r'<Prefix>([^<]+)</Prefix>', text)
+                        if p != prefix]
+            nxt = re.search(r'<NextMarker>([^<]+)</NextMarker>', text)
+            if '<IsTruncated>true</IsTruncated>' not in text or not nxt:
+                break
+            marker = nxt.group(1)
+        symbols = sorted(set(symbols))
+        os.makedirs(self.cache_dir, exist_ok=True)
+        with open(cache, 'w') as fh:
+            json.dump(symbols, fh)
+        return symbols
 
 
 def _utc_ms(text: str) -> float:

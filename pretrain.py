@@ -23,12 +23,10 @@ start (journal P(edge), scanner regimes) and keeps learning on top of it. Run it
 low --rate: the download shares the link with the live streams.
 """
 import argparse
-import json
 import logging
 import pickle
 import statistics
 import time
-import urllib.request
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
@@ -52,31 +50,71 @@ SIG_KEYS = None   # filled lazily: journal.FEATURE_KEYS values + _base_row input
 
 # ====================================================================== coins
 
-def select_coins(min_volume: float) -> List[Tuple[str, str, Optional[str]]]:
-    """(journal key, futures id, spot id or None) of every trading USDT perpetual above the volume floor."""
-    info = json.load(urllib.request.urlopen('https://fapi.binance.com/fapi/v1/exchangeInfo', timeout=60))
-    tickers = json.load(urllib.request.urlopen('https://fapi.binance.com/fapi/v1/ticker/24hr', timeout=60))
-    spot_info = json.load(urllib.request.urlopen('https://api.binance.com/api/v3/exchangeInfo?permissions=SPOT',
-                                                 timeout=60))
-    spot_ids = {s['symbol'] for s in spot_info.get('symbols', []) if s.get('status') == 'TRADING'}
-    volume = {t['symbol']: float(t.get('quoteVolume') or 0) for t in tickers}
-    excluded = set(CONFIG.exchange.excluded_underlying_types)
-    out = []
-    for s in info.get('symbols', []):
-        if (s.get('contractType') != 'PERPETUAL' or s.get('quoteAsset') != 'USDT' or s.get('status') != 'TRADING'
-                or s.get('underlyingType') in excluded or volume.get(s['symbol'], 0) < min_volume):
-            continue
-        base = s['baseAsset']
-        key = f"{base}/USDT:USDT"
-        spot = f"{base}USDT" if f"{base}USDT" in spot_ids else None
-        if spot is None:
-            for prefix in ('1000000', '1000', '1M'):
-                if base.startswith(prefix) and f"{base[len(prefix):]}USDT" in spot_ids:
-                    spot = f"{base[len(prefix):]}USDT"
-                    break
-        out.append((key, s['symbol'], spot))
-    out.sort(key=lambda c: -volume.get(c[1], 0))
+def _spot_pair(base: str, spot_ids: set) -> Optional[str]:
+    """The Binance spot pair of a futures base (1000PEPE -> PEPEUSDT), else None."""
+    if f"{base}USDT" in spot_ids:
+        return f"{base}USDT"
+    for prefix in ('1000000', '1000', '1M'):
+        if base.startswith(prefix) and f"{base[len(prefix):]}USDT" in spot_ids:
+            return f"{base[len(prefix):]}USDT"
+    return None
+
+
+def eligible_days(daily: np.ndarray, start: date, end: date, min_volume: float) -> List[int]:
+    """
+    Days (epoch day numbers) in [start, end] on which the coin would have passed the universe's volume floor and
+    listing age, from PAST data only: the average daily quote volume of the 30 days before (over the days it traded,
+    at least min_listing_days of them) >= min_volume. Days whose 30 days before hold fewer than 20 known daily candles
+    (the running month has no monthly 1d file) keep the last decision.
+    """
+    if len(daily) == 0:
+        return []
+    by_day = {int(ts // 86_400_000): qv for ts, _, qv in daily}
+    first = min(by_day)
+    min_age = CONFIG.exchange.min_listing_days
+    out: List[int] = []
+    last = False
+    d0, d1 = (start - date(1970, 1, 1)).days, (end - date(1970, 1, 1)).days
+    for day in range(d0, d1 + 1):
+        window = [by_day[k] for k in range(day - 30, day) if k in by_day]
+        if len(window) >= 20 or (day - first < 30 and len(window) >= min_age):
+            last = day - first >= min_age and sum(window) / len(window) >= min_volume
+        if last:
+            out.append(day)
     return out
+
+
+def select_coins(archive, start: date, end: date, min_volume: float) -> List[Tuple[str, str, str, List[int]]]:
+    """
+    (journal key, futures id, spot id, eligible days) of every USDT perpetual the ARCHIVE has - delisted ones included
+    - with a Binance spot pair (the live universe requires one: CONFIG.exchange.require_spot; tokenized stocks and
+    pre-IPO contracts have none) that passed the volume floor on at least one day of the window, judged day by day from
+    the 30 days before it. Today's exchange list and today's 24h volume picked the coins before: delisted coins were
+    missing (survivorship) and a coin that became liquid last week counted for all months (look-ahead).
+    Sorted by volume over the window.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    futures = [s for s in archive.list_symbols('futures')
+               if s.endswith('USDT') and '_' not in s and 'SETTLED' not in s]
+    spot_ids = set(archive.list_symbols('spot'))
+    pairs = [(f, _spot_pair(f[:-4], spot_ids)) for f in futures]
+    pairs = [(f, sp) for f, sp in pairs if sp]
+    since = start - timedelta(days=35)
+
+    def one(item):
+        fut_id, spot_id = item
+        daily = archive.klines_1d('futures', fut_id, since, end)
+        days = eligible_days(daily, start, end, min_volume)
+        window = daily[daily[:, 0] >= (start - date(1970, 1, 1)).days * 86_400_000] if len(daily) else daily
+        return fut_id, spot_id, days, float(window[:, 2].sum()) if len(window) else 0.0
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(one, pairs))
+    out = [(f"{f[:-4]}/USDT:USDT", f, sp, days, vol) for f, sp, days, vol in results if days]
+    out.sort(key=lambda c: -c[4])
+    logger.info(f"pretrain: {len(out)} coins with a spot pair passed the ${min_volume / 1e6:g}M floor on some day "
+                f"({len(pairs)} with a spot pair, {len(futures)} USDT perpetuals in the archive, delisted included)")
+    return [c[:4] for c in out]
 
 
 # ====================================================================== per coin (worker process)
@@ -103,6 +141,12 @@ def _raw_frame(c: np.ndarray, oi: Optional[Dict[int, float]]) -> pl.DataFrame:
     }, schema=RAW_SCHEMA)
 
 
+def closed_minutes(open_ts: np.ndarray, now_ms: float) -> int:
+    """How many 1m candles (by open time) have CLOSED by now_ms: an archive minute holds its whole minute, the live
+    scanner only the seconds already passed, so a running minute must not be read."""
+    return int(np.searchsorted(open_ts, now_ms - MINUTE_MS, side='right'))
+
+
 def _asof(ts: np.ndarray, values: np.ndarray, at: float) -> Optional[float]:
     i = int(np.searchsorted(ts, at, side='right')) - 1
     return float(values[i]) if i >= 0 else None
@@ -113,7 +157,8 @@ def process_coin(job: tuple) -> Optional[Dict]:
     One coin: download, build the live data structures from history, and produce the journal rows the bot would
     have written (without the cross-coin context, added in the main process) plus the market series.
     """
-    key, fut_id, spot_id, start_iso, end_iso, rate = job
+    key, fut_id, spot_id, start_iso, end_iso, rate, days_ok = job
+    days_ok = frozenset(days_ok)
     from history import Archive
     from indicators import (calculate_tier0_metrics, compute_indicators_batch, minute_delta, seasonal_factors,
                             seasonal_scale)
@@ -124,7 +169,7 @@ def process_coin(job: tuple) -> Optional[Dict]:
     from strategies.structure import coin_trend, pools_before, recent_atr, trend_w_of, weekly_ref
 
     import os
-    paths = _paths(fut_id, start_iso, end_iso)
+    paths = _paths(fut_id, start_iso, end_iso, days_ok)
     if all(os.path.exists(v) for v in paths.values()):
         # computed by an earlier (interrupted) run over the same window: resume
         return {'key': key, 'n': pl.scan_parquet(paths['rows']).select(pl.len()).collect().item(), **paths}
@@ -137,7 +182,7 @@ def process_coin(job: tuple) -> Optional[Dict]:
     spot = archive.klines_1m('spot', spot_id, start, end) if spot_id else np.empty((0, 8))
     met = archive.metrics(fut_id, start, end)
     fund = archive.funding(fut_id, start, end)
-    w1 = _weekly_closes(fut_id)
+    w1 = _weekly_closes(archive, fut_id, start, end)
 
     # ---------------------------------------------------------------- 15m / 1h candles, indicators, phases
     c15 = _bucket(fut, QUARTER_MS)
@@ -197,7 +242,7 @@ def process_coin(job: tuple) -> Optional[Dict]:
         # Only minutes CLOSED by now_ms: an archive minute holds its whole minute, while the live scanner sees only
         # the seconds of the running minute that have passed (the full minute after a 15m close leaked up to 55s of
         # future volume and taker flow into rvol_1m / minute_usd / *_cvd_5m)
-        j = int(np.searchsorted(m_ts, now_ms - MINUTE_MS, side='right'))          # minutes opened <= now - 1m
+        j = closed_minutes(m_ts, now_ms)
         minutes = deque(stream_rows(fut, j - 30, j), maxlen=240)
         ticker = deque(((k[0] + 59_999, k[4], 0.0) for k in stream_rows(fut, j - 10, j)), maxlen=400)
         k = int(np.searchsorted(oi_ts, now_ms, side='right')) if len(oi_ts) else 0
@@ -215,7 +260,7 @@ def process_coin(job: tuple) -> Optional[Dict]:
                                     avg_minute_usd=avg_minute)
         m['futures_cvd_5m'] = minute_delta(minutes, now_ms)
         if len(s_ts):
-            js = int(np.searchsorted(s_ts, now_ms - MINUTE_MS, side='right'))
+            js = closed_minutes(s_ts, now_ms)
             m['spot_cvd_5m'] = minute_delta(stream_rows(spot, js - 6, js), now_ms)
         m['whale_net_5m'] = None        # no historical sweeps: the feature is learned live only
         m['volume_24h'] = qv_cum[j] - qv_cum[max(0, j - DAY_MINUTES)]
@@ -377,6 +422,8 @@ def process_coin(job: tuple) -> Optional[Dict]:
         if ts - last_ts < cooldown and rank <= last_rank:
             continue
         last_logged[family] = (ts, rank)
+        if ts // 86_400_000 not in days_ok:
+            continue            # the coin was not in the universe that day (volume floor / listing age, past data)
         r4 = ret_4h(ts, price)
         if r4 is None:
             continue
@@ -392,32 +439,44 @@ def process_coin(job: tuple) -> Optional[Dict]:
         above.append(None if tw is None else float(tw > 0))
     series = series.with_columns(pl.Series('above_w', above, dtype=pl.Float64))
     series.with_columns(pl.lit(key).alias('symbol')).write_parquet(paths['series'])
+    # 5m closes: the label's universe baseline at <= 5 min from any signal (15m put minute rows up to 15 min off)
+    c5 = _bucket(fut, 5 * MINUTE_MS)
+    pl.DataFrame({'timestamp': c5[:, 0].astype(np.int64), 'close': c5[:, 4], 'symbol': [key] * len(c5)}).write_parquet(
+        paths['series5'])
     pl.DataFrame(rows, infer_schema_length=None).write_parquet(paths['rows']) if rows else \
         pl.DataFrame({'ts': []}, schema={'ts': pl.Int64}).write_parquet(paths['rows'])
     return {'key': key, 'n': len(rows), **paths}
 
 
-def _weekly_closes(fut_id: str) -> np.ndarray:
+def _weekly_closes(archive, fut_id: str, start: date, end: date) -> np.ndarray:
     """
-    [close time ms, close] of the futures' weekly candles (REST, weight 1: the archive window is too short for a
-    20-week EMA); empty on failure (trend_w / breadth_w are then None, as for a young listing live).
+    [close time ms, close] of the futures' COMPLETE weekly candles (Monday 00:00 UTC weeks, like Binance's 1w) from the
+    archive's daily candles since ~16 months before the window (weekly_ref needs 21 closed weeks). The archive is
+    point-in-time and reachable where the REST API is not.
     """
-    try:
-        rows = json.load(urllib.request.urlopen(
-            f'https://fapi.binance.com/fapi/v1/klines?symbol={fut_id}&interval=1w&limit=200', timeout=30))
-    except Exception as e:
-        logger.debug(f"pretrain: weekly candles of {fut_id} failed ({e})")
+    daily = archive.klines_1d('futures', fut_id, start - timedelta(days=480), end)
+    if len(daily) == 0:
         return np.empty((0, 2))
-    now_ms = time.time() * 1000
-    return np.asarray([[int(k[6]) + 1, float(k[4])] for k in rows if int(k[6]) < now_ms], dtype=float).reshape(-1, 2)
+    week_ms, offset = 7 * 86_400_000, 4 * 86_400_000          # 1970-01-01 was a Thursday
+    weeks: Dict[int, Tuple[float, float]] = {}
+    for ts, close, _ in daily:
+        start_ms = int((ts - offset) // week_ms * week_ms + offset)
+        if start_ms not in weeks or ts > weeks[start_ms][0]:
+            weeks[start_ms] = (ts, close)
+    out = [[w + week_ms, c] for w, (last_ts, c) in sorted(weeks.items())
+           if last_ts >= w + week_ms - 86_400_000]          # the week's last day is in: the week closed
+    return np.asarray(out, dtype=float).reshape(-1, 2)
 
 
-def _paths(fut_id: str, start_iso: str, end_iso: str) -> Dict[str, str]:
+def _paths(fut_id: str, start_iso: str, end_iso: str, days: frozenset = frozenset()) -> Dict[str, str]:
+    import hashlib
     import os
-    # the logic version is part of the name: rows computed by older signal logic are never resumed
+    # the logic version and the coin's eligible days are part of the name: rows of older signal logic or of another
+    # volume floor are never resumed
+    tag = hashlib.sha1(','.join(map(str, sorted(days))).encode()).hexdigest()[:8]
     stem = os.path.join(CONFIG.pretrain.cache_dir, 'rows',
-                        f"{fut_id}_{start_iso}_{end_iso}_{CONFIG.journal.logic_version}")
-    return {'rows': stem + '.rows.parquet', 'series': stem + '.series.parquet'}
+                        f"{fut_id}_{start_iso}_{end_iso}_{tag}_{CONFIG.journal.logic_version}")
+    return {'rows': stem + '.rows.parquet', 'series': stem + '.series.parquet', 'series5': stem + '.series5.parquet'}
 
 
 def _sig_keys() -> set:
@@ -443,6 +502,24 @@ def _small(sig: Dict) -> Dict:
 
 
 # ====================================================================== market-wide pass (main process)
+
+def _forward_median(series: pl.DataFrame, step_ms: int, horizon_ms: int) -> Tuple[np.ndarray, np.ndarray]:
+    """(grid of candle open times, the median over coins of close[t + horizon] / close[t] - 1 from each candle's close)."""
+    closes = series.select('symbol', 'timestamp', 'close').pivot(on='symbol', index='timestamp', values='close')
+    ts = closes['timestamp'].to_numpy().astype(np.int64)
+    grid = np.arange(ts.min(), ts.max() + step_ms, step_ms, dtype=np.int64)
+    C = np.full((len(grid), closes.width - 1), np.nan, dtype=np.float32)
+    C[((ts - grid[0]) // step_ms).astype(int)] = closes.drop('timestamp').to_numpy().astype(np.float32)
+    k = horizon_ms // step_ms
+    fwd = np.full_like(C, np.nan)
+    fwd[:-k] = C[k:] / C[:-k] - 1
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        med = np.nanmedian(fwd, axis=1)
+    med[np.sum(~np.isnan(fwd), axis=1) < 20] = np.nan
+    return grid, med
+
 
 def _market_series(series: pl.DataFrame) -> Dict[str, object]:
     """
@@ -497,11 +574,13 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
 
     end = datetime.now(timezone.utc).date() - timedelta(days=1)
     start = end - timedelta(days=30 * months)
-    coins = select_coins(min_volume)
+    from history import Archive
+    coins = select_coins(Archive(rate_bytes=rate), start, end, min_volume)
     if limit:
         coins = coins[:limit]
     logger.info(f"pretrain: {len(coins)} coins, {start} .. {end}, {workers} workers, {rate / 1e6:.1f} MB/s total")
-    jobs = [(key, fid, sid, start.isoformat(), end.isoformat(), rate / max(1, workers)) for key, fid, sid in coins]
+    jobs = [(key, fid, sid, start.isoformat(), end.isoformat(), rate / max(1, workers), days)
+            for key, fid, sid, days in coins]
     results: List[Dict] = []
     started = time.time()
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -523,6 +602,17 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
     series = pl.concat([pl.read_parquet(r['series']) for r in results], how='diagonal_relaxed')
     market = _market_series(series)
     grid = market['grid']
+    series5 = pl.concat([pl.read_parquet(r['series5']) for r in results], how='diagonal_relaxed')
+    grid5, fwd5 = _forward_median(series5, 5 * MINUTE_MS, H4_MS)
+    del series5
+
+    def baseline_at(ts_ms: int) -> Optional[float]:
+        """The universe's median 4h move from the last 5m close at or before the signal."""
+        i = (ts_ms // (5 * MINUTE_MS) * 5 * MINUTE_MS - 5 * MINUTE_MS - int(grid5[0])) // (5 * MINUTE_MS)
+        if 0 <= i < len(grid5):
+            v = fwd5[i]
+            return None if v != v else float(v)
+        return None
 
     def at(name: str, t: int) -> Optional[float]:
         i = (t - int(grid[0])) // QUARTER_MS
@@ -534,8 +624,10 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
     regime_model = RegimeModel()
     regime_model.history = RegimeModel.market_features(series)
     del series
-    regime_model.refit()
-    regimes = regime_model.labels_walk_forward()        # known at each candle's time, no look-ahead
+    regimes: Dict[int, str] = {}
+    if len(regime_model.history) >= CONFIG.ml.regime_min_history:     # a --limit run of a few coins has no market
+        regime_model.refit()
+        regimes = regime_model.labels_walk_forward()    # known at each candle's time, no look-ahead
     logger.info(f"pretrain: regimes fitted on {len(regime_model.history)} market candles: "
                 f"{sorted(set(regimes.values()))}")
 
@@ -569,8 +661,9 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
         row['strategy'] = _strategy_of(group_key)
         row['perp_led'] = int(bool(sig.get('perp_led_long') if direction > 0 else sig.get('perp_led_short')))
         row['ret_4h'] = r4
-        # the universe baseline: the median move of every coin over the same 4h, from the close the signal saw
-        baseline = at('fwd_4h', last_closed)
+        # the universe baseline: the median move of every coin over the same 4h, from the last 5m close at or before
+        # the signal (the 15m grid put a minute row's baseline up to 15 min before it)
+        baseline = baseline_at(ts)
         label = label_of(row, baseline)
         if label is None:
             continue
