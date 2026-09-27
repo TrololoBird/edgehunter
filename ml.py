@@ -388,6 +388,12 @@ class SuccessModel:
                 x[key + '_sign'] = float(np.sign(value) * direction)
         if get('vol_ratio') is not None:
             x['vol_ratio'] = float(get('vol_ratio'))
+        # the weekly trend in the signal's direction (clipped: a fresh listing's first weeks give |z| of 10+) and the
+        # market's weekly breadth around its middle, in the signal's direction
+        if get('trend_w') is not None and direction:
+            x['trend_w_dir'] = max(-5.0, min(5.0, float(get('trend_w')))) * direction
+        if get('breadth_w') is not None and direction:
+            x['breadth_w_dir'] = (float(get('breadth_w')) - 0.5) * direction
         if get('volume_24h'):
             x['volume_24h_log'] = math.log10(float(get('volume_24h')))
         # entry confirmations (strategies/confirm.py): +1 present, -1 absent, missing = no reading

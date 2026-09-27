@@ -121,7 +121,7 @@ def process_coin(job: tuple) -> Optional[Dict]:
     from scorer import PhaseScorer
     from strategies.breakout import breakout_at_close
     from strategies.level import sweep_at_close
-    from strategies.structure import coin_trend, pools_before, recent_atr
+    from strategies.structure import coin_trend, pools_before, recent_atr, trend_w_of, weekly_ref
 
     import os
     paths = _paths(fut_id, start_iso, end_iso)
@@ -137,6 +137,7 @@ def process_coin(job: tuple) -> Optional[Dict]:
     spot = archive.klines_1m('spot', spot_id, start, end) if spot_id else np.empty((0, 8))
     met = archive.metrics(fut_id, start, end)
     fund = archive.funding(fut_id, start, end)
+    w1 = _weekly_closes(fut_id)
 
     # ---------------------------------------------------------------- 15m / 1h candles, indicators, phases
     c15 = _bucket(fut, QUARTER_MS)
@@ -218,9 +219,20 @@ def process_coin(job: tuple) -> Optional[Dict]:
         m['volume_24h'] = qv_cum[j] - qv_cum[max(0, j - DAY_MINUTES)]
         return m
 
+    w1_refs: Dict[int, Optional[tuple]] = {}
+
+    def weekly_at(now_ms: float) -> Optional[tuple]:
+        """weekly_ref of the weeks CLOSED before now_ms (as the live bot has it after each weekly close)."""
+        i = int(np.searchsorted(w1[:, 0], now_ms, side='right')) if len(w1) else 0     # weeks closed by now
+        if i not in w1_refs:
+            w1_refs[i] = weekly_ref(w1[:i, 1].tolist()) if i else None
+        return w1_refs[i]
+
     def context_at(now_ms: float) -> Dict:
         """The coin's own context (the market's is added in the main process)."""
         out: Dict = {}
+        k = int(np.searchsorted(m_ts, now_ms - MINUTE_MS, side='right')) - 1
+        out['trend_w'] = trend_w_of(weekly_at(now_ms), float(fut[k, 4])) if k >= 0 else None
         h = int(np.searchsorted(h1_close_ts, now_ms, side='right'))
         out['coin_trend'] = coin_trend(h1_list[max(0, h - 200):h]) if h else None
         q = int(np.searchsorted(c15[:, 0] + QUARTER_MS, now_ms, side='right'))
@@ -371,10 +383,31 @@ def process_coin(job: tuple) -> Optional[Dict]:
 
     # On disk, not returned: ~500k rows of all coins as Python objects in the main process were ~2 GB
     series = fut_all.select('timestamp', 'close', 'ret_std', 'predicted_funding', 'oi_change_short', 'rvol')
+    # above the weekly EMA at each candle's close (the market's weekly breadth, like the scanner's breadth_w)
+    above = []
+    for t, c in zip(series['timestamp'].to_list(), series['close'].to_list()):
+        tw = trend_w_of(weekly_at(t + QUARTER_MS), c)
+        above.append(None if tw is None else float(tw > 0))
+    series = series.with_columns(pl.Series('above_w', above, dtype=pl.Float64))
     series.with_columns(pl.lit(key).alias('symbol')).write_parquet(paths['series'])
     pl.DataFrame(rows, infer_schema_length=None).write_parquet(paths['rows']) if rows else \
         pl.DataFrame({'ts': []}, schema={'ts': pl.Int64}).write_parquet(paths['rows'])
     return {'key': key, 'n': len(rows), **paths}
+
+
+def _weekly_closes(fut_id: str) -> np.ndarray:
+    """
+    [close time ms, close] of the futures' weekly candles (REST, weight 1: the archive window is too short for a
+    20-week EMA); empty on failure (trend_w / breadth_w are then None, as for a young listing live).
+    """
+    try:
+        rows = json.load(urllib.request.urlopen(
+            f'https://fapi.binance.com/fapi/v1/klines?symbol={fut_id}&interval=1w&limit=200', timeout=30))
+    except Exception as e:
+        logger.debug(f"pretrain: weekly candles of {fut_id} failed ({e})")
+        return np.empty((0, 2))
+    now_ms = time.time() * 1000
+    return np.asarray([[int(k[6]) + 1, float(k[4])] for k in rows if int(k[6]) < now_ms], dtype=float).reshape(-1, 2)
 
 
 def _paths(fut_id: str, start_iso: str, end_iso: str) -> Dict[str, str]:
@@ -436,11 +469,20 @@ def _market_series(series: pl.DataFrame) -> Dict[str, object]:
     btc = C[:, symbols.index('BTC/USDT:USDT')] if 'BTC/USDT:USDT' in symbols else np.full(len(grid), np.nan)
     btc_1h = np.full(len(grid), np.nan)
     btc_1h[4:] = btc[4:] / btc[:-4] - 1
+    # the share of coins above their weekly EMA (scanner: breadth_w); series cached by an older run have no above_w
+    breadth = np.full(len(grid), np.nan)
+    if 'above_w' in series.columns:
+        above = series.select('symbol', 'timestamp', 'above_w').pivot(on='symbol', index='timestamp', values='above_w')
+        A = np.full((len(grid), above.width - 1), np.nan)
+        A[((above['timestamp'].to_numpy().astype(np.int64) - grid[0]) // QUARTER_MS).astype(int)] =             above.drop('timestamp').to_numpy().astype(float)
+        n = np.sum(~np.isnan(A), axis=1)
+        with np.errstate(all='ignore'):
+            breadth = np.where(n >= 20, np.nansum(A, axis=1) / np.maximum(n, 1), np.nan)
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         return {'grid': grid, 'mkt_1h': median(back(4)), 'mkt_4h': median(back(16)), 'btc_1h': btc_1h,
-                'fwd_4h': median(fwd)}
+                'fwd_4h': median(fwd), 'breadth_w': breadth}
 
 
 def run(months: int, min_volume: float, workers: int, rate: float, limit: Optional[int] = None) -> Dict:
@@ -474,7 +516,7 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
                             f"({sum(r['n'] for r in results)} rows so far)")
 
     # ---------------------------------------------------------------- market series, regimes
-    series = pl.concat([pl.read_parquet(r['series']) for r in results], how='vertical_relaxed')
+    series = pl.concat([pl.read_parquet(r['series']) for r in results], how='diagonal_relaxed')
     market = _market_series(series)
     grid = market['grid']
 
@@ -511,6 +553,7 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
         last_closed = (ts - 5_000) // QUARTER_MS * QUARTER_MS - QUARTER_MS      # the candle that just closed
         sig['mkt_1h'], sig['mkt_4h'] = at('mkt_1h', last_closed), at('mkt_4h', last_closed)
         sig['btc_1h'] = at('btc_1h', last_closed)
+        sig['breadth_w'] = at('breadth_w', last_closed)
         sig['regime'] = regimes.get(last_closed)
         while recent and ts - recent[0][0] > CONFIG.market.cluster_window_sec * 1000:
             recent.popleft()

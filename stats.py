@@ -328,6 +328,15 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
     ('coin 1h trend vs the signal', lambda r: None if _col(r, 'coin_trend') is None or not _col(r, 'direction') else
         ('with' if _col(r, 'coin_trend') * _col(r, 'direction') > 0 else
          'against' if _col(r, 'coin_trend') * _col(r, 'direction') < 0 else 'none')),
+    # the weekly trend (price vs the weekly EMA in weekly std) and the market's weekly breadth, both vs the signal:
+    # touches in a strong weekly trend bounced 55-58% vs ~50% (history test 2026-09-27) - does it carry to 4h?
+    ('coin weekly trend vs the signal', lambda r: None if _col(r, 'trend_w') is None or not _col(r, 'direction') else
+        ('strongly with (>= 1 sd)' if _col(r, 'trend_w') * _col(r, 'direction') >= 1 else
+         'with (0..1 sd)' if _col(r, 'trend_w') * _col(r, 'direction') >= 0 else
+         'against (0..-1 sd)' if _col(r, 'trend_w') * _col(r, 'direction') > -1 else 'strongly against (<= -1 sd)')),
+    ('market weekly breadth vs the signal', lambda r: None if _col(r, 'breadth_w') is None or not _col(r, 'direction') else
+        (('long' if _col(r, 'direction') > 0 else 'short') + ' / ' +
+         ('broad >= 60%' if _col(r, 'breadth_w') >= 0.6 else 'narrow <= 30%' if _col(r, 'breadth_w') <= 0.3 else 'mixed'))),
     # eng-4 (audit): time of day (volume / volatility peak at the US open), weekends (spreads x2, volume -20-40%),
     # a pullback zone on a real map level vs Fibonacci alone, what the sweep candle liquidated, funding vs the signal
     ('session (UTC)', lambda r: None if _col(r, 'hour_utc') is None else

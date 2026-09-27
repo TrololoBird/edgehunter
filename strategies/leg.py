@@ -17,7 +17,7 @@ from config import CONFIG
 from levels import _leg_levels, fib_price, find_impulse, reached_after, retracement_of
 from strategies.base import TRIGGER_MINUTES, PlanInput, Strategy, base_plan
 from strategies.geometry import cap_for_rr, select_targets
-from zones import RawLevel, merge, stop_beyond, support_in
+from zones import RawLevel, is_structural, merge, stop_beyond, support_in
 
 
 def _leg_anchor(impulse: Dict) -> Dict:
@@ -79,8 +79,13 @@ class LegContinuation(Strategy):
         fib_lo, fib_hi = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
         support = support_in(zones, fib_lo, fib_hi, d)
         half = CONFIG.zones.zone_half_atr * impulse['atr']
+        stop_ref = stop_ref_src = None
         if support is not None:
             level_lo, level_hi, zone_src = support.lo, support.hi, support.label
+            if is_structural(support):
+                # the trade's structure is this zone (its edge drawn by wicks): the stop goes beyond all of it, not
+                # beyond the entry trigger's 5m low inside it
+                stop_ref, stop_ref_src = (support.lo if d > 0 else support.hi), f"beyond the zone ({support.label})"
         else:
             ema = _ema_of_tf(x, impulse['tf'], 20)
             if ema is None or not fib_lo <= ema <= fib_hi:
@@ -98,6 +103,7 @@ class LegContinuation(Strategy):
         return base_plan(x, self.name, _leg_anchor(impulse), tf, trigger_minutes=TRIGGER_MINUTES.get(tf, 5),
                          leg_atr=impulse['atr'], entry='pullback', zone_lo=zone[0], zone_hi=zone[1], zone_src=zone_src,
                          invalid=impulse['start'], reset=impulse['end'], missable=False, retarget=True,
+                         stop_ref=stop_ref, stop_ref_src=stop_ref_src,
                          intent='extension', fillers=tuple(extensions), fill_label='fib ext', targets=targets,
                          target_src=sources, zones=zones, key=(impulse['end_ts'], impulse['end']), impulse=impulse)
 

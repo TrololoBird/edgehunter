@@ -142,6 +142,9 @@ EXTRA_COLUMNS = {
     # eng-3: entry confirmations (strategies/confirm.py, JSON {name: true / false / null | order-flow kind}) and how
     # many were positive
     'confirms': 'TEXT', 'conf_n': 'INTEGER',
+    # the coin's weekly trend (distance from its weekly EMA in weekly standard deviations) and the universe's share
+    # above its weekly EMA: context, never a filter (the weekly EMA tested as no level of its own, 2026-09-27)
+    'trend_w': 'REAL', 'breadth_w': 'REAL',
 }
 
 FEATURE_KEYS = {
@@ -156,6 +159,7 @@ FEATURE_KEYS = {
     'coin_trend': 'coin_trend', 'vol_ratio': 'vol_ratio', 'volume_24h': 'volume_24h',
     'agg_funding_8h': 'agg_funding_8h', 'ls_bybit': 'ls_bybit', 'ls_okx': 'ls_okx', 'hour_utc': 'hour_utc',
     'weekend': 'weekend', 'liq_on_wick': 'liq_on_wick', 'oi_change_sweep': 'oi_change_sweep', 'adx': 'adx',
+    'trend_w': 'trend_w', 'breadth_w': 'breadth_w',
 }
 
 # (setup, regime) -> (results, upper end of the 90% interval of its 4h Edge): refreshed hourly from the journal

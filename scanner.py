@@ -26,7 +26,7 @@ from notifier import Notifier
 from scorer import PhaseScorer, score_closed, signals_from_rows
 from strategies import confirm
 from strategies.detect import LiveDetector
-from strategies.structure import PART_COLUMNS, build_maps, part_candles
+from strategies.structure import PART_COLUMNS, build_maps, part_candles, trend_w_of
 from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
@@ -697,10 +697,15 @@ class Scanner:
         r1h = last['r1h'].drop_nulls()
         r4h = last['r4h'].drop_nulls()
         btc = last.filter(pl.col('symbol') == 'BTC/USDT:USDT')
+        # Weekly breadth: the share of the universe above its weekly EMA (a slow market state the 1h regimes miss;
+        # 5-15% in April-July 2026, 75% in September)
+        trends = [trend_w_of(md.w1_ref, self._price_of(s)) for s, md in self.market_data.items()]
+        trends = [t for t in trends if t is not None]
         self.market_state = {
             'mkt_1h': float(r1h.median()) if len(r1h) else None,
             'mkt_4h': float(r4h.median()) if len(r4h) else None,
             'btc_1h': float(btc['r1h'][0]) if btc.height and btc['r1h'][0] is not None else None,
+            'breadth_w': sum(t > 0 for t in trends) / len(trends) if len(trends) >= 20 else None,
         }
 
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
@@ -709,6 +714,7 @@ class Scanner:
         ctx = self.detector.context.get(symbol)
         sig['coin_trend'] = ctx.trend if ctx is not None else None
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
+        sig['trend_w'] = trend_w_of(md.w1_ref, self._price_of(symbol))
         sig['volume_24h'] = md.quote_volume_24h or None
         sig['tier2_active'] = md.trades_subscribed
         sig['futures_cvd'] = sig.get('futures_cvd_5m', 0.0)

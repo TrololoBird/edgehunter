@@ -359,8 +359,11 @@ class LevelsConfig:
     ltf_minutes: int = 5
     ltf_break_lookback: int = 5
     ltf_flow_candles: int = 3
-    # Stop beyond the LTF extreme (reversals: beyond the reversed leg's end too) by this many 15m ATRs
-    stop_buffer_atr: float = 0.1
+    # Stop = structure + a volatility buffer (hybrid): beyond the farthest of the structural zone the entry comes from
+    # (its wick-defined edge), the deepest wick that tested it and a stop pool right behind, then by this many ATRs of
+    # the anchor's timeframe. 0.1 sat where stops cluster (Osler, NY Fed SR150) and inside the 0.1-1.0 ATR pierce this
+    # bot itself calls a sweep: 47% of 15m-swing stops at 0.1 ATR were followed by the +2 ATR move (history, 2026-09)
+    stop_buffer_atr: float = 0.3
     # ... and never closer than this many 15m ATRs to the entry: live, stops < 1 ATR (the low of 2-3 5m candles)
     # were hit on 8 of 10 entries while their paper R:R read 9-23
     min_stop_atr: float = 1.0
@@ -475,6 +478,11 @@ class StrategiesConfig:
     # The coin's own trend (1h): close vs EMA(trend_ema) and the EMA's slope over trend_slope_bars bars
     trend_ema: int = 20
     trend_slope_bars: int = 4
+    # The coin's weekly trend (context only, journaled as trend_w / breadth_w): distance of the price from the EMA of
+    # the last trend_w_ema CLOSED weekly closes in standard deviations of the weekly log returns over the same weeks.
+    # Tested 2026-09-27 on 120 coins' full daily history: the weekly EMA is no level of its own (touches / crosses
+    # behave like parallel lines EMA x 0.8..1.2), the trend a touch happens in is what differs
+    trend_w_ema: int = 20
     # Stop floor = levels.min_stop_atr x max(ATR14, ATR of the last recent_atr_candles 15m candles): ATR14 lags a
     # waking market (live: the last hour's ATR was 26% above ATR14 when the stops were hit)
     recent_atr_candles: int = 4
@@ -626,7 +634,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-5"
+    logic_version: str = "eng-6"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

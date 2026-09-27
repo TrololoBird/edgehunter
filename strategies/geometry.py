@@ -113,12 +113,14 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
     if plan.get('stop_mid') is not None:
         base, src = plan['stop_mid'], plan.get('stop_mid_src', 'range middle')
     else:
-        ref = plan.get('stop_ref')
-        if ref is None:
+        # the farthest of the strategy's structural reference (a zone's edge, the anchor's extreme) and the deepest
+        # wick that tested it since price came into the zone (the trigger's extreme)
+        ref, label = plan.get('stop_ref'), plan.get('stop_ref_src') or 'beyond the swing'
+        if ref is None or (extreme is not None and direction * (ref - extreme) > 0):
+            if ref is not None:
+                label = 'beyond the test wick'
             ref = extreme
-        elif extreme is not None:
-            ref = min(ref, extreme) if direction > 0 else max(ref, extreme)
-        base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr)
+        base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label)
     stop = base - direction * cfg.stop_buffer_atr * (plan.get('leg_atr') or atr)
     floor = stop_floor(atr, plan.get('recent_atr'))
     if direction * (entry - stop) < floor:

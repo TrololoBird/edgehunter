@@ -109,6 +109,10 @@ class MarketData:
     # week, sessions, 1h swings) and the coin's own trend for the strategies; [ts, o, h, l, c, quote_vol, taker_buy]
     h1: list = field(default_factory=list)
     h1_loaded: float = 0.0
+    # Weekly trend reference (strategies.structure.weekly_ref: EMA of the closed weekly closes, weekly return std), a
+    # context feature only (trend_w / breadth_w in the journal); reloaded after each weekly close
+    w1_ref: Optional[tuple] = None
+    w1_loaded: float = 0.0
 
     def frame(self, market: str) -> Optional[pl.DataFrame]:
         return self.spot_df if market == 'spot' else self.futures_df
@@ -1126,6 +1130,42 @@ class DataFetcher:
             now = time.time()
             await asyncio.sleep(max(60.0, 3600 - now % 3600 + 60))
 
+    async def _weekly_candles_loop(self):
+        """
+        Weekly candles of every universe coin (limit 60, weight 1): the weekly trend reference (weekly_ref), loaded
+        once per weekly candle (Monday 00:00 UTC) and for coins that join; hourly check, ~150 weight a week.
+        """
+        from strategies.structure import weekly_ref
+        while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
+            await asyncio.sleep(10)
+        while self._running:
+            now = time.time()
+            week_start = (now // 86400 - (now // 86400 + 3) % 7) * 86400      # this week's Monday 00:00 UTC
+            symbols = [s for s, md in self.markets.items() if md.w1_loaded < week_start + 60]
+            sem = asyncio.Semaphore(4)
+
+            async def one(symbol: str):
+                binance_symbol = self._ccxt_to_binance_symbol(symbol)
+                md = self.markets.get(symbol)
+                if not binance_symbol or md is None:
+                    return
+                async with sem:
+                    try:
+                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                                     {'symbol': binance_symbol, 'interval': '1w', 'limit': 60},
+                                                     priority=2, weight=1)
+                    except Exception as e:
+                        logger.debug(f"weekly candles failed for {symbol}: {e}")
+                        return
+                md.w1_ref = weekly_ref([float(k[4]) for k in self._closed_only(rows or [])])
+                md.w1_loaded = time.time()
+
+            if symbols and now >= week_start + 60:
+                await asyncio.gather(*(one(s) for s in symbols))
+                logger.info(f"Weekly trend: {sum(1 for s in symbols if self.markets.get(s) and self.markets[s].w1_ref)} "
+                            f"of {len(symbols)} coins have >= {CONFIG.strategies.trend_w_ema} closed weeks")
+            await asyncio.sleep(3600)
+
     async def _seasonal_loop(self):
         """
         Each coin's time-of-day volume / volatility profile from its last 4 weeks of 1h candles (limit 672, weight 5),
@@ -1307,6 +1347,7 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._binance_rest_tickers_loop()))
         self._tasks.append(asyncio.create_task(self._hourly_candles_loop()))
         self._tasks.append(asyncio.create_task(self._seasonal_loop()))
+        self._tasks.append(asyncio.create_task(self._weekly_candles_loop()))
 
     async def _start_binance_streams(self, symbols: List[str]):
         ids = {'spot': [], 'futures': []}

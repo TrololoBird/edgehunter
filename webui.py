@@ -125,6 +125,9 @@ def context_parts(sig: Dict) -> List[str]:
         parts.append(f"Coinbase {sig['cb_premium'] * 100:+.2f}%")
     if sig.get('coin_trend'):
         parts.append(f"coin 1h trend {'up' if sig['coin_trend'] > 0 else 'down'}")
+    if sig.get('trend_w') is not None:
+        parts.append(f"weekly EMA {sig['trend_w']:+.1f} sd" +
+                     (f", market {sig['breadth_w'] * 100:.0f}% above weekly EMA" if sig.get('breadth_w') is not None else ''))
     if sig.get('mkt_1h') is not None:
         parts.append(f"market 1h {sig['mkt_1h'] * 100:+.2f}%" + (f", BTC {sig['btc_1h'] * 100:+.2f}%" if sig.get('btc_1h') is not None else ''))
     if (sig.get('market_crowd') or 0) >= CONFIG.market.cluster_min:

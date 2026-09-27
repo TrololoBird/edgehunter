@@ -37,6 +37,10 @@ DAY_MS = 24 * HOUR_MS
 # Resting orders / stops still there. 'liq_hit' (liquidations that already happened) is a level, not a pool: the
 # stops there are gone, so stops are not pushed beyond it and TP3 does not aim for it
 POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
+# Price-action levels whose edge the market drew with wicks (swings, equal highs / lows, previous day / week and
+# sessions, a range's edges, round numbers) or resting size that stayed (book liquidity bands): a stop belongs beyond
+# such a zone. VWAP, volume profile, Fibonacci and estimated liquidations have no 'broken here' edge.
+STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round', 'book')
 
 
 @dataclass
@@ -378,6 +382,10 @@ def is_pool(zone: Zone) -> bool:
     return any(k in POOL_KINDS for k in zone.kinds)
 
 
+def is_structural(zone: Zone) -> bool:
+    return any(k in STRUCTURE_KINDS for k in zone.kinds)
+
+
 def targets(zones: List[Zone], entry: float, direction: int, atr: float) -> List[Tuple[float, str]]:
     """
     Up to three targets beyond `entry`: TP1 / TP2 = the first zones strong enough to stall price (min_strength),
@@ -407,7 +415,8 @@ def targets(zones: List[Zone], entry: float, direction: int, atr: float) -> List
     return out
 
 
-def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction: int, atr: float) -> Tuple[float, str]:
+def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction: int, atr: float,
+                label: str = 'beyond the swing') -> Tuple[float, str]:
     """
     Stop base: the invalidation price, pushed beyond a stop pool / liquidation cluster that sits just behind it
     (within stop_pool_atr ATR), so a routine sweep of that pool does not take the stop, as long as the risk stays
@@ -421,7 +430,7 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
         base = far.lo if direction > 0 else far.hi
         if abs(entry - base) <= cfg.max_stop_atr * atr:
             return base, f"beyond {far.label}"
-    return invalidation, 'beyond the swing'
+    return invalidation, label
 
 
 def support_in(zones: List[Zone], lo: float, hi: float, direction: int) -> Optional[Zone]:

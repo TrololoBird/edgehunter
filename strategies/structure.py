@@ -62,6 +62,34 @@ def coin_trend(candles_1h: Sequence[Sequence[float]]) -> int:
     return 0
 
 
+def weekly_ref(closes_1w: Sequence[float]) -> Optional[Tuple[float, float]]:
+    """
+    (EMA(trend_w_ema) of CLOSED weekly closes, std of their weekly log returns over the same number of weeks), or None
+    with fewer weeks than the EMA's period (a young listing has no weekly trend yet).
+    """
+    import math
+    n = CONFIG.strategies.trend_w_ema
+    closes = [c for c in closes_1w if c > 0]
+    if len(closes) < n + 1:
+        return None
+    k = 2 / (n + 1)
+    ema = closes[0]
+    for c in closes[1:]:
+        ema += k * (c - ema)
+    rets = [math.log(b / a) for a, b in zip(closes[-n - 1:-1], closes[-n:])]
+    mean = sum(rets) / len(rets)
+    std = (sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)) ** 0.5
+    return (ema, std) if std > 0 else None
+
+
+def trend_w_of(ref: Optional[Tuple[float, float]], price: Optional[float]) -> Optional[float]:
+    """The price's distance from the weekly EMA in weekly standard deviations (+ above, - below)."""
+    import math
+    if not ref or not price or price <= 0:
+        return None
+    return math.log(price / ref[0]) / ref[1]
+
+
 def _swings_with_ts(candles: Sequence[Sequence[float]], width: int, bar_ms: int) -> List[Pool]:
     """Intact fractal swings (no later CLOSE beyond) with the time the fractal completed."""
     n = len(candles)
