@@ -1000,7 +1000,8 @@ class DataFetcher:
             return False
         md.htf_klines = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
                          for k in self._closed_only(klines or [])]
-        md.htf_oi = [(int(r['timestamp']), float(r.get('sumOpenInterestValue') or 0.0)) for r in (oi or [])]
+        # OI in COINS: in USD a rally with no new contract read as "positions opened" (phantom liquidation clusters)
+        md.htf_oi = [(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in (oi or [])]
         md.htf_5m = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
                      for k in self._closed_only(k5 or [])]
         md.htf_loaded = time.time()

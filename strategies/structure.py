@@ -9,6 +9,7 @@ A coin's market structure for the strategies, rebuilt after every closed 15m can
 - the events of the candle that just closed (a sweep of a pool, a breakout accepted), detected here so the loop
   never scans 300 coins' candles.
 """
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -216,7 +217,10 @@ def build_maps(jobs: List[tuple]) -> Dict[str, tuple]:
             profile = candles_4d or candles_1h[-96:]
             raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile)
             context = build_context(candles, candles_1h, atr, merge(raw, atr), now_ms) if with_context else None
-        except Exception:
+        except Exception as e:
+            # a coin without a map has no levels / pools / events: say so instead of dropping it silently (the worker
+            # process has no logging config: WARNING goes to its stderr, the bot's console)
+            logging.getLogger(__name__).warning(f"Level map of {symbol} failed: {type(e).__name__} {e}")
             continue
         out[symbol] = (raw, context)
     return out

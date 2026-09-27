@@ -50,6 +50,7 @@ class RawLevel:
     label: str
     side: int = 0          # +1 a high / resistance-type level, -1 a low / support-type, 0 either
     size: float = 0.0      # USD for liquidation levels
+    ts: int = 0            # open time of the candle that made the level (swings), 0 = unknown
 
 
 @dataclass
@@ -93,9 +94,9 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
         h, l = candles[i][2], candles[i][3]
         around = candles[i - width:i] + candles[i + 1:i + 1 + width]
         if all(c[2] < h for c in around) and max_after[i + 1] <= h:
-            out.append(RawLevel(h, kind, f"{tf} high", +1))
+            out.append(RawLevel(h, kind, f"{tf} high", +1, ts=int(candles[i][0])))
         if all(c[3] > l for c in around) and min_after[i + 1] >= l:
-            out.append(RawLevel(l, kind, f"{tf} low", -1))
+            out.append(RawLevel(l, kind, f"{tf} low", -1, ts=int(candles[i][0])))
     return out
 
 
@@ -104,20 +105,23 @@ def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr:
     tol = CONFIG.zones.equal_tolerance_atr * atr
     out: List[RawLevel] = []
     for side in (+1, -1):
-        prices = sorted(l.price for l in levels if l.side == side)
-        group: List[float] = []
-        for p in prices + [None]:
-            if p is not None and group and p - group[0] <= tol:
-                group.append(p)
+        same = sorted((l for l in levels if l.side == side), key=lambda l: l.price)
+        group: List[RawLevel] = []
+        for level in same + [None]:
+            if level is not None and group and level.price - group[0].price <= tol:
+                group.append(level)
                 continue
             if len(group) >= 2:
-                edge = max(group) if side > 0 else min(group)
-                # Swept when a later candle traded beyond the pool (checked on the recent candles)
-                recent = candles[-12:]
-                swept = any(c[2] > edge + tol for c in recent) if side > 0 else any(c[3] < edge - tol for c in recent)
+                edge = max(l.price for l in group) if side > 0 else min(l.price for l in group)
+                # Swept when a candle after the latest swing of the group traded beyond the pool (the last 12 candles
+                # when the swings carry no time)
+                latest = max(l.ts for l in group)
+                after = [c for c in candles if c[0] > latest] if latest else candles[-12:]
+                swept = any(c[2] > edge + tol for c in after) if side > 0 else any(c[3] < edge - tol for c in after)
                 if not swept:
-                    out.append(RawLevel(edge, 'equal', f"{'EQH' if side > 0 else 'EQL'}×{len(group)}", side))
-            group = [p] if p is not None else []
+                    out.append(RawLevel(edge, 'equal', f"{'EQH' if side > 0 else 'EQL'}×{len(group)}", side,
+                                        ts=latest))
+            group = [level] if level is not None else []
     return out
 
 
@@ -238,7 +242,11 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
 
 def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequence[Tuple[int, float]],
                            atr: float) -> List[RawLevel]:
-    """Estimated liquidation clusters from 1h OI changes (see the module docstring). Sizes in USD."""
+    """
+    Estimated liquidation clusters from 1h OI changes (see the module docstring). `oi_1h` is OI in COINS (contracts x
+    contract size): OI in USD rises with the price alone and read every rally as new positions. Clusters are kept in
+    coins; the sizes returned are USD at the last close.
+    """
     cfg = CONFIG.zones
     if len(candles_1h) < 10 or len(oi_1h) < 10 or not atr:
         return []
@@ -277,10 +285,13 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
     if not prev_oi:
         return []
     floor = cfg.liq_min_oi_share * prev_oi
+    last_price = candles_1h[-1][4]
     out = []
     ranked = sorted(clusters.items(), key=lambda kv: -kv[1])
-    for (bucket, side), usd in [kv for kv in ranked if kv[0][1] > 0][:cfg.liq_max_per_side] +             [kv for kv in ranked if kv[0][1] < 0][:cfg.liq_max_per_side]:
-        if usd >= floor:
+    for (bucket, side), coins in [kv for kv in ranked if kv[0][1] > 0][:cfg.liq_max_per_side] + \
+            [kv for kv in ranked if kv[0][1] < 0][:cfg.liq_max_per_side]:
+        if coins >= floor:
+            usd = coins * last_price
             who = 'longs' if side > 0 else 'shorts'
             out.append(RawLevel((bucket + 0.5) * step, 'liq_est', f"liq est {who} {_usd(usd)}", -side, usd))
     return out

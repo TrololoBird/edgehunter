@@ -374,6 +374,9 @@ class LevelsConfig:
     # Manual execution: the journal replays entries filled this long after the trigger, plus slippage
     fill_delay_sec: int = 30
     slippage_bps: float = 5.0
+    # A target (a resting limit order) counts as filled in the journal's replay only once price traded this far
+    # THROUGH it: a touch fills only part of the queue (backtests that fill limits on a touch overstate the result)
+    target_through_bps: float = 2.0
     # Spring "test": average 1m volume of the pullback <= this share of the spring candle's average minute
     spring_test_volume_ratio: float = 0.6
     # Lifetimes: waiting for the pullback, waiting for the trigger inside the zone, managing the trade
@@ -608,6 +611,20 @@ class VenuesConfig:
 
 
 @dataclass(frozen=True)
+class RiskConfig:
+    """
+    Position sizing shown on an entered card (webui.sizing_view): information for the manual trader, never an order.
+    - max leverage: the isolated-margin liquidation (about 1/L - maintenance away from the entry) stays at least
+      liq_stop_margin x the stop distance away, so a gap through the stop is not a liquidation;
+    - position size: only with account_usd > 0 (config.local.toml [risk]); notional so that the stop loses risk_pct of
+      the account including the round-trip execution cost.
+    """
+    account_usd: float = 0.0
+    risk_pct: float = 1.0
+    liq_stop_margin: float = 1.5
+
+
+@dataclass(frozen=True)
 class NotifyConfig:
     """Optional notifications for a manual trader away from the screen (off by default)."""
     enabled: bool = False
@@ -634,7 +651,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-6"
+    logic_version: str = "eng-7"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
@@ -688,6 +705,7 @@ class AppConfig:
     positioning: PositioningConfig = field(default_factory=PositioningConfig)
     venues: VenuesConfig = field(default_factory=VenuesConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
+    risk: RiskConfig = field(default_factory=RiskConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     ml: MLConfig = field(default_factory=MLConfig)
     pretrain: PretrainConfig = field(default_factory=PretrainConfig)

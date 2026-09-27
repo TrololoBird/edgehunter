@@ -135,7 +135,14 @@ class WyckoffStrategy(Strategy):
         if x.direction < 0 or x.df is None:
             return None
         if x.setup == 'BULL B':
-            return x.sig.get('prior_range_high') or None
+            # the range the spring swept, from the FUTURES frame (the scored row's prior_range_high is in spot units
+            # for coins with a spot pair: 1000x off for 1000PEPE-type contracts, so the target was silently dropped)
+            spring_ts = x.sig.get('candle_ts')
+            if spring_ts is not None and 'timestamp' in x.df.columns:
+                before = x.df.filter(pl.col('timestamp') < spring_ts)['high'].tail(CONFIG.metrics.spring_lookback)
+                if before.len() >= CONFIG.metrics.spring_lookback // 2:
+                    return float(before.max()) or None
+            return None if x.sig.get('has_spot') else (x.sig.get('prior_range_high') or None)
         if x.setup == 'BULL A':
             window = CONFIG.metrics.price_flat_window
             return max(x.df['high'].tail(window + 1).head(window).to_list() or [0.0]) or None

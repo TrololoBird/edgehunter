@@ -175,6 +175,31 @@ def _anchor_view(anchor: Optional[Dict]) -> Optional[Dict]:
     return {k: (v if isinstance(v, str) else _num(v)) for k, v in anchor.items()}
 
 
+def sizing_view(levels: Optional[Dict], direction: int, funding_8h: Optional[float]) -> Optional[Dict]:
+    """
+    Sizing facts of an entry for a manual trader (CONFIG.risk): the stop distance, the highest isolated leverage whose
+    liquidation stays liq_stop_margin x the stop distance away, the funding the position pays (+) or receives (-) per
+    8h at the current rate, and, with an account size configured, the notional and margin for risk_pct of it.
+    """
+    if not levels or not levels.get('entry') or levels.get('sl') is None or not direction:
+        return None
+    from strategies.geometry import cost_of
+    cfg = CONFIG.risk
+    entry, sl = float(levels['entry']), float(levels['sl'])
+    stop_frac = abs(entry - sl) / entry
+    if stop_frac <= 0:
+        return None
+    # isolated margin: liquidation about (1/L - maintenance) from the entry
+    max_lev = 1.0 / (cfg.liq_stop_margin * stop_frac + CONFIG.zones.liq_maintenance)
+    out = {'stop_pct': stop_frac, 'max_leverage': max(1.0, math.floor(max_lev)),
+           'funding_8h': (direction * funding_8h) if funding_8h is not None else None}
+    if cfg.account_usd > 0:
+        risk_usd = cfg.account_usd * cfg.risk_pct / 100
+        notional = risk_usd / (stop_frac + cost_of(entry) / entry)
+        out.update(risk_usd=risk_usd, notional_usd=notional, margin_usd=notional / out['max_leverage'])
+    return out
+
+
 def card_view(s, now: float) -> Dict:
     plan = s.plan or {}
     lv = s.levels or {}
@@ -198,6 +223,7 @@ def card_view(s, now: float) -> Dict:
         'anchor': _anchor_view(plan.get('anchor')), 'tf': plan.get('tf'),
         'trigger_minutes': plan.get('trigger_minutes'),
         'levels': {k: (v if isinstance(v, str) else _num(v)) for k, v in lv.items()} if lv else None,
+        'sizing': sizing_view(lv, s.direction, s.sig.get('funding_rate')) if lv else None,
         'r_now': _num(s.r_now), 'best_target': s.best_target, 'final_r': _num(s.final_r),
         'vetoed_triggers': s.vetoed_triggers, 'veto_log': list(s.veto_log), 'of_confirm': s.of_confirm,
         'confirms': s.confirms, 'required': list(confirm.required(s.mode)), 'crowd': s.sig.get('market_crowd'),

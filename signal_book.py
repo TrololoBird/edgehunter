@@ -543,8 +543,13 @@ class SignalBook:
             return None
         levels['zone_src'] = s.plan.get('zone_src')
         reason = None
+        # the spring candle's average FUTURES minute (the pullback minutes are futures candles); a card restored from
+        # an older state has only the spot figure: no test rather than a test in the wrong units
+        spring_minute = s.sig.get('fut_candle_minute_usd')
+        if spring_minute is None and not s.sig.get('has_spot'):
+            spring_minute = s.sig.get('candle_minute_usd')
         if s.group_key == 'BULL B' and not pullback_volume_ok(minutes, s.zone_since_ms, trigger['time'],
-                                                             s.sig.get('candle_minute_usd') or 0.0):
+                                                             spring_minute or 0.0):
             reason = 'no_spring_test'
         confirms = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, trigger['time'], trigger.get('extreme_time')) \
             if confirm_of else {}

@@ -1,18 +1,41 @@
-# Handoff (2026-09-28)
+# Handoff (2026-09-28, облачная сессия: аудит + исправления eng-7)
 
-State of the work when the session moved to the cloud. Delete this file once it is dealt with.
+Записка для владельца: что сделано в облаке, что нужно сделать на Windows-машине. Удалить файл, когда всё закрыто.
 
-## Done in the last session (uncommitted until this commit)
-- **Weekly trend context** (`trend_w`, `breadth_w`): weekly candles per coin (`DataFetcher._weekly_candles_loop`), `strategies.structure.weekly_ref` / `trend_w_of`, journal columns, P(edge) features × direction, `stats.py` splits, webui line, pretraining via REST weekly candles. Context only.
-- **Structural stop (eng-6)**: continuation entries put the stop beyond the structural support zone (`zones.STRUCTURE_KINDS`) instead of the 5m trigger's low; the stop goes beyond the farthest of that edge and the deepest test wick, then a pool behind it, then `stop_buffer_atr` = 0.3 ATR (was 0.1) of the anchor's timeframe; 1 ATR floor kept. `logic_version` = `eng-6`.
-- The journal was reset at the switch (old one kept locally as `signals.eng5.bak.db`, not in git); open cards were dropped from `scanner_state.json`.
+## Сделано в облаке (коммит этой ветки, `logic_version` = `eng-7`)
+Все правки проверены офлайн: `pytest` 63/63 (Python 3.11, не 3.14), `ruff` — новых замечаний нет, `node --check web/app.js`.
 
-## Evidence behind it (scripts were in the session scratchpad, not in the repo)
-- Weekly / monthly EMA: touches, crosses, retests and the 10-80% moves after them behave like parallel lines EMA x 0.8..1.2 once volatility and the 7-day run-up are matched; the trend around the touch is what differs.
-- Stops at 0.1 ATR beyond a 15m swing: 47% of the stopped trades then went +2 ATR the trade's way within 8h (27% at 1.5 ATR); 1h swings 18% -> 8%. Targets: no measurable 'repel' exactly at the swing level (continuation per 0.1 ATR flat at 92-97%).
-- Sources: Osler NY Fed SR150 (stops cluster just beyond round numbers / obvious levels), Elder SafeZone, LeBeau chandelier, Kaminski & Lo (stops do not change expectancy under a random walk), Liu-Tsyvinski-Wu (crypto momentum 1-4 weeks).
+1. **Подглядывание в будущее в предобучении** (`pretrain.tier0_at`): бралась архивная минута, открывшаяся в момент скана, целиком (вживую видны только первые секунды). Теперь только минуты, закрытые к моменту скана; пробы аномалий — на закрытии минуты.
+   - Проверено на реальном архиве SOLUSDT 2026-07-01..09-25: медиана `rvol_1m` строк на закрытии 15m была 1.69 со старым кодом и 0.67 с исправленным; p90 6.17 → 2.79.
+   - Корреляция утёкшего `futures_cvd_5m` с меткой на этой монете незначима (Spearman 0.012 против 0.002, n≈860). Главный вред — искажённые признаки (обучение не совпадает с работой), а не прямая утечка метки.
+   - Кэш строк теперь содержит версию логики; старые строки удаляются `prune_cache`. `pretrained.pkl` другой версии не используется для P(edge), история режимов остаётся. Бот сам перезапустит предобучение (`_pretrain_due`).
+2. **Оценочные ликвидации — OI в монетах** (`fetcher.load_htf` → `sumOpenInterest`, `zones.estimated_liquidations`). Синтетика: при неизменном числе контрактов и росте цены было 12 фантомных кластеров, стало 0.
+3. **Тест пружины**: фьючерсы сравниваются с фьючерсами (`fut_candle_minute_usd`). Раньше фьючерсный объём отката сравнивался со спотовой свечой.
+4. **BULL B «range high»** берётся из фьючерсного фрейма. Для монет вида 1000PEPE спотовая цена в 1000 раз меньше, и цель молча выпадала.
+5. `equal_pools`: пул считается снятым, если его пробила любая свеча после последнего свинга группы (а не только последние 12). Ошибка карты уровней в worker-процессе теперь логируется (`Level map of X failed`).
+6. Bollinger с ddof=0 (определение Боллинджера).
+7. Реплей журнала: TP засчитывается при проходе на `target_through_bps` = 2 б.п., а не по касанию.
+8. Карточка (панель монеты): строка «позиция» — стоп в %, максимальное плечо (изолированная маржа, ликвидация не ближе 1.5× стопа), фандинг за 8ч против позиции; при `[risk] account_usd` — объём и маржа на `risk_pct` счёта. Только информация, ордеров нет.
 
-## Open
-1. Live check of eng-6 on the owner's machine: `sl_src` of new entries reads `beyond the zone (...)` / `beyond the test wick` / `beyond <pool>`; share of `low_rr` vetoes vs before; no errors in `scanner.log`. The last start hit a Binance NetworkError on the market list and retried; confirm it came up.
-2. Proposed but not done: a history test of the stop in the bot's own scheme (zone on the anchor timeframe, entry on the trigger timeframe, stop beyond the zone vs the old trigger-low stop), measuring noise stop-outs, win rate, R and R:R vetoes.
-3. After 2-3 weeks of eng-6 data: `stats.py` splits `coin weekly trend vs the signal` and `market weekly breadth vs the signal`; only a proven negative bucket may become a veto.
+## Сделать на машине (по порядку)
+1. **До перезапуска** — проверить, подтверждается ли ошибка теста пружины на журнале eng-6:
+   ```sql
+   SELECT vetoed, COUNT(*) FROM signals WHERE group_key = 'ENTRY BULL B' AND logic_version = 'eng-6' GROUP BY vetoed;
+   ```
+   Ожидание (вывод из кода, не измерено): большинство отклонённых входов BULL B — `no_spring_test`.
+2. `git pull`, затем `.venv\Scripts\python -m pytest tests -q` на 3.14.
+3. Мягкая остановка бота (Ctrl+C через AttachConsole, как в CLAUDE.md). Журнал по принятой практике: сохранить `signals.db` как `signals.eng6.bak.db` и начать новый (stats и так фильтруют по версии). Открытые карточки eng-6 убрать из `scanner_state.json`. `ml_state.pkl` удалять НЕ нужно: признаки IsolationForest не менялись.
+4. Предобучение: либо дождаться автоматического запуска (через ~10 мин после старта бот увидит `pretrained.pkl` версии eng-6), либо при остановленном боте `.venv\Scripts\python pretrain.py --months 6`. Затем `.venv\Scripts\python ml_eval.py` и записать сюда log-loss skill / AUC до и после (старые цифры были завышены утечкой).
+5. Один запуск на 5–10 минут: строка `Health:`, нет ли `Level map of ... failed`, на карточке входа видна строка «позиция», число уровней `liq_est` в `liq_levels` (ожидается заметно меньше в росте рынка).
+6. По желанию: `config.local.toml` → `[risk] account_usd = ...`, `risk_pct = 1.0`.
+
+## Не сделано (нужны данные машины, живой прогон или решение владельца)
+1. **Смещение отбора в предобучении**: `select_coins` берёт текущий список TRADING и текущий 24h-объём, поэтому делистнутые монеты выпадают, а недавние хайп-монеты попадают на все 6 месяцев. Предложение: список символов из архива `data.binance.vision/?prefix=data/futures/um/monthly/klines/` и отбор по объёму за месяц ДО каждого окна. Из облака `fapi.binance.com` отвечает 451, проверить здесь нельзя.
+2. **База метки для минутных строк предобучения** сдвинута до 15 мин (сетка медиан 15m). Нужна сетка 1m или 5m по рынку.
+3. **Edge без поправки на бету**: сигналы отбираются по волатильности. Добавить в `stats.py` колонку с поправкой на бету (бета монеты к медиане универса по снимкам `universe` за 7 дней до сигнала) или плацебо (случайные входы в ту же монету в тот же час). Проверять на реальном журнале.
+4. **Множественные сравнения** в таблицах `stats.py`: десятки разрезов с 90% интервалами без поправки. Добавить q-values (BH, как в `journal.proven_negative`) и держать отложенный период перед каждой сменой правил.
+5. **Фандинг в реплее** (`levels.simulate`) не учтён: при крайнем фандинге это до 0.1–0.3% за удержание.
+6. **Тест паритета** «признаки предобучения = живые признаки» и тест на подглядывание с обрезанной историей (как freqtrade lookahead-analysis). По правилам CLAUDE.md тесты — только с согласия владельца; баг конкретный (п. 1 выше), рекомендую добавить.
+7. **Названия фаз** A–F не совпадают с фазами Вайкоффа (B = spring фазы C, E = selling climax фазы A, F = markup фазы E). Переименование меняет `group_key` в журнале — решение владельца.
+8. **ATR** — простое среднее, а не RMA Уайлдера. Смена сдвинет все пороги в ATR; только вместе с перемером.
+9. Из прошлой записки (eng-6), всё ещё открыто: исторический тест стопа в схеме бота (зона на ТФ якоря, вход на ТФ триггера, стоп за зоной против старого стопа за минимумом триггера); через 2–3 недели данных — разрезы `coin weekly trend vs the signal` и `market weekly breadth vs the signal`.

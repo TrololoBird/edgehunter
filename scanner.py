@@ -103,6 +103,7 @@ class Scanner:
         self._pretrain_proc = None
         self._pretrained_meta: Optional[Dict] = None
         self._pretrain_retry_at = 0.0
+        self._pretrain_checked = (None, False)      # (pretrained.pkl mtime, built by the current logic version)
         self._cb_median: Optional[float] = None        # the universe's median Coinbase premium (the USDT basis)
         self._futures_closed = pl.DataFrame()
         self._frame_parts: Dict[str, pl.DataFrame] = {}
@@ -1122,8 +1123,15 @@ class Scanner:
             return False
 
     def _pretrain_due(self) -> bool:
+        """pretrained.pkl missing, older than auto_refresh_days, or built by an older logic_version."""
         path = CONFIG.pretrain.path
-        return not os.path.exists(path) or time.time() - os.path.getmtime(path) > CONFIG.pretrain.auto_refresh_days * 86400
+        if not os.path.exists(path) or time.time() - os.path.getmtime(path) > CONFIG.pretrain.auto_refresh_days * 86400:
+            return True
+        mtime = os.path.getmtime(path)
+        if self._pretrain_checked[0] != mtime:
+            from journal import load_pretrained, pretrained_current
+            self._pretrain_checked = (mtime, pretrained_current(load_pretrained()))
+        return not self._pretrain_checked[1]
 
     async def pretrain_loop(self):
         """
@@ -1170,7 +1178,8 @@ class Scanner:
             return
         self._pretrained_meta = {k: state.get(k) for k in ('created', 'start', 'end', 'coins', 'rows')}
         success = self.journal.success if self.journal else None
-        if success is not None and state.get('success'):
+        from journal import pretrained_current
+        if success is not None and state.get('success') and pretrained_current(state):
             success.load_pretrained(state['success'])
             await asyncio.to_thread(self.journal.warm_start)
         if self.regime_model is not None and state.get('regime_history'):

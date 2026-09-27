@@ -10,7 +10,10 @@ logger = logging.getLogger(__name__)
 # carry the column), funding is a per-symbol scalar already present on both frames
 FUTURES_COLUMNS = {'oi_change_pct': 'oi_change_pct', 'oi_change_short': 'oi_change_short',
                    'oi_change_flat': 'oi_change_flat', 'rvol': 'rvol', 'oi_std': 'oi_std',
-                   'delta_1h': 'fut_delta_1h', 'flow_1h': 'fut_flow_1h'}
+                   'delta_1h': 'fut_delta_1h', 'flow_1h': 'fut_flow_1h',
+                   # the futures candle's average minute: the spring "test" compares futures 1m pullback volume with
+                   # it (the spot candle's minute is several times smaller: the test failed on volume units alone)
+                   'candle_minute_usd': 'fut_candle_minute_usd'}
 # Per-symbol live extras joined onto the scored frame (scanner: aggregated multi-venue 15m flow)
 EXTRA_COLUMNS = ('agg_fut_delta_1h', 'agg_spot_extra_1h', 'agg_ready')
 
@@ -70,7 +73,8 @@ class PhaseScorer:
         else:
             df = (spot_df if has_spot else futures_df).with_columns(pl.lit(has_spot).alias('has_spot'))
             if not has_spot:
-                df = df.with_columns(pl.col('delta_1h').alias('fut_delta_1h'), pl.col('flow_1h').alias('fut_flow_1h'))
+                df = df.with_columns(pl.col('delta_1h').alias('fut_delta_1h'), pl.col('flow_1h').alias('fut_flow_1h'),
+                                     pl.col('candle_minute_usd').alias('fut_candle_minute_usd'))
 
         needed = ['oi_change_pct', 'oi_change_short', 'oi_change_flat', 'rvol', 'fut_delta_1h', 'fut_flow_1h']
         missing = [c for c in needed if c not in df.columns]
@@ -407,6 +411,7 @@ class PhaseScorer:
             'prior_range_high': num('prior_range_high'),
             'prior_low': num('prior_low'),
             'candle_minute_usd': num('candle_minute_usd'),
+            'fut_candle_minute_usd': row.get('fut_candle_minute_usd'),
             'has_spot': bool(row.get('has_spot')),
             'spot_delta_1h': row.get('spot_delta_1h'),
             'perp_delta_1h': num('perp_delta_1h'),

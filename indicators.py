@@ -69,7 +69,8 @@ def compute_indicators_batch(frames: Dict[str, pl.DataFrame], funding: Dict[str,
     # Average of the previous candles only, so a spike doesn't dilute its own baseline
     sma_vol = _over(quote_vol.shift(1).rolling_mean(window_size=cfg.rvol_window, min_samples=cfg.rvol_window // 2))
     bb_mid = _over(close.rolling_mean(window_size=20, min_samples=10))
-    bb_std = _over(close.rolling_std(window_size=20, min_samples=10))
+    # population standard deviation (ddof=0), as Bollinger defines the bands
+    bb_std = _over(close.rolling_std(window_size=20, min_samples=10, ddof=0))
     prior_low = _over(low.rolling_min(window_size=cfg.spring_lookback, min_samples=cfg.spring_lookback // 2).shift(1))
     prior_range_high = _over(high.rolling_max(window_size=cfg.spring_lookback, min_samples=cfg.spring_lookback // 2).shift(1))
     prior_high = _over(high.rolling_max(window_size=cfg.local_high_window, min_samples=cfg.local_high_window // 2).shift(1))

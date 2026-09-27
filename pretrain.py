@@ -194,10 +194,12 @@ def process_coin(job: tuple) -> Optional[Dict]:
 
     def tier0_at(now_ms: float) -> Dict[str, float]:
         """calculate_tier0_metrics exactly as the scanner calls it, on the history up to now_ms."""
-        i = int(np.searchsorted(m_ts, now_ms - MINUTE_MS + 1, side='right'))      # minutes opened <= now - 1m
-        j = int(np.searchsorted(m_ts, now_ms, side='right'))
+        # Only minutes CLOSED by now_ms: an archive minute holds its whole minute, while the live scanner sees only
+        # the seconds of the running minute that have passed (the full minute after a 15m close leaked up to 55s of
+        # future volume and taker flow into rvol_1m / minute_usd / *_cvd_5m)
+        j = int(np.searchsorted(m_ts, now_ms - MINUTE_MS, side='right'))          # minutes opened <= now - 1m
         minutes = deque(stream_rows(fut, j - 30, j), maxlen=240)
-        ticker = deque(((k[0] + 59_999, k[4], 0.0) for k in stream_rows(fut, i - 10, i)), maxlen=400)
+        ticker = deque(((k[0] + 59_999, k[4], 0.0) for k in stream_rows(fut, j - 10, j)), maxlen=400)
         k = int(np.searchsorted(oi_ts, now_ms, side='right')) if len(oi_ts) else 0
         oi = deque(oi_pts[max(0, k - 13):k], maxlen=64)
         n = min(j, DAY_MINUTES)
@@ -213,7 +215,7 @@ def process_coin(job: tuple) -> Optional[Dict]:
                                     avg_minute_usd=avg_minute)
         m['futures_cvd_5m'] = minute_delta(minutes, now_ms)
         if len(s_ts):
-            js = int(np.searchsorted(s_ts, now_ms, side='right'))
+            js = int(np.searchsorted(s_ts, now_ms - MINUTE_MS, side='right'))
             m['spot_cvd_5m'] = minute_delta(stream_rows(spot, js - 6, js), now_ms)
         m['whale_net_5m'] = None        # no historical sweeps: the feature is learned live only
         m['volume_24h'] = qv_cum[j] - qv_cum[max(0, j - DAY_MINUTES)]
@@ -344,7 +346,7 @@ def process_coin(job: tuple) -> Optional[Dict]:
     minutes_to_check = sorted(set(price_idx.tolist()) | set(rv_idx.tolist()) | {i for i in oi_idx if i >= 0})
     probe_rows, probe_meta = [], []
     for i in minutes_to_check:
-        now_ms = float(m_ts[i]) + 59_000          # late in the minute, as the 2s Tier-0 loop sees it
+        now_ms = float(m_ts[i]) + MINUTE_MS       # the minute's close: its final kline is what the live loop reads
         m = tier0_at(now_ms)
         probe_rows.append({'symbol': key, **{c: v for c, v in m.items() if isinstance(v, (int, float)) and v is not None}})
         probe_meta.append((now_ms, m, float(closes[i])))
@@ -412,7 +414,9 @@ def _weekly_closes(fut_id: str) -> np.ndarray:
 
 def _paths(fut_id: str, start_iso: str, end_iso: str) -> Dict[str, str]:
     import os
-    stem = os.path.join(CONFIG.pretrain.cache_dir, 'rows', f"{fut_id}_{start_iso}_{end_iso}")
+    # the logic version is part of the name: rows computed by older signal logic are never resumed
+    stem = os.path.join(CONFIG.pretrain.cache_dir, 'rows',
+                        f"{fut_id}_{start_iso}_{end_iso}_{CONFIG.journal.logic_version}")
     return {'rows': stem + '.rows.parquet', 'series': stem + '.series.parquet'}
 
 
@@ -651,8 +655,16 @@ def prune_cache(months: int):
             if m and (m.group(1) + '-31')[:10] < cutoff:
                 os.remove(os.path.join(root, name))
                 removed += 1
+    # per-coin rows / series of an older logic version are never read again (_paths names the version)
+    rows_dir = os.path.join(CONFIG.pretrain.cache_dir, 'rows')
+    if os.path.isdir(rows_dir):
+        tag = f"_{CONFIG.journal.logic_version}."
+        for name in os.listdir(rows_dir):
+            if name.endswith('.parquet') and tag not in name:
+                os.remove(os.path.join(rows_dir, name))
+                removed += 1
     if removed:
-        logger.info(f"pretrain: pruned {removed} cached files older than {cutoff}")
+        logger.info(f"pretrain: pruned {removed} cached files (older than {cutoff} or of older logic)")
 
 
 if __name__ == '__main__':

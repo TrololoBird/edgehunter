@@ -45,6 +45,15 @@ def load_pretrained() -> Optional[Dict]:
         return None
 
 
+def pretrained_current(state: Optional[Dict]) -> bool:
+    """
+    The pretrained P(edge) was built by the current signal logic. A model of an older logic_version learned rows the
+    bot no longer writes (eng-7: rows of older versions saw up to 55s of the future in their Tier-0 inputs), so it
+    is not used; its regime history (market features only) stays valid.
+    """
+    return bool(state) and state.get('logic_version') == CONFIG.journal.logic_version
+
+
 def _strategy_of(group_key: str) -> Optional[str]:
     from strategies import SETUPS
     key = group_key.split(' ', 1)[1] if group_key.split(' ', 1)[0] in ('ENTRY', 'SL', 'TP3', 'CLOSED', 'INVALID', 'MISSED', 'EXPIRED') else group_key
@@ -409,7 +418,10 @@ class SignalJournal:
             except Exception as e:
                 logger.warning(f"P(edge) model unavailable: {e}")
             pretrained = load_pretrained()
-            if self.success is not None and pretrained and pretrained.get('success'):
+            if pretrained and pretrained.get('success') and not pretrained_current(pretrained):
+                logger.warning(f"Pretrained P(edge) is of logic {pretrained.get('logic_version')}, not "
+                               f"{CONFIG.journal.logic_version}: not used until pretrain.py runs again")
+            elif self.success is not None and pretrained and pretrained.get('success'):
                 self.success.load_pretrained(pretrained['success'])
                 logger.info(f"P(edge) model: pretrained on {pretrained['rows']} historical rows of {pretrained['coins']} "
                             f"coins ({pretrained['start']} .. {pretrained['end']}); the journal replay continues it")

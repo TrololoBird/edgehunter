@@ -253,7 +253,8 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
     """
     Replay 1m candles [open_time, open, high, low, close, ...] after an entry. With use_fill the trade is entered at
     fill_price (manual execution) and R is measured from there; otherwise at levels['entry'] (the trigger close).
-    SL and TPs are checked candle by candle; if one candle touches both SL and a TP, SL counts first (conservative).
+    SL and TPs are checked candle by candle; if one candle touches both SL and a TP, SL counts first (conservative); a
+    target counts only once price traded target_through_bps THROUGH it (a limit order is not filled by a touch).
     Returns the furthest target reached before the stop and the R result of exiting fully at TP1 / TP2
     (unfinished trades are marked to the last close). A fill already beyond the stop is 'SKIPPED' (not traded).
     """
@@ -276,6 +277,12 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         result['filled'] = 0
         return result
 
+    through = CONFIG.levels.target_through_bps / 1e4
+
+    def reached(level: float, high: float, low: float) -> bool:
+        # a limit target fills once price traded through it (a touch fills only part of the queue)
+        return high >= level * (1 + through) if direction > 0 else low <= level * (1 - through)
+
     best_target = 0
     exits = {1: None, 2: None}
     # Variant D: once TP1 traded the stop moves to the entry (from the next candle), the rest exits at TP2
@@ -286,10 +293,10 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         if (low <= stop) if direction > 0 else (high >= stop):
             be_result = 0.0 if be_armed else -1.0 - (CONFIG.levels.slippage_bps / 1e4) * sl / risk
             break
-        if (high >= targets[1]) if direction > 0 else (low <= targets[1]):
+        if reached(targets[1], high, low):
             be_result = abs(targets[1] - entry) / risk
             break
-        if (high >= targets[0]) if direction > 0 else (low <= targets[0]):
+        if reached(targets[0], high, low):
             be_armed = True
     if be_result is None:
         be_result = direction * (float(candles[-1][4]) - entry) / risk
@@ -305,7 +312,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
             result['outcome'] = f"TP{best_target}" if best_target else 'SL'
             break
         for k, level in enumerate(targets, start=1):
-            if k > best_target and ((high >= level) if direction > 0 else (low <= level)):
+            if k > best_target and reached(level, high, low):
                 best_target = k
         for k in exits:
             if exits[k] is None and best_target >= k:

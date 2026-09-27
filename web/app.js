@@ -26,6 +26,14 @@ function pct(v, d = 2, colored = true) {
   if (!colored) return s;
   return `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${s}</span>`;
 }
+// Sizing facts of an entered card (webui.sizing_view): information, never an order
+function sizingText(z) {
+  const parts = [`стоп ${(z.stop_pct * 100).toFixed(2)}%`, `плечо ≤ ${z.max_leverage}× (изолированная маржа: ликвидация дальше стопа)`];
+  if (z.funding_8h !== null && z.funding_8h !== undefined)
+    parts.push(`фандинг ${z.funding_8h >= 0 ? 'платите' : 'получаете'} ${Math.abs(z.funding_8h * 100).toFixed(3)}%/8ч`);
+  if (z.notional_usd) parts.push(`объём $${usd(z.notional_usd)} (маржа $${usd(z.margin_usd)} при ${z.max_leverage}×, риск $${usd(z.risk_usd)})`);
+  return parts.join(' · ');
+}
 function usd(v) {
   if (v === null || v === undefined) return '—';
   const a = Math.abs(v);
@@ -594,6 +602,7 @@ function drawCoin(fit) {
       <div class="hint">${esc((c.why || []).join(' · '))}</div>
       <div class="kv">${c.zone && c.zone[0] ? `<span>зона</span><span>${fp(c.zone[0])} – ${fp(c.zone[1])} <span class="src">${esc(c.zone_src || '')}</span></span>` : ''}
       ${c.levels ? `<span>вход / стоп</span><span>${fp(c.levels.entry)} / ${fp(c.levels.sl)} <span class="src">${esc(c.levels.sl_src || '')}</span></span>` : ''}
+      ${c.sizing ? `<span>позиция</span><span>${sizingText(c.sizing)}</span>` : ''}
       <span>цели</span><span>${targetsCell(c.levels ? [c.levels.tp1, c.levels.tp2, c.levels.tp3] : c.targets, c.levels ? [c.levels.tp1_src, c.levels.tp2_src, c.levels.tp3_src] : c.target_src)}</span>
       ${c.vetoed_triggers ? `<span>отсеяно</span><span>${c.vetoed_triggers}${c.veto_log.length ? ': ' + esc(vetoRu([...new Set(c.veto_log)].join(','))) : ''}</span>` : ''}</div>`;
   }
