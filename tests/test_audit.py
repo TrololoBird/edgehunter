@@ -69,3 +69,29 @@ def test_bh_q_values():
     q = bh_q([0.01, 0.04, None, 0.5])
     assert q[2] is None and abs(q[0] - 0.03) < 1e-9 and q[1] <= q[3] == 0.5
 
+
+
+def test_indicators_and_phases_do_not_look_ahead():
+    # freqtrade-style look-ahead check: every value at a candle must be the same whether later candles exist or not
+    import math
+    import random
+    rng = random.Random(3)
+    n, close = 99, [100.0]
+    for _ in range(n - 1):
+        close.append(close[-1] * (1 + rng.gauss(0, 0.004)))
+    qv = [1e5 * (1 + rng.random()) for _ in range(n)]
+    delta = [rng.uniform(-3e4, 3e4) for _ in range(n)]
+    oi = [1e6 * (1 + 0.001 * k + rng.gauss(0, 0.002)) for k in range(n)]
+    full = frame(close, qv=qv, delta=delta, oi=oi)
+    scorer = PhaseScorer()
+    scored_full = scorer.calculate_scores(None, compute_indicators_batch({'X': full}, {}))
+    for cut in (60, 80):
+        part = scorer.calculate_scores(None, compute_indicators_batch({'X': full.head(cut)}, {}))
+        a, b = scored_full.head(cut), part
+        for col in ('atr', 'bb_upper', 'bb_lower', 'rvol', 'adx', 'oi_change_short', 'flow_flat', 'ret_std',
+                    'is_squeezed', 'total_long_score', 'total_short_score'):
+            for x, y in zip(a[col].to_list(), b[col].to_list()):
+                if isinstance(x, float) and isinstance(y, float):
+                    assert (math.isnan(x) and math.isnan(y)) or abs(x - y) <= 1e-9 * max(1.0, abs(x)), (col, cut)
+                else:
+                    assert x == y, (col, cut)
