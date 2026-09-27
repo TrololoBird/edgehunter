@@ -15,7 +15,7 @@ from config import CONFIG
 from depth import DepthBook
 from strategies import confirm
 from flow import SPOT_VENUES, Footprint, FlowStore, Sweep, SweepTracker, WhaleBook, absorption_in
-from indicators import RAW_SCHEMA, TIMEFRAME_MS, empty_raw_frame, merge_live_candle
+from indicators import RAW_SCHEMA, TIMEFRAME_MS, empty_raw_frame, merge_live_candle, seasonal_factors
 from ratelimit import RATE_LIMIT_ERRORS, BanState, RestGate
 from symbols import SymbolMap, VenueMarket
 from venues import BinanceStream, VENUE_MARKETS, VENUE_STREAMS, venue_market_rows
@@ -60,6 +60,8 @@ class MarketData:
     minute_closed_until: int = 0
     spot_minute_klines: deque = field(default_factory=lambda: deque(maxlen=60))
     avg_minute_usd: float = 0.0
+    # Intraday periodicity (indicators.seasonal_factors, 4 weeks of 1h candles, refreshed daily)
+    season: Optional[Dict] = None
     quote_volume_24h: float = 0.0
     # 15m candles built from closed 1m candles per market: the bucket being filled, and markets whose last bucket
     # missed minutes (stream gap) and needs a REST backfill
@@ -1124,6 +1126,32 @@ class DataFetcher:
             now = time.time()
             await asyncio.sleep(max(60.0, 3600 - now % 3600 + 60))
 
+    async def _seasonal_loop(self):
+        """
+        Each coin's time-of-day volume / volatility profile from its last 4 weeks of 1h candles (limit 672, weight 5),
+        once a day after the 15m history (indicators.seasonal_factors): Tier-0's RVOL and z-scores compare a minute
+        with the same hour instead of the flat 24h average. New coins get theirs on the next pass.
+        """
+        while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
+            await asyncio.sleep(10)
+        while self._running:
+            started = time.time()
+            sem = asyncio.Semaphore(4)
+
+            async def one(symbol: str):
+                md = self.markets.get(symbol)
+                if md is None:
+                    return
+                async with sem:
+                    rows = await self._fetch_klines('futures', symbol, '1h', 672)
+                md.season = seasonal_factors([[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]),
+                                               float(k[7]), float(k[10])] for k in self._closed_only(rows or [])])
+
+            await asyncio.gather(*(one(s) for s in list(self.markets)))
+            logger.info(f"Seasonal profiles: {sum(1 for md in self.markets.values() if md.season)} of "
+                        f"{len(self.markets)} coins in {time.time() - started:.0f}s")
+            await asyncio.sleep(24 * 3600)
+
     def baselines_loaded(self) -> int:
         return sum(1 for md in self.markets.values() if md.baseline_ready)
 
@@ -1278,6 +1306,7 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._deep_books_loop()))
         self._tasks.append(asyncio.create_task(self._binance_rest_tickers_loop()))
         self._tasks.append(asyncio.create_task(self._hourly_candles_loop()))
+        self._tasks.append(asyncio.create_task(self._seasonal_loop()))
 
     async def _start_binance_streams(self, symbols: List[str]):
         ids = {'spot': [], 'futures': []}

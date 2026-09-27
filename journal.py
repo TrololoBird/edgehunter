@@ -138,7 +138,7 @@ EXTRA_COLUMNS = {
     # eng-4: the 8h horizon (entries replayed over the trade's life), the other venues' funding and long/short
     # ratios, time of day, the sweep candle's liquidations / OI change
     'ret_8h': 'REAL', 'agg_funding_8h': 'REAL', 'ls_bybit': 'REAL', 'ls_okx': 'REAL', 'hour_utc': 'INTEGER',
-    'weekend': 'INTEGER', 'liq_on_wick': 'REAL', 'oi_change_sweep': 'REAL',
+    'weekend': 'INTEGER', 'liq_on_wick': 'REAL', 'oi_change_sweep': 'REAL', 'adx': 'REAL',
     # eng-3: entry confirmations (strategies/confirm.py, JSON {name: true / false / null | order-flow kind}) and how
     # many were positive
     'confirms': 'TEXT', 'conf_n': 'INTEGER',
@@ -155,7 +155,7 @@ FEATURE_KEYS = {
     'market_crowd': 'market_crowd', 'mkt_1h': 'mkt_1h', 'mkt_4h': 'mkt_4h', 'btc_1h': 'btc_1h',
     'coin_trend': 'coin_trend', 'vol_ratio': 'vol_ratio', 'volume_24h': 'volume_24h',
     'agg_funding_8h': 'agg_funding_8h', 'ls_bybit': 'ls_bybit', 'ls_okx': 'ls_okx', 'hour_utc': 'hour_utc',
-    'weekend': 'weekend', 'liq_on_wick': 'liq_on_wick', 'oi_change_sweep': 'oi_change_sweep',
+    'weekend': 'weekend', 'liq_on_wick': 'liq_on_wick', 'oi_change_sweep': 'oi_change_sweep', 'adx': 'adx',
 }
 
 # (setup, regime) -> (results, upper end of the 90% interval of its 4h Edge): refreshed hourly from the journal
@@ -217,6 +217,26 @@ def oi_anomaly(sig: Dict) -> bool:
     return abs(z) >= t0.oi_z_threshold or (z == 0 and abs(oi) > 2 * t0.oi_change_5m_threshold)
 
 
+def crowded(sig: Dict, direction: int) -> bool:
+    """
+    Leverage crowded on the trade's side with positions still building: funding (all venues, else Binance) at or
+    beyond the crowding level for that side, or (longs) US spot at a discount (Coinbase premium), AND OI rising
+    over the last hour.
+    """
+    cfg = CONFIG.orderflow
+    funding = sig.get('agg_funding_8h')
+    funding = sig.get('funding_rate') if funding is None else funding
+    oi = sig.get('agg_oi_change_1h')
+    oi = sig.get('oi_change_1h') if oi is None else oi
+    if oi is None or oi < cfg.crowded_oi_1h:
+        return False
+    if direction > 0:
+        premium = sig.get('cb_premium')
+        return (funding is not None and funding >= cfg.crowded_funding_long) or \
+            (premium is not None and premium <= -cfg.crowded_cb_discount)
+    return funding is not None and funding <= cfg.crowded_funding_short
+
+
 def perp_flow_5m(sig: Dict) -> float:
     """5m perp taker flow: all futures venues when several report, else Binance."""
     if (sig.get('venues_active') or 0) >= 2 and sig.get('agg_cvd_5m'):
@@ -266,7 +286,10 @@ def classify(sig: Dict) -> Tuple[str, str, int]:
         # Directional only when both confirm: OI clearly rising (new positions, not just unknown/flat OI) and the
         # 5m futures taker flow on the same side as the move. Missing data = unconfirmed.
         cvd = perp_flow_5m(sig)
-        oi_confirms = oi >= t0.impulse_oi_min
+        # OI rising in the coin's own terms (z of its 5m OI change) above a small floor; the fixed threshold only
+        # while its OI volatility is unknown
+        oi_z = sig.get('oi_z', 0.0) or 0.0
+        oi_confirms = (oi >= t0.impulse_oi_floor and oi_z >= t0.impulse_oi_z) if oi_z else oi >= t0.impulse_oi_min
         flow_confirms = bool(cvd) and (cvd > 0) == up
         if oi_confirms and flow_confirms:
             return 'anomaly', 'IMPULSE UP' if up else 'IMPULSE DOWN', 1 if up else -1
@@ -298,20 +321,19 @@ def veto_reason(group_key: str, sig: Dict) -> Optional[str]:
     spot disagrees.
     """
     if CONFIG.orderflow.veto_perp_led and sig.get('has_spot'):
-        if group_key == 'BEAR D' and sig.get('perp_led_short'):
-            return 'perp_led'
-        if group_key == 'BULL F' and sig.get('perp_led_long'):
-            return 'perp_led'
-        # A breakout is a continuation too: the same 1h spot-vs-perp reading of its closed candle
-        if group_key == 'BREAKOUT UP' and sig.get('perp_led_long'):
-            return 'perp_led'
-        if group_key == 'BREAKOUT DOWN' and sig.get('perp_led_short'):
-            return 'perp_led'
-        if group_key in ('IMPULSE UP', 'IMPULSE DOWN'):
-            direction = 1 if group_key == 'IMPULSE UP' else -1
-            perp = perp_flow_5m(sig)
-            spot = sig.get('spot_cvd_5m') or 0.0
-            if direction * perp > 0 and (direction * spot <= 0 or abs(spot) < CONFIG.orderflow.perp_led_spot_share * abs(perp)):
+        # Perps lead spot in price discovery (a perp-led move is the normal case, and perp taker imbalance predicts
+        # 4-12h continuation): the risk is CROWDED leverage (high funding / basis with OI building predicts
+        # liquidations, BIS WP 1087). Vetoed only perp-led AND crowded AND OI rising; else journaled perp_led=1.
+        direction = {'BEAR D': -1, 'BULL F': 1, 'BREAKOUT UP': 1, 'BREAKOUT DOWN': -1,
+                     'IMPULSE UP': 1, 'IMPULSE DOWN': -1}.get(group_key)
+        if direction is not None:
+            if group_key.startswith('IMPULSE'):
+                perp = perp_flow_5m(sig)
+                spot = sig.get('spot_cvd_5m') or 0.0
+                led = direction * perp > 0 and (direction * spot <= 0 or abs(spot) < CONFIG.orderflow.perp_led_spot_share * abs(perp))
+            else:
+                led = bool(sig.get('perp_led_long') if direction > 0 else sig.get('perp_led_short'))
+            if led and crowded(sig, direction):
                 return 'perp_led'
     # Proven negative in the current market regime (enough independent 4h blocks, BH-controlled: proven_negative)
     regime = sig.get('regime')

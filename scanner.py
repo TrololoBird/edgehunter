@@ -20,7 +20,8 @@ from watchdog import LoopWatchdog
 from zones import RawLevel, build_raw, merge
 from fetcher import DataFetcher, MarketData
 from flow import FUTURES_VENUES
-from indicators import TIER0_COLUMNS, calculate_tier0_metrics, compute_indicators_batch, merge_live_candle, minute_delta
+from indicators import (TIER0_COLUMNS, calculate_tier0_metrics, compute_indicators_batch, merge_live_candle, minute_delta,
+                        seasonal_scale)
 from notifier import Notifier
 from scorer import PhaseScorer, score_closed, signals_from_rows
 from strategies import confirm
@@ -241,8 +242,12 @@ class Scanner:
         whales = self.fetcher.whales
         out = {}
         for symbol, md in self.market_data.items():
+            # the 24h averages scaled to this hour of the day / week (relative volume and volatility at time)
+            vol_scale = seasonal_scale(md.season, now_ms, 'vol')
+            ret_scale = seasonal_scale(md.season, now_ms, 'ret')
             m = calculate_tier0_metrics(md.ticker_samples, md.oi_samples, md.minute_klines, now_ms,
-                                        ret_std=md.ret_std, oi_std=md.oi_std, avg_minute_usd=md.avg_minute_usd)
+                                        ret_std=md.ret_std * ret_scale if md.ret_std else md.ret_std, oi_std=md.oi_std,
+                                        avg_minute_usd=md.avg_minute_usd * vol_scale if md.avg_minute_usd else md.avg_minute_usd)
             flow = snapshot.get(symbol, {})
             m['whale_net_5m'] = whales.net_units(symbol, CONFIG.tier0.window_sec, now_ms)
             m['cluster'] = float(whales.cluster(symbol, now_ms))
@@ -304,7 +309,8 @@ class Scanner:
             if scores is not None:
                 m['ml_score'] = float(scores[i])
                 m['ml_anomaly'] = 1.0 if scores[i] < model.threshold else 0.0
-                m['ml_ready'] = 1.0
+                # shadow (journaled ml_score / ml_anomaly): the rules decide unless anomaly_decides
+                m['ml_ready'] = 1.0 if CONFIG.ml.anomaly_decides else 0.0
         model.observe(X, now, warmed_up=now - self._started_at >= CONFIG.ml.anomaly_skip_first_sec)
 
     async def _update_hot(self):
@@ -582,7 +588,7 @@ class Scanner:
                 sig['perp_led_long'] = bool(row.get('perp_led_long'))
                 sig['perp_led_short'] = bool(row.get('perp_led_short'))
                 # the closed candle's 1h spot / perp flows (journal features, like the phase setups carry)
-                for key in ('spot_delta_1h', 'perp_delta_1h'):
+                for key in ('spot_delta_1h', 'perp_delta_1h', 'adx'):
                     if row.get(key) is not None:
                         sig[key] = row[key]
                 if setup['setup'].startswith('SWEEP'):

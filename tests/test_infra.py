@@ -92,9 +92,13 @@ def test_classification_and_families():
     assert classify(_sig(price_change_5m=0.015, price_z=8, oi_change_5m=0.01, futures_cvd_5m=1e5))[1] == 'IMPULSE UP'
     assert classify(_sig(price_change_5m=0.015, price_z=2))[1] != 'IMPULSE UP'
     up = _sig(price_change_5m=0.03, oi_change_5m=0.01, futures_cvd_5m=1e5, has_spot=True)
-    assert veto_reason('IMPULSE UP', dict(up, spot_cvd_5m=-1e4)) == 'perp_led'
+    # perp-led alone is the normal case (perps lead price discovery): vetoed only when leverage is crowded
+    assert veto_reason('IMPULSE UP', dict(up, spot_cvd_5m=-1e4)) is None
+    assert veto_reason('IMPULSE UP', dict(up, spot_cvd_5m=-1e4, agg_funding_8h=0.0005, agg_oi_change_1h=0.01)) == 'perp_led'
     assert veto_reason('IMPULSE UP', dict(up, spot_cvd_5m=5e4)) is None
-    assert veto_reason('BEAR D', {'has_spot': True, 'perp_led_short': True}) == 'perp_led'
+    assert veto_reason('BEAR D', {'has_spot': True, 'perp_led_short': True}) is None
+    assert veto_reason('BEAR D', {'has_spot': True, 'perp_led_short': True, 'agg_funding_8h': -0.0005,
+                                  'agg_oi_change_1h': 0.01}) == 'perp_led'
 
 
 def test_journal_record_entry_veto_and_universe(tmp_path):
@@ -103,7 +107,8 @@ def test_journal_record_entry_veto_and_universe(tmp_path):
     assert j.conn.execute("PRAGMA journal_mode").fetchone()[0] == 'wal'
     unc = _sig(price_change_5m=0.03, futures_cvd_5m=1e5)
     sq = _sig(price_change_5m=0.03, oi_change_5m=-0.01)
-    conf = _sig(price_change_5m=0.03, oi_change_5m=0.01, futures_cvd_5m=1e5, has_spot=True, spot_cvd_5m=-1e4)
+    conf = _sig(price_change_5m=0.03, oi_change_5m=0.01, futures_cvd_5m=1e5, has_spot=True, spot_cvd_5m=-1e4,
+                agg_funding_8h=0.0005, agg_oi_change_1h=0.01)
     assert j.record([('F', unc)], {'F': 1.0}) == 1
     assert j.record([('F', sq)], {'F': 1.0}) == 0            # same event relabelled
     assert asyncio.run(j.arecord([('F', conf)], {'F': 1.0})) == 1   # stronger reading, from a worker thread

@@ -29,6 +29,21 @@ def _rows(df: pl.DataFrame) -> List[List[float]]:
     return [list(r) for r in df.select(['timestamp', 'open', 'high', 'low', 'close']).rows()]
 
 
+def _ema_of_tf(x: PlanInput, tf: str, span: int) -> Optional[float]:
+    """The EMA of the leg's own timeframe: 15m from the frame, 1h from the 1h candles, 4h = 4 x span on 1h."""
+    if tf == '15m':
+        closes = x.df['close'].to_list() if x.df is not None and not x.df.is_empty() else []
+    else:
+        closes = [c[4] for c in (x.h1 or [])]
+        span = span * 4 if tf == '4h' else span
+    if len(closes) < span:
+        return None
+    alpha, ema = 2 / (span + 1), closes[0]
+    for c in closes[1:]:
+        ema += alpha * (c - ema)
+    return ema
+
+
 class LegContinuation(Strategy):
     anchor_type = 'leg'
     requires = ('spot',)
@@ -38,6 +53,19 @@ class LegContinuation(Strategy):
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         impulse = find_impulse(x.df, x.direction, x.h1)
         return (impulse['end_ts'], impulse['end']) if impulse else None
+
+    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        """
+        Elder's triple screen: a pullback trade only with the tide - the coin's 1h trend (EMA20 slope; 1h is ~4-5x
+        the 15m structure) not against the trade, and BTC (alts follow it: BTC -> alt Granger causality) not
+        moving hard against it over the last hour. Breakouts take no trend filter (Turtle / Bollinger method I).
+        """
+        if sig.get('coin_trend') == -direction:
+            return 'against_tide'
+        btc = sig.get('btc_1h')
+        if btc is not None and direction * btc <= -CONFIG.strategies.tide_btc_against:
+            return 'against_tide'
+        return None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         cfg = CONFIG.levels
@@ -50,13 +78,18 @@ class LegContinuation(Strategy):
         lo_ratio, hi_ratio = cfg.continuation_zone
         fib_lo, fib_hi = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
         support = support_in(zones, fib_lo, fib_hi, d)
-        zone_src = f"fib {lo_ratio:g}-{hi_ratio:g} (fib only)"
+        half = CONFIG.zones.zone_half_atr * impulse['atr']
         if support is not None:
-            half = CONFIG.zones.zone_half_atr * impulse['atr']
-            near, far = (support.hi + half, support.lo - half) if d > 0 else (support.lo - half, support.hi + half)
-            lo_ratio = max(0.0, retracement_of(impulse, near))
-            hi_ratio = min(1.0, retracement_of(impulse, far))
-            zone_src = support.label
+            level_lo, level_hi, zone_src = support.lo, support.hi, support.label
+        else:
+            ema = _ema_of_tf(x, impulse['tf'], 20)
+            if ema is None or not fib_lo <= ema <= fib_hi:
+                return {'skip': 'no_level'}
+            level_lo = level_hi = ema
+            zone_src = f"EMA20 {impulse['tf']}"
+        near, far = (level_hi + half, level_lo - half) if d > 0 else (level_lo - half, level_hi + half)
+        lo_ratio = max(0.0, retracement_of(impulse, near))
+        hi_ratio = min(1.0, retracement_of(impulse, far))
         extensions = [fib_price(impulse, 1.0 - r) for r in cfg.continuation_targets]
         worst_entry = fib_price(impulse, lo_ratio)
         targets, sources = select_targets(zones, worst_entry, d, atr, 'extension', extensions, 'fib ext')

@@ -426,7 +426,7 @@ class SuccessModel:
         if ts:
             hour = (int(ts) // 3_600_000) % 24
             x['hour_sin'], x['hour_cos'] = math.sin(2 * math.pi * hour / 24), math.cos(2 * math.pi * hour / 24)
-            x['weekend'] = 1.0 if (int(ts) // 86_400_000 + 4) % 7 >= 5 else 0.0      # 1970-01-01 was a Thursday
+            x['weekend'] = 1.0 if (int(ts) // 86_400_000 + 3) % 7 >= 5 else 0.0      # Monday = 0 (1970-01-01 was a Thursday)
         x['perp_led'] = float(get('perp_led') or 0)
         x['cluster_dir'] = float((get('cluster') or 0) * direction)
         x['early_quarter'] = 1.0 if (get('sec_into_candle') or 0) < 60 else 0.0

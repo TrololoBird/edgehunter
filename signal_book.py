@@ -172,6 +172,7 @@ class SignalBook:
         # symbol -> True once its 1h history and level map are loaded (a plan without them misses 1h / 4h legs)
         self.map_ready_of: Optional[Callable[[str], bool]] = None
         self._plan_cache: Dict[Tuple[str, str], Tuple[tuple, Optional[Dict]]] = {}
+        self._skip_reason: Dict[Tuple[str, str], str] = {}
         # (symbol, setup) -> (plan key, gate result): a phase setup repeats on every scan of its candle
         self._gate_cache: Dict[Tuple[str, str], Tuple[tuple, Optional[str]]] = {}
         self._candles_of: Callable[[str], Sequence[Sequence[float]]] = lambda symbol: []
@@ -363,6 +364,10 @@ class SignalBook:
             if cached is not None and cached[0] == key:
                 return cached[1]
         plan = strategy.plan(self._input(s.symbol, s.group_key, s.direction, s.sig, frames, s.reached))
+        if plan is not None and plan.get('skip'):
+            # the strategy says why there is no plan ('no_level'): kept per card, the plan cache holds None
+            self._skip_reason[(s.symbol, s.group_key)] = plan['skip']
+            plan = None
         if key is not None:
             self._plan_cache[(s.symbol, s.group_key)] = (key, plan)
         return plan
@@ -460,7 +465,7 @@ class SignalBook:
                 return None
             s.plan = self._plan(s, frames)
             if s.plan is None or not s.plan['targets']:
-                self._drop(s, now, 'no_leg' if s.plan is None else 'no_room')
+                self._drop(s, now, self._skip_reason.pop((s.symbol, s.group_key), 'no_leg') if s.plan is None else 'no_room')
                 return None
             self._activate(s, s.plan, price, now)
             s.status = 'WATCH'

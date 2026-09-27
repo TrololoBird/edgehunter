@@ -102,6 +102,8 @@ class MetricsConfig:
     capitulation_confirm_flow: float = 0.1
     # Phase D: OI must grow at least this much over oi_short_window (new shorts, not noise)
     dump_oi_min: float = 0.005
+    trend_oi_z: float = 1.5
+    trend_oi_floor: float = 0.003
     # Phase F (markup breakout, the mirror of D): candle delta ratio above this (+0.2 = taker buys >= 60%), OI up at
     # least dump_oi_min over oi_short_window, funding below funding_extreme_positive (longs not crowded yet)
     markup_delta_ratio: float = 0.2
@@ -157,6 +159,8 @@ class Tier0Config:
     tier2_hold_sec: int = 300
     # A 5m price impulse is directional only if OI rose at least this much (new positions) and futures CVD agrees
     impulse_oi_min: float = 0.003
+    impulse_oi_z: float = 2.0
+    impulse_oi_floor: float = 0.0015
     # Net whale flow over 5m, in units of the symbol's whale size, that counts as an anomaly
     whale_net_units: float = 3.0
     # |Px 5m| below this with an RVOL spike = absorption (volume hits resting orders, price doesn't move)
@@ -251,6 +255,12 @@ class OrderflowConfig:
     # Perp-led: 1h spot and perp flows disagree in sign, or spot net flow < this share of the perp net flow
     perp_led_spot_share: float = 0.25
     veto_perp_led: bool = True
+    # "Crowded" (journal.crowded): funding >= +0.03% / 8h for longs (<= -0.01% for shorts) or a Coinbase discount
+    # >= 0.05% for longs, with OI +0.5% over the last hour
+    crowded_funding_long: float = 0.0003
+    crowded_funding_short: float = -0.0001
+    crowded_cb_discount: float = 0.0005
+    crowded_oi_1h: float = 0.005
     # Footprint price bucket as a share of the 15m ATR, diagonal imbalance ratio and consecutive levels
     footprint_bucket_atr: float = 0.05
     imbalance_ratio: float = 3.0
@@ -281,6 +291,10 @@ class MLConfig:
     # anomaly_sample_every_sec, refit hourly; a coin is anomalous when its vector is among the anomaly_quantile
     # most unusual of the training window. Until the first fit (and with anomaly_enabled=false) the rules decide.
     anomaly_enabled: bool = True
+    # The classic rules (RVOL at time of day, z-scores, OI, whales, liquidations, one venue) decide anomalies; the
+    # IsolationForest is only journaled: no evidence it beats rules / robust z on 9 interpretable features
+    # (ADBench: no universally best detector), and live its "most unusual" events moved no more than the rules'
+    anomaly_decides: bool = False
     anomaly_quantile: float = 0.001
     anomaly_window_sec: int = 3 * 3600
     anomaly_sample_every_sec: int = 30
@@ -328,7 +342,11 @@ class LevelsConfig:
     # ... and at least this big in price: at night ATR shrinks and a 0.5% drift can measure 7 ATR
     impulse_min_move: float = 0.015
     # Continuation: look for the trigger once the pullback reaches this retracement zone of the impulse
-    continuation_zone: tuple = (0.382, 0.786)
+    # The pullback band of a continuation: 0.382-0.618 of the leg (a deeper retrace is a trend failure, not an entry);
+    # the zone is a real map level inside it, else the EMA20 of the leg's timeframe (Raschke's "Holy Grail"
+    # pullback); no level and no EMA20 inside: no card ('no_level'). Automated tests found no edge in Fibonacci
+    # ratios themselves (ESWA 2021): a Fibonacci-only zone was a line with nothing behind it.
+    continuation_zone: tuple = (0.382, 0.618)
     continuation_targets: tuple = (1.0, 1.272, 1.618)
     # Reversal: price must still be within this retracement of the reversed leg's end (accumulation: a bit wider)
     reversal_zone_max: float = 0.236
@@ -451,6 +469,9 @@ class StrategiesConfig:
     # REST replacement arrives minutes late (live, a 3-minute limit lost every event of a disturbed close); each event
     # fires once, the fired ones are kept in scanner_state.json across restarts, and the entry is priced now (R:R)
     close_event_max_age_sec: int = 900
+    # Elder's tide (trend / momentum pullbacks): vetoed 'against_tide' when BTC moved at least this much against the
+    # trade over the last hour, or the coin's 1h trend points the other way
+    tide_btc_against: float = 0.005
     # The coin's own trend (1h): close vs EMA(trend_ema) and the EMA's slope over trend_slope_bars bars
     trend_ema: int = 20
     trend_slope_bars: int = 4
@@ -605,7 +626,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-4"
+    logic_version: str = "eng-5"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

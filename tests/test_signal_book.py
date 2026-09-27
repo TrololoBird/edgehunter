@@ -78,10 +78,10 @@ def test_trigger_without_orderflow_is_vetoed_and_card_keeps_waiting(rally_frame,
 
 def test_perp_led_impulse_is_vetoed(rally_frame):
     book = SignalBook()
-    perp_led = dict(IMPULSE_UP, spot_cvd_5m=-1e5)
+    perp_led = dict(IMPULSE_UP, spot_cvd_5m=-1e5, agg_funding_8h=0.0005, agg_oi_change_1h=0.01)   # crowded
     created, _ = book.update([('X', perp_led)], Frames(rally_frame), lambda s: 119.5, lambda s: [], T_ZONE)
     assert created == [] and book.vetoed and book.vetoed[0][2] == 'perp_led'
-    led_markup = dict(MARKUP, perp_led_long=True)
+    led_markup = dict(MARKUP, perp_led_long=True, agg_funding_8h=0.0005, agg_oi_change_1h=0.01)
     created, _ = book.update([('Z', led_markup)], Frames(rally_frame), lambda s: 119.5, lambda s: [], T_ZONE)
     assert created == [] and book.vetoed[0][2] == 'perp_led'
     futures_only = dict(MARKUP, has_spot=False)

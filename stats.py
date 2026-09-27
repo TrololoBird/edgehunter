@@ -333,6 +333,8 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
     ('session (UTC)', lambda r: None if _col(r, 'hour_utc') is None else
         ('Asia 0-7' if _col(r, 'hour_utc') < 7 else 'London 7-13' if _col(r, 'hour_utc') < 13 else
          'NY 13-21' if _col(r, 'hour_utc') < 21 else 'late 21-24')),
+    ('ADX14 (15m)', lambda r: None if _col(r, 'adx') is None else
+        ('trending >= 30' if _col(r, 'adx') >= 30 else 'weak < 20' if _col(r, 'adx') < 20 else '20-30')),
     ('weekend', lambda r: None if _col(r, 'weekend') is None else ('weekend' if _col(r, 'weekend') else 'weekday')),
     ('pullback zone', lambda r: None if not _col(r, 'zone_src') or _col(r, 'kind') != 'entry' else
         ('Fibonacci only' if 'fib only' in _col(r, 'zone_src') else 'map level')),

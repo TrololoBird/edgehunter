@@ -1,5 +1,6 @@
 import bisect
 import math
+import statistics
 import polars as pl
 from typing import Dict, Optional, Sequence, Tuple
 from collections import deque
@@ -117,6 +118,17 @@ def compute_indicators_batch(frames: Dict[str, pl.DataFrame], funding: Dict[str,
         _over(close.pct_change().rolling_std(window_size=96, min_samples=24)).alias('ret_std'),
         _over(open_interest.pct_change().rolling_std(window_size=96, min_samples=24)).alias('oi_std'),
     )
+    # ADX14 (Wilder): trend strength, a journal feature (Raschke's Holy Grail trades pullbacks with ADX > 30)
+    up_move = high - high.shift(1)
+    down_move = low.shift(1) - low
+    plus_dm = pl.when((up_move > down_move) & (up_move > 0)).then(up_move).otherwise(0.0)
+    minus_dm = pl.when((down_move > up_move) & (down_move > 0)).then(down_move).otherwise(0.0)
+    tr = pl.max_horizontal(high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs())
+    wilder = lambda e: _over(e.ewm_mean(alpha=1 / 14, adjust=False))  # noqa: E731
+    plus_di = _safe_div(100 * wilder(plus_dm), wilder(tr))
+    minus_di = _safe_div(100 * wilder(minus_dm), wilder(tr))
+    dx = _safe_div(100 * (plus_di - minus_di).abs(), plus_di + minus_di)
+    df = df.with_columns(_over(dx.ewm_mean(alpha=1 / 14, adjust=False)).alias('adx'))
     # Squeeze: width within a small tolerance of its lookback minimum (exact float equality with a rolling
     # minimum fails on rounding noise even for a perfectly flat range)
     return df.with_columns(
@@ -257,6 +269,67 @@ def calculate_tier0_metrics(
                 metrics['oi_z'] = metrics['oi_change_5m'] / (oi_std / sqrt3)
 
     return metrics
+
+
+def seasonal_factors(candles_1h: Sequence[Sequence[float]]) -> Optional[Dict]:
+    """
+    The coin's intraday periodicity from ~4 weeks of 1h candles [ts, o, h, l, c, quote_vol, ...]: per UTC hour the
+    median quote volume and the median |1h return| of weekdays, each divided by its mean over the 24 hours, and the
+    weekend / weekday ratio of both. Relative volume and volatility then compare a minute with the same time of day
+    ("relative volume at time"; Andersen-Bollerslev periodicity): against a flat 24h average, the US open produced
+    false anomalies and quiet hours / weekends hid real ones (Boudt, Croux & Laurent 2011; crypto: arXiv 2109.12142).
+    """
+    if len(candles_1h) < 24 * 14:
+        return None
+    vol = [[] for _ in range(24)]
+    ret = [[] for _ in range(24)]
+    wk_vol, wd_vol, wk_ret, wd_ret = [], [], [], []
+    prev = None
+    for c in candles_1h:
+        hour = int(c[0]) // 3_600_000 % 24
+        weekend = (int(c[0]) // 86_400_000 + 3) % 7 >= 5          # 1970-01-01 was a Thursday (Monday = 0)
+        r = abs(c[4] / prev - 1) if prev else None
+        prev = c[4]
+        if weekend:
+            wk_vol.append(c[5])
+            if r is not None:
+                wk_ret.append(r)
+        else:
+            vol[hour].append(c[5])
+            wd_vol.append(c[5])
+            if r is not None:
+                ret[hour].append(r)
+                wd_ret.append(r)
+
+    def profile(buckets):
+        med = [statistics.median(b) if b else None for b in buckets]
+        known = [m for m in med if m]
+        if len(known) < 20:
+            return None
+        mean = sum(known) / len(known)
+        return [min(3.0, max(0.3, (m or mean) / mean)) for m in med]
+
+    v, r_ = profile(vol), profile(ret)
+    if v is None or r_ is None:
+        return None
+    ratio = lambda a, b: min(3.0, max(0.3, statistics.median(a) / statistics.median(b))) if a and b and statistics.median(b) else 1.0  # noqa: E731
+    return {'vol': v, 'ret': r_, 'wk_vol': ratio(wk_vol, wd_vol), 'wk_ret': ratio(wk_ret, wd_ret)}
+
+
+def seasonal_scale(season: Optional[Dict], now_ms: float, kind: str) -> float:
+    """
+    Expected level now relative to the trailing 24h average it scales (kind 'vol' for volume, 'ret' for volatility):
+    the hour's factor x the weekend ratio, over the weekend share of the last 24 hours (the average already
+    contains them). 1.0 without a profile.
+    """
+    if not season:
+        return 1.0
+    hour = int(now_ms) // 3_600_000 % 24
+    day = (int(now_ms) // 86_400_000 + 3) % 7
+    wk = season['wk_' + kind]
+    now_factor = season[kind][hour] * (wk if day >= 5 else 1.0)
+    weekend_hours = sum(1 for k in range(24) if (int(now_ms - k * 3_600_000) // 86_400_000 + 3) % 7 >= 5)
+    return now_factor / (1 + weekend_hours / 24 * (wk - 1))
 
 
 def minute_delta(minute_klines: Sequence[Sequence[float]], now_ms: float, window_sec: int = 300) -> float:

@@ -170,6 +170,13 @@ class PhaseScorer:
                 ('liq', cascade), ('venue', one_venue), ('ml', ml & (pl.col('ml_ready') > 0)))],
         )
 
+    def _oi_building(self) -> pl.Expr:
+        """OI rising over the last hour in the coin's own terms (z >= trend_oi_z of its 1h change, floor), else fixed."""
+        scaled = pl.max_horizontal(pl.col('oi_std') * (self.cfg.oi_short_window ** 0.5) * self.cfg.trend_oi_z,
+                                   pl.lit(self.cfg.trend_oi_floor))
+        return pl.when(pl.col('oi_std') > 0).then(pl.col('oi_change_short') >= scaled) \
+            .otherwise(pl.col('oi_change_short') >= self.cfg.dump_oi_min)
+
     @staticmethod
     def _points(condition: pl.Expr, weight: int) -> pl.Expr:
         return pl.when(condition.fill_null(False)).then(weight).otherwise(0)
@@ -262,7 +269,7 @@ class PhaseScorer:
         dump = (
             (pl.col('close') < pl.col('bb_lower')) &
             (pl.col('delta_ratio') < self.cfg.dump_delta_ratio) &
-            (pl.col('oi_change_short') >= self.cfg.dump_oi_min) &
+            self._oi_building() &
             (pl.col('predicted_funding') > self.cfg.funding_extreme_negative)
         ).fill_null(False)
         return df.with_columns(
@@ -323,7 +330,7 @@ class PhaseScorer:
         markup = (
             (pl.col('close') > pl.col('bb_upper')) &
             (pl.col('delta_ratio') > self.cfg.markup_delta_ratio) &
-            (pl.col('oi_change_short') >= self.cfg.dump_oi_min) &
+            self._oi_building() &
             (pl.col('predicted_funding') < self.cfg.funding_extreme_positive)
         ).fill_null(False)
         return df.with_columns(
@@ -391,6 +398,7 @@ class PhaseScorer:
             'flow_divergence': num('flow_divergence'),
             'oi_change_3h': num('oi_change_pct'),
             'oi_change_1h': num('oi_change_short'),
+            'adx': row.get('adx'),
             'price_change_flat': num('price_change_flat'),
             'flat_range_atr': num('flat_range') / row['atr'] if row.get('atr') else 0.0,
             'oi_change_flat': num('oi_change_flat'),

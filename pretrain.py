@@ -115,7 +115,8 @@ def process_coin(job: tuple) -> Optional[Dict]:
     """
     key, fut_id, spot_id, start_iso, end_iso, rate = job
     from history import Archive
-    from indicators import calculate_tier0_metrics, compute_indicators_batch, minute_delta
+    from indicators import (calculate_tier0_metrics, compute_indicators_batch, minute_delta, seasonal_factors,
+                            seasonal_scale)
     from journal import classify, event_family
     from scorer import PhaseScorer
     from strategies.breakout import breakout_at_close
@@ -180,6 +181,16 @@ def process_coin(job: tuple) -> Optional[Dict]:
     h1_close_ts = h1[:, 0] + HOUR_MS if len(h1) else np.empty(0)
     c15_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in c15]
 
+    seasons: Dict[int, Optional[Dict]] = {}
+
+    def season_at(now_ms: float) -> Optional[Dict]:
+        """The time-of-day profile as the bot would have had it: the 4 weeks of 1h candles before that day."""
+        day = int(now_ms) // 86_400_000
+        if day not in seasons:
+            h = int(np.searchsorted(h1_close_ts, day * 86_400_000, side='right'))
+            seasons[day] = seasonal_factors(h1_list[max(0, h - 672):h])
+        return seasons[day]
+
     def tier0_at(now_ms: float) -> Dict[str, float]:
         """calculate_tier0_metrics exactly as the scanner calls it, on the history up to now_ms."""
         i = int(np.searchsorted(m_ts, now_ms - MINUTE_MS + 1, side='right'))      # minutes opened <= now - 1m
@@ -193,6 +204,10 @@ def process_coin(job: tuple) -> Optional[Dict]:
         q = int(np.searchsorted(fut_ind[:, 0], now_ms - QUARTER_MS, side='right')) - 1
         ret_std = fut_ind[q, 1] if q >= 0 and fut_ind[q, 1] == fut_ind[q, 1] else None
         oi_std = fut_ind[q, 2] if q >= 0 and fut_ind[q, 2] == fut_ind[q, 2] else None
+        season = season_at(now_ms)
+        if ret_std:
+            ret_std *= seasonal_scale(season, now_ms, 'ret')
+        avg_minute *= seasonal_scale(season, now_ms, 'vol')
         m = calculate_tier0_metrics(ticker, oi, minutes, now_ms, ret_std=ret_std, oi_std=oi_std,
                                     avg_minute_usd=avg_minute)
         m['futures_cvd_5m'] = minute_delta(minutes, now_ms)
