@@ -418,6 +418,22 @@ async function renderAnom() {
     ], h, { empty: 'Нет аномалий за период.' });
 }
 
+// Small-cap pumps / dumps of the last 48h and their first pullback (pumps.py; research/pumps*.md)
+function pumpsHtml() {
+  const rows = (S.pumps || []).filter(matches);
+  const st = rows.length ? rows[0].stats : null;
+  return `<h3>Пампы и дампы щитков за 48ч <small>вне топ-30 по объёму; +15% (−15%) за ≤6ч на объёме ×3; первый откат 38.2–61.8%</small></h3>` +
+    table('pumps', [
+      { k: 'Монета', v: r => `<b>${esc(r.name)}</b> ${r.kind === 'pump' ? 'памп' : 'дамп'}`, s: r => r.name },
+      { k: 'Когда', v: r => clock(r.event_ts), s: r => r.event_ts },
+      { k: 'Ход', v: r => pct(r.direction * r.move), s: r => r.move, num: true },
+      { k: 'База → пик', v: r => `${fp(r.base)} → ${fp(r.peak)}` },
+      { k: 'Зона отката', v: r => `${fp(r.zone[0])} – ${fp(r.zone[1])}` },
+      { k: 'Состояние', v: r => esc(r.state) + (r.levels ? ` · ${r.trade_dir > 0 ? 'лонг' : 'шорт'} ${fp(r.levels.entry)}, стоп ${fp(r.levels.stop)}, цели ${fp(r.levels.tp1)} / ${fp(r.levels.tp2)}` : ''), wrap: true },
+      { k: 'История правила', v: r => `${esc(r.stats.label)}: ${esc(r.stats.verdict)}, ${esc(r.stats.r)}, цель ${esc(r.stats.hit)}`, wrap: true },
+    ], rows, { empty: 'Пампов и дампов щитков за 48ч нет.' });
+}
+
 function renderForming() {
   const f = (S.forming || []).filter(matches), v = (S.vetoed || []).filter(matches);
   return `<div class="toolbar">${filterBox()}</div>
@@ -429,6 +445,7 @@ function renderForming() {
       { k: 'Покупатели', v: r => r.sig.delta_ratio === null ? '—' : ((1 + r.sig.delta_ratio) / 2 * 100).toFixed(0) + '%', s: r => r.sig.delta_ratio, num: true },
       { k: 'Контекст', v: r => esc((r.why || []).join(' · ')), wrap: true },
     ], f, { empty: 'Ничего не формируется.' }) +
+    pumpsHtml() +
     `<h3>Отсеяны на этом скане <small>сетапы, которые не стали карточками</small></h3>` +
     table('vetoed', [
       { k: 'Монета', v: r => `<b>${esc(r.name)}</b>`, s: r => r.name },

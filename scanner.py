@@ -126,6 +126,7 @@ class Scanner:
         self.watchdog = LoopWatchdog()
         self.positioning = Positioning(self.fetcher)
         self.macro = Macro()
+        self._pump_cache: Dict = {}      # pumps.monitor: symbol -> (last 1h candle ts, scan result)
         self._level_raw: Dict[str, List[RawLevel]] = {}
         self._level_sig: Dict[str, tuple] = {}
         self.book.levels_of = self._levels_of
