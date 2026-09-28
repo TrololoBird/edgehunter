@@ -472,6 +472,10 @@ class StrategiesConfig:
     # -0.06R [-0.18..+0.06]; research/cards_6m.md, research_cards.py). Re-enable in config.local.toml
     # ([strategies] enabled = [...]) once a change is shown to turn them positive on that replay.
     enabled: tuple = ('trend', 'momentum', 'wyckoff', 'absorption', 'exhaustion')
+    # Single setups whose cards are off (journaled with vetoed='disabled'): proven to lose net of costs on the same
+    # card replay (research/phases_6m.md: BEAR C -0.23R, BULL A -0.20R, BULL F -0.22R, BULL B -0.13R, all BH q <= 0.003).
+    # BULL E (+0.32R, n.s., 45 entries) and BEAR D (-0.15R, q 0.15) are not proven either way and stay on.
+    disabled_setups: tuple = ('BULL A', 'BULL B', 'BEAR C', 'BULL F')
     # 1h candles of every coin (fetcher._hourly_candles_loop): ~8 days for the weekly / daily / session pools
     h1_candles: int = 200
     h1_refresh_sec: int = 3600

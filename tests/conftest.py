@@ -53,3 +53,13 @@ def rally_frame():
 
 def minute(t0: int, i: int, o, h, l, c, q=1e4, Q=5e3):
     return [t0 + i * 60_000, o, h, l, c, q, Q]
+
+
+@pytest.fixture(autouse=True)
+def all_strategies_enabled(monkeypatch):
+    """The tests exercise the lifecycle of every strategy: the deployment's disabled strategies / setups do not apply."""
+    import dataclasses
+    import config as config_mod
+    from strategies import STRATEGIES
+    monkeypatch.setattr(config_mod.CONFIG, 'strategies', dataclasses.replace(
+        config_mod.CONFIG.strategies, enabled=tuple(STRATEGIES), disabled_setups=()))
