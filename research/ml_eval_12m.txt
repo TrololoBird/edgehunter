@@ -1,0 +1,51 @@
+# ml_eval.py on the 12-month pretraining dataset (2025-10-02 .. 2026-09-26, 401 coins, Python 3.14); Edge against the universe mean.
+
+rows 963895, coins 401, 50.1% positive, effective n (sum of uniqueness) 1047
+
+1. online logistic regression as it ran (prediction before learning each row)
+   base rate (running)    log-loss 0.6932 (skill +0.000%)  Brier skill +0.000%  AUC 0.501
+   river LR (online)      log-loss 0.7240 (skill -4.434%)  Brier skill -3.201%  AUC 0.567
+   fold 1: train 197960 rows, test 172558 rows, LightGBM 629 trees
+   fold 2: train 370878 rows, test 157352 rows, LightGBM 434 trees
+   fold 3: train 528222 rows, test 159545 rows, LightGBM 1108 trees
+   fold 4: train 687605 rows, test 146548 rows, LightGBM 1183 trees
+   fold 5: train 834283 rows, test 128898 rows, LightGBM 1993 trees
+
+2. purged walk-forward (out of sample)
+   base rate              log-loss 0.6931 (skill +0.000%)  Brier skill +0.000%  AUC 0.501
+   logistic (L2)          log-loss 0.6913 (skill +0.267%)  Brier skill +0.370%  AUC 0.533
+   LightGBM (shallow)     log-loss 0.6907 (skill +0.359%)  Brier skill +0.495%  AUC 0.537
+
+   calibration of LightGBM (shallow) (predicted -> observed, by decile)
+     0.330-0.457: predicted 0.431  observed 0.431  n 76491
+     0.457-0.474: predicted 0.466  observed 0.468  n 76491
+     0.474-0.485: predicted 0.479  observed 0.484  n 76491
+     0.485-0.494: predicted 0.489  observed 0.495  n 76491
+     0.494-0.502: predicted 0.498  observed 0.501  n 76491
+     0.502-0.511: predicted 0.506  observed 0.510  n 76491
+     0.511-0.519: predicted 0.515  observed 0.516  n 76491
+     0.519-0.529: predicted 0.524  observed 0.524  n 76491
+     0.529-0.542: predicted 0.535  observed 0.535  n 76491
+     0.542-0.659: predicted 0.560  observed 0.556  n 76491
+
+3. Edge 4h (return in the signal's direction minus the mean of all coins), out of sample
+   all rows          +0.010%  (n 764901)
+   top 50% by P(edge) +0.030%  (n 382451)
+   top 20% by P(edge) +0.046%  (n 152981)
+   top 10% by P(edge) +0.062%  (n 76491)
+
+   by setup (all rows vs top 20%):
+   BEAR C                 -0.004% -> +0.001%  (n 40184)
+   BEAR D                 +0.018% -> +0.002%  (n 11513)
+   BREAKOUT DOWN          -0.026% -> -0.006%  (n 71890)
+   BREAKOUT UP            -0.033% -> +0.024%  (n 58296)
+   BULL A                 +0.016% -> +0.024%  (n 46669)
+   BULL B                 +0.014% -> +0.040%  (n 19235)
+   BULL E                 +0.165% -> +0.312%  (n 467)
+   BULL F                 +0.052% -> +0.229%  (n 24146)
+   BULL a (partial)       +0.016% -> +0.030%  (n 244846)
+   BULL e (partial)       -0.288% -> -0.285%  (n 304)
+   IMPULSE DOWN           -0.057% -> -0.182%  (n 5242)
+   IMPULSE UP             -0.104% -> +0.408%  (n 13499)
+   SWEEP HIGH             +0.040% -> +0.133%  (n 109721)
+   SWEEP LOW              +0.022% -> +0.031%  (n 118872)

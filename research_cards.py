@@ -579,6 +579,8 @@ def main():
     parser.add_argument('--min-volume', type=float, default=cfg.min_volume_usd)
     parser.add_argument('--workers', type=int, default=3)
     parser.add_argument('--limit', type=int, default=None)
+    parser.add_argument('--end', default=None, help='last day of the window (YYYY-MM-DD; default yesterday): an '
+                        'earlier window is a holdout for decisions made on the recent one')
     parser.add_argument('--out', default=os.path.join('research', 'cards_6m.md'))
     parser.add_argument('--rows', default='research_cards.parquet')
     parser.add_argument('--what', choices=('events', 'phases', 'all'), default='events',
@@ -587,7 +589,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
     from history import Archive
     from pretrain import select_coins
-    end = datetime.now(timezone.utc).date() - timedelta(days=1)
+    end = date.fromisoformat(args.end) if args.end else datetime.now(timezone.utc).date() - timedelta(days=1)
     start = end - timedelta(days=30 * args.months)
     coins = select_coins(Archive(rate_bytes=4e7), start, end, args.min_volume)
     if args.limit:
