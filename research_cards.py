@@ -55,7 +55,17 @@ def _oi_change(oi_ts: np.ndarray, oi_v: np.ndarray, since: float, until: float) 
 
 
 def replay_coin(job: tuple) -> List[Dict]:
-    key, fut_id, spot_id, start_iso, end_iso, days_ok = job
+    key, fut_id, spot_id, start_iso, end_iso, days_ok, what = job
+    out: List[Dict] = []
+    if what in ('events', 'all'):
+        out += replay_events(job)
+    if what in ('phases', 'all'):
+        out += replay_phases(job)
+    return out
+
+
+def replay_events(job: tuple) -> List[Dict]:
+    key, fut_id, spot_id, start_iso, end_iso, days_ok, _ = job
     from history import Archive
     from indicators import compute_indicators_batch
     from levels import ltf_trigger, resample, simulate
@@ -146,10 +156,164 @@ def replay_coin(job: tuple) -> List[Dict]:
     return out
 
 
+def replay_phases(job: tuple) -> List[Dict]:
+    """
+    The phase setups the bot makes cards of (trend: BULL F / BEAR D; wyckoff: BULL A / B / E, BEAR C): scored by the
+    live PhaseScorer on closed 15m candles (spot structure, futures OI / flow), classified, vetoed like the bot
+    (perp-led when crowded, the trend strategy's tide), planned and walked like the event cards; the plan is re-made at
+    every 15m close until the entry (live it follows the chart), a continuation's plan frozen in its zone.
+    """
+    key, fut_id, spot_id, start_iso, end_iso, days_ok, _ = job
+    from history import Archive
+    from indicators import compute_indicators_batch
+    from journal import classify, veto_reason
+    from levels import ltf_trigger, pullback_volume_ok, resample, simulate
+    from pretrain import _asof, _bucket, _raw_frame
+    from scorer import PhaseScorer
+    from strategies import strategy_of
+    from strategies.base import PlanInput
+    from strategies.geometry import entry_levels
+    from strategies.structure import Context, coin_trend, recent_atr
+    from zones import build_raw, merge
+
+    days_ok = set(days_ok)
+    start, end = date.fromisoformat(start_iso), date.fromisoformat(end_iso)
+    archive = Archive(rate_bytes=4e7)
+    fut = archive.klines_1m('futures', fut_id, start, end)
+    spot = archive.klines_1m('spot', spot_id, start, end) if spot_id else np.empty((0, 8))
+    if len(fut) < 1440 * 10 or len(spot) == 0:
+        return []
+    btc = fut if fut_id == 'BTCUSDT' else archive.klines_1m('futures', 'BTCUSDT', start, end)
+    met = archive.metrics(fut_id, start, end)
+    fund = archive.funding(fut_id, start, end)
+    c15 = _bucket(fut, QUARTER_MS)
+    oi15 = {int((t - 1) // QUARTER_MS * QUARTER_MS): float(v) for t, v in zip(met['ts'], met['oi']) if int(t) % QUARTER_MS == 0 and v}
+    fut_all = compute_indicators_batch({key: _raw_frame(c15, oi15)}, {key: (0.0, 0.0)})
+    spot_all = compute_indicators_batch({key: _raw_frame(_bucket(spot, QUARTER_MS), None)}, {key: (0.0, 0.0)})
+    if len(fund):
+        for name in ('fut', 'spot'):
+            frame = fut_all if name == 'fut' else spot_all
+            rates = [(_asof(fund[:, 0], fund[:, 1], t + QUARTER_MS) or 0.0) for t in frame['timestamp'].to_list()]
+            frame = frame.with_columns(pl.Series('funding_rate', rates), pl.Series('predicted_funding', rates))
+            if name == 'fut':
+                fut_all = frame
+            else:
+                spot_all = frame
+    scorer = PhaseScorer()
+    scored = scorer.calculate_scores(spot_all, fut_all, None, None).sort('timestamp')
+    fut_ts = fut_all['timestamp'].to_numpy()
+    m_ts = fut[:, 0]
+    minutes_all = fut[:, STREAM_COLS]
+    h1 = _bucket(fut, HOUR_MS)
+    h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in h1]
+    h1_close = h1[:, 0] + HOUR_MS if len(h1) else np.empty(0)
+    c5 = _bucket(fut, 5 * MINUTE_MS)
+    c5_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in c5]
+    c5_close = c5[:, 0] + 5 * MINUTE_MS if len(c5) else np.empty(0)
+    c15_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in c15]
+    c15_close = c15[:, 0] + QUARTER_MS
+    btc15 = _bucket(btc, QUARTER_MS)
+    btc_close_ts, btc_close = btc15[:, 0] + QUARTER_MS, btc15[:, 4]
+    oi_ts, oi_v = np.asarray(met['ts']), np.asarray(met['oi'])
+    oi_hour = [(int(t), float(v)) for t, v in zip(oi_ts, oi_v) if int(t) % HOUR_MS == 0 and v]
+    oi_hour_ts = np.asarray([t for t, _ in oi_hour]) if oi_hour else np.empty(0)
+
+    def inputs(t_ms: float):
+        """(df of closed 15m candles, 1h candles, raw levels, context) as the bot had them at t_ms."""
+        q = int(np.searchsorted(fut_ts + QUARTER_MS, t_ms, side='right'))
+        df = fut_all.slice(max(0, q - CONFIG.timeframe.rest_lookback_candles), min(q, CONFIG.timeframe.rest_lookback_candles))
+        k = int(np.searchsorted(c15_close, t_ms, side='right'))
+        part = c15_list[max(0, k - CONFIG.timeframe.rest_lookback_candles):k]
+        h = int(np.searchsorted(h1_close, t_ms, side='right'))
+        h1w = h1_list[max(0, h - 200):h]
+        atr = df['atr'][-1] if df.height else None
+        if not atr or atr != atr or not part:
+            return None
+        j = int(np.searchsorted(oi_hour_ts, t_ms, side='right')) if len(oi_hour_ts) else 0
+        k5 = int(np.searchsorted(c5_close, t_ms, side='right'))
+        raw = build_raw(part, h1w, oi_hour[max(0, j - 200):j], [], atr, t_ms, candles_4d=c5_list[max(0, k5 - 4 * 288):k5])
+        ctx = Context(atr=atr, recent_atr=recent_atr(part), cut_ms=int(t_ms), zones=merge(raw, atr), pools=[],
+                      trend=coin_trend(h1w))
+        return df, h1w, raw, ctx
+
+    out: List[Dict] = []
+    busy_until = {1: 0.0, -1: 0.0}
+    for row in scored.iter_rows(named=True):
+        close_ms = row['timestamp'] + QUARTER_MS
+        if close_ms // 86_400_000 not in days_ok:
+            continue
+        row.update({c: 0.0 for c in ('rvol_1m', 'price_z', 'oi_z', 'whale_net_5m', 'liq_long_5m', 'liq_short_5m')})
+        row.update(is_tier_0_anomaly=False, rule_anomaly=False, liq_cascade=False)
+        sig = scorer.signal_from_row(row)
+        if not sig or not sig.get('is_structured'):
+            continue
+        _, group_key, d = classify(sig)
+        strategy = strategy_of(group_key)
+        if strategy is None or not d:
+            continue
+        now_ms = close_ms + 5_000
+        if now_ms < busy_until[d]:
+            continue
+        x = inputs(now_ms)
+        if x is None:
+            continue
+        df, h1w, raw, ctx = x
+        b = int(np.searchsorted(btc_close_ts, now_ms, side='right')) - 1
+        sig.update(coin_trend=ctx.trend, has_spot=True,
+                   btc_1h=float(btc_close[b] / btc_close[b - 4] - 1) if b >= 4 else None)
+        vetoed = veto_reason(group_key, sig) or strategy.context_veto(sig, d)
+        k = int(np.searchsorted(m_ts, now_ms - MINUTE_MS, side='right'))
+        plan = strategy.plan(PlanInput(key, d, group_key, sig, df, minutes_all[max(0, k - 240):k].tolist(), raw, h1w,
+                                       ctx, None))
+        rec = {'symbol': key, 'ts_ms': now_ms, 'setup': group_key, 'strategy': strategy.name, 'direction': d,
+               'vetoed': vetoed or '', 'status': 'NO_PLAN', 'vetoed_triggers': 0, 'veto_log': '', 'r_tp1': None,
+               'r_tp2': None, 'r_be': None, 'rr_tp1': None, 'risk_pct': None, 'outcome': None, 'hold_min': None,
+               'vx_reason': '', 'vx_r_tp1': None, 'vx_r_tp2': None, 'vx_rr_tp1': None}
+        if plan is None or plan.get('skip') or not plan.get('targets'):
+            if plan and plan.get('skip'):
+                rec['status'] = f"NO_PLAN ({plan['skip']})"
+            out.append(rec)
+            continue
+        reached = plan.get('reached')
+
+        def replan(t_ms, strategy=strategy, d=d, group_key=group_key, sig=sig, reached=reached):
+            y = inputs(t_ms)
+            if y is None:
+                return None
+            df2, h1w2, raw2, ctx2 = y
+            kk = int(np.searchsorted(m_ts, t_ms - MINUTE_MS, side='right'))
+            p2 = strategy.plan(PlanInput(key, d, group_key, sig, df2, minutes_all[max(0, kk - 240):kk].tolist(), raw2,
+                                         h1w2, ctx2, reached))
+            return None if p2 is None or p2.get('skip') else p2
+
+        spring_minute = sig.get('fut_candle_minute_usd')
+
+        def spring_test(levels, zone_since, trigger_ms, group_key=group_key, spring_minute=spring_minute):
+            if group_key != 'BULL B':
+                return None
+            a = int(np.searchsorted(m_ts, zone_since, side='left'))
+            b2 = int(np.searchsorted(m_ts, trigger_ms, side='left'))
+            ok = pullback_volume_ok(minutes_all[a:b2].tolist(), int(zone_since), int(trigger_ms), spring_minute or 0.0)
+            return None if ok else 'no_spring_test'
+
+        finished = _lifecycle(plan, strategy, d, rec, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
+                              entry_levels, ltf_trigger, resample, simulate, _asof, replan=replan, extra_veto=spring_test)
+        if not vetoed:
+            busy_until[d] = finished
+        out.append(rec)
+    return out
+
+
 def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
-               entry_levels, ltf_trigger, resample, simulate, _asof) -> float:
-    """Walk the card minute by minute from start_ms; fills `row`; returns when the card finished (ms)."""
+               entry_levels, ltf_trigger, resample, simulate, _asof, replan=None, extra_veto=None) -> float:
+    """
+    Walk the card minute by minute from start_ms; fills `row`; returns when the card finished (ms). `replan(t_ms)`:
+    the strategy's plan as of a 15m close (the live plan follows the chart until the entry; a continuation's plan is
+    frozen in its zone), None while the plan does not exist. `extra_veto(levels, zone_since, trigger_ms)`: a
+    strategy-specific trigger veto (the spring's test).
+    """
     watch_ttl, zone_ttl, trade_ttl = strategy.ttls(plan['tf'])
+    fixed_invalid = plan.get('invalid') if plan.get('fix_invalid') else None
     invalid, tp1 = plan.get('invalid'), plan['targets'][0]
     required_oi = strategy.name == 'breakout'
     interval = plan['trigger_minutes'] * MINUTE_MS
@@ -211,16 +375,36 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
     status, zone_since = 'WATCH', None
     near_edge = plan['zone_hi'] if d > 0 else plan['zone_lo']
     horizon = start_ms + (watch_ttl + zone_ttl) * 1000 + HOUR_MS
+    current = plan
     while j < len(m_ts) and m_ts[j] < horizon:
         t_close = float(m_ts[j]) + MINUTE_MS
         high, low, close = float(fut[j, 2]), float(fut[j, 3]), float(fut[j, 4])
         against, favour = (low, high) if d > 0 else (high, low)
+        if replan is not None and int(m_ts[j]) % QUARTER_MS == 0 and not (strategy.frozen_in_zone and status == 'ZONE'):
+            current = replan(float(m_ts[j]))
+            if current is not None and current.get('targets'):
+                plan = current
+                invalid = fixed_invalid if fixed_invalid is not None else plan.get('invalid')
+                tp1 = plan['targets'][0]
+                near_edge = plan['zone_hi'] if d > 0 else plan['zone_lo']
+                interval = plan['trigger_minutes'] * MINUTE_MS
+            else:
+                current = None
+        if current is None:
+            # no plan (the leg stopped qualifying): the card waits, and expires after the waiting lifetime
+            if t_close - start_ms > watch_ttl * 1000:
+                row['status'] = 'EXPIRED'
+                return t_close
+            j += 1
+            continue
         if invalid is not None and d * (against - invalid) <= 0:
             row['status'] = 'INVALID'
             return t_close
         if plan.get('missable') and d * (favour - tp1) >= 0:
             row['status'] = 'MISSED'
             return t_close
+        if plan.get('reset') is not None and status == 'ZONE' and d * (favour - plan['reset']) > 0:
+            status, zone_since = 'WATCH', None       # the leg extended without a trigger: re-measured
         if status != 'ZONE' and d * (against - near_edge) <= 0:
             status, zone_since = 'ZONE', float(m_ts[j])
         if status == 'ZONE':
@@ -233,7 +417,8 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
                 else:
                     levels = entry_levels(plan, trigger['entry'], trigger['extreme'], d)
                     if levels and d * (close - levels['sl']) > 0:
-                        reason = veto(levels, trigger['time'])
+                        reason = extra_veto(levels, zone_since, trigger['time']) if extra_veto else None
+                        reason = reason or veto(levels, trigger['time'])
                         if reason is None:
                             return enter(levels, t_close + 5_000)
                         row['vetoed_triggers'] += 1
@@ -258,7 +443,7 @@ def _block_ci(values: np.ndarray, blocks: np.ndarray, seed: int = 7):
 
 def report(df: pl.DataFrame, start: date, end: date) -> str:
     from research_edges import bh
-    lines = [f"# Historical card replay: SWEEP / BREAKOUT (logic {CONFIG.journal.logic_version})", '',
+    lines = [f"# Historical card replay (logic {CONFIG.journal.logic_version})", '',
              f"Window {start} .. {end}, {df['symbol'].n_unique()} coins, {len(df)} cards. R = result in stop units of an "
              f"entry replayed like the journal (fill at the next full minute's open + {CONFIG.levels.slippage_bps:g} bps, "
              f"stop exits slipped, targets traded {CONFIG.levels.target_through_bps:g} bps through, funding), NET of the "
@@ -317,6 +502,8 @@ def main():
     parser.add_argument('--limit', type=int, default=None)
     parser.add_argument('--out', default=os.path.join('research', 'cards_6m.md'))
     parser.add_argument('--rows', default='research_cards.parquet')
+    parser.add_argument('--what', choices=('events', 'phases', 'all'), default='events',
+                        help='events: SWEEP / BREAKOUT; phases: trend / wyckoff phase setups')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
     from history import Archive
@@ -326,7 +513,7 @@ def main():
     coins = select_coins(Archive(rate_bytes=4e7), start, end, args.min_volume)
     if args.limit:
         coins = coins[:args.limit]
-    jobs = [(k, f, s, start.isoformat(), end.isoformat(), days) for k, f, s, days in coins]
+    jobs = [(k, f, s, start.isoformat(), end.isoformat(), days, args.what) for k, f, s, days in coins]
     rows: List[Dict] = []
     started = time.time()
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
