@@ -212,7 +212,8 @@ def main():
     errors = [r['error'] for r in rows if 'error' in r]
     rows = [r for r in rows if 'error' not in r]
     ev = pl.DataFrame([{k: v for k, v in r.items() if k != 'trades'} for r in rows]).sort('ts')
-    tr = pl.DataFrame([{**t, 'ts': r['ts'], 'major': r['major'], 'kind': r['kind'], 'coin': r['coin']}
+    tr = pl.DataFrame([{**t, 'ts': r['ts'], 'major': r['major'], 'kind': r['kind'], 'coin': r['coin'],
+                        'size': '15-30%' if r['move'] < 0.30 else '30-60%' if r['move'] < 0.60 else '60%+'}
                        for r in rows for t in r['trades']], infer_schema_length=None).sort('ts')
     mid = int(ev['ts'].min() + (ev['ts'].max() - ev['ts'].min()) // 2)
     half = pl.when(pl.col('ts') < mid).then(pl.lit('older')).otherwise(pl.lit('newer')).alias('half')
@@ -247,6 +248,16 @@ def main():
                      f"{g2['geo2'].mean() if len(g2) else float('nan'):.0%} | "
                      f"{g['r2'].drop_nulls().mean() if 'r2' in g.columns and g['r2'].drop_nulls().len() else float('nan'):+.3f} | "
                      f"{g['risk_pct'].median() * 100:.1f}% |")
+    lines += ['', '## Trades by the size of the move (whole window)', '',
+              '| class | kind | strategy | size | trades | TP1 hit | geometry | R TP1 net | R TP2 net |',
+              '|---|---|---|---|---:|---:|---:|---:|---:|']
+    for key, g in tr.group_by(['class', 'kind', 'strategy', 'size'], maintain_order=True):
+        if len(g) < 20:
+            continue
+        g1 = g.filter(pl.col('win1').is_not_null())
+        lines.append(f"| {' | '.join(key)} | {len(g)} | {g1['win1'].mean():.0%} | {g1['geo1'].mean():.0%} | "
+                     f"{g['r1'].drop_nulls().mean():+.3f} | "
+                     f"{g['r2'].drop_nulls().mean() if 'r2' in g.columns and g['r2'].drop_nulls().len() else float('nan'):+.3f} |")
     if errors:
         lines += ['', f"{len(errors)} coins failed, first: {errors[0]}"]
     text = '\n'.join(lines) + '\n'

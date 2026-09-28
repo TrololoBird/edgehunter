@@ -459,6 +459,29 @@ class PositioningConfig:
 
 
 @dataclass(frozen=True)
+class PoolsConfig:
+    """
+    Per-strategy coin pools (pools.py): each strategy trades only its own coins, refreshed hourly. A pool = the
+    universe filtered by the strategy's rule (coin classes by 24h volume rank: major = BTC ETH SOL XRP BNB, large =
+    rank <= 30, mid = rank <= 80, small = the rest; sectors to exclude; minimum 1h volatility), minus the coins where
+    the strategy's journaled entries of the last lookback_days average <= exclude_below_r over >= min_entries (walk-
+    forward on the archive: the worst coins of the last 6 months stayed the worst the next month, -0.39R vs -0.10R;
+    picking the best ones did not help), capped at `size` coins by 24h volume. Setups outside the pool are journaled
+    with vetoed='not_in_pool'.
+    """
+    enabled: bool = True
+    size: int = 20
+    refresh_sec: int = 3600
+    lookback_days: int = 90
+    min_entries: int = 8
+    exclude_below_r: float = -0.3
+    # (strategy, classes 'major,large,mid,small' or 'all', sectors to exclude (sectors.py names), min ATR(1h) in %)
+    rules: tuple = (('trend', 'all', '', 0.0), ('momentum', 'all', '', 0.0), ('wyckoff', 'all', '', 0.0),
+                    ('absorption', 'all', '', 0.0), ('exhaustion', 'all', '', 0.0), ('sweep', 'all', '', 0.0),
+                    ('breakout', 'all', '', 0.0))
+
+
+@dataclass(frozen=True)
 class StrategiesConfig:
     """
     Strategies (strategies/): each has its own anchor (a leg, a level or a range), entry, stop and target intent;
@@ -710,6 +733,7 @@ class AppConfig:
     levels: LevelsConfig = field(default_factory=LevelsConfig)
     zones: ZonesConfig = field(default_factory=ZonesConfig)
     strategies: StrategiesConfig = field(default_factory=StrategiesConfig)
+    pools: PoolsConfig = field(default_factory=PoolsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
     web: WebConfig = field(default_factory=WebConfig)
     positioning: PositioningConfig = field(default_factory=PositioningConfig)

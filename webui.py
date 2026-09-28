@@ -265,6 +265,7 @@ def build_state(scanner) -> Dict:
         'timing': {'scan': scanner.last_scan_sec, 'heavy': scanner.last_heavy_sec, 'tier0': scanner.last_tier0_sec},
         'symbols': len(scanner.market_data), 'hot': len(scanner._hot),
         'cards': cards, 'forming': forming, 'vetoed': vetoed, 'anomalies': anomalies,
+        'pools': scanner.pools.view(),
         'pumps': [dict(r, name=_name(r['symbol'])) for r in pumps.monitor(scanner.market_data, now * 1000,
                                                                           scanner._pump_cache)],
         'session': {'results': dict(results), 'r': [_num(r) for r in r_list]},

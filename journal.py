@@ -696,6 +696,14 @@ class SignalJournal:
         confirm.PROMOTED.update(promoted)
         return len(promoted)
 
+    def coin_results(self, since_ms: int) -> List[Tuple[str, str, int, float]]:
+        """(strategy, symbol, entries, mean net R to TP1) of the replayed, non-vetoed entries since `since_ms`."""
+        with self._lock:
+            return self.conn.execute(
+                "SELECT strategy, symbol, COUNT(*), AVG(r_tp1) FROM signals WHERE kind = 'entry' AND r_tp1 IS NOT NULL "
+                "AND (vetoed IS NULL OR vetoed = '') AND strategy IS NOT NULL AND ts_ms >= ? GROUP BY strategy, symbol",
+                (since_ms,)).fetchall()
+
     def summary(self) -> Tuple[int, int]:
         """(signals logged, signals with a 4h outcome)."""
         with self._lock:

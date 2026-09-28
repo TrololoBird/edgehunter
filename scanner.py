@@ -17,6 +17,8 @@ from levels import resample
 from positioning import Positioning
 import scenarios
 from macro import Macro
+from pools import Pools
+import sectors
 from storage import atomic_write
 from watchdog import LoopWatchdog
 from zones import RawLevel, build_raw, merge
@@ -126,7 +128,8 @@ class Scanner:
         self.watchdog = LoopWatchdog()
         self.positioning = Positioning(self.fetcher)
         self.macro = Macro()
-        self._pump_cache: Dict = {}      # pumps.monitor: symbol -> (last 1h candle ts, scan result)
+        self._pump_cache: Dict = {}
+        self.pools = Pools()      # pumps.monitor: symbol -> (last 1h candle ts, scan result)
         self._level_raw: Dict[str, List[RawLevel]] = {}
         self._level_sig: Dict[str, tuple] = {}
         self.book.levels_of = self._levels_of
@@ -183,7 +186,7 @@ class Scanner:
     def start(self):
         self._running = True
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
-                 self.levels_loop(), self.pretrain_loop(), self.macro_loop()]
+                 self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop()]
         if self.journal:
             loops.append(self.journal.evaluate_loop(self.fetcher))
             # P(edge) model state = the journal itself: replay the labelled rows, then the regime Edge table
@@ -958,6 +961,25 @@ class Scanner:
         }
 
     # ------------------------------------------------------------------ background loops
+
+    async def pools_loop(self):
+        """Per-strategy coin pools (pools.py), rebuilt every CONFIG.pools.refresh_sec off the loop."""
+        self.book.pool_of = self.pools.allows
+        await asyncio.sleep(120)                     # after the 1h candles and 24h volumes are in
+        while self._running:
+            try:
+                since = int((time.time() - CONFIG.pools.lookback_days * 86400) * 1000)
+                sector_map = await asyncio.to_thread(sectors.load)
+                results = await asyncio.to_thread(self.journal.coin_results, since) if self.journal else []
+                await asyncio.to_thread(self.pools.rebuild, dict(self.market_data), sector_map, results)
+                sizes = {k: len(v) for k, v in self.pools.members.items()}
+                excl = sum(len(v) for v in self.pools.excluded.values())
+                logger.info(f"Coin pools rebuilt: {sizes}; {excl} coin x strategy pairs excluded by their results")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Coin pools refresh failed: {e}")
+            await asyncio.sleep(CONFIG.pools.refresh_sec)
 
     async def macro_loop(self):
         """FRED macro context (US10Y, dollar index, Brent) for the scenario card, refreshed every 6h off the loop."""

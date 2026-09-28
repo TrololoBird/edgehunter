@@ -79,7 +79,7 @@ const VETO = {
   no_spring_test: 'нет теста spring (объём отката высокий)', low_rr: 'R:R до TP1 < 1', regime: 'сетап минусовой в этом режиме рынка',
   no_leg: 'нет подходящей ноги: не из чего строить план', no_room: 'цена уже прошла все цели', same_leg: 'по этой ноге карточка уже была',
   market_move: 'движение всего рынка: тот же сетап у многих монет сразу',
-  against_trend: 'против тренда монеты на 1h: снятие ликвидности против тренда обычно проваливается', disabled: 'стратегия выключена в конфиге',
+  against_trend: 'против тренда монеты на 1h: снятие ликвидности против тренда обычно проваливается', disabled: 'стратегия выключена в конфиге', not_in_pool: 'монета не в пуле этой стратегии (класс / сектор / волатильность / плохая история на ней)',
 };
 // Strategies: each has its own anchor, entry and targets (strategies/)
 const FAMILY = {
@@ -434,6 +434,19 @@ function pumpsHtml() {
     ], rows, { empty: 'Пампов и дампов щитков за 48ч нет.' });
 }
 
+// Per-strategy coin pools (pools.py): which coins each strategy trades, and the ones excluded by their results
+function poolsHtml() {
+  const p = S.pools;
+  if (!p || !p.updated) return '<h3>Пулы монет стратегий</h3><div class="hint">Строятся (через ~2 минуты после старта, затем раз в час).</div>';
+  const rows = Object.entries(p.pools).map(([k, v]) => ({ k, coins: v, excl: p.excluded[k] || {} }));
+  return `<h3>Пулы монет стратегий <small>каждая стратегия торгует только свои монеты; обновлено ${ago(nowSec() - p.updated)} назад</small></h3>` +
+    table('pools', [
+      { k: 'Стратегия', v: r => esc((FAMILY[r.k] || [r.k])[0]), s: r => r.k },
+      { k: 'Монеты', v: r => r.coins.map(c => `${esc(c)} <span class="src">${esc((p.classes[c] || {}).sector || '')}</span>`).join(', '), wrap: true },
+      { k: 'Исключены по истории', v: r => Object.entries(r.excl).map(([c, x]) => `${esc(c)} (${x.entries} входов, ${x.r > 0 ? '+' : ''}${x.r}R)`).join(', ') || '—', wrap: true },
+    ], rows, { empty: 'Нет пулов.' });
+}
+
 function renderForming() {
   const f = (S.forming || []).filter(matches), v = (S.vetoed || []).filter(matches);
   return `<div class="toolbar">${filterBox()}</div>
@@ -445,7 +458,7 @@ function renderForming() {
       { k: 'Покупатели', v: r => r.sig.delta_ratio === null ? '—' : ((1 + r.sig.delta_ratio) / 2 * 100).toFixed(0) + '%', s: r => r.sig.delta_ratio, num: true },
       { k: 'Контекст', v: r => esc((r.why || []).join(' · ')), wrap: true },
     ], f, { empty: 'Ничего не формируется.' }) +
-    pumpsHtml() +
+    pumpsHtml() + poolsHtml() +
     `<h3>Отсеяны на этом скане <small>сетапы, которые не стали карточками</small></h3>` +
     table('vetoed', [
       { k: 'Монета', v: r => `<b>${esc(r.name)}</b>`, s: r => r.name },

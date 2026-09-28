@@ -219,6 +219,9 @@ class SignalBook:
                     reason = 'no_data'
                 if reason is None and (not strategy.enabled or group_key in CONFIG.strategies.disabled_setups):
                     reason = 'disabled'
+                pool_of = getattr(self, 'pool_of', None)
+                if reason is None and pool_of is not None and not pool_of(strategy.name, symbol):
+                    reason = 'not_in_pool'
                 if reason:
                     sig['card_veto'] = reason
                     self.vetoed.append((symbol, group_key, reason, sig))
