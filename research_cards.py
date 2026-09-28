@@ -39,10 +39,18 @@ H4_MS = 4 * HOUR_MS
 STREAM_COLS = [0, 1, 2, 3, 4, 6, 7]          # [t, o, h, l, c, quote, taker buy quote]
 
 
-def _net_r(r: Optional[float], entry: float, sl: float) -> Optional[float]:
+# Entry execution of the replay: 'market' (the journal's manual fill: the next full minute's open + slippage, taker
+# fees) or 'maker' (a resting limit at the trigger's close, filled only if price trades back through it within
+# MAKER_WAIT_MIN minutes). Set with --entry (an environment variable, so the worker processes see it).
+ENTRY_MODE = os.environ.get('RESEARCH_ENTRY', 'market')
+MAKER_WAIT_MIN = 5
+MAKER_FEE, TAKER_FEE = 0.0002, 0.0005        # Binance USD-M VIP0
+
+
+def _net_r(r: Optional[float], entry: float, sl: float, fee: Optional[float] = None) -> Optional[float]:
     if r is None or not entry or entry == sl:
         return r
-    return r - CONFIG.journal.fee_round_trip * entry / abs(entry - sl)
+    return r - (CONFIG.journal.fee_round_trip if fee is None else fee) * entry / abs(entry - sl)
 
 
 def _oi_change(oi_ts: np.ndarray, oi_v: np.ndarray, since: float, until: float) -> Optional[float]:
@@ -509,12 +517,28 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
         if len(candles) < trade_ttl // 60:
             return None
         rate = _asof(fund[:, 0], fund[:, 1], entered_ms) if len(fund) else None
-        res = simulate(levels, d, [[c[0], c[1], c[2], c[3], c[4]] for c in candles], use_fill=True, funding_8h=rate)
+        bars = [[c[0], c[1], c[2], c[3], c[4]] for c in candles]
+        fee = None
+        if ENTRY_MODE == 'maker':
+            # a resting limit at the trigger's close: filled only when price trades back through it within
+            # MAKER_WAIT_MIN minutes (the fills are the trades price went against: adverse selection included);
+            # maker fee on the entry, no entry slippage, a taker fee on the exit (conservative: TPs could rest too)
+            limit = levels['entry']
+            k = next((i for i, c in enumerate(bars[:MAKER_WAIT_MIN])
+                      if (c[3] < limit * (1 - 1e-4) if d > 0 else c[2] > limit * (1 + 1e-4))), None)
+            if k is None:
+                return {'filled': False, 'outcome': 'NOT_FILLED', 'rr_tp1': levels['rr_tp1'],
+                        'risk_pct': abs(levels['entry'] - levels['sl']) / levels['entry'],
+                        'r_tp1': None, 'r_tp2': None, 'r_be': None}
+            res = simulate(levels, d, bars[k:], use_fill=False, funding_8h=rate)
+            fee = MAKER_FEE + TAKER_FEE
+        else:
+            res = simulate(levels, d, bars, use_fill=True, funding_8h=rate)
         out = {'filled': bool(res.get('filled')), 'outcome': res.get('outcome'), 'rr_tp1': levels['rr_tp1'],
                'risk_pct': abs(levels['entry'] - levels['sl']) / levels['entry']}
         entry = res.get('entry_fill') or levels['entry']
         for col in ('r_tp1', 'r_tp2', 'r_be'):
-            out[col] = _net_r(res.get(col), entry, levels['sl']) if out['filled'] else None
+            out[col] = _net_r(res.get(col), entry, levels['sl'], fee) if out['filled'] else None
         return out
 
     def sample(levels, entered_ms, res, reason):
@@ -694,6 +718,8 @@ def main():
     parser.add_argument('--rows', default='research_cards.parquet')
     parser.add_argument('--samples', default='research_samples.parquet',
                         help='every taken and first vetoed trade with its entry features (research_meta.py)')
+    parser.add_argument('--entry', choices=('market', 'maker'), default='market',
+                        help='entry execution: the journal\'s market fill, or a resting limit at the trigger (maker fee)')
     parser.add_argument('--what', choices=('events', 'phases', 'all'), default='events',
                         help='events: SWEEP / BREAKOUT; phases: trend / wyckoff phase setups')
     args = parser.parse_args()
@@ -705,6 +731,7 @@ def main():
     coins = select_coins(Archive(rate_bytes=4e7), start, end, args.min_volume)
     if args.limit:
         coins = coins[:args.limit]
+    os.environ['RESEARCH_ENTRY'] = args.entry           # the worker processes read ENTRY_MODE at import
     jobs = [(k, f, s, start.isoformat(), end.isoformat(), days, args.what) for k, f, s, days in coins]
     rows: List[Dict] = []
     samples: List[Dict] = []
