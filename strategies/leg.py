@@ -97,7 +97,8 @@ class LegContinuation(Strategy):
         hi_ratio = min(1.0, retracement_of(impulse, far))
         extensions = [fib_price(impulse, 1.0 - r) for r in cfg.continuation_targets]
         worst_entry = fib_price(impulse, lo_ratio)
-        targets, sources = select_targets(zones, worst_entry, d, atr, 'extension', extensions, 'fib ext')
+        # targets spaced in the ATR of the leg's own timeframe (15m ATR steps put TP1 inside a 1h / 4h leg's noise)
+        targets, sources = select_targets(zones, worst_entry, d, impulse['atr'], 'extension', extensions, 'fib ext')
         zone = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
         tf = impulse['tf']
         return base_plan(x, self.name, _leg_anchor(impulse), tf, trigger_minutes=TRIGGER_MINUTES.get(tf, 5),
@@ -165,7 +166,7 @@ class WyckoffStrategy(Strategy):
         retraces = [fib_price(impulse, r) for r in cfg.reversal_targets]
         intent = 'range' if x.setup in ('BULL A', 'BULL B') else 'mean'
         first = (far, 'range high') if far and d * (far - reached) > 0 else None
-        targets, sources = select_targets(zones, reached, d, atr, intent, retraces, 'fib', first=first)
+        targets, sources = select_targets(zones, reached, d, impulse['atr'], intent, retraces, 'fib', first=first)
         zone_max = cfg.accumulation_zone_max if x.setup == 'BULL A' else cfg.reversal_zone_max
         hi_ratio = zone_max
         zone_src = f"leg end (0-{hi_ratio:g})"

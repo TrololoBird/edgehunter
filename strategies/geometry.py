@@ -135,7 +135,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
     risk = abs(entry - stop)
     if not risk or direction * (entry - stop) <= 0:
         return None
-    atr = plan['atr']
+    atr = plan.get('leg_atr') or plan['atr']            # targets are spaced in the structure's own ATR
     if plan.get('retarget'):
         # Continuation: re-measured from the real entry
         targets, sources = select_targets(plan.get('zones') or [], entry, direction, atr, plan['intent'],

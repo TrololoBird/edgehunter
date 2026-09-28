@@ -11,7 +11,7 @@ __pycache__/
 *.lock
 scanner_state.json
 hl_accounts.json
-history_cache/
+history_cache
 pretrain_rows/
 archive/
 # local overrides may hold secrets (Telegram token)

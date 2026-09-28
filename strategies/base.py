@@ -89,7 +89,8 @@ class Strategy:
             return tuple(getattr(CONFIG.strategies, self.ttl_key))
         cfg = CONFIG.levels
         factor = TTL_FACTOR.get(tf, 1)
-        return cfg.watch_ttl_sec * factor, cfg.zone_ttl_sec * factor, cfg.trade_ttl_sec
+        # the trade lives as long as its structure: a 4h leg's target is days away, an 8h cap closed it on the way
+        return cfg.watch_ttl_sec * factor, cfg.zone_ttl_sec * factor, cfg.trade_ttl_sec * factor
 
     @property
     def enabled(self) -> bool:
