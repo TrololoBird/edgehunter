@@ -7,7 +7,7 @@ Browser dashboard: an aiohttp server inside the bot, bound to localhost only.
 - GET /api/coin    one coin: 1h / 15m / 5m candles, the level map (zones.py) or the card's plan, the order-book
                    heatmap (hot coins), journal rows of 48h
 - GET /api/history finished cards / anomalies / entries of the last N hours with what price did afterwards, raw and
-                   against the whole-universe median (the journal's `universe` snapshots)
+                   against the whole-universe mean (the journal's `universe` snapshots)
 - GET /api/anomaly_stats  per anomaly label: count and the average move afterwards in its direction
 - GET /api/stats   stats.py report rendered to HTML
 

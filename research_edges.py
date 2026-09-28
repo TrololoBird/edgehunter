@@ -2,7 +2,8 @@
 Historical Edge of every setup on the pretraining dataset (pretrain_rows/: every labelled row the bot would have
 written over the archive window, with its label and baseline), with the same statistics the live journal uses:
 
-- Edge 4h = the 4h return in the signal's direction minus the universe median over the same window;
+- Edge 4h = the 4h return in the signal's direction minus the universe MEAN over the same window (coins beat the
+  median by ~0.11% per 4h on average - right-skewed returns - so the median favoured every long);
 - 90% block-bootstrap interval (4h blocks of one direction resampled together: one market move = one cluster);
 - Benjamini-Hochberg q-value over every setup (many setups at once make some "significant" by chance);
 - Edge beta: the baseline scaled by the coin's beta to the universe (7 days of hourly returns before the signal's
@@ -97,6 +98,25 @@ def coin_betas(series_glob: str) -> Dict[Tuple[str, int], float]:
     return out
 
 
+def mean_baseline(df: pl.DataFrame, ts: np.ndarray, series5_glob: str) -> np.ndarray:
+    """
+    The universe's MEAN 4h move from the last 5m close at or before each row: coins beat the median by ~0.11% per 4h
+    on average (right-skewed returns), so an Edge against the median favours every long and penalises every short.
+    From the dataset when pretraining stored it, else rebuilt from the cached 5m series.
+    """
+    if 'baseline_mean_4h' in df.columns and df['baseline_mean_4h'].null_count() < df.height:
+        return df['baseline_mean_4h'].to_numpy().astype(float)
+    from pretrain import _forward_stats
+    files = glob.glob(series5_glob)
+    s5 = pl.concat([pl.read_parquet(f) for f in files], how='vertical_relaxed').unique(['symbol', 'timestamp'])
+    grid, _, mean = _forward_stats(s5, 300_000, H4)
+    i = (ts // 300_000 * 300_000 - 300_000 - int(grid[0])) // 300_000
+    ok = (i >= 0) & (i < len(grid))
+    out = np.full(len(ts), np.nan)
+    out[ok] = mean[i[ok]]
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', default=CONFIG.pretrain.dataset_path)
@@ -110,10 +130,15 @@ def main():
     df = df.filter(pl.col('direction') != 0)
     betas = coin_betas(args.series)
     d = df['direction'].to_numpy().astype(float)
-    ret, base = df['ret_4h'].to_numpy().astype(float), df['baseline_4h'].to_numpy().astype(float)
     ts = df['ts_ms'].to_numpy().astype(np.int64)
+    ret = df['ret_4h'].to_numpy().astype(float)
+    base = mean_baseline(df, ts, args.series.replace('.series.parquet', '.series5.parquet'))
     sym = df['symbol'].to_list()
     beta = np.asarray([betas.get((s, int(t // DAY)), np.nan) for s, t in zip(sym, ts)])
+    keep = np.isfinite(base)
+    d, ts, ret, base, beta = d[keep], ts[keep], ret[keep], base[keep], beta[keep]
+    df = df.filter(pl.Series(keep))
+    sym = df['symbol'].to_list()
     edge = d * (ret - base)
     edge_b = d * (ret - np.where(np.isnan(beta), 1.0, beta) * base)
     block = (ts // H4) * 2 + (d > 0)
@@ -149,7 +174,7 @@ def main():
     lines = [f"# Historical Edge by setup (pretraining rows, logic {CONFIG.journal.logic_version})", '',
              f"Window {pl.from_epoch(pl.Series([ts.min()]), 'ms')[0]:%Y-%m-%d} .. {pl.from_epoch(pl.Series([ts.max()]), 'ms')[0]:%Y-%m-%d}, "
              f"{len(df)} directional rows, {df['symbol'].n_unique()} coins. Edge = 4h return in the signal's direction minus the "
-             f"universe median; [90%] block bootstrap (4h x direction blocks); q = Benjamini-Hochberg over all setups; "
+             f"universe MEAN (the median favours every long by ~0.11%); [90%] block bootstrap (4h x direction blocks); q = Benjamini-Hochberg over all setups; "
              f"Edge β = baseline x the coin's Blume-adjusted 7-day beta; halves = Edge in the first / second half of the "
              f"window; trend = the coin's 1h trend vs the signal (N >= 30). No execution costs: a round trip costs "
              f"~{(CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4) * 100:.2f}% (fees + slippage).", '',

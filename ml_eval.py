@@ -19,7 +19,8 @@ import polars as pl
 
 from config import CONFIG
 
-META = ('ts_ms', 'symbol', 'kind', 'group_key', 'direction', 'ret_4h', 'baseline_4h', 'label', 'p_before')
+META = ('ts_ms', 'symbol', 'kind', 'group_key', 'direction', 'ret_4h', 'baseline_4h', 'baseline_mean_4h', 'label',
+        'p_before')
 H4 = 4 * 3_600_000
 
 
@@ -159,10 +160,12 @@ def main():
         for test, p in test_rows:
             mask |= test
             score[test] = p
-        edge = (df['direction'].to_numpy() * (df['ret_4h'].to_numpy() - df['baseline_4h'].to_numpy()))[mask]
+        # Edge against the universe MEAN (coins beat the median by ~0.11% per 4h: that favoured every long)
+        base_col = 'baseline_mean_4h' if 'baseline_mean_4h' in df.columns else 'baseline_4h'
+        edge = (df['direction'].to_numpy() * (df['ret_4h'].to_numpy() - df[base_col].to_numpy()))[mask]
         s = score[mask]
         ww = w[mask]
-        print("\n3. Edge 4h (return in the signal's direction minus the median of all coins), out of sample")
+        print(f"\n3. Edge 4h (return in the signal's direction minus the {'mean' if base_col == 'baseline_mean_4h' else 'median'} of all coins), out of sample")
         print(f"   all rows          {np.average(edge, weights=ww) * 100:+.3f}%  (n {mask.sum()})")
         for q in (0.5, 0.8, 0.9):
             top = s >= np.quantile(s, q)

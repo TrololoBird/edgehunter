@@ -586,8 +586,13 @@ class SignalJournal:
 
     # ------------------------------------------------------------------ market baseline / ML
 
-    def universe_return(self, ts_ms: int, minutes: int) -> Optional[float]:
-        """Median return of the whole universe between the snapshots nearest ts and ts + minutes (<= 20 min away)."""
+    def universe_return(self, ts_ms: int, minutes: int, stat: str = 'mean') -> Optional[float]:
+        """
+        Return of the whole universe between the snapshots nearest ts and ts + minutes (<= 20 min away): the MEAN
+        (Edge: an equal-weight universe has zero mean excess, while coins beat the median by ~0.11% per 4h on average -
+        right-skewed returns - so Edge against the median favoured every long and penalised every short) or the
+        'median' (the P(edge) label: a balanced 'beat the median coin').
+        """
         with self._lock:
             if not self._snapshot_times or self._snapshot_times[-1] < ts_ms + minutes * 60_000:
                 self._snapshot_times = [t for (t,) in self.conn.execute("SELECT DISTINCT ts_ms FROM universe ORDER BY ts_ms")]
@@ -609,7 +614,9 @@ class SignalJournal:
                 snaps.append(self._snapshot_cache[t])
         a, b = snaps
         changes = [b[s] / a[s] - 1 for s in a if s in b and a[s]]
-        return statistics.median(changes) if len(changes) >= 20 else None
+        if len(changes) < 20:
+            return None
+        return statistics.median(changes) if stat == 'median' else statistics.fmean(changes)
 
     def _labelled_rows(self, since_ms: int = 0) -> List[sqlite3.Row]:
         with self._lock:
@@ -628,7 +635,7 @@ class SignalJournal:
         from ml import label_of
         learned = 0
         for row in self._labelled_rows():
-            label = label_of(row, self.universe_return(row['ts_ms'], 240))
+            label = label_of(row, self.universe_return(row['ts_ms'], 240, 'median'))
             if label is not None:
                 self.success.learn(row, label)
                 learned += 1
@@ -805,7 +812,7 @@ class SignalJournal:
                 self.conn.row_factory = None
         if row is None or row['kind'] in ('entry', 'card') or row['logic_version'] != CONFIG.journal.logic_version:
             return
-        label = label_of(row, self.universe_return(row['ts_ms'], 240))
+        label = label_of(row, self.universe_return(row['ts_ms'], 240, 'median'))
         if label is not None:
             self.success.learn(row, label)
 

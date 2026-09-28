@@ -503,8 +503,12 @@ def _small(sig: Dict) -> Dict:
 
 # ====================================================================== market-wide pass (main process)
 
-def _forward_median(series: pl.DataFrame, step_ms: int, horizon_ms: int) -> Tuple[np.ndarray, np.ndarray]:
-    """(grid of candle open times, the median over coins of close[t + horizon] / close[t] - 1 from each candle's close)."""
+def _forward_stats(series: pl.DataFrame, step_ms: int, horizon_ms: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    (grid of candle open times, the median and the mean over coins of close[t + horizon] / close[t] - 1 from each
+    candle's close). The median labels P(edge) (a balanced 'beat the median coin'); the mean is the Edge baseline:
+    coins beat the median by ~0.11% per 4h on average (right-skewed returns), the mean has zero excess by construction.
+    """
     closes = series.select('symbol', 'timestamp', 'close').pivot(on='symbol', index='timestamp', values='close')
     ts = closes['timestamp'].to_numpy().astype(np.int64)
     grid = np.arange(ts.min(), ts.max() + step_ms, step_ms, dtype=np.int64)
@@ -517,8 +521,11 @@ def _forward_median(series: pl.DataFrame, step_ms: int, horizon_ms: int) -> Tupl
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         med = np.nanmedian(fwd, axis=1)
-    med[np.sum(~np.isnan(fwd), axis=1) < 20] = np.nan
-    return grid, med
+        mean = np.nanmean(fwd, axis=1)
+    few = np.sum(~np.isnan(fwd), axis=1) < 20
+    med[few] = np.nan
+    mean[few] = np.nan
+    return grid, med, mean
 
 
 def _market_series(series: pl.DataFrame) -> Dict[str, object]:
@@ -603,14 +610,14 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
     market = _market_series(series)
     grid = market['grid']
     series5 = pl.concat([pl.read_parquet(r['series5']) for r in results], how='diagonal_relaxed')
-    grid5, fwd5 = _forward_median(series5, 5 * MINUTE_MS, H4_MS)
+    grid5, fwd5, fwd5_mean = _forward_stats(series5, 5 * MINUTE_MS, H4_MS)
     del series5
 
-    def baseline_at(ts_ms: int) -> Optional[float]:
-        """The universe's median 4h move from the last 5m close at or before the signal."""
+    def baseline_at(ts_ms: int, values: np.ndarray) -> Optional[float]:
+        """The universe's 4h move (median or mean) from the last 5m close at or before the signal."""
         i = (ts_ms // (5 * MINUTE_MS) * 5 * MINUTE_MS - 5 * MINUTE_MS - int(grid5[0])) // (5 * MINUTE_MS)
         if 0 <= i < len(grid5):
-            v = fwd5[i]
+            v = values[i]
             return None if v != v else float(v)
         return None
 
@@ -663,16 +670,18 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
         row['ret_4h'] = r4
         # the universe baseline: the median move of every coin over the same 4h, from the last 5m close at or before
         # the signal (the 15m grid put a minute row's baseline up to 15 min before it)
-        baseline = baseline_at(ts)
+        baseline = baseline_at(ts, fwd5)
+        baseline_mean = baseline_at(ts, fwd5_mean)
         label = label_of(row, baseline)
         if label is None:
             continue
         part.append({'ts_ms': ts, 'symbol': key, 'kind': kind, 'group_key': group_key, 'direction': direction,
-                     'ret_4h': r4, 'baseline_4h': baseline, 'label': bool(label),
+                     'ret_4h': r4, 'baseline_4h': baseline, 'baseline_mean_4h': baseline_mean, 'label': bool(label),
                      'p_before': success.predict(row), **SuccessModel.features(row)})
         success.learn(row, label)
         learned += 1
-        edges.setdefault(group_key, []).append(direction * (r4 - baseline))
+        if baseline_mean is not None:
+            edges.setdefault(group_key, []).append(direction * (r4 - baseline_mean))
         if len(part) >= 50_000:
             pl.DataFrame(part, infer_schema_length=None).write_parquet(os.path.join(out_dir, f"part-{parts:04d}.parquet"))
             parts, part = parts + 1, []

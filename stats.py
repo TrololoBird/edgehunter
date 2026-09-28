@@ -10,8 +10,9 @@ Statistics over the signal journal (signals.db): what the price did after each k
 Returns are measured from the futures last price at the signal, in the signal's direction: for BEAR / IMPULSE
 DOWN a falling price counts as a gain. "Net" figures subtract the round-trip fee (CONFIG.journal.fee_round_trip).
 
-Market baseline: the median return of the WHOLE universe over the same window, from the price snapshots the
-scanner stores every 15 minutes (older databases without snapshots fall back to the median of the coins logged in
+Market baseline: the MEAN return of the WHOLE universe over the same window (not the median: coins beat the median
+by ~0.11% per 4h on average - right-skewed returns - which made every long look good and every short bad), from the price snapshots the
+scanner stores every 15 minutes (older databases without snapshots fall back to the mean of the coins logged in
 the same hour). "Edge" is a setup's return in its direction minus that baseline, so a falling market doesn't make
 every short look good. [lo..hi] = 90% bootstrap interval of the mean: an interval that straddles 0 means the
 sample cannot tell the setup from noise yet.
@@ -93,7 +94,7 @@ def hour_key(row) -> int:
 # ---------------------------------------------------------------------- market baseline
 
 class UniverseBaseline:
-    """Median return of every universe coin between the snapshots at/after t and at/after t + horizon."""
+    """Mean return of every universe coin between the snapshots nearest t and t + horizon (see ret)."""
 
     MAX_GAP_MS = 20 * 60_000
 
@@ -124,16 +125,18 @@ class UniverseBaseline:
         if key not in self._cache:
             a, b = self.snapshots[t0], self.snapshots[t1]
             changes = [b[s] / a[s] - 1 for s in a if s in b and a[s]]
-            self._cache[key] = statistics.median(changes) if len(changes) >= 20 else None
+            # the MEAN: coins beat the median by ~0.11% per 4h on average (right-skewed returns), so an Edge against
+            # the median favoured every long and penalised every short; an equal-weight universe has zero mean excess
+            self._cache[key] = statistics.fmean(changes) if len(changes) >= 20 else None
         return self._cache[key]
 
 
 class BetaEstimator:
     """
-    Each coin's beta to the universe median from the snapshots of the 7 days BEFORE a signal (hourly returns, OLS,
+    Each coin's beta to the universe mean from the snapshots of the 7 days BEFORE a signal (hourly returns, OLS,
     Blume-adjusted toward 1: 0.67 x beta + 0.33). Signals are picked on volatile coins (impulses, cascades), and a coin
-    with beta 2 in a falling market "beats" the median on a short without any skill: Edge beta = the return in the
-    signal's direction minus beta x the median. None (plain Edge) with fewer than 48 hourly points.
+    with beta 2 in a falling market "beats" the mean on a short without any skill: Edge beta = the return in the
+    signal's direction minus beta x the mean. None (plain Edge) with fewer than 48 hourly points.
     """
 
     HOUR_MS = 3_600_000
@@ -142,7 +145,7 @@ class BetaEstimator:
 
     def __init__(self, universe: 'UniverseBaseline'):
         self.hours: List[int] = []
-        self.market: Dict[int, float] = {}               # hour -> median hourly return
+        self.market: Dict[int, float] = {}               # hour -> mean hourly return
         self.coin: Dict[str, Dict[int, float]] = {}      # symbol id -> hour -> hourly return
         self._cache: Dict[Tuple[str, int], Optional[float]] = {}
         if not universe:
@@ -160,7 +163,7 @@ class BetaEstimator:
             changes = {sym: b[sym] / a[sym] - 1 for sym in a if sym in b and a[sym]}
             if len(changes) < 20:
                 continue
-            self.market[h] = statistics.median(changes.values())
+            self.market[h] = statistics.fmean(changes.values())
             for sym, v in changes.items():
                 self.coin.setdefault(sym, {})[h] = v
 
@@ -220,14 +223,14 @@ def bh_q(pvalues: List[Optional[float]]) -> List[Optional[float]]:
 
 
 def market_baseline(rows: List) -> Dict[str, Dict[int, float]]:
-    """Fallback: per horizon, the median raw return of all rows logged in the same hour."""
+    """Fallback: per horizon, the mean raw return of all rows logged in the same hour."""
     baseline: Dict[str, Dict[int, float]] = {}
     for label in HORIZONS:
         buckets: Dict[int, List[float]] = {}
         for r in rows:
             if r[f'ret_{label}'] is not None:
                 buckets.setdefault(hour_key(r), []).append(r[f'ret_{label}'])
-        baseline[label] = {h: statistics.median(v) for h, v in buckets.items() if len(v) >= 5}
+        baseline[label] = {h: statistics.fmean(v) for h, v in buckets.items() if len(v) >= 5}
     return baseline
 
 
@@ -240,7 +243,7 @@ class Baseline:
 
     @property
     def source(self) -> str:
-        return "whole universe (15m snapshots)" if self.universe else "median of logged coins per hour (no snapshots yet)"
+        return "whole-universe mean (snapshots)" if self.universe else "mean of logged coins per hour (no snapshots yet)"
 
     def of(self, row, label: str) -> Optional[float]:
         if self.universe:
