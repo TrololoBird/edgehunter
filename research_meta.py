@@ -32,7 +32,10 @@ META = ('symbol', 'ts_ms', 'r_tp1', 'r_tp2', 'r_be')
 def design(df: pl.DataFrame, categories: Dict[str, List[str]] = None) -> Tuple[np.ndarray, List[str], Dict[str, List[str]]]:
     """Numeric features + one-hot categoricals (categories fixed on the training data)."""
     categories = categories or {c: sorted(df[c].unique().to_list()) for c in CATEGORICAL if c in df.columns}
-    numeric = [c for c in df.columns if c not in META and c not in CATEGORICAL and df[c].dtype.is_numeric()]
+    # x_* are the exit rules' OUTCOMES of the same trade (research_cards.exit_variants): never features (they leaked the
+    # label - AUC 1.000 - in the first run)
+    numeric = [c for c in df.columns if c not in META and c not in CATEGORICAL and not c.startswith('x_')
+               and df[c].dtype.is_numeric()]
     cols = [pl.col(c).cast(pl.Float64) for c in numeric]
     names = list(numeric)
     for c, values in categories.items():
@@ -70,6 +73,15 @@ def auc(y: np.ndarray, p: np.ndarray) -> float:
 def logloss(y, p):
     p = np.clip(p, 1e-6, 1 - 1e-6)
     return float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
+
+
+def fit_regressor(X: np.ndarray, r: np.ndarray):
+    """LightGBM on the net R itself (the economic target), R clipped to [-1.5, 5] against outliers."""
+    from lightgbm import LGBMRegressor
+    gbm = LGBMRegressor(n_estimators=400, learning_rate=0.03, num_leaves=15, min_child_samples=200, subsample=0.8,
+                        subsample_freq=1, colsample_bytree=0.8, reg_lambda=5.0, verbose=-1)
+    gbm.fit(X, np.clip(r, -1.5, 5.0))
+    return gbm
 
 
 def fit_models(X: np.ndarray, y: np.ndarray):
@@ -125,6 +137,7 @@ def main():
         if train.sum() < 2000 or test.sum() < 500:
             continue
         Xtr, names, cats = design(df.filter(pl.Series(train)))
+        assert not any(n.startswith('x_') or n in ('r_tp1', 'r_tp2', 'r_be') for n in names), 'outcome columns in the features'
         Xte, _, _ = design(df.filter(pl.Series(test)), cats)
         models, _ = fit_models(Xtr, y[train])
         p_lr, p_gb = models['logistic'](Xte), models['lightgbm'](Xte)
@@ -183,7 +196,24 @@ def main():
     lines += ['', '### Most informative features (LightGBM gain, holdout model)', '',
               ', '.join(f"{n} ({g / sum(x for x, _ in imp):.0%})" for g, n in imp)]
 
+    # the economic target: a regressor on the net R, taking the trades it expects to be positive (and its top 20%)
+    reg = fit_regressor(Xtr, r[train])
+    pr_tr, pr = reg.predict(Xtr), reg.predict(Xte)
+    thr_r = float(np.quantile(pr_tr, 1 - args.top))
+    lines += ['', '## 4. Holdout, target = net R (regression), trained on the older half', '',
+              f"Correlation of the predicted and the realized R on the holdout: {np.corrcoef(pr, rt)[0, 1]:+.3f}.", '',
+              '| selection | n | mean R all [90%] | taken | mean R taken [90%] | win |', '|---|---:|---|---:|---|---:|']
+    lines.append(select_report('predicted R > 0', rt, tt, dt, pr, 1e-9))
+    lines.append(select_report(f"top {args.top:.0%} of training predictions", rt, tt, dt, pr, thr_r))
+    for s_name in sorted(set(strat)):
+        m = strat == s_name
+        if m.sum() >= 50:
+            lines.append(select_report(f"{s_name}: predicted R > 0", rt[m], tt[m], dt[m], pr[m], 1e-9))
+    m_reg, lo_reg, hi_reg = block_mean_ci(rt[pr > 1e-9], tt[pr > 1e-9], dt[pr > 1e-9]) if (pr > 1e-9).any() else (0, -1, -1)
+
     m_sel, lo_sel, hi_sel = block_mean_ci(rt[p_gb >= thr], tt[p_gb >= thr], dt[p_gb >= thr])
+    if lo_reg > lo_sel:
+        m_sel, lo_sel, hi_sel = m_reg, lo_reg, hi_reg
     passed = lo_sel > 0
     lines += ['', f"## Verdict: {'PASSED' if passed else 'NOT PASSED'}", '',
               f"The trades the model would take on the holdout: mean net R {m_sel:+.3f} [{lo_sel:+.3f}..{hi_sel:+.3f}]. "
