@@ -425,7 +425,8 @@ class ZonesConfig:
     # Source weights; a zone's strength is the sum of its sources
     weights: tuple = (('swing_1h', 1.5), ('swing_15m', 1.0), ('equal', 2.0), ('pdhl', 2.0), ('poc', 1.5),
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 1.5), ('liq_hit', 1.0), ('wall', 1.0),
-                      ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0))
+                      ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0),
+                      ('swing_1d', 2.5), ('htf', 2.5))
     # Round-number levels / pools within this many ATR of price (zones.round_levels)
     round_span_atr: float = 3.0
     # Targets: a zone must be at least this strong to be an obstacle (TP1/TP2); TP3 prefers pools / liquidations

@@ -551,6 +551,18 @@ async function loadCoin(fit = false) {
 // The two-sided scenario card (scenarios.py): the reaction zone, resistances above, supports below, a long
 // (breakout and retest) and a short (rejection) plan; the probability is the trained model's only when it beat the
 // geometric baseline out of sample (the source is shown).
+function htfLine(h) {
+  if (!h || h.trend_w === undefined) return '<div class="hint">Старший диапазон (день / неделя) ещё грузится.</div>';
+  const t = h.trend_w > 0.5 ? 'вверх' : h.trend_w < -0.5 ? 'вниз' : 'боковик';
+  return `<div class="hint">Неделя: тренд ${t} (EMA20 недель ${h.trend_w > 0 ? '+' : ''}${h.trend_w.toFixed(1)}% за 4 недели) · цена в ${Math.round(h.range_pos_30d * 100)}% 30-дневного диапазона</div>`;
+}
+
+function statsLine(st) {
+  if (!st) return '';
+  return '<div class="hint">История триггеров (архив, 478 монет, 2024–2026): ' + Object.values(st).map(x =>
+    `${esc(x.label)} — цель ${Math.round(x.hit * 100)}% при геометрии ${Math.round(x.geo * 100)}%, ${x.r > 0 ? '+' : ''}${x.r.toFixed(2)}R`).join(' · ') + '</div>';
+}
+
 function scenarioHtml(s, price) {
   if (!s) return '<h3>Сценарии</h3><div class="hint">Нет сценария: мало 1h истории или нет уровней по обе стороны цены.</div>';
   const zone = (z, name, hint) => `<span>${name}</span><span>${fp(z.lo)} – ${fp(z.hi)} ${pct(z.price / price - 1)} <span class="src">${esc(hint || z.label)}</span></span>`;
@@ -573,7 +585,8 @@ function scenarioHtml(s, price) {
     <div class="hint">Вероятность дойти до первого сопротивления раньше первой поддержки: <b>${Math.round(pu * 100)}%</b>
       (вниз первой: ${Math.round((1 - pu) * 100)}%) — ${esc(s.p_source)}</div>${warn}
     ${plan(s.long, 'ЛОНГ', 'scen-long')}${plan(s.short, 'ШОРТ', 'scen-short')}
-    <div class="hint">Сценарий — механические правила по уровням, не рекомендация; проверка правил: research/scenario_model.md.</div>`;
+    ${htfLine(s.htf)}${statsLine(s.trigger_stats)}
+    <div class="hint">Сценарий — механические правила по уровням, не рекомендация; проверка: research/scenario_model.md, research/level_triggers.md.</div>`;
 }
 
 function drawCoin(fit) {

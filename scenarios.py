@@ -17,6 +17,7 @@ previous day / week and session highs / lows, the 8-day volume profile of the 1h
 import math
 import os
 import pickle
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
@@ -28,6 +29,14 @@ HOUR_MS = 3_600_000
 FEATURES = ('d_up', 'd_down', 's_up', 's_down', 'p_geo', 'trend_1h', 'trend_4h', 'ret_24h', 'ret_7d', 'range_pos',
             'vol_ratio', 'btc_ret_24h', 'btc_ret_7d', 'btc_trend_4h', 'n_up', 'n_down')
 _model_cache: Dict = {}
+# Measured on the archive (research/level_triggers.md: 478 coins, 2024-01..2026-08, 772k trades, the newer half):
+# TP1 hit rate, the geometric (random-walk) rate of the same entry / stop / target, net R to TP1
+TRIGGER_STATS = {
+    'long': {'label': 'пробой и ретест', 'hit': 0.647, 'geo': 0.668, 'r': -0.111},
+    'short': {'label': 'отказ у сопротивления', 'hit': 0.726, 'geo': 0.721, 'r': -0.051},
+    'long_bounce': {'label': 'отскок от поддержки', 'hit': 0.690, 'geo': 0.710, 'r': -0.093},
+    'short_breakdown': {'label': 'пробой поддержки и ретест', 'hit': 0.675, 'geo': 0.666, 'r': -0.056},
+}
 
 
 # ---------------------------------------------------------------------------------------------------- levels
@@ -44,6 +53,64 @@ def levels_1h(candles_1h: Sequence[Sequence[float]], atr: float, now_ms: float) 
     levels += [RawLevel(p, 'round', f"round {p:g}", +1 if p > last else -1)
                for p in round_levels(last, cfg.round_span_atr * atr)]
     return levels
+
+
+def daily_from_1h(candles_1h: Sequence[Sequence[float]]) -> List[List[float]]:
+    """UTC daily candles [ts, o, h, l, c, quote_vol] from complete days of 1h candles."""
+    days: Dict[int, List] = {}
+    for c in candles_1h:
+        days.setdefault(int(c[0]) // 86_400_000, []).append(c)
+    out = []
+    for d in sorted(days):
+        cs = days[d]
+        if len(cs) == 24:
+            out.append([d * 86_400_000, cs[0][1], max(x[2] for x in cs), min(x[3] for x in cs), cs[-1][4],
+                        sum(x[5] for x in cs)])
+    return out
+
+
+def levels_htf(candles_1d: Sequence[Sequence[float]], candles_1h_30d: Sequence[Sequence[float]],
+               atr_1d: float) -> List[RawLevel]:
+    """
+    The higher-timeframe range: intact daily swings (90 days), the previous week's / month's high and low, the 30-day
+    range high / low and the 30-day volume profile (POC / VAH / VAL / HVN of the 1h candles: the range's value area).
+    """
+    out: List[RawLevel] = [RawLevel(s.price, 'swing_1d', s.label, s.side, ts=s.ts)
+                           for s in swings(candles_1d[-90:], 3, 'swing_1d', '1d')]
+    if len(candles_1d) >= 30:
+        last30 = candles_1d[-30:]
+        out.append(RawLevel(max(c[2] for c in last30), 'htf', '30d high', +1))
+        out.append(RawLevel(min(c[3] for c in last30), 'htf', '30d low', -1))
+    if candles_1d:
+        last_day = int(candles_1d[-1][0])
+        week0 = (last_day // 86_400_000 + 3) // 7 * 7 - 3            # the Monday of the last day's week (days)
+        prev_week = [c for c in candles_1d if week0 - 7 <= c[0] // 86_400_000 < week0]
+        if prev_week:
+            out.append(RawLevel(max(c[2] for c in prev_week), 'htf', 'prev week high', +1))
+            out.append(RawLevel(min(c[3] for c in prev_week), 'htf', 'prev week low', -1))
+        dt = datetime.fromtimestamp(last_day / 1000, timezone.utc)
+        month0 = datetime(dt.year, dt.month, 1, tzinfo=timezone.utc).timestamp() * 1000
+        pm = datetime(dt.year - (dt.month == 1), (dt.month - 2) % 12 + 1, 1, tzinfo=timezone.utc).timestamp() * 1000
+        prev_month = [c for c in candles_1d if pm <= c[0] < month0]
+        if prev_month:
+            out.append(RawLevel(max(c[2] for c in prev_month), 'htf', 'prev month high', +1))
+            out.append(RawLevel(min(c[3] for c in prev_month), 'htf', 'prev month low', -1))
+    if candles_1h_30d and atr_1d:
+        out += volume_profile(candles_1h_30d, atr_1d / 4, '30d')
+    return out
+
+
+def htf_context(candles_1d: Sequence[Sequence[float]], price: float) -> Dict[str, float]:
+    """Weekly trend (EMA20 of weekly closes vs 4 weeks before) and the price's place in the 30-day range."""
+    closes = [c[4] for c in candles_1d]
+    weekly = closes[6::7]
+    trend_w = 0.0
+    if len(weekly) >= 24:
+        e = _ema(weekly, 20)
+        trend_w = (e[-1] / e[-5] - 1) * 100
+    last30 = candles_1d[-30:]
+    hi, lo = (max(c[2] for c in last30), min(c[3] for c in last30)) if last30 else (price, price)
+    return {'trend_w': trend_w, 'range_pos_30d': (price - lo) / (hi - lo) if hi > lo else 0.5}
 
 
 def _ema(xs: Sequence[float], span: int) -> List[float]:
@@ -162,7 +229,9 @@ def probability(feats: Dict[str, float], model: Optional[Dict]) -> Dict:
 
 def build(candles_1h: Sequence[Sequence[float]], price: Optional[float], now_ms: float,
           btc_closes_1h: Optional[Sequence[float]] = None, extra_levels: Sequence[RawLevel] = (),
-          model=None, macro_feats: Optional[Dict[str, float]] = None) -> Optional[Dict]:
+          model=None, macro_feats: Optional[Dict[str, float]] = None,
+          candles_1d: Optional[Sequence[Sequence[float]]] = None,
+          candles_1h_30d: Optional[Sequence[Sequence[float]]] = None) -> Optional[Dict]:
     """
     The scenario card of one coin from its 1h candles (>= 50) and the live price. model: None = the saved model when it
     passed, False = the geometric baseline (training), a dict = that model.
@@ -173,13 +242,20 @@ def build(candles_1h: Sequence[Sequence[float]], price: Optional[float], now_ms:
     atr = atr_of(candles_1h, 14)
     if not atr or not price:
         return None
-    zones = merge(levels_1h(candles_1h, atr, now_ms) + list(extra_levels), atr)
+    raw = levels_1h(candles_1h, atr, now_ms) + list(extra_levels)
+    htf = {}
+    if candles_1d and len(candles_1d) >= 20:
+        atr_1d = atr_of(candles_1d, 14)
+        raw += levels_htf(candles_1d, candles_1h_30d or [], atr_1d or 0.0)
+        htf = htf_context(candles_1d, price)
+    zones = merge(raw, atr)
     lad = ladder(zones, price, atr)
     if lad is None:
         return None
     closes = [c[4] for c in candles_1h]
     feats = features(lad, price, atr, closes, btc_closes_1h)
     feats.update(macro_feats or {})
+    feats.update(htf)
     prob = probability(feats, None if model is False else model if model is not None else load_model())
     react, above, below = lad['reaction'], lad['above'], lad['below']
     buf = 0.25 * atr
@@ -204,7 +280,8 @@ def build(candles_1h: Sequence[Sequence[float]], price: Optional[float], now_ms:
         'short': {'trigger': f"отказ от {above[0]['lo']:.6g}-{above[0]['hi']:.6g} (разворот на 15m)",
                   'entry': short_entry, 'stop': short_stop, 'targets': short_targets,
                   'rr': [rr(short_entry, short_stop, t) for t in short_targets]},
-        'p_up_first': round(prob['p_up'], 3), 'p_source': prob['source'], 'features': feats,
+        'p_up_first': round(prob['p_up'], 3), 'p_source': prob['source'], 'features': feats, 'htf': htf,
+        'trigger_stats': TRIGGER_STATS,
     }
 
 

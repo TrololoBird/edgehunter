@@ -101,6 +101,9 @@ class MarketData:
     coinbase_rest_ts: float = 0.0
     # Level-map inputs loaded only for coins with cards: 1h klines (raw Binance rows) and 1h OI (ts_ms, oi_usd)
     htf_klines: list = field(default_factory=list)
+    # the scenario card's higher-timeframe range: 200 daily candles and 30 days of 1h candles (load_htf)
+    htf_1d: list = field(default_factory=list)
+    htf_1h_30d: list = field(default_factory=list)
     htf_oi: list = field(default_factory=list)
     # 4 days of 5m candles for the 4-day volume profile (card coins only)
     htf_5m: list = field(default_factory=list)
@@ -985,7 +988,7 @@ class DataFetcher:
             return False
         n = CONFIG.zones.htf_candles
         try:
-            klines, oi, k5 = await asyncio.gather(
+            klines, oi, k5, k1d, k30 = await asyncio.gather(
                 self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
                                 {'symbol': binance_symbol, 'interval': '1h', 'limit': n}, priority=1, weight=1),
                 self._rest_call(self.futures_exchange, 'fapiDataGetOpenInterestHist',
@@ -993,6 +996,11 @@ class DataFetcher:
                 # 4 days of 5m candles (limit > 1000 weighs 10; card coins only, hourly)
                 self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
                                 {'symbol': binance_symbol, 'interval': '5m', 'limit': 4 * 288}, priority=1, weight=10),
+                # the higher-timeframe range of the scenario card (limit 100-500 weighs 2, 500-1000 weighs 5)
+                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                {'symbol': binance_symbol, 'interval': '1d', 'limit': 200}, priority=1, weight=2),
+                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                {'symbol': binance_symbol, 'interval': '1h', 'limit': 720}, priority=1, weight=5),
             )
         except Exception as e:
             logger.debug(f"1h history failed for {symbol}: {e}")
@@ -1004,6 +1012,10 @@ class DataFetcher:
         md.htf_oi = [(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in (oi or [])]
         md.htf_5m = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
                      for k in self._closed_only(k5 or [])]
+        md.htf_1d = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
+                     for k in self._closed_only(k1d or [])]
+        md.htf_1h_30d = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
+                         for k in self._closed_only(k30 or [])]
         md.htf_loaded = time.time()
         return True
 

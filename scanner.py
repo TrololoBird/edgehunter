@@ -936,7 +936,8 @@ class Scanner:
         btc_closes = [c[4] for c in btc.h1] if btc and btc.h1 else None
         try:
             scenario = await asyncio.to_thread(scenarios.build, list(md.h1), price, now * 1000, btc_closes,
-                                               (), None, self.macro.features(now * 1000))
+                                               (), None, self.macro.features(now * 1000),
+                                               list(md.htf_1d) or None, list(md.htf_1h_30d) or None)
             if scenario is not None:
                 scenario['macro'] = self.macro.snapshot(now * 1000)
         except Exception as e:
