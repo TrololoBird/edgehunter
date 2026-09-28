@@ -76,7 +76,9 @@ def main():
     args = parser.parse_args()
     import os
     path = os.path.join(args.path, '*.parquet') if os.path.isdir(args.path) else args.path
-    df = pl.read_parquet(path).sort('ts_ms')
+    # the parts carry different one-hot columns (setups / regimes seen so far): union them
+    import glob
+    df = pl.concat([pl.read_parquet(f) for f in sorted(glob.glob(path))], how='diagonal_relaxed').sort('ts_ms')
     y = df['label'].cast(pl.Float64).to_numpy()
     ts = df['ts_ms'].to_numpy()
     w = uniqueness(ts)

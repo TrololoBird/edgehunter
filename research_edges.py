@@ -105,7 +105,8 @@ def main():
     parser.add_argument('--out', default='research_edges.md')
     args = parser.parse_args()
     path = os.path.join(args.path, '*.parquet') if os.path.isdir(args.path) else args.path
-    df = pl.read_parquet(path, columns=None).sort('ts_ms')
+    # the parts carry different one-hot columns (setups / regimes seen so far): union them
+    df = pl.concat([pl.read_parquet(f) for f in sorted(glob.glob(path))], how='diagonal_relaxed').sort('ts_ms')
     df = df.filter(pl.col('direction') != 0)
     betas = coin_betas(args.series)
     d = df['direction'].to_numpy().astype(float)
