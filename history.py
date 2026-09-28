@@ -185,8 +185,8 @@ class Archive:
         return {'ts': arr[:, 0], 'oi': arr[:, 1], 'oi_usd': arr[:, 2], 'top_pos': arr[:, 3], 'top_acc': arr[:, 4],
                 'global': arr[:, 5]}
 
-    def funding(self, symbol: str, start: date, end: date) -> np.ndarray:
-        """Funding settlements [calc_time_ms, rate normalized to 8h], sorted."""
+    def funding(self, symbol: str, start: date, end: date, raw: bool = False) -> np.ndarray:
+        """Funding settlements [calc_time_ms, rate normalized to 8h (raw=True: the rate paid at that settlement)]."""
         months, days = self.periods(start, end)
         months += sorted({d[:7] for d in days})
         out = []
@@ -196,7 +196,8 @@ class Archive:
                 continue
             for r in self._rows(data):
                 try:
-                    out.append((float(r[0]), float(r[2]) * 8 / max(1.0, float(r[1] or 8))))
+                    rate = float(r[2])
+                    out.append((float(r[0]), rate if raw else rate * 8 / max(1.0, float(r[1] or 8))))
                 except (ValueError, IndexError):
                     continue
         if not out:
@@ -226,6 +227,27 @@ class Archive:
             return np.empty((0, 3))
         arr = np.asarray(sorted(set(out)), dtype=np.float64)
         return arr
+
+    def klines_ohlc(self, market: str, symbol: str, interval: str, start: date, end: date) -> np.ndarray:
+        """
+        Klines [open_time_ms, open, high, low, close, quote_volume] of `interval` (e.g. '1h') over the COMPLETE months
+        in [start, end] (monthly files only, like `klines_1d`).
+        """
+        root = 'futures/um' if market == 'futures' else 'spot'
+        months, _ = self.periods(date(start.year, start.month, 1), end)
+        out = []
+        for m in months:
+            data = self._fetch(f"{root}/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{m}.zip")
+            if data is None:
+                continue
+            for r in self._rows(data):
+                ts = float(r[0])
+                if ts > 1e14:
+                    ts /= 1000.0
+                out.append((ts, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[7])))
+        if not out:
+            return np.empty((0, 6))
+        return np.asarray(sorted(set(out)), dtype=np.float64)
 
     def list_symbols(self, market: str) -> List[str]:
         """
