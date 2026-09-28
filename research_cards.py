@@ -404,6 +404,83 @@ def _impulses(key, fut, spot, met, fut_all, scored, h1_list, days_ok, scorer, cl
     return out
 
 
+EXIT_RULES = ('tp1', 'tp2', 'be05_tp1', 'be05_tp2', 'be1r_tp2', 'trail1r', 'time60', 'time240', 'fix1r', 'fix2r',
+              'fix3r', 'wide2x')
+
+
+def exit_variants(bars: np.ndarray, d: int, sl: float, tp1: float, tp2: float) -> Dict[str, float]:
+    """
+    Gross result (fraction of price, before costs) of pre-registered exit rules for ONE entry on the same path of 1m
+    candles [t, o, h, l, c] after it (filled at the first candle's open). A stop and a target in one candle: the stop
+    first; a target fills once traded 2 bps through; breakeven / trailing stops act from the candle after they arm;
+    unfinished trades close at the last candle's close (8h). Rules: tp1 / tp2 (stop or target), be05_* (stop to the
+    entry once price went +0.5%), be1r_tp2 (... once +1R), trail1r (after +1R a stop trailing 1R behind the best
+    price, no target), time60 / time240 (tp1, closed at market after 60 / 240 min), fixN r (target at N stop
+    distances), wide2x (stop and TP1 distances doubled).
+    """
+    b = np.asarray(bars, dtype=float)
+    n = len(b)
+    if n < 2:
+        return {}
+    hi = b[:, 2] * d if d > 0 else -b[:, 3]
+    lo = b[:, 3] * d if d > 0 else -b[:, 2]
+    close = b[:, 4] * d
+    e, s, t1, t2 = b[0, 1] * d, sl * d, tp1 * d, tp2 * d
+    risk = e - s
+    if risk <= 0 or t1 <= e:
+        return {}
+    buf = 2e-4 * abs(b[0, 1])
+    unit = abs(b[0, 1])
+
+    def first(mask: np.ndarray) -> int:
+        idx = np.flatnonzero(mask)
+        return int(idx[0]) if len(idx) else -1
+
+    def bracket(stop: float, target: float, start: int = 0, end: int = n) -> float:
+        """Exit price of a stop / target bracket over candles [start, end), else the close of the last one."""
+        if start >= end:
+            return close[end - 1]
+        i_s = first(lo[start:end] <= stop)
+        i_t = first(hi[start:end] >= target + buf) if np.isfinite(target) else -1
+        if i_s >= 0 and (i_t < 0 or i_s <= i_t):
+            return stop
+        if i_t >= 0:
+            return target
+        return close[end - 1]
+
+    def armed(threshold: float, target: float) -> float:
+        """Stop to the entry once price reached threshold (from the next candle), exit at target."""
+        a = first(hi >= threshold)
+        if a < 0:
+            return bracket(s, target)
+        before = bracket(s, target, 0, a + 1)
+        i_s, i_t = first(lo[:a + 1] <= s), first(hi[:a + 1] >= target + buf)
+        if i_s >= 0 or i_t >= 0:
+            return before
+        return bracket(e, target, a + 1, n)
+
+    def trailing() -> float:
+        a = first(hi >= e + risk)
+        if a < 0:
+            return bracket(s, np.inf)
+        i_s = first(lo[:a + 1] <= s)
+        if i_s >= 0:
+            return s
+        best = np.maximum.accumulate(hi[a:])
+        stops = np.maximum(best[:-1] - risk, e)            # the stop of candle j is set by the best up to j-1
+        hit = first(lo[a + 1:] <= stops)
+        return stops[hit] if hit >= 0 else close[-1]
+
+    exits = {
+        'tp1': bracket(s, t1), 'tp2': bracket(s, t2),
+        'be05_tp1': armed(e + 0.005 * unit, t1), 'be05_tp2': armed(e + 0.005 * unit, t2),
+        'be1r_tp2': armed(e + risk, t2), 'trail1r': trailing(),
+        'time60': bracket(s, t1, 0, min(n, 60)), 'time240': bracket(s, t1, 0, min(n, 240)),
+        'fix1r': bracket(s, e + risk), 'fix2r': bracket(s, e + 2 * risk), 'fix3r': bracket(s, e + 3 * risk),
+        'wide2x': bracket(e - 2 * risk, e + 2 * (t1 - e)),
+    }
+    return {k: float((v - e) / unit) for k, v in exits.items()}
+
 TF_RANK = {'5m': 1, '15m': 2, '1h': 3, '4h': 4}
 
 
@@ -534,11 +611,13 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
             fee = MAKER_FEE + TAKER_FEE
         else:
             res = simulate(levels, d, bars, use_fill=True, funding_8h=rate)
+            res['variants'] = exit_variants(bars, d, levels['sl'], levels['tp1'], levels['tp2'])
         out = {'filled': bool(res.get('filled')), 'outcome': res.get('outcome'), 'rr_tp1': levels['rr_tp1'],
                'risk_pct': abs(levels['entry'] - levels['sl']) / levels['entry']}
         entry = res.get('entry_fill') or levels['entry']
         for col in ('r_tp1', 'r_tp2', 'r_be'):
             out[col] = _net_r(res.get(col), entry, levels['sl'], fee) if out['filled'] else None
+        out['variants'] = res.get('variants') or {}
         return out
 
     def sample(levels, entered_ms, res, reason):
@@ -551,7 +630,7 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
         samples.append({'symbol': row['symbol'], 'ts_ms': int(entered_ms), 'setup': row['setup'],
                         'strategy': row['strategy'], 'direction': d, 'card_veto': row['vetoed'],
                         'trigger_veto': reason or '', 'r_tp1': res['r_tp1'], 'r_tp2': res['r_tp2'],
-                        'r_be': res['r_be'], **f})
+                        'r_be': res['r_be'], **{f"x_{k}": v for k, v in res.get('variants', {}).items()}, **f})
 
     def enter(levels, entered_ms) -> float:
         res = trade(levels, entered_ms)
