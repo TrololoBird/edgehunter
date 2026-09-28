@@ -57,11 +57,16 @@ def _oi_change(oi_ts: np.ndarray, oi_v: np.ndarray, since: float, until: float) 
 def replay_coin(job: tuple) -> List[Dict]:
     key, fut_id, spot_id, start_iso, end_iso, days_ok, what = job
     out: List[Dict] = []
+    samples: List[Dict] = []
     if what in ('events', 'all'):
-        out += replay_events(job)
+        rows, smp = replay_events(job)
+        out += rows
+        samples += smp
     if what in ('phases', 'all'):
-        out += replay_phases(job)
-    return out
+        rows, smp = replay_phases(job)
+        out += rows
+        samples += smp
+    return out, samples
 
 
 def replay_events(job: tuple) -> List[Dict]:
@@ -83,7 +88,9 @@ def replay_events(job: tuple) -> List[Dict]:
     archive = Archive(rate_bytes=4e7)
     fut = archive.klines_1m('futures', fut_id, start, end)
     if len(fut) < 1440 * 10:
-        return []
+        return [], []
+    spot = archive.klines_1m('spot', spot_id, start, end) if spot_id else np.empty((0, 8))
+    btc = fut if fut_id == 'BTCUSDT' else archive.klines_1m('futures', 'BTCUSDT', start, end)
     met = archive.metrics(fut_id, start, end)
     fund = archive.funding(fut_id, start, end)
     c15 = _bucket(fut, QUARTER_MS)
@@ -105,6 +112,8 @@ def replay_events(job: tuple) -> List[Dict]:
     qv15 = c15[:, 6]
     prev20 = np.r_[np.nan, np.convolve(qv15, np.ones(20), 'full')[:len(qv15)][:-1]] / 20
     sweep_possible = ~(prev20 > 0) | (qv15 >= CONFIG.strategies.sweep_min_rvol * prev20)
+    features = feature_builder(fut, spot, _bucket(btc, QUARTER_MS), fut_all, oi_ts, oi_v, fund, h1_list)
+    samples: List[Dict] = []
 
     out: List[Dict] = []
     busy_until = {1: 0.0, -1: 0.0}
@@ -149,11 +158,12 @@ def replay_events(job: tuple) -> List[Dict]:
                 out.append(row)
                 continue
             finished_ms = _lifecycle(plan, strategy, d, row, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
-                                     entry_levels, ltf_trigger, resample, simulate, _asof)
+                                     entry_levels, ltf_trigger, resample, simulate, _asof,
+                                     features=features, samples=samples)
             if not vetoed:
                 busy_until[d] = finished_ms
             out.append(row)
-    return out
+    return out, samples
 
 
 def replay_phases(job: tuple) -> List[Dict]:
@@ -182,7 +192,7 @@ def replay_phases(job: tuple) -> List[Dict]:
     fut = archive.klines_1m('futures', fut_id, start, end)
     spot = archive.klines_1m('spot', spot_id, start, end) if spot_id else np.empty((0, 8))
     if len(fut) < 1440 * 10 or len(spot) == 0:
-        return []
+        return [], []
     btc = fut if fut_id == 'BTCUSDT' else archive.klines_1m('futures', 'BTCUSDT', start, end)
     met = archive.metrics(fut_id, start, end)
     fund = archive.funding(fut_id, start, end)
@@ -217,6 +227,8 @@ def replay_phases(job: tuple) -> List[Dict]:
     oi_ts, oi_v = np.asarray(met['ts']), np.asarray(met['oi'])
     oi_hour = [(int(t), float(v)) for t, v in zip(oi_ts, oi_v) if int(t) % HOUR_MS == 0 and v]
     oi_hour_ts = np.asarray([t for t, _ in oi_hour]) if oi_hour else np.empty(0)
+    features = feature_builder(fut, spot, btc15, fut_all, oi_ts, oi_v, fund, h1_list)
+    samples: List[Dict] = []
 
     def inputs(t_ms: float):
         """(df of closed 15m candles, 1h candles, raw levels, context) as the bot had them at t_ms."""
@@ -302,11 +314,12 @@ def replay_phases(job: tuple) -> List[Dict]:
             return None if ok else 'no_spring_test'
 
         finished = _lifecycle(plan, strategy, d, rec, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
-                              entry_levels, ltf_trigger, resample, simulate, _asof, replan=replan, extra_veto=spring_test)
+                              entry_levels, ltf_trigger, resample, simulate, _asof, replan=replan, extra_veto=spring_test,
+                              features=features, samples=samples)
         if not vetoed:
             busy_until[d] = finished
         out.append(rec)
-    return out
+    return out, samples
 
 
 def _impulses(key, fut, spot, met, fut_all, scored, h1_list, days_ok, scorer, classify) -> list:
@@ -383,8 +396,90 @@ def _impulses(key, fut, spot, met, fut_all, scored, h1_list, days_ok, scorer, cl
     return out
 
 
+TF_RANK = {'5m': 1, '15m': 2, '1h': 3, '4h': 4}
+
+
+def feature_builder(fut: np.ndarray, spot: np.ndarray, btc15: np.ndarray, fut_all: pl.DataFrame, oi_ts: np.ndarray,
+                    oi_v: np.ndarray, fund: np.ndarray, h1_list: list):
+    """
+    Features of a potential trade at its entry time, from data the live bot has at that moment (futures 1m klines of
+    the last 4h, the 15m frame, spot 1m klines of the last hour, OI of the last hour, funding, BTC's 15m closes, the
+    coin's 1h candles). Directional readings are multiplied by the trade's direction. For the meta-labeling model
+    (research_meta.py): which of a strategy's trades are worth taking.
+    """
+    from levels import atr_of
+    from strategies.structure import coin_trend
+    m_ts = fut[:, 0]
+    s_ts = spot[:, 0] if len(spot) else np.empty(0)
+    ind = fut_all.select('timestamp', 'atr', 'adx').to_numpy()
+    btc_ts, btc_c = (btc15[:, 0] + QUARTER_MS, btc15[:, 4]) if len(btc15) else (np.empty(0), np.empty(0))
+    h1_close = np.asarray([c[0] + HOUR_MS for c in h1_list]) if h1_list else np.empty(0)
+
+    def flow(arr, a, b):
+        qv = arr[a:b, 6].sum()
+        return float((2 * arr[a:b, 7].sum() - qv) / qv) if qv > 0 else 0.0
+
+    def build(t_ms: float, d: int, levels: Dict, plan: Dict, start_ms: float, vetoed_before: int) -> Dict:
+        j = int(np.searchsorted(m_ts, t_ms - MINUTE_MS, side='right'))
+        if j < 1441:
+            return {}
+        price = float(fut[j - 1, 4])
+        closes = fut[j - 61:j, 4]
+        lr = np.diff(np.log(closes))
+        q = int(np.searchsorted(ind[:, 0] + QUARTER_MS, t_ms, side='right')) - 1
+        atr15 = float(ind[q, 1]) if q >= 0 and ind[q, 1] == ind[q, 1] else None
+        adx = float(ind[q, 2]) if q >= 0 and ind[q, 2] == ind[q, 2] else None
+        day_qv = fut[j - 1440:j, 6].sum()
+        lo24, hi24 = float(fut[j - 1440:j, 3].min()), float(fut[j - 1440:j, 2].max())
+        pos = (price - lo24) / (hi24 - lo24) if hi24 > lo24 else 0.5
+        h = int(np.searchsorted(h1_close, t_ms, side='right'))
+        h1w = h1_list[max(0, h - 200):h]
+        closes_1h = [c[4] for c in h1w]
+        ema = None
+        if len(closes_1h) >= 40:
+            ema = closes_1h[0]
+            for c in closes_1h[1:]:
+                ema += 2 / 21 * (c - ema)
+        atr1h = atr_of([list(c[:5]) for c in h1w]) if h1w else None
+        b = int(np.searchsorted(btc_ts, t_ms, side='right')) - 1
+        risk = abs(levels['entry'] - levels['sl'])
+        hour = int(t_ms) // HOUR_MS % 24
+        out = {
+            'rr_tp1': levels['rr_tp1'], 'risk_pct': risk / levels['entry'],
+            'risk_atr': risk / atr15 if atr15 else None,
+            'tp1_atr': abs(levels['tp1'] - levels['entry']) / atr15 if atr15 else None,
+            'tf_rank': TF_RANK.get(plan.get('tf'), 2), 'entry_confirm': 1.0 if plan.get('entry') == 'confirm' else 0.0,
+            'wait_min': (t_ms - start_ms) / MINUTE_MS, 'vetoed_before': float(vetoed_before),
+            'ret_1h_dir': d * (price / fut[j - 61, 4] - 1), 'ret_4h_dir': d * (price / fut[j - 241, 4] - 1),
+            'ret_24h_dir': d * (price / fut[j - 1441, 4] - 1),
+            'rv_1h_atr': float(lr.std() * price / atr15) if atr15 and len(lr) > 10 else None,
+            'rvol_15m': float(fut[j - 15:j, 6].sum() / (day_qv / 96)) if day_qv > 0 else None,
+            'flow_15m_dir': d * flow(fut, j - 15, j), 'flow_1h_dir': d * flow(fut, j - 60, j),
+            'adx': adx, 'pos_24h_dir': pos if d > 0 else 1 - pos,
+            'hour_sin': float(np.sin(2 * np.pi * hour / 24)), 'hour_cos': float(np.cos(2 * np.pi * hour / 24)),
+            'weekend': 1.0 if (int(t_ms) // 86_400_000 + 3) % 7 >= 5 else 0.0,
+            'coin_trend_dir': float(d * coin_trend(h1w)) if h1w else 0.0,
+            'ema20_1h_atr_dir': d * (price - ema) / atr1h if ema and atr1h else None,
+            'btc_1h_dir': d * float(btc_c[b] / btc_c[b - 4] - 1) if b >= 4 else None,
+            'btc_4h_dir': d * float(btc_c[b] / btc_c[b - 16] - 1) if b >= 16 else None,
+        }
+        oi = _oi_change(oi_ts, oi_v, t_ms - HOUR_MS, t_ms)
+        out['oi_1h'] = oi
+        out['oi_1h_dir'] = d * oi if oi is not None else None
+        if len(fund):
+            from pretrain import _asof
+            rate = _asof(fund[:, 0], fund[:, 1], t_ms)
+            out['funding_dir'] = d * rate * 1e4 if rate is not None else None
+        if len(s_ts):
+            js = int(np.searchsorted(s_ts, t_ms - MINUTE_MS, side='right'))
+            out['spot_flow_1h_dir'] = d * flow(spot, max(0, js - 60), js) if js > 60 else None
+        return out
+
+    return build
+
 def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
-               entry_levels, ltf_trigger, resample, simulate, _asof, replan=None, extra_veto=None) -> float:
+               entry_levels, ltf_trigger, resample, simulate, _asof, replan=None, extra_veto=None,
+               features=None, samples=None) -> float:
     """
     Walk the card minute by minute from start_ms; fills `row`; returns when the card finished (ms). `replan(t_ms)`:
     the strategy's plan as of a 15m close (the live plan follows the chart until the entry; a continuation's plan is
@@ -422,8 +517,21 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
             out[col] = _net_r(res.get(col), entry, levels['sl']) if out['filled'] else None
         return out
 
+    def sample(levels, entered_ms, res, reason):
+        """A training example for the meta-labeling model: the trade's features at entry and its net R."""
+        if samples is None or features is None or not res or not res['filled']:
+            return
+        f = features(entered_ms, d, levels, plan, start_ms, row['vetoed_triggers'] - (1 if reason else 0))
+        if not f:
+            return
+        samples.append({'symbol': row['symbol'], 'ts_ms': int(entered_ms), 'setup': row['setup'],
+                        'strategy': row['strategy'], 'direction': d, 'card_veto': row['vetoed'],
+                        'trigger_veto': reason or '', 'r_tp1': res['r_tp1'], 'r_tp2': res['r_tp2'],
+                        'r_be': res['r_be'], **f})
+
     def enter(levels, entered_ms) -> float:
         res = trade(levels, entered_ms)
+        sample(levels, entered_ms, res, None)
         if res is None:
             row['status'] = 'NO_DATA'
             return entered_ms
@@ -439,6 +547,7 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
         res = trade(levels, entered_ms)
         if res and res['filled']:
             row.update(vx_reason=reason, vx_r_tp1=res['r_tp1'], vx_r_tp2=res['r_tp2'], vx_rr_tp1=res['rr_tp1'])
+            sample(levels, entered_ms, res, reason)
 
     j = int(np.searchsorted(m_ts, start_ms - MINUTE_MS, side='right'))
     if plan['entry'] == 'confirm' and j > 0:
@@ -583,6 +692,8 @@ def main():
                         'earlier window is a holdout for decisions made on the recent one')
     parser.add_argument('--out', default=os.path.join('research', 'cards_6m.md'))
     parser.add_argument('--rows', default='research_cards.parquet')
+    parser.add_argument('--samples', default='research_samples.parquet',
+                        help='every taken and first vetoed trade with its entry features (research_meta.py)')
     parser.add_argument('--what', choices=('events', 'phases', 'all'), default='events',
                         help='events: SWEEP / BREAKOUT; phases: trend / wyckoff phase setups')
     args = parser.parse_args()
@@ -596,18 +707,24 @@ def main():
         coins = coins[:args.limit]
     jobs = [(k, f, s, start.isoformat(), end.isoformat(), days, args.what) for k, f, s, days in coins]
     rows: List[Dict] = []
+    samples: List[Dict] = []
     started = time.time()
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(replay_coin, job): job[0] for job in jobs}
         for n, fut in enumerate(as_completed(futures), 1):
             try:
-                rows += fut.result()
+                coin_rows, coin_samples = fut.result()
+                rows += coin_rows
+                samples += coin_samples
             except Exception as e:
                 logger.warning(f"cards: {futures[fut]} failed ({type(e).__name__} {e})")
             if n % 25 == 0 or n == len(jobs):
                 logger.info(f"cards: {n}/{len(jobs)} coins in {time.time() - started:.0f}s ({len(rows)} cards)")
     df = pl.DataFrame(rows, infer_schema_length=None)
     df.write_parquet(args.rows)
+    if samples:
+        pl.DataFrame(samples, infer_schema_length=None).write_parquet(args.samples)
+        logger.info(f"cards: {len(samples)} trade samples with features -> {args.samples}")
     text = report(df, start, end)
     os.makedirs(os.path.dirname(args.out) or '.', exist_ok=True)
     with open(args.out, 'w', encoding='utf-8') as fh:
