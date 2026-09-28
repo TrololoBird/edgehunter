@@ -106,3 +106,8 @@ pre.rich { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; l
   header#top { gap: 8px; } .status { text-align: left; } nav#tabs { top: 0; position: static; }
   #chart { height: 300px; }
 }
+
+/* scenario card (scenarios.py) */
+.scen-long, .scen-short { border: 1px solid; border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
+.scen-long { border-color: #2ecc71; }
+.scen-short { border-color: #ff5c5c; }

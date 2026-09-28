@@ -15,6 +15,8 @@ from config import CONFIG
 from ml import AnomalyModel, RegimeModel
 from levels import resample
 from positioning import Positioning
+import scenarios
+from macro import Macro
 from storage import atomic_write
 from watchdog import LoopWatchdog
 from zones import RawLevel, build_raw, merge
@@ -123,6 +125,7 @@ class Scanner:
         # Level maps (zones.py) of coins with open cards: symbol -> raw levels, and the inputs they were built from
         self.watchdog = LoopWatchdog()
         self.positioning = Positioning(self.fetcher)
+        self.macro = Macro()
         self._level_raw: Dict[str, List[RawLevel]] = {}
         self._level_sig: Dict[str, tuple] = {}
         self.book.levels_of = self._levels_of
@@ -179,7 +182,7 @@ class Scanner:
     def start(self):
         self._running = True
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
-                 self.levels_loop(), self.pretrain_loop()]
+                 self.levels_loop(), self.pretrain_loop(), self.macro_loop()]
         if self.journal:
             loops.append(self.journal.evaluate_loop(self.fetcher))
             # P(edge) model state = the journal itself: replay the labelled rows, then the regime Edge table
@@ -928,7 +931,19 @@ class Scanner:
         candles_5m = history_5m + stream_5m
         # 1h: 4 days, so a leg of hours or days is visible whole
         candles_1h = list(md.htf_klines)
+        # the two-sided scenario card (1h ladder; the same level code the probability model was trained with)
+        btc = self.market_data.get('BTC/USDT:USDT')
+        btc_closes = [c[4] for c in btc.h1] if btc and btc.h1 else None
+        try:
+            scenario = await asyncio.to_thread(scenarios.build, list(md.h1), price, now * 1000, btc_closes,
+                                               (), None, self.macro.features(now * 1000))
+            if scenario is not None:
+                scenario['macro'] = self.macro.snapshot(now * 1000)
+        except Exception as e:
+            logger.warning(f"scenario for {symbol} failed: {e}")
+            scenario = None
         return {
+            'scenario': scenario,
             'symbol': symbol, 'price': price, 'atr': atr,
             'candles_15m': candles,
             'candles_5m': candles_5m,
@@ -941,6 +956,19 @@ class Scanner:
         }
 
     # ------------------------------------------------------------------ background loops
+
+    async def macro_loop(self):
+        """FRED macro context (US10Y, dollar index, Brent) for the scenario card, refreshed every 6h off the loop."""
+        while self._running:
+            try:
+                ok = await asyncio.to_thread(self.macro.refresh)
+                if not ok:
+                    logger.warning("Macro context (FRED) unavailable; scenario cards run without it")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Macro refresh failed: {e}")
+            await asyncio.sleep(6 * 3600)
 
     async def universe_loop(self):
         """Re-select the universe hourly: new listings join, dropped coins leave (open cards finish first)."""

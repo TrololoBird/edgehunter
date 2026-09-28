@@ -548,6 +548,34 @@ async function loadCoin(fit = false) {
   } catch (err) { $('#d-body').innerHTML = `<div class="empty">Ошибка: ${esc(err.message)}</div>`; }
 }
 
+// The two-sided scenario card (scenarios.py): the reaction zone, resistances above, supports below, a long
+// (breakout and retest) and a short (rejection) plan; the probability is the trained model's only when it beat the
+// geometric baseline out of sample (the source is shown).
+function scenarioHtml(s, price) {
+  if (!s) return '<h3>Сценарии</h3><div class="hint">Нет сценария: мало 1h истории или нет уровней по обе стороны цены.</div>';
+  const zone = (z, name, hint) => `<span>${name}</span><span>${fp(z.lo)} – ${fp(z.hi)} ${pct(z.price / price - 1)} <span class="src">${esc(hint || z.label)}</span></span>`;
+  const names = ['локальное сопротивление', 'сопротивление', 'глобальное сопротивление'];
+  let rows = s.above.slice().reverse().map((z, i, a) => zone(z, names[a.length - 1 - i])).join('');
+  rows += zone(s.reaction, '<b>зона реакции</b>', 'текущая зона: ' + s.reaction.label);
+  rows += s.below.map((z, i) => zone(z, i === 0 ? 'следующая поддержка' : 'ключевая поддержка')).join('');
+  const plan = (p, name, cls) => `<div class="${cls}"><b>${name}</b> <small>${esc(p.trigger)}</small><div class="kv">
+    <span>вход</span><span>${fp(p.entry)}</span>
+    <span>цели</span><span>${p.targets.map((t, i) => `${fp(t)} ${pct(t / price - 1)} <small>R:R ${p.rr[i] ?? '—'}</small>`).join(' · ')}</span>
+    <span>стоп</span><span>${fp(p.stop)} ${pct(p.stop / price - 1)}</span></div></div>`;
+  const pu = s.p_up_first;
+  const warn = s.status === 'inside' ? '<div class="hint">Цена внутри зоны реакции: ждём выхода и подтверждения, вход из середины диапазона не планируется.</div>' : '';
+  const m = s.macro || {};
+  const num = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : (v > 0 ? '+' : '') + v.toFixed(d);
+  const macro = m.us10y != null ? `<div class="hint">Макро (FRED, дневные, с задержкой в день): US10Y ${m.us10y.toFixed(2)}% (${num(m.us10y_5d_bp, 0)} б.п. за 5 дней) ·
+    доллар ${m.dxy != null ? m.dxy.toFixed(1) : '—'} (${num(m.dxy_5d)}%) · Brent ${m.brent != null ? m.brent.toFixed(1) : '—'} (${num(m.brent_5d)}%)</div>` : '';
+  return `<h3>Сценарии <small>1h, ATR 1h ${fp(s.atr_1h)}</small></h3>${macro}
+    <div class="kv">${rows}</div>
+    <div class="hint">Вероятность дойти до первого сопротивления раньше первой поддержки: <b>${Math.round(pu * 100)}%</b>
+      (вниз первой: ${Math.round((1 - pu) * 100)}%) — ${esc(s.p_source)}</div>${warn}
+    ${plan(s.long, 'ЛОНГ', 'scen-long')}${plan(s.short, 'ШОРТ', 'scen-short')}
+    <div class="hint">Сценарий — механические правила по уровням, не рекомендация; проверка правил: research/scenario_model.md.</div>`;
+}
+
 function drawCoin(fit) {
   const d = coinData; if (!d || d.error) { $('#d-body').innerHTML = `<div class="empty">${esc(d && d.error)}</div>`; return; }
   const raw = tf === 60 ? (d.candles_1h || []) : tf === 15 ? d.candles_15m : d.candles_5m;
@@ -576,6 +604,12 @@ function drawCoin(fit) {
       line(lv.entry, '#3cc7e8', 'вход', 0, 2); line(lv.sl, '#ff5c5c', 'стоп', 0, 2);
       [lv.tp1, lv.tp2, lv.tp3].forEach((t, i) => line(t, '#2ecc71', 'TP' + (i + 1), 0, 2));
     } else (card.targets || []).forEach((t, i) => line(t, '#2ecc71', 'TP' + (i + 1), 2, 1));
+  }
+  if (!card && d.scenario) {
+    const s = d.scenario;
+    line(s.reaction.hi, '#4a8cff', 'реакция', 2, 2); line(s.reaction.lo, '#4a8cff', '', 2, 2, false);
+    s.above.forEach((z, i) => line(z.lo, '#ff5c5c', ['лок. сопр.', 'сопр.', 'глоб. сопр.'][i], 0, 2));
+    s.below.forEach((z, i) => line(z.hi, '#2ecc71', ['поддержка', 'ключ. поддержка'][i], 0, 2));
   }
   // Journal events as markers on the bar they happened in
   const size = tf * 60;   // bar size in seconds (5 / 15 / 60 minutes)
@@ -606,6 +640,7 @@ function drawCoin(fit) {
       <span>цели</span><span>${targetsCell(c.levels ? [c.levels.tp1, c.levels.tp2, c.levels.tp3] : c.targets, c.levels ? [c.levels.tp1_src, c.levels.tp2_src, c.levels.tp3_src] : c.target_src)}</span>
       ${c.vetoed_triggers ? `<span>отсеяно</span><span>${c.vetoed_triggers}${c.veto_log.length ? ': ' + esc(vetoRu([...new Set(c.veto_log)].join(','))) : ''}</span>` : ''}</div>`;
   }
+  body += scenarioHtml(d.scenario, d.price);
   body += `<h3>Карта уровней <small>ближайшие к цене; сила = сумма весов источников</small></h3>` +
     table('zones', [
       { k: 'Цена', v: z => fp(z.price), s: z => z.price, num: true },
