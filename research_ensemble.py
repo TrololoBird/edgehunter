@@ -11,6 +11,9 @@ Zarattini, Pagani & Barbon (2025), "Catching Crypto Trends; A Tactical Approach 
   higher of the previous stop and the channel midpoint (highest + lowest close of the L days before) / 2;
 - coin exposure = the share of its lookbacks that are long x min(1, 25% / the coin's 90-day annualized volatility);
   each coin gets 1/20 of the capital; long-only; decided at the daily close, held from the next day.
+- the phase gate alone, for comparison: the top-20 equal weight (or BTC) held only on days whose PREVIOUS close was
+  in the UP phase (Faber 2007's 200-day rule + breadth), 0.10% per switch, funding paid;
+- the market phase of a day is the one known at the previous close;
 - costs: 0.10% of each traded notional (half of the 0.20% round trip: taker fee + slippage), funding of the
   perpetuals held (archive rates); a 0.05%-per-side run for sensitivity.
 
@@ -186,10 +189,12 @@ def main():
                 ok = (i >= 0) & (i < len(grid))
                 np.add.at(F[:, j], i[ok], f[ok, 1])             # the rate paid at each settlement
     btc_j = coins.index('BTCUSDT')
-    phase = market_phase(C, M, btc_j)
+    phase_now = market_phase(C, M, btc_j)
+    phase = np.concatenate([['n/a'], phase_now[:-1]])       # known at the PREVIOUS close: the day's return is after it
     n = len(grid)
     r_net, r_low, r_gross, expo = (np.full(n, np.nan) for _ in range(4))
     r_btc, r_ew = np.full(n, np.nan), np.full(n, np.nan)
+    r_ew_gate, r_btc_gate = np.full(n, np.nan), np.full(n, np.nan)
     first = 400
     for d in range(first, n):
         w_prev = W[d - 1]
@@ -204,6 +209,11 @@ def main():
         r_btc[d] = ret[d, btc_j]
         mem = M[d - 1] & ~np.isnan(ret[d])
         r_ew[d] = float(ret[d, mem].mean()) if mem.any() else np.nan
+        # the phase gate alone (Faber-style): long the top 20 / BTC only while yesterday's phase was UP
+        on, was = phase[d] == 'UP', phase[d - 1] == 'UP'
+        switch = SIDE_COST if on != was else 0.0
+        r_ew_gate[d] = (r_ew[d] - float(F[d, mem].mean()) if on and mem.any() else 0.0) - switch
+        r_btc_gate[d] = (ret[d, btc_j] - F[d, btc_j] if on else 0.0) - switch
     days = np.array([datetime.fromtimestamp(t / 1000, timezone.utc).date() for t in grid])
     after = PAPER_END + timedelta(days=1)
     periods = (('whole window', (days >= days[first])),
@@ -219,12 +229,14 @@ def main():
                   '| series | CAGR | Sharpe | max drawdown | total | mean exposure | ann. mean [90%] |',
                   '|---|---:|---:|---:|---:|---:|---|']
         for label, r in (('ensemble net', r_net), ('ensemble at 0.05%/side', r_low), ('ensemble gross', r_gross),
-                         ('BTC buy & hold', r_btc), ('top-20 equal weight held', r_ew)):
+                         ('BTC buy & hold', r_btc), ('top-20 equal weight held', r_ew),
+                         ('top-20 EW only in UP phase', r_ew_gate), ('BTC only in UP phase', r_btc_gate)):
             s = stats(r[mask])
             if not s:
                 continue
             lo, hi = block_ci(r[mask])
-            ex = np.nanmean(expo[mask]) if label.startswith('ensemble') else 1.0
+            ex = np.nanmean(expo[mask]) if label.startswith('ensemble') else \
+                (float(np.mean(phase[mask] == 'UP')) if 'UP phase' in label else 1.0)
             lines.append(f"| {label} | {s[0] * 100:+.1f}% | {s[1]:.2f} | {s[2] * 100:.1f}% | {s[3] * 100:+.1f}% | "
                          f"{ex:.0%} | {np.nanmean(r[mask]) * 36500:+.1f}% [{lo * 100:+.1f}..{hi * 100:+.1f}] |")
         lines += ['', '| market phase | days | ensemble net ann. mean [90%] | exposure | BTC ann. mean | '
