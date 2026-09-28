@@ -17,3 +17,4 @@ archive/
 # local overrides may hold secrets (Telegram token)
 config.local.toml
 models/macro_cache.json
+models/sectors.json
