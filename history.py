@@ -62,9 +62,13 @@ class Archive:
         """The zip at `path` (cached); None when the archive has no such file."""
         local = os.path.join(self.cache_dir, *path.split('/'))
         if os.path.exists(local):
-            self.cached += 1
             with open(local, 'rb') as fh:
-                return fh.read()
+                data = fh.read()
+            if _is_zip(data):
+                self.cached += 1
+                return data
+            logger.info(f"archive: cached {path} is truncated, downloading it again")
+            os.remove(local)
         if os.path.exists(local + '.none'):
             self.missing += 1
             return None
@@ -72,6 +76,7 @@ class Archive:
         for attempt in range(5):
             try:
                 with urllib.request.urlopen(url, timeout=60) as resp:
+                    expected = int(resp.headers.get('Content-Length') or 0)
                     chunks = []
                     while True:
                         chunk = resp.read(65536)
@@ -80,6 +85,9 @@ class Archive:
                         chunks.append(chunk)
                         self.limiter.consumed(len(chunk))
                     data = b''.join(chunks)
+                # a connection cut mid-transfer ends the read early without an error: never cache a partial zip
+                if (expected and len(data) != expected) or not _is_zip(data):
+                    raise ConnectionError(f"truncated download ({len(data)} of {expected or '?'} bytes)")
                 os.makedirs(os.path.dirname(local), exist_ok=True)
                 with open(local + '.tmp', 'wb') as fh:
                     fh.write(data)
@@ -258,6 +266,15 @@ class Archive:
         with open(cache, 'w') as fh:
             json.dump(symbols, fh)
         return symbols
+
+
+def _is_zip(data: bytes) -> bool:
+    """A complete zip archive (its central directory at the end is intact)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            return bool(zf.namelist())
+    except zipfile.BadZipFile:
+        return False
 
 
 def _utc_ms(text: str) -> float:
