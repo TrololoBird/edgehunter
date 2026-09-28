@@ -56,11 +56,15 @@ G: Dict = {}                          # shared with the forked workers
 
 # ---------------------------------------------------------------------------------------------------- data
 
-def load(months: int, limit: int = 0):
+def load(months: int, limit: int = 0, end_month: str = ''):
+    """end_month 'YYYY-MM': the window's last month (default: the last complete one)."""
     from history import Archive
     from pretrain import _spot_pair
     archive = Archive(rate_bytes=4e7, cache_dir=os.environ.get('HTF_CACHE') or None)
     today = datetime.now(timezone.utc).date()
+    if end_month:
+        y, m = map(int, end_month.split('-'))
+        today = date(y + (m == 12), m % 12 + 1, 1)
     end = date(today.year, today.month, 1) - timedelta(days=1)            # the last complete month
     first = date(end.year, end.month, 1)
     for _ in range(months - 1):
