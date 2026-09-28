@@ -466,8 +466,12 @@ class StrategiesConfig:
     entry timeframe is 3-6x finer than the structure (Elder's factor of ~5): 15m -> 5m, 1h -> 15m, 4h -> 1h. Sizes are
     in 15m ATRs; lifetimes are (waiting, trigger in the zone, open trade) seconds.
     """
-    # Strategies that produce cards (a disabled one is still detected and journaled with vetoed='disabled')
-    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'sweep', 'absorption', 'exhaustion', 'breakout')
+    # Strategies that produce cards (a disabled one is still detected and journaled with vetoed='disabled').
+    # sweep / breakout are off: their cards replayed on 6 months x 360 coins of the archive with this exact lifecycle
+    # lost net of costs in every class (breakout up -0.18R [-0.26..-0.11], down -0.13R; sweep low -0.27R, sweep high
+    # -0.06R [-0.18..+0.06]; research/cards_6m.md, research_cards.py). Re-enable in config.local.toml
+    # ([strategies] enabled = [...]) once a change is shown to turn them positive on that replay.
+    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'absorption', 'exhaustion')
     # 1h candles of every coin (fetcher._hourly_candles_loop): ~8 days for the weekly / daily / session pools
     h1_candles: int = 200
     h1_refresh_sec: int = 3600
