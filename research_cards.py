@@ -236,8 +236,8 @@ def replay_phases(job: tuple) -> List[Dict]:
                       trend=coin_trend(h1w))
         return df, h1w, raw, ctx
 
-    out: List[Dict] = []
-    busy_until = {1: 0.0, -1: 0.0}
+    # ---- candidates: phase setups at each closed 15m candle, Tier-0 impulses (momentum) at qualifying minutes
+    candidates = []
     for row in scored.iter_rows(named=True):
         close_ms = row['timestamp'] + QUARTER_MS
         if close_ms // 86_400_000 not in days_ok:
@@ -248,10 +248,15 @@ def replay_phases(job: tuple) -> List[Dict]:
         if not sig or not sig.get('is_structured'):
             continue
         _, group_key, d = classify(sig)
+        if strategy_of(group_key) is not None and d:
+            candidates.append((close_ms + 5_000, sig, group_key, d))
+    candidates += _impulses(key, fut, spot, met, fut_all, scored, h1_list, days_ok, scorer, classify)
+    candidates.sort(key=lambda c: c[0])
+
+    out: List[Dict] = []
+    busy_until = {1: 0.0, -1: 0.0}
+    for now_ms, sig, group_key, d in candidates:
         strategy = strategy_of(group_key)
-        if strategy is None or not d:
-            continue
-        now_ms = close_ms + 5_000
         if now_ms < busy_until[d]:
             continue
         x = inputs(now_ms)
@@ -301,6 +306,80 @@ def replay_phases(job: tuple) -> List[Dict]:
         if not vetoed:
             busy_until[d] = finished
         out.append(rec)
+    return out
+
+
+def _impulses(key, fut, spot, met, fut_all, scored, h1_list, days_ok, scorer, classify) -> list:
+    """
+    IMPULSE UP / DOWN setups (momentum) as the live Tier-0 loop finds them: every minute whose 5m move or 1m volume
+    could qualify is probed at its close with calculate_tier0_metrics (the coin's 15m return / OI std, the time-of-day
+    profile, the average minute of the last 24h, OI from the 5-minute metrics), then flagged and classified like live.
+    """
+    from indicators import calculate_tier0_metrics, minute_delta, seasonal_factors, seasonal_scale
+    from collections import deque
+    t0 = CONFIG.tier0
+    m_ts = fut[:, 0]
+    closes = fut[:, 4]
+    qv_cum = np.concatenate(([0.0], np.cumsum(fut[:, 6])))
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ch5 = np.abs(closes[5:] / closes[:-5] - 1)
+    probe = np.flatnonzero(ch5 > t0.price_change_5m_threshold) + 5
+    if not len(probe):
+        return []
+    s_ts = spot[:, 0] if len(spot) else np.empty(0)
+    oi_pts = [(float(t), float(v)) for t, v in zip(met['ts'], met['oi']) if v]
+    oi_ts = np.asarray([p[0] for p in oi_pts]) if oi_pts else np.empty(0)
+    ind = fut_all.select('timestamp', 'ret_std', 'oi_std').to_numpy()
+    h1_close = np.asarray([c[0] + HOUR_MS for c in h1_list]) if h1_list else np.empty(0)
+    seasons: Dict[int, Optional[Dict]] = {}
+    scored_ts = scored['timestamp'].to_numpy()
+    out = []
+    last_family_ms = 0.0
+    for i in probe:
+        now_ms = float(m_ts[i]) + MINUTE_MS
+        if now_ms // 86_400_000 not in days_ok or now_ms - last_family_ms < CONFIG.journal.cooldown_sec * 1000:
+            continue
+        j = int(np.searchsorted(m_ts, now_ms - MINUTE_MS, side='right'))
+        minutes = deque(fut[max(0, j - 30):j][:, STREAM_COLS].tolist(), maxlen=240)
+        ticker = deque(((k[0] + 59_999, k[4], 0.0) for k in fut[max(0, j - 10):j].tolist()), maxlen=400)
+        k = int(np.searchsorted(oi_ts, now_ms, side='right')) if len(oi_ts) else 0
+        oi = deque(oi_pts[max(0, k - 13):k], maxlen=64)
+        n = min(j, 1440)
+        avg_minute = (qv_cum[j] - qv_cum[j - n]) / max(1, n) if n else 0.0
+        q = int(np.searchsorted(ind[:, 0], now_ms - QUARTER_MS, side='right')) - 1
+        ret_std = ind[q, 1] if q >= 0 and ind[q, 1] == ind[q, 1] else None
+        oi_std = ind[q, 2] if q >= 0 and ind[q, 2] == ind[q, 2] else None
+        day = int(now_ms) // 86_400_000
+        if day not in seasons:
+            h = int(np.searchsorted(h1_close, day * 86_400_000, side='right'))
+            seasons[day] = seasonal_factors(h1_list[max(0, h - 672):h])
+        if ret_std:
+            ret_std *= seasonal_scale(seasons[day], now_ms, 'ret')
+        avg_minute *= seasonal_scale(seasons[day], now_ms, 'vol')
+        m = calculate_tier0_metrics(ticker, oi, minutes, now_ms, ret_std=ret_std, oi_std=oi_std, avg_minute_usd=avg_minute)
+        m['futures_cvd_5m'] = minute_delta(minutes, now_ms)
+        if len(s_ts):
+            js = int(np.searchsorted(s_ts, now_ms - MINUTE_MS, side='right'))
+            m['spot_cvd_5m'] = minute_delta(spot[max(0, js - 6):js][:, STREAM_COLS].tolist(), now_ms)
+        qs = int(np.searchsorted(scored_ts, now_ms - QUARTER_MS, side='right')) - 1
+        if qs < 0:
+            continue
+        full = scored.row(qs, named=True)
+        full.update(m)
+        flag = scorer.flag_tier_0_anomaly(pl.DataFrame([{'symbol': key, **{c: v for c, v in m.items()
+                                                                           if isinstance(v, (int, float))}}]))
+        if not flag['is_tier_0_anomaly'][0]:
+            continue
+        full.update(is_tier_0_anomaly=True, rule_anomaly=True, liq_cascade=False, whale_net_5m=0.0)
+        sig = scorer.signal_from_row(full)
+        if not sig:
+            continue
+        sig['spot_cvd_5m'] = m.get('spot_cvd_5m', 0.0)
+        sig['futures_cvd_5m'] = m['futures_cvd_5m']
+        _, group_key, d = classify(sig)
+        if group_key in ('IMPULSE UP', 'IMPULSE DOWN') and d:
+            out.append((now_ms, sig, group_key, d))
+            last_family_ms = now_ms
     return out
 
 
