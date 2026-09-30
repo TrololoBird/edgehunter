@@ -570,7 +570,7 @@ class Scanner:
         # Before the Tier-0 warm-up ends the 5m metrics span less than 5 minutes: no new signals or journal rows yet.
         # Raw anomalies must be present on two consecutive scans (structured ones come from closed candles already,
         # detected setups fire once per event).
-        warmed_up = time.time() - self._started_at >= CONFIG.tier0.window_sec
+        warmed_up = time.time() - self._started_at >= CONFIG.tier0.warmup_sec
         if warmed_up:
             signals += self._detect_setups()
         current_keys = {(symbol, sig['alert_type']) for symbol, sig in signals if not sig.get('is_setup')}
@@ -1250,7 +1250,7 @@ class Scanner:
         loaded = self.fetcher.baselines_loaded()
         if loaded < len(self.market_data):
             parts.append(f"history {loaded}/{len(self.market_data)}")
-        warmup_left = CONFIG.tier0.window_sec - (time.time() - self._started_at)
+        warmup_left = CONFIG.tier0.warmup_sec - (time.time() - self._started_at)
         if warmup_left > 0:
             parts.append(f"warm-up {int(warmup_left // 60)}:{int(warmup_left % 60):02d} (no signals yet)")
         return " | ".join(parts)

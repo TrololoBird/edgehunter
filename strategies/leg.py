@@ -90,6 +90,10 @@ class LegContinuation(Strategy):
             ema = _ema_of_tf(x, impulse['tf'], 20)
             if ema is None or not fib_lo <= ema <= fib_hi:
                 return {'skip': 'no_level'}
+            # Linda Raschke's Holy Grail, where the EMA20 pullback comes from: only in a strong trend, ADX(14) > 30
+            adx = x.sig.get('adx')
+            if adx is not None and adx <= CONFIG.strategies.holy_grail_adx:
+                return {'skip': 'weak_trend'}
             level_lo = level_hi = ema
             zone_src = f"EMA20 {impulse['tf']}"
         near, far = (level_hi + half, level_lo - half) if d > 0 else (level_lo - half, level_hi + half)

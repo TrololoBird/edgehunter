@@ -41,7 +41,9 @@ class ExchangeConfig:
     max_spread: float = 0.001            # bid-ask spread / mid at the selection (10 bp)
     # Binance exchangeInfo `underlyingType` values to skip: tokenized stocks (US/HK/KR/CN) and pre-IPO shares.
     # They sit flat outside their exchange's trading hours and trip squeeze/flat-price phases.
-    excluded_underlying_types: tuple = ('EQUITY', 'HK_EQUITY', 'KR_EQUITY', 'CN_EQUITY', 'PREMARKET')
+    excluded_underlying_types: tuple = ('EQUITY', 'HK_EQUITY', 'KR_EQUITY', 'CN_EQUITY', 'PREMARKET', 'COMMODITY')
+    # Tokenized gold / silver trade the metal, not crypto flows (PAXG / XAUT were flagged 'whales' on metal hedges)
+    excluded_bases: tuple = ('PAXG', 'XAUT', 'XAU', 'XAG', 'XPT', 'XPD')
     # The universe (top max_pairs by 24h volume) is re-selected this often: new listings join, dropped coins leave
     universe_refresh_sec: int = 3600
 
@@ -157,6 +159,9 @@ class Tier0Config:
     price_z_threshold: float = 4.0
     oi_z_threshold: float = 4.0
     window_sec: int = 300
+    # No signals / journal rows this long after a start: the 5m flow windows are seeded from REST 1m klines (Binance),
+    # so a minute is enough for the streams to connect (was window_sec = 5 minutes)
+    warmup_sec: int = 60
     check_interval_sec: float = 2.0
     # Keep hot-symbol (order book) subscriptions this long after the last trigger
     tier2_hold_sec: int = 300
@@ -511,6 +516,8 @@ class StrategiesConfig:
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     disabled_setups: tuple = ('BULL E',)
+    # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
+    holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
     # a warning on the card, not a filter
     # (SWEEP / BREAKOUT were rewritten to their sources in eng-16: the archive has not replayed the new logic)
@@ -711,7 +718,7 @@ class WebConfig:
 class RestConfig:
     """REST pacing. Binance futures: 2400 weight/min per IP, spot: 6000/min."""
     # Futures klines (limit 99) weigh 1 and openInterestHist 0, so 15 parallel symbols stay far below the limit
-    baseline_concurrency: int = 15
+    baseline_concurrency: int = 40
     baseline_delay_sec: float = 0.05
     max_retries: int = 3
     # Proactive budget: stay below this share of the weight limit (read from X-MBX-USED-WEIGHT-1M); lower priorities
@@ -799,7 +806,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-17"
+    logic_version: str = "eng-18"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

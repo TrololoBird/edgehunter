@@ -377,6 +377,7 @@ class DataFetcher:
         self._backfill_retry_at: Dict[Tuple[str, str], float] = {}
         self._backfill_semaphore = asyncio.Semaphore(3)
         self.funding_interval_hours: Dict[str, int] = {}
+        self.streams_started_ms = 0               # the flow windows before it are seeded from REST klines
         self.reference_prices: Dict[str, float] = {}
         self._htf_loading: set = set()
         self._deriv_cache: Dict[str, Tuple[float, Dict[str, float]]] = {}
@@ -792,7 +793,8 @@ class DataFetcher:
             if not (s.endswith(f"/{quote}") or s.endswith(f"/{quote}:{quote}")):
                 continue
             market = self.futures_exchange.markets.get(s) or {}
-            if market.get('info', {}).get('underlyingType') in excluded_types:
+            if market.get('info', {}).get('underlyingType') in excluded_types or \
+                    market.get('base') in CONFIG.exchange.excluded_bases:
                 excluded += 1
                 continue
             if market.get('swap') is False:
@@ -961,6 +963,14 @@ class DataFetcher:
             rows = await self._fetch_klines(market, sym, '1m', limit + 1)
             md.seed_minutes(market, [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
                                       float(k[10])] for k in rows or []], now_ms)
+            if market == 'futures' and self.streams_started_ms:
+                # Binance's taker flow of the 15 minutes the streams did not see (a minute that closed before they
+                # started): Tier-0's 5m windows are valid at once (the other venues fill in live)
+                for k in rows or []:
+                    t = int(k[0])
+                    if self.streams_started_ms - 15 * 60_000 <= t and t + 60_000 <= self.streams_started_ms:
+                        buy, total = float(k[10]), float(k[7])
+                        self.flow.seed_minute('binance', symbol, t, buy, max(0.0, total - buy), int(k[8]))
 
     async def _seed_oi(self, symbol: str, md: MarketData):
         """
@@ -1404,6 +1414,7 @@ class DataFetcher:
                 ids['spot'].append(spot_id)
                 self._binance_keys[('spot', spot_id)] = symbol
         logger.info(f"Starting Binance streams for {len(ids['spot'])} spot, {len(ids['futures'])} futures symbols")
+        self.streams_started_ms = self.streams_started_ms or int(time.time() * 1000)
         # Bandwidth matters more than message counts here: the link to Binance measured ~150 KB/s in total and a
         # single socket ~40-70 KB/s, beyond which the server's buffer fills and it drops the connection. So:
         # only 1m klines (15m candles are built from them), no whole-market ticker arrays (funding / mark / 24h

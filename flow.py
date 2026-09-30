@@ -146,6 +146,17 @@ class FlowStore:
 
     # ------------------------------------------------------------------ writes (hot path)
 
+    def seed_minute(self, venue: str, symbol: str, minute_ms: int, buy_usd: float, sell_usd: float, trades: int):
+        """A closed minute from REST (a kline's taker buy / total quote volume) at its middle second: the 5m windows
+        are valid right after a start instead of 5 minutes later. Only minutes before the streams started."""
+        row = self.rows.get(symbol)
+        flow = self.venues.get(venue)
+        if row is None or flow is None:
+            return
+        sec = int(minute_ms // 1000) + 30
+        flow.add(row, sec, BUY, buy_usd, trades // 2)
+        flow.add(row, sec, SELL, sell_usd, trades - trades // 2)
+
     def trade(self, venue: str, symbol: str, ts_ms: int, usd: float, side: int, recv_ms: Optional[float] = None):
         row = self.rows.get(symbol)
         flow = self.venues.get(venue)
