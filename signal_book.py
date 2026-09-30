@@ -42,6 +42,9 @@ from config import CONFIG
 from journal import classify, veto_reason
 from levels import MINUTE_MS, ltf_trigger, pullback_volume_ok, resample
 from strategies.maniac import ifvg_trigger, in_session, pinbar_trigger
+from strategies.maniac_strategies import MANIAC_STRATEGIES
+
+MANIAC_NAMES = frozenset(s.name for s in MANIAC_STRATEGIES)
 from strategies import PlanInput, Strategy, strategy_of
 from strategies import confirm
 from strategies.geometry import entry_levels
@@ -398,8 +401,14 @@ class SignalBook:
         if plan.get('fix_invalid'):
             s.invalid_price = plan.get('invalid')
         rank = TF_RANK.get(self._tf(s), 2)
+        mine = self.strategy(s)
         for o in self.signals.values():
             if o is s or o.finished or o.symbol != s.symbol or o.direction == s.direction:
+                continue
+            # crypto_maniac's systems run independently (as in his bots): their signals never close another
+            # strategy's card, nor are theirs closed by others - only the same system's opposite signal does
+            other = self.strategy(o)
+            if mine is not None and other is not None and mine.name != other.name and                     (mine.name in MANIAC_NAMES or other.name in MANIAC_NAMES):
                 continue
             # Only a setup of the same or a higher timeframe overrules a card: a 5m event against a 1h idea is noise
             # inside it, the two coexist

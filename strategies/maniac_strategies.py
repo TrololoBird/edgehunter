@@ -72,7 +72,9 @@ class SupplyDemandStrategy(_System):
         targets, sources = select_targets(zones, near, d, atr, 'opposite_liquidity')
         plan = base_plan(x, self.name, _anchor(sig, '15m'), '15m', entry='pullback', trigger='pinbar',
                          zone_lo=lo, zone_hi=hi, zone_src=f"{sig.get('anchor_label', 'zone')} (5m pinbar)",
-                         invalid=far, fix_invalid=True, invalid_close_min=15, missable=True, stop_ref=far,
+                         # not missable: the zone is confirmed only once price left it by 2 ATR, so a target
+                         # measured from the zone is often behind price already; his zone waits for the return
+                         invalid=far, fix_invalid=True, invalid_close_min=15, missable=False, stop_ref=far,
                          exit={'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': atr,
                                'stop_src': 'beyond the pinbar and the zone'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
