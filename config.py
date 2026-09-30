@@ -825,6 +825,17 @@ class PretrainConfig:
 
 
 @dataclass(frozen=True)
+class ExecutorConfig:
+    # BingX DEMO trading of every card that reaches ENTRY (executor.py; sandbox forced, never a real balance). Turned on
+    # by an api_key / api_secret in config.local.toml ([executor], a trade-only key)
+    enabled: bool = True
+    api_key: str = ""
+    api_secret: str = ""
+    risk_pct: float = 1.0           # the stop costs this share of the demo balance
+    max_leverage: int = 20
+
+
+@dataclass(frozen=True)
 class RecorderConfig:
     # Live-only data (per-second flow of all venues, 500-level books, per-venue OI / funding) to Parquet: recorder.py
     enabled: bool = True
@@ -860,6 +871,7 @@ class AppConfig:
     ml: MLConfig = field(default_factory=MLConfig)
     pretrain: PretrainConfig = field(default_factory=PretrainConfig)
     recorder: RecorderConfig = field(default_factory=RecorderConfig)
+    executor: ExecutorConfig = field(default_factory=ExecutorConfig)
 
 
 LOCAL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.local.toml')

@@ -95,6 +95,8 @@ class Scanner:
         self.web = None   # webui.WebUI, attached by main.py
         self.journal = journal
         self.notifier = Notifier()
+        from executor import DemoExecutor
+        self.demo = DemoExecutor()
         self.book = SignalBook()
         self.market_data: Dict[str, MarketData] = {}
         self._running = False
@@ -191,6 +193,8 @@ class Scanner:
         self._running = True
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
                  self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop()]
+        if self.demo.enabled:
+            loops.append(self.demo.reconcile_loop(lambda: self._running))
         if CONFIG.recorder.enabled:
             import recorder
             loops.append(recorder.record_loop(self.fetcher, self._maps_executor, CONFIG.recorder.root,
@@ -202,6 +206,12 @@ class Scanner:
             self._background_thread(self.journal.refresh_regime_stats)
             self._background_thread(self.journal.refresh_confirm_stats)
         self._tasks = [asyncio.create_task(c) for c in loops]
+
+    def _background_task(self, coro):
+        task = asyncio.create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        return task
 
     def _background_thread(self, fn, *args):
         task = asyncio.create_task(asyncio.to_thread(fn, *args))
@@ -226,6 +236,7 @@ class Scanner:
                 logger.error(f"Task ended with an error: {result!r}")
         self._save_state()
         await self.notifier.close()
+        await self.demo.close()
         await self.positioning.close()
         await self.fetcher.stop()
         logger.info("Scanner stopped gracefully")
@@ -587,6 +598,13 @@ class Scanner:
                 events, self.fetcher.liq_log = self.fetcher.liq_log, []
                 await self.journal.arecord_liquidations(events)
         await self._output(created, [e for e in entries if not e.vetoed])
+        if self.demo.enabled:
+            # Demo orders off the scan: each call is a few REST round trips
+            for tracked in entries:
+                if not tracked.vetoed and warmed_up:
+                    self._background_task(self.demo.on_entry(tracked))
+            for tracked in self.book.finished_now:
+                self._background_task(self.demo.on_finish(tracked))
 
     def _detect_setups(self) -> List[Tuple[str, Dict]]:
         """Detected setups of this scan as signals (the coin's live Tier-0 metrics + the setup's leg / note)."""

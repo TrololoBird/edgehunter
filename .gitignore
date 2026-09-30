@@ -19,3 +19,4 @@ config.local.toml
 models/macro_cache.json
 models/sectors.json
 data/
+demo_trades.db
