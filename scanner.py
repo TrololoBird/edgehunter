@@ -147,6 +147,9 @@ class Scanner:
         self.market_state: Dict[str, float] = {}
         self._quick_raw: Dict[str, List[RawLevel]] = {}
         self._context_sig: Dict[str, tuple] = {}
+        # crypto_maniac's OI robot: the last final minute checked and the last signal per coin (his 3h cooldown)
+        self._oi_checked: Dict[str, int] = {}
+        self._oi_fired: Dict[str, int] = {}
         self._context_task: Optional[asyncio.Task] = None
         self._maps_pool = None          # ProcessPoolExecutor (one worker) for level maps: see _maps_executor
 
@@ -589,7 +592,11 @@ class Scanner:
             if not self.detector.wants(symbol, md.minute_closed_until, md.tier0):
                 continue
             bands = self.fetcher.depth.liquidity_bands(symbol)
-            for setup in self.detector.scan(symbol, self._minute_candles(symbol), md.tier0, now_ms, bands):
+            setups = self.detector.scan(symbol, self._minute_candles(symbol), md.tier0, now_ms, bands)
+            oi_setup = self._oi_accumulation(symbol, md, now_ms)
+            if oi_setup:
+                setups.append(oi_setup)
+            for setup in setups:
                 sig = dict(md.tier0)
                 sig.update(is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
                            long_score=0, short_score=0, alert_type='LONG' if setup['direction'] > 0 else 'SHORT')
@@ -608,6 +615,38 @@ class Scanner:
                 logger.info(f"Setup detected: {symbol} {setup['setup']} - {setup['setup_note']}")
                 out.append((symbol, sig))
         return out
+
+    def _oi_accumulation(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
+        """
+        crypto_maniac's OI robot (v7.4), checked once per final minute: OI value +5% over the hour without the price
+        (strategies.maniac.oi_accumulation); one signal per coin per oi_cooldown_sec (his 3h cooldown).
+        """
+        from strategies.maniac import oi_accumulation
+        cfg = CONFIG.strategies
+        minute = md.minute_closed_until
+        if not minute or self._oi_checked.get(symbol) == minute:
+            return None
+        self._oi_checked[symbol] = minute
+        if now_ms - self._oi_fired.get(symbol, 0) < cfg.oi_cooldown_sec * 1000:
+            return None
+        minutes = self._minute_candles(symbol)
+        price = md.last_price
+        hour_ago = [c for c in minutes if c[0] <= minute - 59 * 60_000]
+        day_ago = [c for c in md.h1_long if c[0] <= now_ms - 25 * 3_600_000] if len(md.h1_long) else []
+        if not price or not hour_ago or not day_ago:
+            return None
+        candles, _ = part_candles(self._frame_parts.get(symbol))
+        found = oi_accumulation(list(md.oi_5m), price, hour_ago[-1][4], day_ago[-1][4], candles)
+        if found is None:
+            return None
+        if cfg.oi_structure_filter and found.get('structure_broken'):
+            return None
+        self._oi_fired[symbol] = now_ms
+        return {'setup': 'OI ACCUMULATION', 'direction': 1,
+                'setup_note': f"OI +{found['oi_growth_1h']:.1f}% / 1h with price {found['price_growth_1h']:+.1f}% "
+                              f"(24h: OI {found['oi_growth_24h']:+.1f}% vs price {found['price_growth_24h']:+.1f}%)",
+                'anchor_level': price, 'anchor_extreme': found['swing_low'], 'anchor_label': 'OI accumulation',
+                'anchor_ts': int(minute), 'anchor_close': price, 'event_ts': int(minute) + 60_000}
 
     def _sweep_wick(self, symbol: str, md: MarketData, setup: Dict, sig: Dict):
         """
@@ -646,13 +685,33 @@ class Scanner:
         # and no 4-day 5m history for a quick map of a coin whose full map (levels_loop) already has it
         liq = [e for e in md.liq_events if now_ms - e[0] <= 86_400_000]
         candles_4d = list(md.htf_5m) if not with_context or symbol not in self._level_raw else []
+        # crypto_maniac's systems read 499 15m / 1h candles: sent as numpy arrays (pickled as one buffer, not ~3500
+        # float objects per coin on the feeder thread)
+        long_15m = np.asarray(md.m15_long, dtype=np.float64) if with_context and len(md.m15_long) else ()
+        long_1h = np.asarray(md.h1_long, dtype=np.float64) if with_context and len(md.h1_long) else ()
         return (symbol, part.select(PART_COLUMNS), list(md.h1), list(md.htf_klines), list(md.htf_oi), liq, now_ms,
-                candles_4d, with_context)
+                candles_4d, with_context, long_15m, long_1h)
+
+    def _correlates(self) -> Dict[str, np.ndarray]:
+        """The SMT correlates' 15m histories (BTC for every coin, ETH for BTC): the long REST history + the frame."""
+        out = {}
+        for name in ('BTC', 'ETH'):
+            symbol = f"{name}/USDT:USDT"
+            md = self.market_data.get(symbol)
+            if md is None:
+                continue
+            candles, _ = part_candles(self._frame_parts.get(symbol))
+            merged = {int(c[0]): [float(v) for v in c] for c in md.m15_long}
+            merged.update({int(c[0]): list(c) for c in candles})
+            if merged:
+                out[name] = np.asarray([merged[t] for t in sorted(merged)], dtype=np.float64)
+        return out
 
     async def _build_maps(self, jobs: List[tuple]) -> Dict[str, tuple]:
         if not jobs:
             return {}
-        return await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs)
+        corr = self._correlates() if any(job[8] for job in jobs) else None
+        return await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs, corr)
 
     async def _refresh_contexts(self):
         """Quick level maps / sweep pools of every coin whose closed 15m candles changed (worker process)."""

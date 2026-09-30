@@ -38,7 +38,10 @@ class Pools:
         if not CONFIG.pools.enabled or not self.updated:
             return True
         pool = self.members.get(strategy)
-        return pool is None or symbol in pool
+        if pool is None:
+            # no rule for this strategy: the whole universe minus the coins its journal proved losing
+            return symbol not in self.excluded.get(strategy, {})
+        return symbol in pool
 
     def rebuild(self, markets: Dict, sectors_map: Dict[str, str],
                 coin_results: List[Tuple[str, str, int, float]]) -> None:

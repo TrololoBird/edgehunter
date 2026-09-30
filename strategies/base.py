@@ -105,6 +105,13 @@ def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> D
         'entry': 'pullback', 'invalid': None, 'fix_invalid': False, 'reset': None, 'missable': True,
         'stop_ref': None, 'stop_mid': None, 'retarget': False, 'intent': 'extension', 'fillers': (),
         'fill_label': 'fib', 'impulse': None, 'reached': x.reached,
+        # the ported systems (strategies/maniac.py): their own entry trigger ('shift' = our 5m structure shift,
+        # 'pinbar', 'ifvg'), their own exit rules (geometry.system_levels), an entry only at the signal's close
+        # (confirm_only: a vetoed confirmation ends the card), entries only in a session (tz, 'HH:MM', 'HH:MM'),
+        # the pierce time the inversion FVG is searched from, and INVALID on a CLOSE of this many minutes beyond
+        # the invalid price (a wick through is allowed)
+        'trigger': 'shift', 'exit': None, 'confirm_only': False, 'session': None, 'trigger_from_ms': None,
+        'invalid_close_min': None,
     }
     plan.update(fields)
     return plan

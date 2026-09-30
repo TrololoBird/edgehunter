@@ -479,6 +479,8 @@ class PoolsConfig:
     rules: tuple = (('trend', 'all', '', 0.0), ('momentum', 'all', '', 0.0), ('wyckoff', 'all', '', 0.0),
                     ('absorption', 'all', '', 0.0), ('exhaustion', 'all', '', 0.0), ('sweep', 'all', '', 0.0),
                     ('breakout', 'all', '', 0.0))
+    # strategies without a rule (crypto_maniac's systems) run on every coin of the universe; a coin whose journaled
+    # entries of a strategy lose (exclude_below_r) is still excluded from it: see pools.Pools.allows
 
 
 @dataclass(frozen=True)
@@ -495,7 +497,9 @@ class StrategiesConfig:
     # lost net of costs in every class (breakout up -0.18R [-0.26..-0.11], down -0.13R; sweep low -0.27R, sweep high
     # -0.06R [-0.18..+0.06]; research/cards_6m.md, research_cards.py). Re-enable in config.local.toml
     # ([strategies] enabled = [...]) once a change is shown to turn them positive on that replay.
-    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'absorption', 'exhaustion')
+    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'absorption', 'exhaustion',
+                      'supply_demand', 'auction', 'smt', 'trendline', 'thirdeye', 'fib05', 'bomberman', 'csi',
+                      'oi_accum')
     # Single setups whose cards are off (journaled with vetoed='disabled'): proven to lose net of costs (BH q <= 0.10)
     # on the same card replay (research/phases_6m.md, 6 months x 357 coins): BEAR C -0.24R, BULL A -0.20R, BULL F
     # -0.25R, BULL B -0.14R, IMPULSE UP -0.29R, BEAR D -0.19R. BULL E (+0.32R, 45 entries) and IMPULSE DOWN (+0.06R)
@@ -568,6 +572,106 @@ class StrategiesConfig:
     breakout_min_move_atr: float = 1.5
     breakout_zone_atr: float = 0.25
     breakout_ttl: tuple = (2 * 3600, 2 * 3600, 8 * 3600)
+    # ---- crypto_maniac's systems (github.com/roman-boop; strategies/maniac.py): his parameters as he ships them.
+    # Longer histories they need: 15m / 1h candles of every coin (fetcher._hourly_candles_loop, limit 499 = weight 2)
+    long_history_candles: int = 499
+    # supply_demand-v4: ATR(20) of the bars before the source candle, 6 bars of approach, the departure confirmed
+    # within 4 bars by a close 2 ATR beyond, zone height <= 1.2 ATR, score >= 3.5
+    sd_atr_period: int = 20
+    sd_prior_bars: int = 6
+    sd_lookahead: int = 4
+    sd_min_move_atr: float = 2.0
+    sd_max_zone_atr: float = 1.2
+    sd_min_score: float = 3.5
+    sd_ttl: tuple = (24 * 3600, 4 * 3600, 8 * 3600)
+    # auction_theory_in_code (1h): consolidation windows, POC concentration, impulse, retest reaction, targets
+    auction_atr_period: int = 14
+    auction_windows: tuple = (24, 48, 96)
+    auction_max_range_atr: float = 6.0
+    auction_max_range_pct: float = 0.10
+    auction_max_net_ratio: float = 0.35
+    auction_bin_atr: float = 0.20
+    auction_min_concentration: float = 2.5
+    auction_strong_concentration: float = 2.8
+    auction_poc_edge: float = 0.15
+    auction_candidate_stale: int = 8
+    auction_impulse_mult: float = 1.0
+    auction_impulse_horizon: int = 12
+    auction_touch_atr: float = 0.25
+    auction_reaction_atr: float = 0.15
+    auction_invalidation_atr: float = 0.90
+    auction_reaction_window: int = 3
+    auction_max_touches: int = 2
+    auction_level_ttl: int = 1500
+    auction_max_crosses: int = 6
+    auction_level_cooldown: int = 5
+    auction_local_window: int = 30
+    auction_max_levels: int = 50
+    auction_min_rr: float = 1.5
+    auction_fallback_rr: float = 2.5
+    auction_stop_pad_atr: float = 0.35
+    auction_min_risk_atr: float = 0.15
+    auction_ttl: tuple = (3600, 3600, 48 * 3600)
+    # lllll SMT / Quasimodo (15m main + 5m entry): the correlate is BTC (ETH for BTC itself); require_if_available;
+    # the 5m inversion FVG within 8 main bars; entries only 02:00-10:00 New York (his session; () = any time)
+    smt_main_bars: int = 500
+    smt_with_trend_only: bool = False
+    smt_ref_window: int = 60
+    smt_ifvg_min_atr: float = 0.03
+    smt_ifvg_search_back: int = 40
+    smt_sl_buffer_atr: float = 0.1
+    smt_min_rr: float = 2.0
+    smt_fallback_rr: float = 2.5
+    smt_session: tuple = ('America/New_York', '02:00', '10:00')
+    smt_ttl: tuple = (9 * 900, 9 * 900, 8 * 3600)
+    # trendline_bot (15m, sloped lines only)
+    tl_lookback: int = 400
+    tl_pivot: int = 3
+    tl_min_span: int = 40
+    tl_min_touches: int = 3
+    tl_touch_atr: float = 0.25
+    tl_touch_gap: int = 5
+    tl_violation_atr: float = 0.10
+    tl_max_dist_atr: float = 3.0
+    tl_flat_deg: float = 7.5
+    tl_min_pivot_touches: int = 3
+    tl_pivot_tol_atr: float = 0.20
+    tl_max_deg: float = 35.0
+    tl_last_touch_age: int = 40
+    tl_confirm_atr: float = 0.15
+    tl_min_body_atr: float = 0.35
+    tl_max_depth_atr: float = 1.2
+    tl_close_pos_max: float = 0.40
+    tl_min_rr: float = 1.0
+    trendline_ttl: tuple = (900, 900, 24 * 3600)
+    # thirdeye_strategy_algo (1h): CCI length, fixed SL / TP from his realtime.py
+    te_cci_length: int = 25
+    te_sl_pct: float = 0.01
+    te_tp_pct: float = 0.05
+    thirdeye_ttl: tuple = (3600, 3600, 72 * 3600)
+    # fibonachi_trading_system (1h)
+    fib05_ttl: tuple = (3600, 3600, 72 * 3600)
+    # bomberman_bot (1h)
+    bomberman_ttl: tuple = (3600, 3600, 48 * 3600)
+    # bollinger_bands-with-clusters v6 (15m): BB(40, 1.5), RSI(96), CSI clusters, SL 0.4%, out after 3 bars
+    csi_bb_period: int = 40
+    csi_bb_std: float = 1.5
+    csi_rsi_period: int = 96
+    csi_rsi: float = 60.0
+    csi_min_cluster: int = 3
+    csi_bull_quant: float = 0.78
+    csi_bear_quant: float = 0.22
+    csi_sl_pct: float = 0.004
+    csi_ttl: tuple = (900, 900, 3 * 900)
+    # oi_trading_robot v7.4 (long only): OI +5% / 1h, price growth <= 0.5 x OI growth, OI 24h > price 24h; his
+    # defaults SL 2%, TP 4% / 6%, a 3h cooldown per coin, the 15m structure filter off
+    oi_1h_threshold: float = 5.0
+    oi_price_ratio: float = 0.5
+    oi_sl_pct: float = 0.02
+    oi_tp_pcts: tuple = (0.04, 0.06)
+    oi_cooldown_sec: int = 3 * 3600
+    oi_structure_filter: bool = False
+    oi_accum_ttl: tuple = (900, 900, 24 * 3600)
 
 
 @dataclass(frozen=True)

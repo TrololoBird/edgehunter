@@ -10,6 +10,17 @@ Strategies: each class of market event has its own anchor, entry, stop and targe
     exhaustion  FLUSH / SQUEEZE REVERSAL            leg      5m cascade / 5m          mean, retracements
     breakout    BREAKOUT UP / BREAKOUT DOWN         range    15m / 15m close or 5m    measured moves
 
+crypto_maniac's systems (github.com/roman-boop, strategies/maniac.py), each with its author's own entry and exit:
+    supply_demand SD DEMAND / SD SUPPLY            zone     15m zone / 5m pinbar     the map
+    auction     AUCTION LONG / SHORT                POC      1h / at the close        naked POC, 2.5R
+    smt         SMT LOW / SMT HIGH                  pool     15m sweep / 5m iFVG      opposite pool, 2.5R
+    trendline   TRENDLINE UP / DOWN                 line     15m 2 closes             the line's first anchor
+    thirdeye    THIRD EYE LONG / SHORT              cloud    1h / at the close        5% (SL 1%)
+    fib05       FIB 0.5 LONG / SHORT                impulse  1h / at the close        the impulse's end
+    bomberman   BOMBERMAN LONG / SHORT              QML      1h / at the close        2R (SL 1.5 ATR)
+    csi         CSI LONG / SHORT                    BB       15m / at the close       3 bars (SL 0.4%)
+    oi_accum    OI ACCUMULATION                     OI       1m OI / at once          4% / 6% (SL 2%)
+
 Phases (trend, wyckoff) are scored by scorer.py on closed 15m candles, the impulse by Tier-0; the other four are
 detected by LiveDetector (1m / liquidations, loop-side) and structure.build_context (15m closes, worker process).
 """
@@ -20,10 +31,11 @@ from strategies.breakout import BreakoutStrategy
 from strategies.cascade import ExhaustionStrategy
 from strategies.leg import MomentumStrategy, TrendStrategy, WyckoffStrategy
 from strategies.level import AbsorptionStrategy, SweepStrategy
+from strategies.maniac_strategies import MANIAC_STRATEGIES
 
 STRATEGIES: Dict[str, Strategy] = {s.name: s for s in (
     TrendStrategy(), MomentumStrategy(), WyckoffStrategy(), SweepStrategy(), AbsorptionStrategy(),
-    ExhaustionStrategy(), BreakoutStrategy())}
+    ExhaustionStrategy(), BreakoutStrategy(), *MANIAC_STRATEGIES)}
 
 # Setup name -> (strategy name, direction)
 SETUPS: Dict[str, Tuple[str, int]] = {setup: (s.name, d) for s in STRATEGIES.values() for setup, d in s.setups.items()}

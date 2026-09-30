@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import ccxt.async_support as ccxt
+import numpy as np
 import polars as pl
 
 from config import CONFIG
@@ -113,6 +114,12 @@ class MarketData:
     # week, sessions, 1h swings) and the coin's own trend for the strategies; [ts, o, h, l, c, quote_vol, taker_buy]
     h1: list = field(default_factory=list)
     h1_loaded: float = 0.0
+    # Longer histories of crypto_maniac's systems (strategies/maniac.py): 499 closed 1h / 15m candles (refreshed
+    # hourly with h1; h1 itself stays the last h1_candles of it for everything else)
+    h1_long: object = field(default_factory=list)      # np.ndarray (n, 7) once loaded
+    m15_long: object = field(default_factory=list)
+    # OI (coins) every 5 minutes over the last day (the OI robot's 1h / 24h OI growth): seeded from openInterestHist
+    oi_5m: deque = field(default_factory=lambda: deque(maxlen=300))
     # Weekly trend reference (strategies.structure.weekly_ref: EMA of the closed weekly closes, weekly return std), a
     # context feature only (trend_w / breadth_w in the journal); reloaded after each weekly close
     w1_ref: Optional[tuple] = None
@@ -155,6 +162,8 @@ class MarketData:
         if self.oi_samples and self.oi_samples[-1][0] >= ts_ms:
             return
         self.oi_samples.append((ts_ms, float(open_interest)))
+        if not self.oi_5m or ts_ms // 300_000 > self.oi_5m[-1][0] // 300_000:
+            self.oi_5m.append((ts_ms, float(open_interest)))
 
     def seed_minutes(self, market: str, rows: List[List[float]], now_ms: int):
         """
@@ -185,6 +194,12 @@ class MarketData:
         merged = {ts: oi for ts, oi in list(self.oi_samples) + [(float(t), float(v)) for t, v in samples if v]}
         self.oi_samples.clear()
         self.oi_samples.extend(sorted(merged.items()))
+        # the day of 5m points under the live ones, one per 5-minute bucket
+        buckets = {}
+        for ts, oi in sorted(list(self.oi_5m) + [(float(t), float(v)) for t, v in samples if v]):
+            buckets.setdefault(int(ts) // 300_000, (ts, oi))
+        self.oi_5m.clear()
+        self.oi_5m.extend(buckets[k] for k in sorted(buckets))
 
     @property
     def last_price(self) -> Optional[float]:
@@ -949,15 +964,16 @@ class DataFetcher:
 
     async def _seed_oi(self, symbol: str, md: MarketData):
         """
-        The last hour of 5m OI history (13 points, weight 0): Tier-0's 5m OI change and the entries' 1h OI
-        confirmation work from the start (with 3 points every confirmation of the first hour had no OI reading).
+        The last day of 5m OI history (289 points, weight 0): Tier-0's 5m OI change and the entries' 1h OI
+        confirmation work from the start (with 3 points every confirmation of the first hour had no OI reading), and
+        the OI robot's 24h OI growth (MarketData.oi_5m).
         """
         binance_symbol = self._ccxt_to_binance_symbol(symbol)
         if not binance_symbol:
             return
         try:
             rows = await self._rest_call(self.futures_exchange, 'fapiDataGetOpenInterestHist',
-                                         {'symbol': binance_symbol, 'period': '5m', 'limit': 13}, priority=1, weight=0)
+                                         {'symbol': binance_symbol, 'period': '5m', 'limit': 289}, priority=1, weight=0)
         except RATE_LIMIT_ERRORS:
             raise
         except Exception as e:
@@ -1121,16 +1137,25 @@ class DataFetcher:
                 md = self.markets.get(symbol)
                 if not binance_symbol or md is None:
                     return
+                parse = lambda rows: [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
+                                       float(k[10])] for k in self._closed_only(rows or [])]
                 async with sem:
                     try:
+                        # limit 499 weighs 2 like 200 did: the long history of crypto_maniac's 1h systems
                         rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                     {'symbol': binance_symbol, 'interval': '1h', 'limit': cfg.h1_candles},
-                                                     priority=1, weight=2)
+                                                     {'symbol': binance_symbol, 'interval': '1h',
+                                                      'limit': cfg.long_history_candles}, priority=1, weight=2)
+                        rows_15m = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                                         {'symbol': binance_symbol, 'interval': '15m',
+                                                          'limit': cfg.long_history_candles}, priority=1, weight=2)
                     except Exception as e:
-                        logger.debug(f"1h candles failed for {symbol}: {e}")
+                        logger.debug(f"1h / 15m candles failed for {symbol}: {e}")
                         return
-                md.h1 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
-                         for k in self._closed_only(rows or [])]
+                # the long histories as float arrays (~28 KB a coin instead of ~150 KB of candle lists: 6 GB box)
+                hourly = parse(rows)
+                md.h1 = hourly[-cfg.h1_candles:]
+                md.h1_long = np.asarray(hourly, dtype=np.float64)
+                md.m15_long = np.asarray(parse(rows_15m), dtype=np.float64)
                 md.h1_loaded = time.time()
 
             await asyncio.gather(*(one(s) for s in symbols))

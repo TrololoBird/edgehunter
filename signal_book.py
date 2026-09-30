@@ -41,6 +41,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from config import CONFIG
 from journal import classify, veto_reason
 from levels import MINUTE_MS, ltf_trigger, pullback_volume_ok, resample
+from strategies.maniac import ifvg_trigger, in_session, pinbar_trigger
 from strategies import PlanInput, Strategy, strategy_of
 from strategies import confirm
 from strategies.geometry import entry_levels
@@ -475,6 +476,11 @@ class SignalBook:
             if s.plan['entry'] == 'confirm' and not s.confirm_checked:
                 s.confirm_checked = True
                 entry = self._confirmation_entry(s, price, now_ms, confirm_of)
+                if s.plan.get('confirm_only') and (entry is None or entry.vetoed):
+                    # the system enters at its signal's close or not at all (no waiting for a retest)
+                    why = entry.vetoed if entry is not None else 'no valid levels at the signal close'
+                    self._finish(s, 'EXPIRED', now, f"the system's entry at the signal close was skipped ({why})")
+                    return entry
                 if entry is not None:
                     return entry
         # Until the entry the plan follows the chart (a continuing impulse moves its end, a running cascade its
@@ -490,7 +496,11 @@ class SignalBook:
             return None
 
         invalid = s.invalid_price if s.invalid_price is not None else plan.get('invalid')
-        if invalid is not None and d * (price - invalid) <= 0:
+        check = price
+        if invalid is not None and plan.get('invalid_close_min'):
+            # the system invalidates on a CLOSE beyond (a wick through is allowed): the last final candle of that tf
+            check = self._last_close(s.symbol, candles_of, plan['invalid_close_min'])
+        if invalid is not None and check is not None and d * (check - invalid) <= 0:
             self._finish(s, 'INVALID', now, self._invalid_reason(s, price, invalid))
             return None
         tp1 = plan['targets'][0]
@@ -533,7 +543,14 @@ class SignalBook:
         # A trigger candle is complete once its last minute is final (not by the wall clock: that minute's final
         # kline arrives a moment after the minute ends, and the entry would be a mid-minute price)
         ltf = resample(minutes, trigger_minutes, minutes[-1][0] + MINUTE_MS)
-        trigger = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms)
+        kind = s.plan.get('trigger', 'shift')
+        if kind == 'pinbar':
+            trigger = pinbar_trigger(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
+        elif kind == 'ifvg':
+            trigger = ifvg_trigger(ltf, d, int(s.plan.get('trigger_from_ms') or s.zone_since_ms), s.zone_since_ms,
+                                   interval_ms)
+        else:
+            trigger = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms)
         if not trigger:
             return None
         if now_ms - trigger['time'] > interval_ms + 2 * MINUTE_MS:
@@ -558,12 +575,23 @@ class SignalBook:
             if confirm_of else {}
         if reason is None:
             reason = confirm.missing(s.mode, confirms)
+        if reason is None and s.plan.get('session') and not in_session(trigger['time'], tuple(s.plan['session'])):
+            reason = 'off_session'
         if reason is None and CONFIG.levels.veto_low_rr and levels.get('low_rr'):
             reason = 'low_rr'
         if reason:
             # Keep waiting for the next trigger after this one
             s.zone_since_ms = trigger['time']
         return self._enter(s, levels, now_ms, reason, confirms)
+
+    @staticmethod
+    def _last_close(symbol: str, candles_of, minutes_tf: int) -> Optional[float]:
+        """Close of the last FINAL candle of `minutes_tf` minutes (from the final 1m candles), None without data."""
+        minutes = list(candles_of(symbol)) if candles_of else []
+        if not minutes:
+            return None
+        bars = resample(minutes, minutes_tf, minutes[-1][0] + MINUTE_MS)
+        return bars[-1][4] if bars else None
 
     def _confirmation_entry(self, s: TrackedSignal, price: float, now_ms: int,
                             confirm_of: Optional[ConfirmCheck]) -> Optional[TrackedSignal]:

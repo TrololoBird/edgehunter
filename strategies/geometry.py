@@ -129,8 +129,81 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
     return stop, src
 
 
+def exit_stop(exit: Dict, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Tuple[float, str]:
+    """A system's own stop rule (plan['exit']['stop']): ['pct', f] / ['atr', k] / ['ref', pad ATR] / ['price', p]."""
+    kind, value = exit['stop'][0], exit['stop'][1]
+    atr = exit.get('atr') or plan['atr']
+    if kind == 'pct':
+        return entry * (1 - direction * value), f"{value:.2%} from the entry"
+    if kind == 'atr':
+        return entry - direction * value * atr, f"{value:g} ATR from the entry"
+    if kind == 'price':
+        return value, exit.get('stop_src', 'the system stop')
+    refs = [r for r in (plan.get('stop_ref'), extreme) if r is not None]
+    ref = (min(refs) if direction > 0 else max(refs)) if refs else entry
+    return ref - direction * value * atr, exit.get('stop_src', 'beyond the extreme') + (f" + {value:g} ATR" if value else '')
+
+
+def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: int) -> Tuple[Optional[float], str, bool]:
+    """
+    A system's own first target (plan['exit']['tp']): ['pct', f] / ['rr', r] / ['level', price, min R:R, fallback R]
+    (the level when it pays min R:R, else the system skips - `low` True; no level -> fallback R) / ['map', min R:R]
+    (the map's TP1). Returns (price, label, below the system's minimum R:R).
+    """
+    spec = exit['tp']
+    kind = spec[0]
+    if kind == 'pct':
+        return entry * (1 + direction * spec[1]), f"{spec[1]:.1%} from the entry", False
+    if kind == 'rr':
+        return entry + direction * spec[1] * risk, f"{spec[1]:g} R", False
+    if kind == 'level':
+        price, min_rr, fallback = spec[1], spec[2], spec[3]
+        if price is not None and direction * (price - entry) > 0:
+            rr = direction * (price - entry) / risk
+            if rr >= min_rr:
+                return price, exit.get('tp_src', 'the system target'), False
+            if not exit.get('fallback_when_close'):
+                return price, exit.get('tp_src', 'the system target'), True
+        if fallback is None:
+            return None, '', True
+        return entry + direction * fallback * risk, f"{fallback:g} R", False
+    ahead = [(t, s) for t, s in zip(plan['targets'], plan['target_src']) if direction * (t - entry) > 0]
+    if not ahead:
+        return None, '', True
+    t, s = ahead[0]
+    return t, s, direction * (t - entry) / risk < spec[1]
+
+
+def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
+    """Entry / stop / targets by the system's own exit rules (the ported systems of strategies/maniac.py)."""
+    exit = plan['exit']
+    stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
+    risk = direction * (entry - stop)
+    atr = exit.get('atr') or plan['atr']
+    if risk <= 0 or (exit.get('min_risk_atr') and risk < exit['min_risk_atr'] * atr):
+        return None
+    tp1, src1, low = exit_target(exit, plan, entry, risk, direction)
+    if tp1 is None:
+        return None
+    gap = CONFIG.zones.min_target_atr * atr
+    tp2, src2 = tp1 + direction * gap, 'ATR step'
+    if exit.get('tp2'):
+        # the system's own second target (the OI robot's 4% / 6% take-profits)
+        tp2, src2, _ = exit_target({**exit, 'tp': exit['tp2']}, plan, entry, risk, direction)
+        if tp2 is None or direction * (tp2 - tp1) <= 0:
+            tp2, src2 = tp1 + direction * gap, 'ATR step'
+    tp3 = tp2 + direction * gap
+    fee = cost_of(entry)
+    rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
+    return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
+            'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': low,
+            'tp1_src': src1, 'tp2_src': src2, 'tp3_src': 'ATR step', 'sl_src': sl_src}
+
+
 def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
     """Entry / stop / targets for an entry at `entry` (targets behind the entry are dropped, refilled beyond it)."""
+    if plan.get('exit'):
+        return system_levels(plan, entry, extreme, direction)
     stop, sl_src = stop_levels(plan, entry, extreme, direction)
     risk = abs(entry - stop)
     if not risk or direction * (entry - stop) <= 0:

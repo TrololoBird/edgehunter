@@ -164,8 +164,86 @@ def pools_before(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Se
     return liquidity_pools(h1_before, c15_hour, atr, at_ms)
 
 
+def merge_candles(older: Sequence[Sequence[float]], newer: Sequence[Sequence[float]], cut_ms: int,
+                  bar_ms: int) -> List[List[float]]:
+    """A long history (REST, refreshed hourly) with the newer closed candles on top, only bars closed by `cut_ms`."""
+    merged = {int(c[0]): list(c) for c in older}
+    merged.update({int(c[0]): list(c) for c in newer})
+    return [merged[t] for t in sorted(merged) if t + bar_ms <= cut_ms]
+
+
+def hours_from(candles_15m: Sequence[Sequence[float]], h1: Sequence[Sequence[float]], cut_ms: int) -> List[List[float]]:
+    """Closed 1h candles up to `cut_ms`; an hour REST has not published yet is built from its four 15m candles."""
+    out = [list(c) for c in h1 if c[0] + HOUR_MS <= cut_ms]
+    last = out[-1][0] if out else None
+    by_hour: Dict[int, List] = {}
+    for c in candles_15m:
+        hour = int(c[0]) // HOUR_MS * HOUR_MS
+        if (last is None or hour > last) and hour + HOUR_MS <= cut_ms:
+            by_hour.setdefault(hour, []).append(c)
+    for hour in sorted(by_hour):
+        q = sorted(by_hour[hour], key=lambda c: c[0])
+        if len(q) == 4:
+            out.append([hour, q[0][1], max(c[2] for c in q), min(c[3] for c in q), q[-1][4],
+                        sum(c[5] for c in q), sum(c[6] for c in q)])
+    return out
+
+
+def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[float]],
+                  corr: Optional[List[List[float]]], cut: int) -> List[Dict]:
+    """crypto_maniac's systems on the candle that just closed (15m), and on the hour when one closed (1h)."""
+    from strategies import maniac
+    from strategies.auction_engine import auction_signals
+    log = logging.getLogger(__name__)
+    events: List[Dict] = []
+
+    def run(name, fn, *args):
+        try:
+            found = fn(*args)
+        except Exception as e:                   # one system's slip must not cost the others (logged, not hidden)
+            log.warning(f"{name} of {symbol} failed: {type(e).__name__} {e}")
+            return
+        # numpy scalars -> Python numbers: the dashboard's orjson (default=str) turned them into strings
+        clean = lambda e: {k: (v.item() if hasattr(v, 'item') and not isinstance(v, (list, dict)) else v)
+                           for k, v in e.items()}
+        if isinstance(found, dict):
+            events.append(clean(found))
+        elif found:
+            events.extend(clean(e) for e in found)
+
+    run('supply/demand', maniac.sd_zone_events, m15)
+    run('trendline', maniac.trendline_event, m15)
+    run('SMT', maniac.smt_event, m15, corr)
+    run('CSI', maniac.csi_event, m15)
+    if cut % HOUR_MS == 0 and len(h1) >= 30:
+        run('Third Eye', maniac.thirdeye_event, h1)
+        run('fib 0.5', maniac.fib05_event, h1)
+        run('bomberman', maniac.bomberman_event, h1)
+        if symbol:
+            try:
+                signals = auction_signals(symbol, h1)
+            except Exception as e:
+                log.warning(f"auction of {symbol} failed: {type(e).__name__} {e}")
+                signals = []
+            for s in signals:
+                s = {k: (v.item() if hasattr(v, 'item') else v) for k, v in s.items()}
+                d = s['direction']
+                events.append({
+                    'setup': 'AUCTION LONG' if d > 0 else 'AUCTION SHORT', 'direction': d,
+                    'setup_note': f"1h retest of the POC {s['level']:.6g} (concentration {s['conc']:.1f}, {s['kind']}) "
+                                  f"reacted: close {'above' if d > 0 else 'below'} by >= "
+                                  f"{CONFIG.strategies.auction_reaction_atr:g} ATR",
+                    'anchor_level': s['level'], 'anchor_extreme': s['extreme'], 'anchor_label': f"POC ({s['kind']})",
+                    'anchor_ts': int(s['level_ts'] or s['ts']), 'anchor_close': s['entry'],
+                    'auction_stop': s['stop'], 'auction_target': s['target'], 'auction_kind': s['kind'],
+                    'atr_1h': s['atr'], 'event_ts': int(s['ts']) + HOUR_MS})
+    return events
+
+
 def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]], atr: float,
-                  zones: List[Zone], now_ms: float) -> Optional[Context]:
+                  zones: List[Zone], now_ms: float, symbol: Optional[str] = None,
+                  m15_long: Sequence[Sequence[float]] = (), h1_long: Sequence[Sequence[float]] = (),
+                  corr: Optional[Sequence[Sequence[float]]] = None) -> Optional[Context]:
     if not candles_15m or not atr:
         return None
     cut = int(candles_15m[-1][0]) + QUARTER_MS
@@ -183,6 +261,10 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
         for event in (sweep_at_close(candles_15m, pools, atr, ctx.trend), breakout_at_close(candles_15m, atr, closed_1h)):
             if event:
                 ctx.events.append(event)
+        m15 = merge_candles(m15_long, candles_15m, cut, QUARTER_MS)
+        h1 = hours_from(candles_15m, list(h1_long) or list(candles_1h), cut)
+        corr15 = merge_candles(corr, [], cut, QUARTER_MS) if corr else None
+        ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut))
     return ctx
 
 
@@ -199,15 +281,19 @@ def part_candles(part) -> Tuple[List[List[float]], Optional[float]]:
     return candles, atr
 
 
-def build_maps(jobs: List[tuple]) -> Dict[str, tuple]:
+def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> Dict[str, tuple]:
     """
     Worker PROCESS: level maps and contexts of many coins. A job is (symbol, the closed 15m frame (PART_COLUMNS),
     1h candles (8 days, every coin), card 1h candles (with OI), 1h OI, liquidation events, now ms, 4-day 5m candles,
-    with_context) -> {symbol: (raw levels, Context or None)}. The frame is turned into candles here: ~300 conversions
-    after every close held the event loop ~2s.
+    with_context, the long 15m / 1h histories (numpy, crypto_maniac's systems)) -> {symbol: (raw levels, Context or
+    None)}. The frame is turned into candles here: ~300 conversions after every close held the event loop ~2s.
+    `corr`: the SMT correlates' long 15m histories {'BTC': ..., 'ETH': ...} (BTC for every coin, ETH for BTC).
     """
     out: Dict[str, tuple] = {}
-    for symbol, part, h1, card_1h, oi_1h, liq_events, now_ms, candles_4d, with_context in jobs:
+    corr = {k: (v.tolist() if hasattr(v, 'tolist') else list(v)) for k, v in (corr or {}).items()}
+    for job in jobs:
+        symbol, part, h1, card_1h, oi_1h, liq_events, now_ms, candles_4d, with_context = job[:9]
+        m15_long, h1_long = (job[9], job[10]) if len(job) > 10 else ((), ())
         try:
             candles, atr = part_candles(part)
             if not candles or not atr:
@@ -216,7 +302,14 @@ def build_maps(jobs: List[tuple]) -> Dict[str, tuple]:
             candles_1h = h1 if len(h1) >= len(card_1h) else card_1h
             profile = candles_4d or candles_1h[-96:]
             raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile)
-            context = build_context(candles, candles_1h, atr, merge(raw, atr), now_ms) if with_context else None
+            if with_context:
+                correlate = corr.get('ETH' if symbol.startswith('BTC/') else 'BTC')
+                m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
+                h1l = h1_long.tolist() if hasattr(h1_long, 'tolist') else list(h1_long)
+                context = build_context(candles, candles_1h, atr, merge(raw, atr), now_ms, symbol=symbol,
+                                        m15_long=m15, h1_long=h1l, corr=correlate)
+            else:
+                context = None
         except Exception as e:
             # a coin without a map has no levels / pools / events: say so instead of dropping it silently (the worker
             # process has no logging config: WARNING goes to its stderr, the bot's console)

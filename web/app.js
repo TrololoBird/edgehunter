@@ -80,6 +80,7 @@ const VETO = {
   no_leg: 'нет подходящей ноги: не из чего строить план', no_room: 'цена уже прошла все цели', same_leg: 'по этой ноге карточка уже была',
   market_move: 'движение всего рынка: тот же сетап у многих монет сразу',
   against_trend: 'против тренда монеты на 1h: снятие ликвидности против тренда обычно проваливается', disabled: 'стратегия выключена в конфиге', not_in_pool: 'монета не в пуле этой стратегии (класс / сектор / волатильность / плохая история на ней)',
+  off_session: 'вне торговой сессии системы (SMT: 02:00–10:00 Нью-Йорк)',
 };
 // Strategies: each has its own anchor, entry and targets (strategies/)
 const FAMILY = {
@@ -90,6 +91,16 @@ const FAMILY = {
   absorption: ['поглощение', 'агрессия в значимый уровень (пул 1h/4h, сильная зона, ликвидность стакана) без движения цены (1m); вход по слому структуры 5m; цели — возврат к среднему (VWAP, POC, узлы объёма)'],
   exhaustion: ['истощение каскада', 'каскад ликвидаций перехлёстывает цену; вход по слому структуры 5m против каскада; цели — возврат к среднему и откат 38–62% каскада'],
   breakout: ['пробой с инициативой', 'закрытие 15m за диапазоном на объёме ≥1.5× с потоком в ту же сторону и удержание следующей свечой; обязателен рост OI, пробой без спота (ведёт перп) отсеивается; стоп — середина диапазона; цели — мерное движение'],
+  // crypto_maniac's systems (github.com/roman-boop), ported with their own entry and exit
+  supply_demand: ['спрос/предложение (maniac)', 'зона 15m: последняя противоположная свеча или пинбар у локального экстремума, уход ≥2 ATR за 4 свечи; вход по пинбару 5m на ретесте зоны; стоп за пинбаром и зоной; зона мертва при закрытии 15m за ней'],
+  auction: ['аукцион, POC (maniac)', 'POC консолидации 1h (узкий диапазон, концентрированный объём), подтверждённый импульсом ≥1 высоты диапазона; ретест с реакцией закрытием ≥0.15 ATR; вход на закрытии; стоп за экстремумом теста +0.35 ATR; цель — ближайший сильный нетронутый POC (иначе 2.5R)'],
+  smt: ['SMT / Quasimodo (maniac)', 'свип внешнего пула 15m двумя свечами (прокол без закрепа + реакция), SMT-дивергенция с BTC (для BTC — ETH) или Quasimodo; вход по инверсии FVG на 5m в сессию 02–10 Нью-Йорк; стоп за свипом +0.1 ATR; цель — противоположный пул (≥2R) или 2.5R'],
+  trendline: ['трендовая линия (maniac)', 'наклонная линия через ≥3 пивота 15m без закрытий за ней; пробой двумя закрытиями ≥0.15 ATR с сильной свечой; вход на закрытии; стоп за структурой 5m; цель — первый якорь линии (R:R ≥ 1)'],
+  thirdeye: ['Third Eye (maniac)', '1h: CCI(25) пересекает ±98, цена и линии Ишимоку за облаком, EMA200, фильтры ADX/RSI/NATR/ширины BB; вход на закрытии; стоп 1%, тейк 5%'],
+  fib05: ['Фибо 0.5 (maniac)', '1h: импульс по структуре HH/HL; свеча прокалывает 0.5 импульса и закрывается обратно; вход на закрытии; стоп — начало импульса; цель — конец импульса (дальше у автора трейлинг)'],
+  bomberman: ['Bomberman (maniac)', '1h: пересечение MACD и сигнальной по стороне EMA100 после QML, без сжатия BB; вход на закрытии; стоп 1.5 ATR, цель 2R'],
+  csi: ['Боллинджер + CSI (maniac)', '15m: закрытие за BB(40, 1.5) внутри кластера свечного сентимента CSI той же стороны, RSI(96); вход на закрытии; стоп 0.4%, выход через 3 свечи'],
+  oi_accum: ['набор OI (maniac)', 'OI +5% за час при росте цены не больше половины этого, OI за сутки обгоняет цену; только лонг, вход сразу; стоп 2%, тейки 4% и 6%'],
 };
 const SETUP_RU = {
   'BULL A': 'накопление', 'BULL B': 'spring', 'BULL E': 'капитуляция', 'BEAR C': 'распределение',
@@ -97,12 +108,22 @@ const SETUP_RU = {
   'SWEEP LOW': 'сняты стопы снизу', 'SWEEP HIGH': 'сняты стопы сверху', 'FLUSH REVERSAL': 'после слива лонгов',
   'SQUEEZE REVERSAL': 'после сквиза шортов', 'ABSORB BID': 'продажи поглощены', 'ABSORB ASK': 'покупки поглощены',
   'BREAKOUT UP': 'пробой вверх', 'BREAKOUT DOWN': 'пробой вниз',
+  'SD DEMAND': 'зона спроса', 'SD SUPPLY': 'зона предложения', 'AUCTION LONG': 'ретест POC вверх', 'AUCTION SHORT': 'ретест POC вниз',
+  'SMT LOW': 'свип минимума + SMT', 'SMT HIGH': 'свип максимума + SMT', 'TRENDLINE UP': 'пробой линии вверх', 'TRENDLINE DOWN': 'пробой линии вниз',
+  'THIRD EYE LONG': 'CCI + Ишимоку вверх', 'THIRD EYE SHORT': 'CCI + Ишимоку вниз', 'FIB 0.5 LONG': 'откат к 0.5 вверх', 'FIB 0.5 SHORT': 'откат к 0.5 вниз',
+  'BOMBERMAN LONG': 'MACD + QML вверх', 'BOMBERMAN SHORT': 'MACD + QML вниз', 'CSI LONG': 'BB + CSI вверх', 'CSI SHORT': 'BB + CSI вниз',
+  'OI ACCUMULATION': 'набор OI без цены',
 };
 const STRATEGY_OF = {
   'BULL F': 'trend', 'BEAR D': 'trend', 'IMPULSE UP': 'momentum', 'IMPULSE DOWN': 'momentum',
   'BULL A': 'wyckoff', 'BULL B': 'wyckoff', 'BULL E': 'wyckoff', 'BEAR C': 'wyckoff',
   'SWEEP LOW': 'sweep', 'SWEEP HIGH': 'sweep', 'ABSORB BID': 'absorption', 'ABSORB ASK': 'absorption',
   'FLUSH REVERSAL': 'exhaustion', 'SQUEEZE REVERSAL': 'exhaustion', 'BREAKOUT UP': 'breakout', 'BREAKOUT DOWN': 'breakout',
+  'SD DEMAND': 'supply_demand', 'SD SUPPLY': 'supply_demand', 'AUCTION LONG': 'auction', 'AUCTION SHORT': 'auction',
+  'SMT LOW': 'smt', 'SMT HIGH': 'smt', 'TRENDLINE UP': 'trendline', 'TRENDLINE DOWN': 'trendline',
+  'THIRD EYE LONG': 'thirdeye', 'THIRD EYE SHORT': 'thirdeye', 'FIB 0.5 LONG': 'fib05', 'FIB 0.5 SHORT': 'fib05',
+  'BOMBERMAN LONG': 'bomberman', 'BOMBERMAN SHORT': 'bomberman', 'CSI LONG': 'csi', 'CSI SHORT': 'csi',
+  'OI ACCUMULATION': 'oi_accum',
 };
 const familyOf = setup => STRATEGY_OF[setup] || '';
 const setupLabel = setup => {
