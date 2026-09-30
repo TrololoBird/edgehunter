@@ -98,6 +98,19 @@ class VenueFlow:
         seconds = min(seconds, self.H)
         return self._span_sum(field, now_sec - seconds + 1, now_sec + 1)
 
+    def row_range_sum(self, field: int, row: int, start_sec: int, end_sec: int, now_sec: int) -> float:
+        """One row's sum over [start_sec, end_sec): the whole-matrix range_sum then one row cost ~1s on the loop per
+        call (the whale forced-flow check ran it on every sweep)."""
+        self.advance(now_sec)
+        start_sec = max(start_sec, now_sec - self.H + 1)
+        end_sec = min(end_sec, now_sec + 1)
+        if end_sec <= start_sec or row >= self.data.shape[2]:
+            return 0.0
+        a, n = start_sec % self.H, end_sec - start_sec
+        if a + n <= self.H:
+            return float(self.data[a:a + n, field, row].sum(dtype=np.float64))
+        return float(self.data[a:, field, row].sum(dtype=np.float64) + self.data[:a + n - self.H, field, row].sum(dtype=np.float64))
+
     def range_sum(self, field: int, start_sec: int, end_sec: int, now_sec: int) -> np.ndarray:
         """Per-row sum over [start_sec, end_sec) (seconds still inside the buffer only)."""
         self.advance(now_sec)
@@ -214,9 +227,7 @@ class FlowStore:
         now_sec = int(now_sec if now_sec is not None else time.time())
         total = 0.0
         for flow in self.venues.values():
-            part = flow.range_sum(field, start_sec, end_sec, now_sec)
-            if row < part.shape[0]:
-                total += float(part[row])
+            total += flow.row_range_sum(field, row, start_sec, end_sec, now_sec)
         return total
 
     def candle_net(self, venues: Sequence[str], start_sec: int, end_sec: int, now_sec: Optional[int] = None) -> np.ndarray:

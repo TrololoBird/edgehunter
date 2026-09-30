@@ -1728,9 +1728,7 @@ class DataFetcher:
                 vf = self.flow.venues.get(v)
                 if vf is None:
                     continue
-                buy, sell = vf.range_sum(BUY, a, b, now_sec), vf.range_sum(SELL, a, b, now_sec)
-                if row < buy.shape[0]:
-                    total += float(buy[row] - sell[row])
+                total += vf.row_range_sum(BUY, row, a, b, now_sec) - vf.row_range_sum(SELL, row, a, b, now_sec)
             return total
 
         flow_usd = venue_delta(FUTURES_VENUES)
