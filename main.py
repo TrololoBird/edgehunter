@@ -24,6 +24,7 @@ from logging.handlers import RotatingFileHandler
 
 from config import CONFIG
 from journal import SignalJournal
+from netstate import NETWORK
 from scanner import Scanner
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,8 @@ def loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict):
     """
     exc = context.get('exception')
     if isinstance(exc, OSError) and 'shielded future' in (context.get('message') or ''):
-        logger.warning(f"Network: background DNS resolution failed ({type(exc).__name__} {exc})")
+        if not NETWORK.failed("DNS resolver", exc):
+            logger.warning(f"Network: background DNS resolution failed ({type(exc).__name__} {exc})")
         return
     loop.default_exception_handler(context)
 
@@ -155,11 +157,24 @@ async def main(use_web: bool = True):
     graceful_exit = GracefulExit(loop)
 
     signals = [signal.SIGINT, signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, 'SIGBREAK') else [])
-    for sig in signals:
+    if sys.platform == 'win32':
+        # A process started by a shell / tool that ignores Ctrl+C inherits that "ignore" flag (Windows passes
+        # SetConsoleCtrlHandler(NULL, TRUE) on to children): Ctrl+C then never reached the bot. Clear it.
         try:
-            loop.add_signal_handler(sig, graceful_exit, sig)
-        except (NotImplementedError, RuntimeError):
-            signal.signal(sig, graceful_exit)  # Windows
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
+        except Exception as e:
+            logger.debug(f"Ctrl+C handling not re-enabled: {e}")
+        # winloop's add_signal_handler did not catch Ctrl+Break (the process died without its shutdown): Python's
+        # own handlers cover SIGINT and SIGBREAK on Windows
+        for sig in signals:
+            signal.signal(sig, graceful_exit)
+    else:
+        for sig in signals:
+            try:
+                loop.add_signal_handler(sig, graceful_exit, sig)
+            except (NotImplementedError, RuntimeError):
+                signal.signal(sig, graceful_exit)
 
     try:
         # Ctrl+C during start-up (e.g. while REST is paused by a rate-limit ban) must not wait for it to finish

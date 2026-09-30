@@ -18,6 +18,7 @@ from flow import SPOT_VENUES, Footprint, FlowStore, Sweep, SweepTracker, WhaleBo
 from indicators import RAW_SCHEMA, TIMEFRAME_MS, empty_raw_frame, merge_live_candle, seasonal_factors
 from ratelimit import RATE_LIMIT_ERRORS, BanState, RestGate
 from symbols import SymbolMap, VenueMarket
+from netstate import NETWORK
 from venues import BinanceStream, VENUE_MARKETS, VENUE_STREAMS, venue_market_rows
 
 logger = logging.getLogger(__name__)
@@ -490,7 +491,8 @@ class DataFetcher:
         try:
             info = await self._rest_call(self.futures_exchange, 'fapiPublicGetFundingInfo', priority=1)
         except Exception as e:
-            logger.warning(f"Failed to fetch funding info: {e}")
+            if not NETWORK.failed("Binance fundingInfo", e):
+                logger.warning(f"Failed to fetch funding info: {e}")
             return
         intervals = {}
         for item in info:
@@ -572,7 +574,8 @@ class DataFetcher:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.warning(f"Binance REST tickers failed ({type(e).__name__}): {e}")
+                if not NETWORK.failed("Binance REST tickers", e):
+                    logger.warning(f"Binance REST tickers failed ({type(e).__name__}): {e}")
             await asyncio.sleep(CONFIG.timeframe.bulk_funding_interval_sec)
 
     async def _update_premium_index(self):
@@ -1220,7 +1223,8 @@ class DataFetcher:
         try:
             await self._update_24h_volumes()
         except Exception as e:
-            logger.warning(f"24h volumes unavailable: {e}")
+            if not NETWORK.failed("Binance 24h volumes", e):
+                logger.warning(f"24h volumes unavailable: {e}")
 
         async def fetch_symbol(futures_symbol: str):
             md = self.markets.get(futures_symbol)
@@ -1302,7 +1306,7 @@ class DataFetcher:
                 md.finalized_until[market] = max(md.finalized_until[market], final)
                 logger.debug(f"Backfilled {market} candles for {symbol}")
                 return
-            logger.warning(f"Backfill failed for {symbol} ({market}) after {len(self.BACKFILL_DELAYS_SEC)} attempts")
+            (logger.debug if NETWORK.down else logger.warning)(f"Backfill failed for {symbol} ({market}) after {len(self.BACKFILL_DELAYS_SEC)} attempts")
             self._backfill_retry_at[key] = time.time() + 600
         finally:
             self._backfill_pending.discard(key)

@@ -31,6 +31,7 @@ from scorer import PhaseScorer, score_closed, signals_from_rows
 from strategies import confirm
 from strategies.detect import LiveDetector
 from strategies.structure import PART_COLUMNS, build_maps, part_candles, trend_w_of
+from netstate import NETWORK
 from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
@@ -1024,7 +1025,8 @@ class Scanner:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.warning(f"Universe refresh failed: {e}")
+                if not NETWORK.failed("universe refresh", e):
+                    logger.warning(f"Universe refresh failed: {e}")
 
     async def positioning_loop(self):
         """

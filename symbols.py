@@ -176,8 +176,9 @@ class SymbolMap:
         deviation, per_coin_venue, per_coin_binance = self._deviation(m, venue_price, binance_price)
         if deviation > CONFIG.venues.max_price_deviation:
             if (m.venue, m.native) not in self.dropped:
-                # Normally caught by verify_prices at start-up; reaching this means the venue had no ticker then
-                logger.warning(f"Symbol map: dropped {m.venue} {m.native} for {m.key} "
+                # Normally caught by verify_prices at start-up; reaching this means the venue had no ticker then.
+                # The check doing its job (a different token under the same ticker): INFO, not a fault
+                logger.info(f"Symbol map: dropped {m.venue} {m.native} for {m.key} "
                                f"(price {per_coin_venue:.6g} vs Binance {per_coin_binance:.6g})")
             self._drop(m)
             return False

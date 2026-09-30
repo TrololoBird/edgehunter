@@ -53,9 +53,24 @@ _picows = _import_picows()
 WSListener, WSMsgType, WSTransport, ws_connect = _picows.WSListener, _picows.WSMsgType, _picows.WSTransport, _picows.ws_connect
 
 from config import CONFIG
+from netstate import NETWORK
 from symbols import SymbolMap
 
 logger = logging.getLogger(__name__)
+
+_SSL_CONTEXT = None
+
+
+def ssl_context():
+    """
+    One shared client SSL context: ws_connect built a new one per connection, and loading the Windows certificate
+    stores (ssl.create_default_context) blocked the loop 1-1.5s at every reconnect wave.
+    """
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        import ssl
+        _SSL_CONTEXT = ssl.create_default_context()
+    return _SSL_CONTEXT
 # picows logs every connect / disconnect at INFO; ours already does
 logging.getLogger('picows').setLevel(logging.WARNING)
 
@@ -240,6 +255,7 @@ class VenueStream:
                     enable_auto_ping=True, auto_ping_idle_timeout=self.idle_timeout,
                     auto_ping_reply_timeout=self.idle_timeout, enable_auto_pong=True,
                     max_frame_size=MAX_FRAME_SIZE, websocket_handshake_timeout=15, use_aiofastnet=False,
+                    ssl_context=ssl_context() if self.connection_url(index).startswith('wss') else None,
                 )
                 self._transports.add(transport)
                 self.connected += 1
@@ -258,7 +274,8 @@ class VenueStream:
                 if self._running:
                     # A single drop that reconnects at once is routine for public feeds (exchange gateway restarts,
                     # network blips): INFO. Repeated connections without data mean the venue is really down: WARNING.
-                    level = logging.WARNING if failures >= 2 else logging.INFO
+                    # (`failures` is reset only after this: a socket that delivered data counts as healthy here)
+                    level = logging.WARNING if failures >= 2 and not listener.frames else logging.INFO
                     logger.log(level, f"{self.name} WS disconnected ({self.last_close or 'no close frame'}) after "
                                       f"{listener.frames} messages, reconnecting")
             except asyncio.CancelledError:
@@ -266,8 +283,9 @@ class VenueStream:
                     transport.disconnect()
                 raise
             except Exception as e:
-                level = logging.WARNING if failures >= 2 else logging.INFO
-                logger.log(level, f"{self.name} WS connect failed ({type(e).__name__} {e}), retry in {backoff:.0f}s")
+                if not NETWORK.failed(f"{self.name} WS", e):
+                    level = logging.WARNING if failures >= 2 else logging.INFO
+                    logger.log(level, f"{self.name} WS connect failed ({type(e).__name__} {e}), retry in {backoff:.0f}s")
             finally:
                 if ping_task:
                     ping_task.cancel()
@@ -278,6 +296,7 @@ class VenueStream:
                     self._dynamic_transport = None
             if listener is not None and listener.frames:
                 backoff, failures = 1.0, 0  # reset only once data actually flowed
+                NETWORK.ok()
             else:
                 failures += 1
             if self._running:

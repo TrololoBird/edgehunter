@@ -21,10 +21,18 @@ logger = logging.getLogger(__name__)
 
 def exit_with_parent(parent_pid: int) -> None:
     """
-    ProcessPoolExecutor initializer: the worker exits when the bot's process is gone. A bot killed without its
+    ProcessPoolExecutor initializer: the worker ignores console Ctrl+C / Ctrl+Break and exits when the bot's process
+    is gone. A bot killed without its
     shutdown (console closed, crash, Stop-Process) left its spawn workers running for days (5 orphans measured).
     """
     import os
+    import signal
+
+    # Ctrl+C goes to every process of the console: a worker killed by it mid-job made the bot's graceful shutdown
+    # log "process pool terminated abruptly". The bot shuts its pools down itself.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    if hasattr(signal, 'SIGBREAK'):
+        signal.signal(signal.SIGBREAK, signal.SIG_IGN)
 
     def watch():
         if sys.platform == 'win32':
@@ -41,9 +49,36 @@ def exit_with_parent(parent_pid: int) -> None:
     threading.Thread(target=watch, name='exit-with-parent', daemon=True).start()
 
 
+def free_ram_mb() -> Optional[float]:
+    """
+    Available physical memory (Windows). Stalls whose loop samples sit in C code (`main.py <module>`, ssl reads) with
+    no busy thread are usually the machine paging the bot out (6 GB shared with Claude and Chrome; measured
+    2026-09-30: ~800 MB free, 3-5k pages/s, the bot's working set trimmed to 197 of 580 MB): shown with each stall.
+    """
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
+                        ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
+                        ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
+                        ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong),
+                        ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return status.ullAvailPhys / 2 ** 20
+    except Exception:
+        pass
+    return None
+
+
 class LoopWatchdog:
     IDLE_FUNCTIONS = {'wait', '_exhaustive_wait', 'get', 'select', 'accept', 'recv', 'recv_bytes', '_recv_bytes',
-                      'poll', 'sleep', 'acquire', 'read'}
+                      'poll', 'sleep', 'acquire', 'read',
+                      '_worker'}   # an idle ThreadPoolExecutor worker sits in the C SimpleQueue.get under _worker
     def __init__(self, stall_sec: float = 0.5, report_sec: float = 1.0):
         self.stall_sec = stall_sec
         self.report_sec = report_sec
@@ -133,4 +168,6 @@ class LoopWatchdog:
             gc_text = f"; gc {sum(t for t, _ in gc_part):.1f}s (gen {max(g for _, g in gc_part)})" if gc_part else ''
             where = '; '.join(f"{n}x {s}" for s, n in samples.most_common(3)) or 'no sample'
             busy = '; '.join(f"{n}x {s}" for s, n in workers.most_common(3))
-            logger.warning(f"Event loop blocked {total:.1f}s{gc_text} | loop: {where}" + (f" | threads: {busy}" if busy else ''))
+            free = free_ram_mb()
+            ram_text = f"; RAM free {free:.0f} MB" if free is not None else ''
+            logger.warning(f"Event loop blocked {total:.1f}s{gc_text}{ram_text} | loop: {where}" + (f" | threads: {busy}" if busy else ''))

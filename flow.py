@@ -27,13 +27,18 @@ SPOT_VENUES = ('coinbase',)
 
 
 class VenueFlow:
-    """Ring buffer of one venue: data[field, symbol_row, second % H]."""
+    """
+    Ring buffer of one venue: data[second % H, field, symbol_row]. Second-major: advancing one second zeroes ~5 KB
+    of contiguous memory and a window sum reads one contiguous block. The symbol-major layout it replaced touched
+    ~1600 pages per venue every second (one per row and field), kept the whole buffer hot and stalled the loop
+    whenever the machine had paged it out.
+    """
 
     def __init__(self, venue: str, history_sec: int, capacity: int):
         self.venue = venue
         self.H = history_sec
-        self.data = np.zeros((N_FIELDS, capacity, history_sec), dtype=np.float32)
-        self.counts = np.zeros((capacity, history_sec), dtype=np.int32)
+        self.data = np.zeros((history_sec, N_FIELDS, capacity), dtype=np.float32)
+        self.counts = np.zeros((history_sec, capacity), dtype=np.int32)
         self.last_sec = 0
         self.messages = 0
         self.last_event_ms = 0
@@ -41,14 +46,14 @@ class VenueFlow:
         self.lag_ms = 0.0
 
     def grow(self, capacity: int):
-        extra = capacity - self.data.shape[1]
+        extra = capacity - self.data.shape[2]
         if extra > 0:
-            self.data = np.concatenate([self.data, np.zeros((N_FIELDS, extra, self.H), np.float32)], axis=1)
-            self.counts = np.concatenate([self.counts, np.zeros((extra, self.H), np.int32)], axis=0)
+            self.data = np.concatenate([self.data, np.zeros((self.H, N_FIELDS, extra), np.float32)], axis=2)
+            self.counts = np.concatenate([self.counts, np.zeros((self.H, extra), np.int32)], axis=1)
 
     def clear_row(self, row: int):
-        self.data[:, row, :] = 0
-        self.counts[row, :] = 0
+        self.data[:, :, row] = 0
+        self.counts[:, row] = 0
 
     def advance(self, sec: int):
         """Move the head to `sec`, zeroing the slots of the seconds skipped since the last write."""
@@ -58,9 +63,11 @@ class VenueFlow:
             self.data[:] = 0
             self.counts[:] = 0
         else:
-            idx = np.arange(self.last_sec + 1, sec + 1) % self.H
-            self.data[:, :, idx] = 0
-            self.counts[:, idx] = 0
+            a, n = (self.last_sec + 1) % self.H, sec - self.last_sec
+            for lo, hi in ((a, min(a + n, self.H)), (0, max(0, a + n - self.H))):
+                if hi > lo:
+                    self.data[lo:hi] = 0
+                    self.counts[lo:hi] = 0
         self.last_sec = sec
 
     def add(self, row: int, sec: int, field: int, usd: float, count: int = 0):
@@ -69,9 +76,9 @@ class VenueFlow:
         elif sec <= self.last_sec - self.H:
             return  # older than the buffer
         slot = sec % self.H
-        self.data[field, row, slot] += usd
+        self.data[slot, field, row] += usd
         if count:
-            self.counts[row, slot] += count
+            self.counts[slot, row] += count
 
     def _span_sum(self, field: int, start_sec: int, end_sec: int) -> np.ndarray:
         """
@@ -80,10 +87,10 @@ class VenueFlow:
         blocked the event loop for about a second.
         """
         a, n = start_sec % self.H, end_sec - start_sec
-        plane = self.data[field]
         if a + n <= self.H:
-            return plane[:, a:a + n].sum(axis=1, dtype=np.float64)
-        return plane[:, a:].sum(axis=1, dtype=np.float64) + plane[:, :a + n - self.H].sum(axis=1, dtype=np.float64)
+            return self.data[a:a + n, field].sum(axis=0, dtype=np.float64)
+        return (self.data[a:, field].sum(axis=0, dtype=np.float64) +
+                self.data[:a + n - self.H, field].sum(axis=0, dtype=np.float64))
 
     def window(self, field: int, seconds: int, now_sec: int) -> np.ndarray:
         """Per-row sum over the last `seconds` seconds up to now_sec (inclusive)."""
@@ -97,7 +104,7 @@ class VenueFlow:
         start_sec = max(start_sec, now_sec - self.H + 1)
         end_sec = min(end_sec, now_sec + 1)
         if end_sec <= start_sec:
-            return np.zeros(self.data.shape[1])
+            return np.zeros(self.data.shape[2])
         return self._span_sum(field, start_sec, end_sec)
 
 
