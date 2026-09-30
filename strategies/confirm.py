@@ -107,7 +107,8 @@ def cvd_divergence(minutes: Sequence[Sequence[float]], extreme_ms: int, directio
 
 def evaluate(strategy: str, direction: int, minutes: Sequence[Sequence[float]],
              spot_minutes: Optional[Sequence[Sequence[float]]], oi: Optional[float],
-             since_ms: int, until_ms: int, extreme_ms: Optional[int], orderflow: Optional[str]) -> Dict:
+             since_ms: int, until_ms: int, extreme_ms: Optional[int], orderflow: Optional[str],
+             flow_usd: Optional[float] = None, spot_usd: Optional[float] = None) -> Dict:
     """
     All confirmations of one entry (see the module docstring). `spot_minutes` None = the coin has no spot pair;
     `oi` = the relative OI change over the last hour.
@@ -115,8 +116,13 @@ def evaluate(strategy: str, direction: int, minutes: Sequence[Sequence[float]],
     # Flows since the extreme, at most the last hour (a 1h / 4h leg's end can be hours back: its flow would be the
     # whole pullback)
     start = max(extreme_ms if extreme_ms is not None else since_ms, until_ms - HOUR_MS)
-    out: Dict = {'flow': direction * delta(minutes, start, until_ms) > 0}
-    out['spot'] = NA if spot_minutes is None else direction * delta(spot_minutes, start, until_ms) > 0
+    # flow_usd / spot_usd: the multi-venue deltas over the same window when the caller has them (fetcher: every futures
+    # venue; Binance spot + Coinbase / Bybit spot), else Binance's 1m candles alone
+    out: Dict = {'flow': direction * (flow_usd if flow_usd is not None else delta(minutes, start, until_ms)) > 0}
+    if spot_minutes is None and spot_usd is None:
+        out['spot'] = NA
+    else:
+        out['spot'] = direction * (spot_usd if spot_usd is not None else delta(spot_minutes, start, until_ms)) > 0
     expect = OI_EXPECT.get(strategy)
     out['oi'] = NA if not expect else (None if oi is None else expect * oi > 0)
     # The raw 1h OI change for every strategy (underscore keys are not confirmations): strategies without an OI

@@ -40,11 +40,16 @@ live journal, fix, note the result here. No archive runs until the list is done.
 - [ ] D3. Labels (journal.classify): what each claims, what the journal shows.
 
 ## E. Analysis methods
-- [ ] E1. Confirmations: windows, OI expectation per strategy, spot for alt-spot coins, orderflow availability.
-- [ ] E2. Perp-led veto, tide filter, market crowd, regimes.
-- [ ] E3. Stats: Edge baseline, clusters, R net of costs; P(edge) (shadow).
+- [x] E1. FIXED (eng-25): flow = every futures venue's delta over the window (was Binance's 1m candles only); spot = Binance spot + Coinbase, or Bybit spot + Coinbase for alt-spot coins. Note: Bitget / Hyperliquid / Coinbase keep 15 min in the rings.
+      Was: Confirmations: windows, OI expectation per strategy, spot for alt-spot coins, orderflow availability.
+- [x] E2. OK: perp-led veto conditional (crowded + OI), Elder tide on 1h, regime mutes by the journal's FDR rule.
+      Was: Perp-led veto, tide filter, market crowd, regimes.
+- [x] E3. OK: Edge vs the universe mean, R net of costs; the entry replay works again (the 'math' fix).
+      Was: Stats: Edge baseline, clusters, R net of costs; P(edge) (shadow).
 
 ## F. Data correctness
-- [ ] F1. Alt-spot 1m candles (Bybit) vs Binance spot semantics.   - [ ] F2. Seeds (flow, OKX) double counting.
+- [x] F1. OK with a gap: an alt-spot minute closes on the next trade; no REST seed, so the first hour after a start has no Bybit spot history.
+      Was: Alt-spot 1m candles (Bybit) vs Binance spot semantics.   - [x] F2. OK: seeds cover only minutes that closed before the streams started (Binance 1m, OKX 5m).
+      Was: Seeds (flow, OKX) double counting.
 
 C6-C17 reviewed again after eng-12..eng-21 (source alignment, structural exits, oi side): no new deviation found.

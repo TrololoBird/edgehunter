@@ -1707,8 +1707,35 @@ class DataFetcher:
             oi = confirm.oi_change(list(md.oi_samples), until_ms - confirm.HOUR_MS, until_ms)
         if oi is None and confirm.OI_EXPECT.get(strategy):
             logger.warning(f"Confirmations: no OI history for {symbol} ({len(md.oi_samples)} samples)")
+        # Multi-venue deltas over the evaluate() window (since the extreme, at most the last hour): Binance's candles
+        # alone called a move "against" while Bybit / OKX bought more than Binance sold
+        from flow import BUY, FUTURES_VENUES, SELL
+        start = max(extreme_ms if extreme_ms is not None else since_ms, until_ms - confirm.HOUR_MS)
+        a, b, now_sec = int(start // 1000), int(until_ms // 1000), int(time.time())
+
+        def venue_delta(venues) -> float:
+            row = self.flow.rows.get(symbol)
+            if row is None:
+                return 0.0
+            total = 0.0
+            for v in venues:
+                vf = self.flow.venues.get(v)
+                if vf is None:
+                    continue
+                buy, sell = vf.range_sum(BUY, a, b, now_sec), vf.range_sum(SELL, a, b, now_sec)
+                if row < buy.shape[0]:
+                    total += float(buy[row] - sell[row])
+            return total
+
+        flow_usd = venue_delta(FUTURES_VENUES)
+        spot_usd = None
+        if spot is not None:
+            if self.needs_alt_spot(symbol):
+                spot_usd = venue_delta(('bybit_spot', 'coinbase'))
+            else:
+                spot_usd = confirm.delta(spot, start, until_ms) + venue_delta(('coinbase',))
         out = confirm.evaluate(strategy, direction, list(md.minute_klines), spot, oi, since_ms, until_ms,
-                               extreme_ms, orderflow)
+                               extreme_ms, orderflow, flow_usd=flow_usd or None, spot_usd=spot_usd)
         # the window the readings were taken over (journaled: a REST check can recompute them exactly)
         out['_window'] = [int(since_ms), int(until_ms), int(extreme_ms) if extreme_ms is not None else None]
         return out
