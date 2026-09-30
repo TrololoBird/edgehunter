@@ -663,6 +663,12 @@ class Scanner:
             return None
         if cfg.oi_structure_filter and found.get('structure_broken'):
             return None
+        # WHO built the OI: rising OI with a flat price is new longs only if the aggressive side of that hour bought.
+        # Live 2026-09-30: ARK fired long while shorts were building and fell 32% in 4h; all four OI longs hit their stop
+        hour = [c for c in minutes if c[0] > minute - 60 * 60_000]
+        taker_delta = sum(2 * c[6] - c[5] for c in hour if len(c) > 6)
+        if taker_delta <= 0:
+            return None
         self._oi_fired[symbol] = now_ms
         return {'setup': 'OI ACCUMULATION', 'direction': 1,
                 'setup_note': f"OI +{found['oi_growth_1h']:.1f}% / 1h with price {found['price_growth_1h']:+.1f}% "

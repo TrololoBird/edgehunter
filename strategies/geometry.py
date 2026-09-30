@@ -287,6 +287,14 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         structural = (base - direction * (buffer if buffer is not None else CONFIG.levels.stop_buffer_atr * atr), src)
     if structural is not None:
         stop, sl_src = structural
+    elif exit['stop'][0] == 'ref' and overshoot(plan.get('symbol'), 'swing_15m', entry) is not None:
+        # the system's own structural reference (beyond the sweep / the zone / the test), but the buffer beyond it is
+        # the measured pierce of this coin (live: GRT's demand stop sat 0.35% under the zone, inside the usual pierce)
+        refs = [r for r in (plan.get('stop_ref'), extreme) if r is not None]
+        ref = (min(refs) if direction > 0 else max(refs)) if refs else entry
+        base, src = stop_beyond(zones, ref, entry, direction, atr, exit.get('stop_src', 'beyond the extreme'))
+        pad = overshoot(plan.get('symbol'), kind_of_label(src, plan.get('tf', '15m')), base)
+        stop, sl_src = base - direction * pad, f"{src} + measured pierce {pad / base:.2%}"
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
     risk = direction * (entry - stop)
