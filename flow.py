@@ -101,10 +101,11 @@ class VenueFlow:
     def row_range_sum(self, field: int, row: int, start_sec: int, end_sec: int, now_sec: int) -> float:
         """One row's sum over [start_sec, end_sec): the whole-matrix range_sum then one row cost ~1s on the loop per
         call (the whale forced-flow check ran it on every sweep)."""
-        self.advance(now_sec)
-        start_sec = max(start_sec, now_sec - self.H + 1)
-        end_sec = min(end_sec, now_sec + 1)
-        if end_sec <= start_sec or row >= self.data.shape[2]:
+        # read-only: no advance() (it rewrites slots - the whole buffer of a quiet venue - on a lookup); seconds after
+        # the last write hold data from one ring period ago, so the window ends there
+        start_sec = max(start_sec, self.last_sec - self.H + 1)
+        end_sec = min(end_sec, self.last_sec + 1)
+        if not self.last_sec or end_sec <= start_sec or row >= self.data.shape[2]:
             return 0.0
         a, n = start_sec % self.H, end_sec - start_sec
         if a + n <= self.H:
