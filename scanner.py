@@ -191,6 +191,10 @@ class Scanner:
         self._running = True
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
                  self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop()]
+        if CONFIG.recorder.enabled:
+            import recorder
+            loops.append(recorder.record_loop(self.fetcher, self._maps_executor, CONFIG.recorder.root,
+                                              lambda: self._running))
         if self.journal:
             loops.append(self.journal.evaluate_loop(self.fetcher))
             # P(edge) model state = the journal itself: replay the labelled rows, then the regime Edge table

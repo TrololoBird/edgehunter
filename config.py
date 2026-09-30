@@ -824,6 +824,13 @@ class PretrainConfig:
     log_path: str = 'pretrain.log'
 
 
+@dataclass(frozen=True)
+class RecorderConfig:
+    # Live-only data (per-second flow of all venues, 500-level books, per-venue OI / funding) to Parquet: recorder.py
+    enabled: bool = True
+    root: str = os.path.join('data', 'recorder')
+
+
 @dataclass
 class AppConfig:
     exchange: ExchangeConfig = field(default_factory=ExchangeConfig)
@@ -852,6 +859,7 @@ class AppConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     ml: MLConfig = field(default_factory=MLConfig)
     pretrain: PretrainConfig = field(default_factory=PretrainConfig)
+    recorder: RecorderConfig = field(default_factory=RecorderConfig)
 
 
 LOCAL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.local.toml')

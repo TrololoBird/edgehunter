@@ -18,3 +18,4 @@ archive/
 config.local.toml
 models/macro_cache.json
 models/sectors.json
+data/
