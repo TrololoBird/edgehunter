@@ -20,7 +20,8 @@ import os
 import signal
 import sys
 import time
-from logging.handlers import RotatingFileHandler
+import queue
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 
 from config import CONFIG
 from journal import SignalJournal
@@ -30,18 +31,25 @@ from scanner import Scanner
 logger = logging.getLogger(__name__)
 
 
-def setup_logging():
-    """Console + a size-rotated scanner.log (a long run never grows the file without bound)."""
+def setup_logging() -> QueueListener:
+    """
+    Console + a size-rotated scanner.log (a long run never grows the file without bound), written by a listener
+    THREAD: the loop only queues records. A console write blocks while the window has a selection or conhost is
+    paged out (measured: the loop stalled 2s inside StreamHandler.emit).
+    """
     cfg = CONFIG.logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s',
-        datefmt='%H:%M:%S',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            RotatingFileHandler(cfg.file, maxBytes=cfg.max_bytes, backupCount=cfg.backups, encoding='utf-8'),
-        ]
-    )
+    formatter = logging.Formatter('%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s', datefmt='%H:%M:%S')
+    handlers = [logging.StreamHandler(sys.stdout),
+                RotatingFileHandler(cfg.file, maxBytes=cfg.max_bytes, backupCount=cfg.backups, encoding='utf-8')]
+    for handler in handlers:
+        handler.setFormatter(formatter)
+    records = queue.SimpleQueue()
+    queued = QueueHandler(records)
+    queued.setFormatter(logging.Formatter('%(message)s'))   # prepare() bakes this into the record: the message only
+    logging.basicConfig(level=logging.INFO, handlers=[queued])
+    listener = QueueListener(records, *handlers, respect_handler_level=True)
+    listener.start()
+    return listener
 
 
 def fast_loop_factory():
@@ -59,6 +67,7 @@ def fast_loop_factory():
         return None, None
 
 FORCE_EXIT_AFTER_SEC = 3.0
+LOG_LISTENER = None   # the logging thread (setup_logging), stopped last so the shutdown lines are written
 
 
 class GracefulExit:
@@ -80,6 +89,8 @@ class GracefulExit:
             self.loop.call_soon_threadsafe(self.shutdown_event.set)
         elif now - self._first_signal_at >= FORCE_EXIT_AFTER_SEC:
             logger.warning("Force exit!")
+            if LOG_LISTENER is not None:
+                LOG_LISTENER.stop()   # flushes the queued lines
             logging.shutdown()
             os._exit(1)
 
@@ -209,7 +220,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Crypto microstructure scanner")
     parser.add_argument("--no-web", action="store_true", help="log only, no browser dashboard")
     args = parser.parse_args()
-    setup_logging()
+    LOG_LISTENER = setup_logging()
     loop_name, loop_factory = fast_loop_factory()
     logger.info(f"Python {sys.version.split()[0]}, event loop: {loop_name or 'asyncio default'}")
     try:
@@ -218,4 +229,6 @@ if __name__ == "__main__":
         pass
     except Exception as e:
         print(f"Fatal: {e}")
+        LOG_LISTENER.stop()
         sys.exit(1)
+    LOG_LISTENER.stop()

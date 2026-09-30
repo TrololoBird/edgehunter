@@ -78,7 +78,7 @@ def free_ram_mb() -> Optional[float]:
 class LoopWatchdog:
     IDLE_FUNCTIONS = {'wait', '_exhaustive_wait', 'get', 'select', 'accept', 'recv', 'recv_bytes', '_recv_bytes',
                       'poll', 'sleep', 'acquire', 'read',
-                      '_worker'}   # an idle ThreadPoolExecutor worker sits in the C SimpleQueue.get under _worker
+                      '_worker', 'dequeue'}   # + the logging listener thread waiting for records   # an idle ThreadPoolExecutor worker sits in the C SimpleQueue.get under _worker
     def __init__(self, stall_sec: float = 0.5, report_sec: float = 1.0):
         self.stall_sec = stall_sec
         self.report_sec = report_sec
