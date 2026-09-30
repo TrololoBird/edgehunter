@@ -6,12 +6,12 @@ VWAP), resampling 1m candles, the structure-shift trigger on closed lower-timefr
 and the journal's replay of an entry on 1m candles (simulate: manual fill, SL first on a tie; r_be = the same trade with
 the stop moved to the entry once TP1 traded, exited at TP2).
 
-import math
 LTF trigger (market structure shift): after the extreme made inside the zone, a candle closes beyond the highest high
 (lowest low for shorts) of the `ltf_break_lookback` candles up to that extreme, while net taker flow of the last
 `ltf_flow_candles` candles after the extreme agrees (the selling into a low is what was absorbed there, not a vote
 against the shift).
 """
+import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import polars as pl
