@@ -374,6 +374,11 @@ class LevelsConfig:
     # Manual execution: the journal replays entries filled this long after the trigger, plus slippage
     fill_delay_sec: int = 30
     slippage_bps: float = 5.0
+    # Slippage grows as liquidity falls (square-root impact): slippage_bps x sqrt(slippage_ref_volume / 24h volume),
+    # between slippage_bps and slippage_max_bps. A hypothesis, not a measurement: 5 bps for BTC and a $10M coin alike
+    # understated the cost of the small ones (spreads up to 10 bps, thin books in cascades)
+    slippage_ref_volume: float = 500e6
+    slippage_max_bps: float = 25.0
     # A target (a resting limit order) counts as filled in the journal's replay only once price traded this far
     # THROUGH it: a touch fills only part of the queue (backtests that fill limits on a touch overstate the result)
     target_through_bps: float = 2.0
@@ -788,7 +793,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-7"
+    logic_version: str = "eng-8"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

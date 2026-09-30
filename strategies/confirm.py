@@ -113,6 +113,9 @@ def evaluate(strategy: str, direction: int, minutes: Sequence[Sequence[float]],
     out['spot'] = NA if spot_minutes is None else direction * delta(spot_minutes, start, until_ms) > 0
     expect = OI_EXPECT.get(strategy)
     out['oi'] = NA if not expect else (None if oi is None else expect * oi > 0)
+    # The raw 1h OI change for every strategy (underscore keys are not confirmations): strategies without an OI
+    # hypothesis show 'n/a', but the journal keeps the reading so stats can test one
+    out['_oi_1h'] = oi
     if orderflow:
         out['orderflow'] = orderflow
     elif strategy in REVERSALS and extreme_ms is not None and cvd_divergence(minutes, extreme_ms, direction):

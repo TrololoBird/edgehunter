@@ -288,7 +288,10 @@ function confirmsCell(c) {
   return Object.keys(CONFIRM_RU).map(k => {
     const v = cf[k], [name, tip] = CONFIRM_RU[k], star = req.has(k) ? '★' : '';
     if (v === null || v === undefined) return `<span class="pill muted" title="${esc(tip)}: нет данных">${star}${name} ?</span>`;
-    if (v === 'n/a') return `<span class="pill muted" title="${esc(tip)}: не применимо к этой монете / стратегии">${name} —</span>`;
+    if (v === 'n/a') {
+      const raw = k === 'oi' && typeof cf._oi_1h === 'number' ? ` ${(cf._oi_1h * 100).toFixed(1)}%` : '';
+      return `<span class="pill muted" title="${esc(tip)}: не применимо к этой монете / стратегии (сырое изменение OI за 1ч показано справочно)">${name} —${raw}</span>`;
+    }
     const label = typeof v === 'string' ? `${name}: ${v}` : name;
     return `<span class="pill ${v ? 'good' : 'bad'}" title="${esc(tip)}">${star}${v ? '✓' : '✗'} ${esc(label)}</span>`;
   }).join(' ');

@@ -6,6 +6,7 @@ VWAP), resampling 1m candles, the structure-shift trigger on closed lower-timefr
 and the journal's replay of an entry on 1m candles (simulate: manual fill, SL first on a tie; r_be = the same trade with
 the stop moved to the entry once TP1 traded, exited at TP2).
 
+import math
 LTF trigger (market structure shift): after the extreme made inside the zone, a candle closes beyond the highest high
 (lowest low for shorts) of the `ltf_break_lookback` candles up to that extreme, while net taker flow of the last
 `ltf_flow_candles` candles after the extreme agrees (the selling into a low is what was absorbed there, not a vote
@@ -238,6 +239,21 @@ def pullback_volume_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     return sum(window) / len(window) <= CONFIG.levels.spring_test_volume_ratio * reference_minute_usd
 
 
+def slippage_bps(volume_24h: Optional[float] = None) -> float:
+    """Slippage of one market order in bps: the base for liquid coins, more for thin ones (CONFIG.levels)."""
+    cfg = CONFIG.levels
+    if not volume_24h or volume_24h <= 0:
+        return cfg.slippage_bps
+    return min(cfg.slippage_max_bps, max(cfg.slippage_bps, cfg.slippage_bps * math.sqrt(cfg.slippage_ref_volume / volume_24h)))
+
+
+def stop_fill(sl: float, direction: int, candle: List, slip: float) -> float:
+    """A stop is a market order: it fills at the stop, or at the open when the candle gapped through it, plus slippage."""
+    o = float(candle[1])
+    px = o if ((o < sl) if direction > 0 else (o > sl)) else sl
+    return px * (1 - direction * slip)
+
+
 def fill_price(levels: Dict[str, float], direction: int, candles: List[List]) -> Optional[float]:
     """
     Price a human gets: the open of the first 1m candle after the trigger (the journal fetches candles from the
@@ -245,7 +261,7 @@ def fill_price(levels: Dict[str, float], direction: int, candles: List[List]) ->
     """
     if not candles:
         return None
-    slip = CONFIG.levels.slippage_bps / 1e4
+    slip = slippage_bps(levels.get('volume_24h')) / 1e4
     return float(candles[0][1]) * (1 + direction * slip)
 
 
@@ -294,6 +310,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         return result
 
     through = CONFIG.levels.target_through_bps / 1e4
+    slip = slippage_bps(levels.get('volume_24h')) / 1e4
 
     def reached(level: float, high: float, low: float) -> bool:
         # a limit target fills once price traded through it (a touch fills only part of the queue)
@@ -310,7 +327,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         high, low = float(c[2]), float(c[3])
         stop = entry if be_armed else sl
         if (low <= stop) if direction > 0 else (high >= stop):
-            be_result = 0.0 if be_armed else -1.0 - (CONFIG.levels.slippage_bps / 1e4) * sl / risk
+            be_result = direction * (stop_fill(stop, direction, c, slip) - entry) / risk
             be_t = float(c[0]) + MINUTE_MS
             break
         if reached(targets[1], high, low):
@@ -323,10 +340,10 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         be_result = direction * (float(candles[-1][4]) - entry) / risk
         be_result = max(be_result, 0.0) if be_armed and be_result < 0 else be_result
     # A stop is a market order: it fills beyond the stop price by the slippage (targets are limit orders)
-    stop_r = -1.0 - (CONFIG.levels.slippage_bps / 1e4) * sl / risk
     for c in candles:
         high, low = float(c[2]), float(c[3])
         if (low <= sl) if direction > 0 else (high >= sl):
+            stop_r = direction * (stop_fill(sl, direction, c, slip) - entry) / risk
             for k in exits:
                 if exits[k] is None:
                     exits[k] = stop_r

@@ -799,9 +799,9 @@ def oi_accumulation(oi_5m: Sequence[Tuple[float, float]], price_now: float, pric
     cfg = CONFIG.strategies
     if len(oi_5m) < 289 or not price_now or not price_1h or not price_24h:
         return None
-    oi_now = oi_5m[-1][1] * price_now
-    oi_1h = oi_5m[-13][1] * price_1h
-    oi_24h = oi_5m[-289][1] * price_24h
+    # OI in COINS: his OI value (coins x price) rose with the price alone, so "OI +5% while price rose <= half of
+    # it" was half met by a 2.5% rally without a single new position (the eng-4 finding for our own OI readings)
+    oi_now, oi_1h, oi_24h = oi_5m[-1][1], oi_5m[-13][1], oi_5m[-289][1]
     if not oi_1h or not oi_24h:
         return None
     g1, g24 = (oi_now / oi_1h - 1) * 100, (oi_now / oi_24h - 1) * 100
