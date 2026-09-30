@@ -564,7 +564,7 @@ def feature_builder(fut: np.ndarray, spot: np.ndarray, btc15: np.ndarray, fut_al
 
 def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
                entry_levels, ltf_trigger, resample, simulate, _asof, replan=None, extra_veto=None,
-               features=None, samples=None) -> float:
+               features=None, samples=None, placebo=None) -> float:
     """
     Walk the card minute by minute from start_ms; fills `row`; returns when the card finished (ms). `replan(t_ms)`:
     the strategy's plan as of a 15m close (the live plan follows the chart until the entry; a continuation's plan is
@@ -635,6 +635,19 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
     def enter(levels, entered_ms) -> float:
         res = trade(levels, entered_ms)
         sample(levels, entered_ms, res, None)
+        if placebo is not None and res is not None and res['filled']:
+            # the same trade (direction, stop / target distances in %) at a random time of the same coin: the
+            # result a system's timing must beat
+            fake_ms = placebo(entered_ms)
+            if fake_ms is not None:
+                k = int(np.searchsorted(m_ts, fake_ms - MINUTE_MS, side='right'))
+                if k > 0:
+                    p0 = float(fut[k - 1, 4])
+                    e0 = levels['entry']
+                    fake = dict(levels, entry=p0, **{key: p0 * levels[key] / e0 for key in ('sl', 'tp1', 'tp2', 'tp3')})
+                    pres = trade(fake, fake_ms)
+                    if pres and pres['filled']:
+                        row['pl_r_tp1'], row['pl_r_tp2'] = pres['r_tp1'], pres['r_tp2']
         if res is None:
             row['status'] = 'NO_DATA'
             return entered_ms
@@ -663,7 +676,13 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
             row['vetoed_triggers'] += 1
             row['veto_log'] += reason + ' '
             vetoed_trade(levels, start_ms, reason)
+        if plan.get('confirm_only'):
+            row['status'] = 'EXPIRED'                     # the system enters at its signal's close or not at all
+            return start_ms
     status, zone_since = 'WATCH', None
+    close_tf = (plan.get('invalid_close_min') or 0) * MINUTE_MS
+    kind = plan.get('trigger', 'shift')
+    from strategies.maniac import ifvg_trigger, in_session, pinbar_trigger
     near_edge = plan['zone_hi'] if d > 0 else plan['zone_lo']
     horizon = start_ms + (watch_ttl + zone_ttl) * 1000 + HOUR_MS
     current = plan
@@ -688,7 +707,12 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
                 return t_close
             j += 1
             continue
-        if invalid is not None and d * (against - invalid) <= 0:
+        if invalid is not None and close_tf:
+            # INVALID on a CLOSE of the system's timeframe beyond (a wick through is allowed)
+            if int(t_close) % close_tf == 0 and d * (close - invalid) <= 0:
+                row['status'] = 'INVALID'
+                return t_close
+        elif invalid is not None and d * (against - invalid) <= 0:
             row['status'] = 'INVALID'
             return t_close
         if plan.get('missable') and d * (favour - tp1) >= 0:
@@ -700,8 +724,15 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
             status, zone_since = 'ZONE', float(m_ts[j])
         if status == 'ZONE':
             a = int(np.searchsorted(m_ts, zone_since - (CONFIG.levels.ltf_break_lookback + 2) * interval, side='left'))
+            if kind == 'ifvg':
+                a = int(np.searchsorted(m_ts, int(plan['trigger_from_ms']) - 45 * interval, side='left'))
             ltf = resample(minutes_all[a:j + 1].tolist(), plan['trigger_minutes'], t_close)
-            trigger = ltf_trigger(ltf, d, int(zone_since), interval)
+            if kind == 'pinbar':
+                trigger = pinbar_trigger(ltf, d, int(zone_since), interval, plan['zone_lo'], plan['zone_hi'])
+            elif kind == 'ifvg':
+                trigger = ifvg_trigger(ltf, d, int(plan['trigger_from_ms']), int(zone_since), interval)
+            else:
+                trigger = ltf_trigger(ltf, d, int(zone_since), interval)
             if trigger:
                 if t_close - trigger['time'] > interval + 2 * MINUTE_MS:
                     zone_since = trigger['time']
@@ -709,6 +740,8 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
                     levels = entry_levels(plan, trigger['entry'], trigger['extreme'], d)
                     if levels and d * (close - levels['sl']) > 0:
                         reason = extra_veto(levels, zone_since, trigger['time']) if extra_veto else None
+                        if reason is None and plan.get('session') and not in_session(trigger['time'], tuple(plan['session'])):
+                            reason = 'off_session'
                         reason = reason or veto(levels, trigger['time'])
                         if reason is None:
                             return enter(levels, t_close + 5_000)
