@@ -90,8 +90,11 @@ class AnomalyModel:
     def _executor(self):
         if self._pool is None:
             import multiprocessing
+            import os
             from concurrent.futures import ProcessPoolExecutor
-            self._pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn'))
+            from watchdog import exit_with_parent
+            self._pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn'),
+                                             initializer=exit_with_parent, initargs=(os.getpid(),))
         return self._pool
 
     async def ascore(self, X: np.ndarray) -> Optional[np.ndarray]:

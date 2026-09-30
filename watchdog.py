@@ -19,6 +19,28 @@ from typing import List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+def exit_with_parent(parent_pid: int) -> None:
+    """
+    ProcessPoolExecutor initializer: the worker exits when the bot's process is gone. A bot killed without its
+    shutdown (console closed, crash, Stop-Process) left its spawn workers running for days (5 orphans measured).
+    """
+    import os
+
+    def watch():
+        if sys.platform == 'win32':
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x00100000, False, parent_pid)   # SYNCHRONIZE
+            if handle:
+                kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)            # INFINITE
+        else:
+            while os.getppid() == parent_pid:
+                time.sleep(2)
+        os._exit(0)
+
+    threading.Thread(target=watch, name='exit-with-parent', daemon=True).start()
+
+
 class LoopWatchdog:
     IDLE_FUNCTIONS = {'wait', '_exhaustive_wait', 'get', 'select', 'accept', 'recv', 'recv_bytes', '_recv_bytes',
                       'poll', 'sleep', 'acquire', 'read'}

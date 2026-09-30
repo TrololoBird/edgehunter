@@ -286,7 +286,9 @@ class Scanner:
 
         check_time = now_ms / 1000
         for symbol, is_anomaly, fired in zip(symbols, flags, triggers):
-            md = self.market_data[symbol]
+            md = self.market_data.get(symbol)
+            if md is None:          # left the universe during the await above (hourly refresh)
+                continue
             m = metrics[symbol]
             if is_anomaly:
                 md.tier0_last_trigger = check_time
@@ -626,8 +628,11 @@ class Scanner:
         """
         if self._maps_pool is None:
             import multiprocessing
+            import os
             from concurrent.futures import ProcessPoolExecutor
-            self._maps_pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn'))
+            from watchdog import exit_with_parent
+            self._maps_pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn'),
+                                                  initializer=exit_with_parent, initargs=(os.getpid(),))
         return self._maps_pool
 
     def _map_job(self, symbol: str, part: pl.DataFrame, with_context: bool, now_ms: float) -> tuple:
