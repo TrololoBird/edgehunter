@@ -1592,6 +1592,17 @@ class DataFetcher:
             self._record_venue_oi(market.key, market.venue, oi_usd, now_ms)
 
     def _on_sweep(self, sweep: Sweep):
+        # A liquidation is executed as a MARKET order and prints in the same trade stream: a "whale buy" during a
+        # short squeeze was the shorts' forced buying (live eng-6: 36% of WHALES BUY / 52% of WHALES SELL rows had the
+        # opposite side liquidated in the same 5 minutes). A sweep whose size is mostly forced flow of its side in
+        # the same seconds is no whale decision: left out of the whale book (Binance's forceOrder feed is sampled,
+        # Bybit's / OKX's complete - the check misses some forced flow, never adds any).
+        from flow import LIQ_LONG, LIQ_SHORT
+        forced = self.flow.symbol_range(sweep.symbol, LIQ_SHORT if sweep.side > 0 else LIQ_LONG,
+                                        int(sweep.t_first // 1000) - 1, int(sweep.t_last // 1000) + 2,
+                                        now_sec=int(sweep.t_last // 1000) + 1)
+        if forced >= CONFIG.sweeps.forced_share * sweep.usd:
+            return
         whale, _ = self.whales.thresholds(sweep.symbol)
         self.whales.add(sweep)
         if sweep.usd >= whale and sweep.venue == 'binance':

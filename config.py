@@ -212,6 +212,8 @@ class SweepConfig:
     cluster_min_whales: float = 2.0
     cluster_side_share: float = 0.8
     window_sec: int = 900
+    # a sweep with forced flow of its side (liquidations) >= this share of its size is not a whale's decision
+    forced_share: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -806,7 +808,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-19"
+    logic_version: str = "eng-20"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
@@ -857,6 +859,9 @@ class RecorderConfig:
     # Live-only data (per-second flow of all venues, 500-level books, per-venue OI / funding) to Parquet: recorder.py
     enabled: bool = True
     root: str = os.path.join('data', 'recorder')
+    # the disk filled up on 2026-09-30 (state saves failed): keep this many days, never write below this much free
+    keep_days: int = 30
+    min_free_gb: float = 5.0
 
 
 @dataclass

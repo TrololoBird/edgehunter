@@ -175,6 +175,23 @@ def compact(root: str, before_sec: float) -> int:
 
 # ------------------------------------------------------------------------------------------------ loop task
 
+def cfg_rec():
+    from config import CONFIG
+    return CONFIG.recorder
+
+
+def prune(root: str, keep_days: int) -> None:
+    """Delete day folders older than keep_days."""
+    import shutil
+    cutoff = datetime.now(timezone.utc).date().toordinal() - keep_days
+    for folder in glob.glob(os.path.join(root, '*', 'date=*')):
+        try:
+            day = datetime.strptime(os.path.basename(folder)[5:], '%Y-%m-%d').date()
+        except ValueError:
+            continue
+        if day.toordinal() < cutoff:
+            shutil.rmtree(folder, ignore_errors=True)
+
 def _log_failure(future) -> None:
     if not future.cancelled() and future.exception() is not None:
         logger.warning(f"Recorder write failed: {future.exception()!r}")
@@ -200,6 +217,11 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
             logger.warning("Recorder: the previous write is still running, skipping a minute")
             continue
         try:
+            import shutil
+            if shutil.disk_usage(root if os.path.exists(root) else '.').free < cfg_rec().min_free_gb * 1e9:
+                logger.warning(f"Recorder paused: less than {cfg_rec().min_free_gb:g} GB free on the disk")
+                last_minute = minute
+                continue
             # Minutes missed while the loop was busy are written too (the ring keeps 15 min for the short venues)
             flows = [(m, flow_minute(fetcher.flow, m * 60)) for m in range(max(last_minute + 1, minute - 10), minute + 1)]
             now = time.time()
@@ -215,6 +237,7 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
                 pending.add_done_callback(_log_failure)
             if now - last_compact > 600:
                 last_compact = now
+                prune(root, cfg_rec().keep_days)
                 loop.run_in_executor(pool, compact, root, now).add_done_callback(_log_failure)
         except Exception as e:
             logger.warning(f"Recorder: {e!r}")
