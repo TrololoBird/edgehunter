@@ -210,6 +210,7 @@ class Scanner:
             self._background_thread(self.journal.warm_start)
             self._background_thread(self.journal.refresh_regime_stats)
             self._background_thread(self.journal.refresh_confirm_stats)
+            self._background_thread(self.journal.refresh_anomaly_effects)
         self._tasks = [asyncio.create_task(c) for c in loops]
 
     async def _seed_okx_later(self):

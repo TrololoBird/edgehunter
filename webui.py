@@ -233,6 +233,12 @@ def card_view(s, now: float) -> Dict:
     }
 
 
+def _anomaly_effect(label: str):
+    from journal import ANOMALY_EFFECT
+    e = ANOMALY_EFFECT.get(label)
+    return {'x': round(e[0], 2), 'n': e[1]} if e else None
+
+
 def build_state(scanner) -> Dict:
     now = time.time()
     book = scanner.book
@@ -249,7 +255,8 @@ def build_state(scanner) -> Dict:
     anomalies = [{'symbol': a.symbol, 'name': _name(a.symbol), 'label': a.group_key, 'first_seen': a.first_seen,
                   'last_seen': a.last_seen, 'hits': a.hits, 'sig': _sig_view(a.sig), 'why': context_parts(a.sig),
                   'peak': {k: _num(v) for k, v in a.peak.items()},
-                  'rules': [k[3:] for k, v in a.sig.items() if k.startswith('t0_') and v]}
+                  'rules': [k[3:] for k, v in a.sig.items() if k.startswith('t0_') and v],
+                  'effect': _anomaly_effect(a.group_key)}
                  for a in book.anomalies_view()]
     venues = {}
     for venue, st in scanner.fetcher.venue_status().items():

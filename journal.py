@@ -179,6 +179,9 @@ FEATURE_KEYS = {
     'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb',
 }
 
+# anomaly label -> (median |4h move| / the coin's usual |4h move|, n): refreshed hourly (refresh_anomaly_effects)
+ANOMALY_EFFECT: Dict[str, tuple] = {}
+
 # (setup, regime) -> (results, upper end of the 90% interval of its 4h Edge): refreshed hourly from the journal
 REGIME_STATS: Dict[Tuple[str, str], Tuple[int, float]] = {}      # (setup, regime) -> (4h blocks, p of Edge >= 0)
 REGIME_MUTED: set = set()                                          # (setup, regime) proven negative (BH-controlled)
@@ -653,6 +656,43 @@ class SignalJournal:
             logger.info(f"P(edge) model warmed up on {learned} journal rows ({self.success.drifts} drift resets)")
         return learned
 
+    def refresh_anomaly_effects(self, days: float = 14.0) -> int:
+        """
+        Each anomaly label's effect, measured against the coin itself: the median of |4h move after the label| /
+        the coin's usual |4h move| (its universe snapshots over the same days). x1.0 = the label adds nothing to the
+        coin's normal volatility (live 2026-09-27..30: whales, absorption, one-venue, cascades ~x1.0; impulses x1.4).
+        """
+        import bisect
+        import statistics
+        since = int((time.time() - days * 86_400) * 1000)
+        with self._lock:
+            uni = self.conn.execute("SELECT ts_ms, symbol, price FROM universe WHERE ts_ms >= ? ORDER BY ts_ms",
+                                    (since,)).fetchall()
+            rows = self.conn.execute("SELECT group_key, symbol, ret_4h FROM signals WHERE kind = 'anomaly' AND "
+                                     "ret_4h IS NOT NULL AND ts_ms >= ?", (since,)).fetchall()
+        norm = lambda s: s.replace('/USDT:USDT', 'USDT').replace('/', '')
+        series: Dict[str, list] = {}
+        for t, s, p in uni:
+            series.setdefault(norm(s), []).append((t, p))
+        usual: Dict[str, float] = {}
+        for s, v in series.items():
+            ts = [x[0] for x in v]
+            moves = []
+            for t, p in v:
+                j = bisect.bisect_left(ts, t + 4 * 3_600_000)
+                if j < len(v) and abs(ts[j] - t - 4 * 3_600_000) <= 600_000 and p:
+                    moves.append(abs(v[j][1] / p - 1))
+            if len(moves) > 20:
+                usual[s] = statistics.mean(moves)
+        ratios: Dict[str, list] = {}
+        for label, s, r4 in rows:
+            base = usual.get(norm(s))
+            if base:
+                ratios.setdefault(label, []).append(abs(r4) / base)
+        ANOMALY_EFFECT.clear()
+        ANOMALY_EFFECT.update({k: (statistics.median(v), len(v)) for k, v in ratios.items() if len(v) >= 25})
+        return len(ANOMALY_EFFECT)
+
     def refresh_regime_stats(self) -> int:
         """
         4h Edge per (setup, regime) for journal.veto_reason: a (setup, regime) is muted once its Edge is proven
@@ -765,6 +805,7 @@ class SignalJournal:
                     last_regime_stats = time.time()
                     await asyncio.to_thread(self.refresh_regime_stats)
                     await asyncio.to_thread(self.refresh_confirm_stats)
+                    await asyncio.to_thread(self.refresh_anomaly_effects)
             except asyncio.CancelledError:
                 raise
             except Exception as e:

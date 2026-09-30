@@ -409,7 +409,8 @@ async function renderAnom() {
     <h3>Сейчас <small>одна строка на монету, держится ${60}с после последнего срабатывания</small></h3>` +
     table('anom-live', [
       { k: 'Монета', v: r => `<b>${esc(r.name)}</b>`, s: r => r.name },
-      { k: 'Метка', v: r => `<span title="${esc(ANOMALY_TIP[r.label] || '')}">${esc(r.label)}</span>`, s: r => r.label },
+      { k: 'Метка', v: r => `<span title="${esc(ANOMALY_TIP[r.label] || '')}" class="${r.effect && r.effect.x < 1.1 ? 'dim' : ''}">${esc(r.label)}</span>`, s: r => r.label },
+      { k: 'Эффект', v: r => r.effect ? `<span class="${r.effect.x >= 1.2 ? 'up' : 'dim'}" title="по журналу за 14 дней (${r.effect.n} случаев): размах цены за 4ч после такой метки против обычного 4-часового размаха этой же монеты; x1.0 = метка ничего не добавляет">x${r.effect.x.toFixed(2)}</span>` : '—', s: r => r.effect ? r.effect.x : 0, num: true },
       { k: 'Правила', v: r => esc((r.rules || []).join(', ')) },
       { k: 'RVOL', v: r => r.sig.rvol_1m ? r.sig.rvol_1m.toFixed(1) + 'x' : '—', s: r => r.sig.rvol_1m, num: true },
       { k: 'Цена 5м', v: r => pct(r.sig.price_change_5m), s: r => r.sig.price_change_5m, num: true },
