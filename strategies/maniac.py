@@ -456,7 +456,9 @@ def smt_event(c15: Sequence[Sequence[float]], corr: Optional[Sequence[Sequence[f
                     swept = min(x[3] for x in seg) < ref[1] if direction > 0 else max(x[2] for x in seg) > ref[1]
                     smt = not swept
     qm = any(q[0] == direction and min(q[1], q[2]) <= extreme <= max(q[1], q[2]) for q in _qm_levels(main, swings))
-    if smt is False and not qm:
+    # SMT is the method: a divergence against a correlated pair (smt True) or the Quasimodo; with no pair
+    # (correlation < 0.7, structure.pick_correlate) or no reference swing it passed as a plain 'SWEEP'
+    if not smt and not qm:
         return None
     tags = '+'.join(t for t, on in (('SMT', smt), ('QM', qm)) if on) or 'SWEEP'
     opposite = pool_high[1] if direction > 0 else pool_low[1]

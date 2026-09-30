@@ -74,11 +74,14 @@ class LegContinuation(Strategy):
         atr = x.atr
         if impulse is None or not atr:
             return None
-        zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None), atr)
+        zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None), atr, symbol=x.symbol)
         lo_ratio, hi_ratio = cfg.continuation_zone
         fib_lo, fib_hi = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
         support = support_in(zones, fib_lo, fib_hi, d)
-        half = CONFIG.zones.zone_half_atr * impulse['atr']
+        # no +-ATR padding: a map zone already spans its candles (body to wick); a point level (EMA20) gets the
+        # typical pierce of a swing (p50, pierce.py) around it - the ATR rule only without the pierce model
+        from pierce import overshoot
+        half = 0.0
         stop_ref = stop_ref_src = None
         if support is not None:
             level_lo, level_hi, zone_src = support.lo, support.hi, support.label
@@ -95,6 +98,7 @@ class LegContinuation(Strategy):
             if adx is not None and adx <= CONFIG.strategies.holy_grail_adx:
                 return {'skip': 'weak_trend'}
             level_lo = level_hi = ema
+            half = overshoot(x.symbol, 'swing_1h' if impulse['tf'] != '15m' else 'swing_15m', ema, 'p50')                 or CONFIG.zones.zone_half_atr * impulse['atr']
             zone_src = f"EMA20 {impulse['tf']}"
         near, far = (level_hi + half, level_lo - half) if d > 0 else (level_lo - half, level_hi + half)
         lo_ratio = max(0.0, retracement_of(impulse, near))
@@ -166,7 +170,7 @@ class WyckoffStrategy(Strategy):
             return None
         far = self._range_far(x)
         extra: List[RawLevel] = [RawLevel(far, 'range', 'range high', +1)] if far else []
-        zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None) + extra, atr)
+        zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None) + extra, atr, symbol=x.symbol)
         end = impulse['end']
         base, _ = stop_beyond(zones, end, end, d, impulse['atr'], symbol=x.symbol)
         stop_est = base - d * cfg.stop_buffer_atr * impulse['atr']

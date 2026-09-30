@@ -653,6 +653,8 @@ class StrategiesConfig:
     smt_fallback_rr: float = 2.5
     # ICT kill zones (New York time): London open 02:00-05:00 and New York open 07:00-10:00 (not one 02-10 window)
     smt_session: tuple = ('America/New_York', '02:00', '05:00', '07:00', '10:00')
+    # SMT only against a pair at least this correlated (15m returns, 200 candles): the method's precondition
+    smt_min_correlation: float = 0.7
     smt_ttl: tuple = (9 * 900, 9 * 900, 8 * 3600)
     # trendline_bot (15m, sloped lines only)
     tl_lookback: int = 400
@@ -818,7 +820,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-26"
+    logic_version: str = "eng-27"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
@@ -842,6 +844,8 @@ class PretrainConfig:
     download_bytes_per_sec: float = 1_000_000
     # The bot re-runs pretrain.py by itself (a background process at below-normal priority, one worker: the machine
     # has little free memory) when pretrained.pkl is missing or older than this, and reloads the models when done
+    # the bot re-runs pretrain.py by itself (stale / other logic version); off while the logic is still changing
+    auto: bool = True
     auto_refresh_days: int = 7
     auto_workers: int = 1
     auto_bytes_per_sec: float = 300_000

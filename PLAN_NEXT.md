@@ -6,9 +6,9 @@ memory; zones and SMT change the logic, so they go in BEFORE the archive run, or
 ## 1. Free the machine (prerequisite)
 Why: ~500 MB free of 6 GB; below ~400 MB Windows pages and the loop stalls 1-6 s regardless of the code; the archive
 run and the P(edge) rebuild cannot run next to the bot.
-- [ ] 1.1 Measure what uses RAM (processes by working set).
+- [x] 1.1 (claude 1.36 GB, python 1.28 GB incl. an automatic pretrain.py 320 MB, chrome 0.7 GB) Measure what uses RAM (processes by working set).
 - [ ] 1.2 Owner closes what is not needed (browser tabs, second Claude windows).
-- [ ] 1.3 Bot: shorter flow rings for the 1h-history venues where the 1h window is not read (measure first which
+- [x] 1.3 (instead: automatic pretraining off until item 5, shadow IsolationForest worker off - config.local.toml; the flow rings are ~60 MB, not worth it) Bot: shorter flow rings for the 1h-history venues where the 1h window is not read (measure first which
       windows are read: 5m Tier-0, 1h perp-led / confirmations).
 - [ ] 1.4 Check: free RAM >= 1.5 GB with the bot running; no "Event loop blocked" for 30 min.
 
@@ -18,21 +18,21 @@ Why: classic S/R zones are drawn from the candles AT the level - body close ("ac
 candle's body (or full range) with its 50% "mean threshold". "Level +- k x ATR" is an indicator-author convention
 (TradingView ATR-zone scripts), not a method. The bot uses ATR for: merge_atr 0.3 (levels merged into a zone),
 zone_half_atr 0.25 (pullback zone around a level), sweep_zone_atr 0.25, breakout_zone_atr 0.25, auction +-0.25 ATR.
-- [ ] 2.1 RawLevel carries its candle: for a swing the pivot candle's body edge and wick extreme; for equal highs /
+- [x] 2.1 RawLevel carries its candle: for a swing the pivot candle's body edge and wick extreme; for equal highs /
       lows the span of the touching candles' bodies / wicks; PDH/PDL / sessions: the extreme candle's body-to-wick.
-- [ ] 2.2 Zone = union of its levels' body-to-wick spans (merging by overlap, not by 0.3 ATR); strength unchanged.
-- [ ] 2.3 Pullback zone (trend / momentum) = the support zone's own span, not level +- 0.25 ATR.
-- [ ] 2.4 Sweep entry area = wick to the sweep candle's body (already close); breakout retest = the breakout candle's
+- [x] 2.2 (merge tolerance = the kind's p50 pierce) Zone = union of its levels' body-to-wick spans (merging by overlap, not by 0.3 ATR); strength unchanged.
+- [x] 2.3 (EMA20 point: p50 pierce of a swing) Pullback zone (trend / momentum) = the support zone's own span, not level +- 0.25 ATR.
+- [x] 2.4 sweep / breakout done; auction's engine keeps its own +-0.25 ATR retest band (the author's system) - Sweep entry area = wick to the sweep candle's body (already close); breakout retest = the breakout candle's
       body-to-edge; auction = the POC's value area (VAL-VAH of the consolidation), not +-0.25 ATR.
-- [ ] 2.5 ATR stays only where nothing is measured (fillers when the map is empty).
+- [x] 2.5 ATR stays only where nothing is measured (fillers when the map is empty).
 - [ ] 2.6 Check: tests pass; on the live chart the zones match the candles at the levels (owner's eye on 5 coins).
 
 ## 3. SMT only on correlated pairs (logic change, before the archive run)
 Why: SMT needs a tight correlation - normally > 0.7 (BTC/ETH ~0.85; BTC/SOL, ETH/SOL usable; BTC vs DOGE is "not an
 SMT pair") - TradingFinder / Bitsgap / Quantum Algo. The bot picks the better of BTC / ETH but never checks the level.
-- [ ] 3.1 Correlation of 15m returns over the last 200 candles >= 0.7 or the coin gets no SMT signal (journaled
+- [x] 3.1 (+ a signal needs SMT or QM: without a pair it passed as a plain sweep) Correlation of 15m returns over the last 200 candles >= 0.7 or the coin gets no SMT signal (journaled
       vetoed='low_correlation').
-- [ ] 3.2 Candidates: BTC, ETH, SOL (and the coin's own sector leader once sectors.py maps it).
+- [~] 3.2 BTC / ETH only for now Candidates: BTC, ETH, SOL (and the coin's own sector leader once sectors.py maps it).
 - [ ] 3.3 Check: the share of coins with an SMT pair, logged once an hour.
 
 ## 4. Archive validation of the CURRENT logic (after 1-3)

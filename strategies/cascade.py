@@ -111,7 +111,7 @@ class ExhaustionStrategy(Strategy):
         if leg is None:
             return None
         levels = list(x.raw_levels or []) + vwap(x.minutes, leg['start_ts'], 'VWAP pre-cascade')
-        zones = merge(levels, atr)
+        zones = merge(levels, atr, symbol=x.symbol)
         end = leg['end']
         stop_est = end - d * CONFIG.levels.stop_buffer_atr * atr
         reached = x.reached if x.reached is not None else reached_since(x.minutes, leg['end_ts'] + MINUTE_MS, end, d)

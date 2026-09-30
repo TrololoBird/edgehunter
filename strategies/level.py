@@ -104,7 +104,7 @@ class SweepStrategy(Strategy):
         if sig.get('anchor_level') is None or not atr:
             return None
         level, extreme = sig['anchor_level'], sig['anchor_extreme']
-        zones = merge(list(x.raw_levels or []), atr)
+        zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         invalid = base - d * CONFIG.levels.stop_buffer_atr * atr
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
@@ -113,7 +113,8 @@ class SweepStrategy(Strategy):
         # shift (a break of the last 5m swing with agreeing taker flow) inside the sweep's area: from the wick to the
         # sweep candle's close (+ a buffer), so the shift right after the sweep and a later retrace both qualify
         close = sig.get('anchor_close', level)
-        edge = (max(close, level) if d > 0 else min(close, level)) + d * CONFIG.strategies.sweep_zone_atr * atr
+        # the sweep candle itself is the area: its wick to its close (or the level, whichever is further); no ATR pad
+        edge = max(close, level) if d > 0 else min(close, level)
         zone = sorted((extreme, edge))
         # ICT: after the sweep, displacement with a fair value gap and a structure shift; the entry is the retrace into
         # that gap (5m), not the shift's close
@@ -176,7 +177,7 @@ class AbsorptionStrategy(Strategy):
         if sig.get('anchor_level') is None or not atr:
             return None
         level, extreme = sig['anchor_level'], sig['anchor_extreme']
-        zones = merge(list(x.raw_levels or []) + [RawLevel(level, 'hvn', sig.get('anchor_label', 'level'))], atr)
+        zones = merge(list(x.raw_levels or []) + [RawLevel(level, 'hvn', sig.get('anchor_label', 'level'))], atr, symbol=x.symbol)
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         invalid = base - d * CONFIG.levels.stop_buffer_atr * atr
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)

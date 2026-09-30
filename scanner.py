@@ -1030,7 +1030,7 @@ class Scanner:
                 zones = s.plan['zones']
                 break
         if not zones and atr:
-            zones = merge(raw + self._live_levels(symbol), atr)
+            zones = merge(raw + self._live_levels(symbol), atr, symbol=symbol)
         price = self._price_of(symbol)
         if price and atr:
             zones = [z for z in zones if abs(z.price - price) <= 25 * atr]
@@ -1313,7 +1313,7 @@ class Scanner:
         await asyncio.sleep(600)            # after the start-up burst
         while self._running:
             try:
-                if not self._pretrain_running() and self._pretrain_due() and time.time() >= self._pretrain_retry_at:
+                if cfg.auto and not self._pretrain_running() and self._pretrain_due() and time.time() >= self._pretrain_retry_at:
                     flags = 0
                     if sys.platform == 'win32':
                         flags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW

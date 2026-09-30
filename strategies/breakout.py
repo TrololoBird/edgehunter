@@ -108,10 +108,13 @@ class BreakoutStrategy(Strategy):
         lo, hi = sig['range_lo'], sig['range_hi']
         edge = hi if d > 0 else lo
         zones = merge(list(x.raw_levels or []) + [RawLevel(hi, 'range', '20-day high', +1),
-                                                   RawLevel(lo, 'range', '20-day low', -1)], atr)
+                                                   RawLevel(lo, 'range', '20-day low', -1)], atr, symbol=x.symbol)
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
         targets, sources = select_targets(zones, reached, d, atr, 'measured')
-        zone = sorted((edge - d * CONFIG.strategies.breakout_zone_atr * atr, edge + d * CONFIG.strategies.breakout_zone_atr * atr))
+        # the retest area = the broken edge +- the typical pierce of a 1h swing (p50: how far a retest overshoots)
+        from pierce import overshoot
+        pad = overshoot(x.symbol, 'swing_1h', edge, 'p50') or CONFIG.strategies.breakout_zone_atr * atr
+        zone = sorted((edge - pad, edge + pad))
         anchor = {'type': 'range', 'tf': '1h', 'lo': lo, 'hi': hi, 'ts': sig['anchor_ts'], 'break_ts': sig.get('break_ts')}
         # a 20-day range's middle is no stop: the breakout candle's origin is the structure (the protected swing and
         # the measured pierce of the geometry go beyond it); back below it the breakout failed

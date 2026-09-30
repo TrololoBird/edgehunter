@@ -51,6 +51,9 @@ class RawLevel:
     side: int = 0          # +1 a high / resistance-type level, -1 a low / support-type, 0 either
     size: float = 0.0      # USD for liquidation levels
     ts: int = 0            # open time of the candle that made the level (swings), 0 = unknown
+    # the candle's body edge on the level's side (a high: max(open, close) of the candle that made it): the zone runs
+    # from where price was ACCEPTED (the body) to where it only probed (the wick = `price`); None = a point level
+    body: Optional[float] = None
 
 
 @dataclass
@@ -94,9 +97,11 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
         h, l = candles[i][2], candles[i][3]
         around = candles[i - width:i] + candles[i + 1:i + 1 + width]
         if all(c[2] < h for c in around) and max_after[i + 1] <= h:
-            out.append(RawLevel(h, kind, f"{tf} high", +1, ts=int(candles[i][0])))
+            out.append(RawLevel(h, kind, f"{tf} high", +1, ts=int(candles[i][0]),
+                                body=max(candles[i][1], candles[i][4])))
         if all(c[3] > l for c in around) and min_after[i + 1] >= l:
-            out.append(RawLevel(l, kind, f"{tf} low", -1, ts=int(candles[i][0])))
+            out.append(RawLevel(l, kind, f"{tf} low", -1, ts=int(candles[i][0]),
+                                body=min(candles[i][1], candles[i][4])))
     return out
 
 
@@ -119,8 +124,11 @@ def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr:
                 after = [c for c in candles if c[0] > latest] if latest else candles[-12:]
                 swept = any(c[2] > edge + tol for c in after) if side > 0 else any(c[3] < edge - tol for c in after)
                 if not swept:
+                    # where the touches were accepted: the body closest to the wicks among them
+                    bodies = [l.body for l in group if l.body is not None]
+                    body = (max(bodies) if side > 0 else min(bodies)) if bodies else None
                     out.append(RawLevel(edge, 'equal', f"{'EQH' if side > 0 else 'EQL'}×{len(group)}", side,
-                                        ts=latest))
+                                        ts=latest, body=body))
             group = [level] if level is not None else []
     return out
 
@@ -169,8 +177,10 @@ def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bo
         if candles:
             hi = max(candles, key=lambda c: c[2])
             lo = min(candles, key=lambda c: c[3])
-            out.append((RawLevel(hi[2], 'pdhl', label_hi, +1), formed if formed else int(hi[0]) + HOUR_MS))
-            out.append((RawLevel(lo[3], 'pdhl', label_lo, -1), formed if formed else int(lo[0]) + HOUR_MS))
+            out.append((RawLevel(hi[2], 'pdhl', label_hi, +1, body=max(hi[1], hi[4])),
+                        formed if formed else int(hi[0]) + HOUR_MS))
+            out.append((RawLevel(lo[3], 'pdhl', label_lo, -1, body=min(lo[1], lo[4])),
+                        formed if formed else int(lo[0]) + HOUR_MS))
 
     span([c for c in candles_1h if today - DAY_MS <= c[0] < today], 'PDH', 'PDL', today)
     span([c for c in candles_1h if week - WEEK_MS <= c[0] < week], 'PWH', 'PWL', week)
@@ -355,9 +365,21 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     return levels
 
 
-def merge(levels: Iterable[RawLevel], atr: float) -> List[Zone]:
-    """Levels closer than merge_atr ATR become one zone; strength = sum of source weights (one kind counted <= 2x)."""
+def _span(l: RawLevel) -> Tuple[float, float]:
+    b = l.body if l.body is not None else l.price
+    return min(b, l.price), max(b, l.price)
+
+
+def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) -> List[Zone]:
+    """
+    Levels whose body-to-wick spans overlap - or lie closer than the typical pierce of their kind (p50, pierce.py:
+    price treats them as one place) - become one zone spanning all of them (classic S/R zones: the region where
+    price fought, body to wick; was: points within 0.3 ATR). Without the pierce model the old ATR tolerance applies.
+    Strength = sum of source weights (one kind counted <= 2x).
+    """
+    from pierce import measured_kind, model, overshoot
     weights = _weights()
+    measured = bool(model())
     tol = CONFIG.zones.merge_atr * atr
     zones: List[Zone] = []
     group: List[RawLevel] = []
@@ -377,14 +399,21 @@ def merge(levels: Iterable[RawLevel], atr: float) -> List[Zone]:
         for l in ordered:
             if l.label not in labels:
                 labels.append(l.label)
-        zones.append(Zone(price, min(l.price for l in group), max(l.price for l in group),
+        zones.append(Zone(price, min(_span(l)[0] for l in group), max(_span(l)[1] for l in group),
                           sorted(per_kind, key=lambda k: -per_kind[k]), labels, strength))
 
-    for l in sorted(levels, key=lambda l: l.price):
-        if group and l.price - group[0].price > tol:
+    group_hi = float('-inf')
+    for l in sorted(levels, key=lambda l: _span(l)[0]):
+        lo, hi = _span(l)
+        if measured:
+            gap = overshoot(symbol, measured_kind([l.kind]) or 'swing_15m', l.price, 'p50') or 0.0
+        else:
+            gap = tol
+        if group and lo - group_hi > gap:
             close_group()
-            group = []
+            group, group_hi = [], float('-inf')
         group.append(l)
+        group_hi = max(group_hi, hi)
     close_group()
     return zones
 

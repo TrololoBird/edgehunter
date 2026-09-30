@@ -298,7 +298,8 @@ def pick_correlate(symbol: str, m15, corr: Dict[str, list]) -> Optional[list]:
         return corr.get('ETH')
     if symbol.startswith('ETH/'):
         return corr.get('BTC')
-    best, best_r = corr.get('BTC'), -2.0
+    # only a pair correlated >= smt_min_correlation (crypto SMT guides: > 0.7), else no SMT for the coin
+    best, best_r = None, CONFIG.strategies.smt_min_correlation
     own = {int(c[0]): c[4] for c in list(m15)[-201:]}
     for name in ('BTC', 'ETH'):
         other = corr.get(name)
@@ -342,7 +343,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
                 correlate = pick_correlate(symbol, m15, corr)
                 m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
                 h1l = h1_long.tolist() if hasattr(h1_long, 'tolist') else list(h1_long)
-                context = build_context(candles, candles_1h, atr, merge(raw, atr), now_ms, symbol=symbol,
+                context = build_context(candles, candles_1h, atr, merge(raw, atr, symbol=symbol), now_ms, symbol=symbol,
                                         m15_long=m15, h1_long=h1l, corr=correlate)
             else:
                 context = None

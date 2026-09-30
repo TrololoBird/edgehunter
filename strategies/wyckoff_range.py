@@ -79,7 +79,7 @@ class WyckoffRangeStrategy(Strategy):
         lo, hi, extreme = sig['range_lo'], sig['range_hi'], sig['anchor_extreme']
         edge, far = (lo, hi) if d > 0 else (hi, lo)
         zones = merge(list(x.raw_levels or []) + [RawLevel(hi, 'range', 'range high', +1),
-                                                   RawLevel(lo, 'range', 'range low', -1)], atr)
+                                                   RawLevel(lo, 'range', 'range low', -1)], atr, symbol=x.symbol)
         targets, sources = select_targets(zones, edge, d, atr, 'range', (far,), 'range far side')
         # the test: back toward the spring's area (the spring's extreme to a fifth into the range)
         zone = sorted((extreme, edge + d * 0.2 * (hi - lo)))

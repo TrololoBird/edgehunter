@@ -36,7 +36,7 @@ def _confirm_plan(x: PlanInput, name: str, tf: str, exit: Dict, zone_src: str, *
     if sig.get('anchor_level') is None or not atr:
         return None
     close = sig['anchor_close']
-    zones = merge(list(x.raw_levels or []), atr)
+    zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
     plan = base_plan(x, name, _anchor(sig, tf), tf, entry='confirm', confirm_only=True,
                      zone_lo=close - 0.25 * atr, zone_hi=close + 0.25 * atr, zone_src=zone_src, missable=False,
                      exit=exit, zones=zones, targets=[], target_src=[], key=(sig['anchor_ts'], name), **fields)
@@ -67,7 +67,7 @@ class SupplyDemandStrategy(_System):
             return None
         lo, hi = sig['zone_lo'], sig['zone_hi']
         far = lo if d > 0 else hi
-        zones = merge(list(x.raw_levels or []), atr)
+        zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         near = hi if d > 0 else lo
         targets, sources = select_targets(zones, near, d, atr, 'opposite_liquidity')
         # Seiden: a resting limit at the proximal line, the stop beyond the distal line, the zone's FIRST touch only
@@ -129,7 +129,7 @@ class SmtStrategy(_System):
                          zone_src=f"after the sweep of {sig.get('anchor_label', 'the pool')} (5m iFVG)",
                          invalid=level, fix_invalid=True, invalid_close_min=15, missable=False, stop_ref=extreme,
                          session=tuple(cfg.smt_session) if cfg.smt_session else None, exit=exit,
-                         zones=merge(list(x.raw_levels or []), atr), targets=[], target_src=[],
+                         zones=merge(list(x.raw_levels or []), atr, symbol=x.symbol), targets=[], target_src=[],
                          key=(sig['anchor_ts'], level))
         return _finish(x, plan, sig['anchor_close'], extreme)
 
