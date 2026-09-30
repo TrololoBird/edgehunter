@@ -14,7 +14,7 @@ A target is always >= zones.min_target_atr beyond its reference (and beyond the 
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
-from zones import Zone, is_pool, stop_beyond
+from zones import STRUCTURE_KINDS, Zone, is_pool, stop_beyond
 
 MEAN_KINDS = ('vwap', 'poc', 'va', 'hvn')
 
@@ -174,19 +174,62 @@ def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: in
     return t, s, direction * (t - entry) / risk < spec[1]
 
 
+def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, floor: float) -> Optional[Tuple[float, str]]:
+    """
+    Stop beyond the nearest price-action structure on the stop side (swings, equal highs / lows, previous day / week /
+    sessions, range edges, round numbers, book bands) that leaves at least `floor` of risk, pushed beyond a stop pool
+    right behind it, plus the ATR buffer. None when no such structure lies within max_stop_atr ATR (price discovery:
+    then the fixed rule is all there is).
+    """
+    cfg = CONFIG.levels
+    buffer = cfg.stop_buffer_atr * atr
+    cands = []
+    for z in zones:
+        if not any(k in STRUCTURE_KINDS for k in z.kinds):
+            continue
+        edge = z.lo if direction > 0 else z.hi
+        dist = direction * (entry - edge) + buffer
+        if dist >= floor and dist <= CONFIG.zones.max_stop_atr * atr:
+            cands.append((dist, edge, z))
+    if not cands:
+        return None
+    _, edge, z = min(cands, key=lambda c: c[0])
+    base, src = stop_beyond(zones, edge, entry, direction, atr, f"beyond {z.label}")
+    return base - direction * buffer, src
+
+
 def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
-    """Entry / stop / targets by the system's own exit rules (the ported systems of strategies/maniac.py)."""
+    """
+    Entry / stop / targets of the ported systems (strategies/maniac.py). Their own structural exits (beyond the sweep,
+    the impulse's start, a level) are kept. Their FIXED exits (a % or ATR stop, a % or R target) ignore the map: a 1%
+    stop on SUI (15m ATR 1.35%) sat inside one candle's noise and was taken before the move (live, 2026-09-30). Those
+    are replaced by the map: the stop beyond the nearest structure, the targets at the next levels; the fixed rule is
+    only the fallback where the map has nothing (price discovery).
+    """
     exit = plan['exit']
-    stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
-    risk = direction * (entry - stop)
     atr = exit.get('atr') or plan['atr']
-    # The author's fixed stops (1% for Third Eye, 0.4% for CSI, 2% for the OI robot) ignore the coin's volatility: a
-    # 1% stop on a coin whose 15m ATR is 1.35% sits inside one candle's noise (live: SUI Third Eye 2026-09-30, stopped
-    # by noise, then the move went on). Our floor applies to them too: never closer than min_stop_atr x ATR
     floor = stop_floor(max(atr, plan['atr']), plan.get('recent_atr'))
+    zones: List[Zone] = plan.get('zones') or []
+    fixed_stop = exit['stop'][0] in ('pct', 'atr')
+    fixed_tp = exit['tp'][0] in ('pct', 'rr')
+    structural = structure_stop(zones, entry, direction, atr, floor) if fixed_stop else None
+    if structural is not None:
+        stop, sl_src = structural
+    else:
+        stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
+    risk = direction * (entry - stop)
     if 0 < risk < floor:
         stop, risk = entry - direction * floor, floor
         sl_src = f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
+    if fixed_tp and zones:
+        targets, sources = select_targets(zones, entry, direction, atr, 'opposite_liquidity')
+        if targets and sources[0] != 'ATR step':
+            tp1, tp2, tp3 = targets[:3]
+            fee = cost_of(entry)
+            rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
+            return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
+                    'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < CONFIG.levels.min_rr_tp1,
+                    'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
     if risk <= 0 or (exit.get('min_risk_atr') and risk < exit['min_risk_atr'] * atr):
         return None
     tp1, src1, low = exit_target(exit, plan, entry, risk, direction)
