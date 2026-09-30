@@ -180,6 +180,13 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
     risk = direction * (entry - stop)
     atr = exit.get('atr') or plan['atr']
+    # The author's fixed stops (1% for Third Eye, 0.4% for CSI, 2% for the OI robot) ignore the coin's volatility: a
+    # 1% stop on a coin whose 15m ATR is 1.35% sits inside one candle's noise (live: SUI Third Eye 2026-09-30, stopped
+    # by noise, then the move went on). Our floor applies to them too: never closer than min_stop_atr x ATR
+    floor = stop_floor(max(atr, plan['atr']), plan.get('recent_atr'))
+    if 0 < risk < floor:
+        stop, risk = entry - direction * floor, floor
+        sl_src = f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
     if risk <= 0 or (exit.get('min_risk_atr') and risk < exit['min_risk_atr'] * atr):
         return None
     tp1, src1, low = exit_target(exit, plan, entry, risk, direction)

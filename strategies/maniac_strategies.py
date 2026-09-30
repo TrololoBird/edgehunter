@@ -190,7 +190,8 @@ class ThirdEyeStrategy(_System):
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         cfg = CONFIG.strategies
-        exit = {'stop': ['pct', cfg.te_sl_pct], 'tp': ['pct', cfg.te_tp_pct]}
+        # 'atr' = the 1h ATR: a 1h system's stop floor is measured on its own timeframe
+        exit = {'stop': ['pct', cfg.te_sl_pct], 'tp': ['pct', cfg.te_tp_pct], 'atr': x.sig.get('atr_1h') or x.atr}
         return _confirm_plan(x, self.name, '1h', exit, 'CCI cross with Ichimoku / EMA200 filters')
 
 
@@ -241,7 +242,8 @@ class OiAccumulationStrategy(_System):
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         cfg = CONFIG.strategies
-        exit = {'stop': ['pct', cfg.oi_sl_pct], 'tp': ['pct', cfg.oi_tp_pcts[0]], 'tp2': ['pct', cfg.oi_tp_pcts[-1]]}
+        exit = {'stop': ['pct', cfg.oi_sl_pct], 'tp': ['pct', cfg.oi_tp_pcts[0]], 'tp2': ['pct', cfg.oi_tp_pcts[-1]],
+                'atr': x.sig.get('atr_1h') or x.atr}
         return _confirm_plan(x, self.name, '15m', exit, 'OI +5%/1h without price')
 
 
