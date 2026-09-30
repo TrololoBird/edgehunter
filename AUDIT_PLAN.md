@@ -15,8 +15,10 @@ live journal, fix, note the result here. No archive runs until the list is done.
 - [ ] A4. Invalidation (fixed at start vs re-measured), opposite-setup closing, TTLs per timeframe.
 
 ## B. Geometry (strategies/geometry.py, zones.py)
-- [ ] B1. Stop: protected swing + measured pierce; `kind_of_label` guesses the level kind from a text label.
-- [ ] B2. Stop pools: which kinds push the stop (liq_est removed); the max distance of a push.
+- [x] B1. FIXED (eng-23): the measured kind comes from the map zone the stop base sits on (pierce.kind_at), the label only as a fallback.
+      Was: Stop: protected swing + measured pierce; `kind_of_label` guesses the level kind from a text label.
+- [x] B2. FIXED (eng-23): a pool is 'just behind' when within the p90 pierce of its kind (pierce.py), no ATR maximum with the model; estimated liquidations never push.
+      Was: Stop pools: which kinds push the stop (liq_est removed); the max distance of a push.
 - [ ] B3. Targets: select_targets order, the 1-ATR minimum gap, 'ATR step' fillers, primary kinds per intent.
 - [x] B4. FIXED (eng-22): the planner's cost_of uses the coin's liquidity-based slippage like the replay.
       Was: R:R: the planner uses a flat 5 bp slippage (cost_of), the replay the liquidity-based one: align.

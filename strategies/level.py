@@ -99,7 +99,7 @@ class SweepStrategy(Strategy):
             return None
         level, extreme = sig['anchor_level'], sig['anchor_extreme']
         zones = merge(list(x.raw_levels or []), atr)
-        base, _ = stop_beyond(zones, extreme, extreme, d, atr)
+        base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         invalid = base - d * CONFIG.levels.stop_buffer_atr * atr
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
         targets, sources = select_targets(zones, reached, d, atr, 'opposite_liquidity')
@@ -171,7 +171,7 @@ class AbsorptionStrategy(Strategy):
             return None
         level, extreme = sig['anchor_level'], sig['anchor_extreme']
         zones = merge(list(x.raw_levels or []) + [RawLevel(level, 'hvn', sig.get('anchor_label', 'level'))], atr)
-        base, _ = stop_beyond(zones, extreme, extreme, d, atr)
+        base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         invalid = base - d * CONFIG.levels.stop_buffer_atr * atr
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
         targets, sources = select_targets(zones, reached, d, atr, 'mean')

@@ -427,13 +427,30 @@ def targets(zones: List[Zone], entry: float, direction: int, atr: float) -> List
 
 
 def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction: int, atr: float,
-                label: str = 'beyond the swing') -> Tuple[float, str]:
+                label: str = 'beyond the swing', symbol: Optional[str] = None) -> Tuple[float, str]:
     """
     Stop base: the invalidation price, pushed beyond a stop pool / liquidation cluster that sits just behind it
     (within stop_pool_atr ATR), so a routine sweep of that pool does not take the stop, as long as the risk stays
     within max_stop_atr ATR. Returns (base price before the ATR buffer, label).
     """
     cfg = CONFIG.zones
+    from pierce import measured_kind, model, overshoot
+    if model():
+        # measured: a pool is "just behind" when it lies within the distance price usually pierces a level of that
+        # kind (p90) - a routine raid of it would take a stop placed in front of it; no ATR maximum (a stop that
+        # does not pay is low_rr, not moved closer)
+        near = []
+        for z in zones:
+            if not any(k in POOL_KINDS and k != 'liq_est' for k in z.kinds):
+                continue
+            edge = z.lo if direction > 0 else z.hi
+            reach = overshoot(symbol, measured_kind(z.kinds) or 'equal', invalidation, 'p90')
+            if reach is not None and 0 <= direction * (invalidation - edge) <= reach:
+                near.append(z)
+        if near:
+            far = min(near, key=lambda z: z.lo) if direction > 0 else max(near, key=lambda z: z.hi)
+            return (far.lo if direction > 0 else far.hi), f"beyond {far.label}"
+        return invalidation, label
     # Real resting stops only: an ESTIMATED liquidation cluster is a model, not orders (live eng-6: stops pushed beyond
     # one were the widest, 3.4% median, -0.16R, and 0 of 22 stopped trades reached TP1 afterwards)
     behind = [z for z in zones if any(k in POOL_KINDS and k != 'liq_est' for k in z.kinds)

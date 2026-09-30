@@ -164,7 +164,7 @@ class WyckoffStrategy(Strategy):
         extra: List[RawLevel] = [RawLevel(far, 'range', 'range high', +1)] if far else []
         zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None) + extra, atr)
         end = impulse['end']
-        base, _ = stop_beyond(zones, end, end, d, impulse['atr'])
+        base, _ = stop_beyond(zones, end, end, d, impulse['atr'], symbol=x.symbol)
         stop_est = base - d * cfg.stop_buffer_atr * impulse['atr']
         reached = x.reached if x.reached is not None else reached_after(_rows(x.df), impulse['end_ts'], end, d)
         retraces = [fib_price(impulse, r) for r in cfg.reversal_targets]

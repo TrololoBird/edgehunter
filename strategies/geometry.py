@@ -31,36 +31,17 @@ def cost_of(price: float, volume_24h: Optional[float] = None) -> float:
     return (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h) / 1e4) * price
 
 
-_OVERSHOOT: Optional[Dict] = None
+from pierce import model as _overshoot_model, measured_kind, overshoot  # noqa: E402  (measured level pierce)
 
 
-def _overshoot_model() -> Dict:
-    global _OVERSHOOT
-    if _OVERSHOOT is None:
-        import json
-        import os
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', 'overshoot.json')
-        try:
-            with open(path, encoding='utf-8') as f:
-                _OVERSHOOT = json.load(f)
-        except (OSError, ValueError):
-            _OVERSHOOT = {}
-    return _OVERSHOOT
-
-
-def overshoot(symbol: Optional[str], kind: str, price: float) -> Optional[float]:
-    """
-    Stop buffer beyond a level, measured: how far price pierces a level of this kind on this coin before turning back
-    (p80 of rejections, research_overshoot.py -> models/overshoot.json; the coin's own figure when it has >= 20
-    rejections, else all coins'). In price units; None without the model (then the old ATR rule applies).
-    """
-    model = _overshoot_model()
-    if not model:
-        return None
-    kind = kind if kind in ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'round') else 'swing_15m'
-    row = ((model.get('coins') or {}).get(symbol) or {}).get(kind) or (model.get('global') or {}).get(kind) or {}
-    p80 = row.get('p80')
-    return price * p80 / 100 if p80 else None
+def kind_at(zones: List[Zone], price: float) -> Optional[str]:
+    """The measured kind of the map zone a stop base sits on (the zone's own kinds, not its text label)."""
+    for z in zones:
+        if z.lo - 1e-12 <= price <= z.hi + 1e-12:
+            kind = measured_kind(z.kinds)
+            if kind:
+                return kind
+    return None
 
 
 def kind_of_label(label: str, tf: str) -> str:
@@ -171,8 +152,9 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
         if prot is not None and direction * (entry - prot) > 0 and (ref is None or direction * (ref - prot) > 0):
             # ICT: the stop beyond the swing that broke structure, not right behind an unswept pool
             ref, label = prot, 'beyond the protected swing (BOS)'
-        base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label)
-    measured = overshoot(plan.get('symbol'), kind_of_label(src, plan.get('tf', '15m')), base)
+        base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label, plan.get('symbol'))
+    kind = kind_at(zones, base) or kind_of_label(src, plan.get('tf', '15m'))
+    measured = overshoot(plan.get('symbol'), kind, base)
     if measured is not None:
         # the measured pierce of this kind of level on this coin, no ATR constants: a stop closer than where price
         # usually pierces before turning back is inside the level's noise; a stop so far that it does not pay is a
@@ -261,7 +243,7 @@ def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, 
     if not cands:
         return None
     _, edge, z, buffer = min(cands, key=lambda c: c[0])
-    base, src = stop_beyond(zones, edge, entry, direction, atr, f"beyond {z.label}")
+    base, src = stop_beyond(zones, edge, entry, direction, atr, f"beyond {z.label}", symbol)
     return base - direction * buffer, src
 
 
@@ -286,7 +268,8 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
             and direction * (structural[0] - prot) > 0:
         # ICT: beyond the protected swing (the one that broke structure) when it lies beyond the nearest structure
         buffer = overshoot(plan.get('symbol'), 'swing_15m', prot)
-        base, src = stop_beyond(zones, prot, entry, direction, atr, 'beyond the protected swing (BOS)')
+        base, src = stop_beyond(zones, prot, entry, direction, atr, 'beyond the protected swing (BOS)',
+                                plan.get('symbol'))
         structural = (base - direction * (buffer if buffer is not None else CONFIG.levels.stop_buffer_atr * atr), src)
     if structural is not None:
         stop, sl_src = structural
@@ -295,8 +278,9 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         # the measured pierce of this coin (live: GRT's demand stop sat 0.35% under the zone, inside the usual pierce)
         refs = [r for r in (plan.get('stop_ref'), extreme) if r is not None]
         ref = (min(refs) if direction > 0 else max(refs)) if refs else entry
-        base, src = stop_beyond(zones, ref, entry, direction, atr, exit.get('stop_src', 'beyond the extreme'))
-        pad = overshoot(plan.get('symbol'), kind_of_label(src, plan.get('tf', '15m')), base)
+        base, src = stop_beyond(zones, ref, entry, direction, atr, exit.get('stop_src', 'beyond the extreme'),
+                                plan.get('symbol'))
+        pad = overshoot(plan.get('symbol'), kind_at(zones, base) or kind_of_label(src, plan.get('tf', '15m')), base)
         stop, sl_src = base - direction * pad, f"{src} + measured pierce {pad / base:.2%}"
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
