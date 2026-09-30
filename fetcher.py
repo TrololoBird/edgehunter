@@ -417,6 +417,8 @@ class DataFetcher:
         self.sweeps = SweepTracker(self._on_sweep)
         self.footprint = Footprint()
         self.depth = DepthBook()
+        from iceberg import IcebergDetector
+        self.icebergs = IcebergDetector()
         # Live liquidations of every venue since the scanner last journaled them: (symbol, ts_ms, price, usd, side, venue)
         self.liq_log: List[tuple] = []
         self.log_liquidations = False     # set by the scanner when a journal takes them
@@ -1517,6 +1519,8 @@ class DataFetcher:
                 md.record_price(price, ts)
             if key in self.footprint.bucket:
                 self.footprint.add(key, ts, price, usd, side)
+            if key in self.icebergs.levels:
+                self.icebergs.on_trade(key, ts, price, usd, side)
         elif event == 'kline':
             md = self.markets.get(self._binance_keys.get((market_type, data.get('s'))))
             if md is not None:
@@ -1543,6 +1547,7 @@ class DataFetcher:
             key = self._binance_keys.get(('futures', data.get('s')))
             if key is not None:
                 self.depth.update(key, data.get('b') or [], data.get('a') or [], int(data.get('E') or recv_ms))
+                self.icebergs.on_book(key, data.get('b') or [], data.get('a') or [], int(data.get('E') or recv_ms))
 
     def _binance_price(self, key: str) -> Optional[float]:
         md = self.markets.get(key)
@@ -1615,6 +1620,7 @@ class DataFetcher:
         """Periodic housekeeping from the Tier-0 loop: close finished sweeps, decay whale histograms."""
         now = now or time.time()
         self.sweeps.flush(now * 1000)
+        self.icebergs.prune(now * 1000)
         self.whales.maintain(now)
         for md in self.markets.values():
             if md.book_eaten and now - md.book_eaten_ts > CONFIG.tier0.display_hold_sec:

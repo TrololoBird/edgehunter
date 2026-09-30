@@ -486,6 +486,8 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
         ('books with it' if _col(r, 'direction') * ((_col(r, 'okx_book_imb') or 0) + (_col(r, 'bybit_book_imb') or 0)) > 0.1
          else 'books against it' if _col(r, 'direction') * ((_col(r, 'okx_book_imb') or 0) + (_col(r, 'bybit_book_imb') or 0)) < -0.1
          else 'balanced')),
+    ('icebergs (hidden limit orders) vs the signal', lambda r: None if not _col(r, 'iceberg_n_5m') or _col(r, 'direction') is None else
+        ('iceberg on its side' if _col(r, 'direction') * (_col(r, 'iceberg_net_5m') or 0) > 0 else 'iceberg against it')),
     ('confirmations positive', lambda r: None if _col(r, 'conf_n') is None else f"{_col(r, 'conf_n')} of 4"),
     ('market regime', lambda r: _col(r, 'regime')),
     ('P(edge) model', lambda r: None if _col(r, 'p_edge') is None else ('p >= 0.5' if _col(r, 'p_edge') >= 0.5 else 'p < 0.5')),

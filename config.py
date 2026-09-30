@@ -850,6 +850,15 @@ class PretrainConfig:
 
 
 @dataclass(frozen=True)
+class IcebergConfig:
+    # iceberg.py: executed at one price >= multiple x the largest size ever shown there, >= min_usd, within window_sec
+    # of the level's last execution, while nothing traded through it
+    window_sec: int = 120
+    multiple: float = 3.0
+    min_usd: float = 50_000
+
+
+@dataclass(frozen=True)
 class ExecutorConfig:
     # BingX DEMO trading of every card that reaches ENTRY (executor.py; sandbox forced, never a real balance). Turned on
     # by an api_key / api_secret in config.local.toml ([executor], a trade-only key)
@@ -904,6 +913,7 @@ class AppConfig:
     pretrain: PretrainConfig = field(default_factory=PretrainConfig)
     recorder: RecorderConfig = field(default_factory=RecorderConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
+    iceberg: IcebergConfig = field(default_factory=IcebergConfig)
 
 
 LOCAL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.local.toml')

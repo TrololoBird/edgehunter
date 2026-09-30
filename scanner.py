@@ -825,6 +825,7 @@ class Scanner:
         sig.update(self.market_state)
         sig.update(self.ext.market)
         sig.update(self.ext.of(symbol))
+        sig.update(self.fetcher.icebergs.features(symbol))
         ctx = self.detector.context.get(symbol)
         sig['coin_trend'] = ctx.trend if ctx is not None else None
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
