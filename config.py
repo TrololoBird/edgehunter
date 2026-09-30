@@ -513,8 +513,8 @@ class StrategiesConfig:
     disabled_setups: tuple = ('BULL E',)
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
     # a warning on the card, not a filter
-    archive_negative: tuple = ('SWEEP LOW', 'SWEEP HIGH', 'BREAKOUT UP', 'BREAKOUT DOWN', 'BULL A', 'BULL B', 'BEAR C',
-                               'BULL E', 'BULL F', 'BEAR D', 'IMPULSE UP')
+    # (SWEEP / BREAKOUT were rewritten to their sources in eng-16: the archive has not replayed the new logic)
+    archive_negative: tuple = ('BULL A', 'BULL B', 'BEAR C', 'BULL E', 'BULL F', 'BEAR D', 'IMPULSE UP')
     # 1h candles of every coin (fetcher._hourly_candles_loop): ~8 days for the weekly / daily / session pools
     h1_candles: int = 200
     h1_refresh_sec: int = 3600
