@@ -510,7 +510,8 @@ class StrategiesConfig:
     # -0.25R, BULL B -0.14R, IMPULSE UP -0.29R, BEAR D -0.19R. BULL E (+0.32R, 45 entries; -0.17R on 171 entries over
     # 12 months after the MTF fix, research/cards_fixed_12m.md) and IMPULSE DOWN (+0.06R)
     # are not proven either way and stay on (with absorption / exhaustion, which the archive cannot replay).
-    disabled_setups: tuple = ('BULL A', 'BULL B', 'BEAR C', 'BULL F', 'BEAR D', 'IMPULSE UP')
+    # BULL E off too (2026-09-30, owner's decision): its plus was noise and it never showed one since.
+    disabled_setups: tuple = ('BULL A', 'BULL B', 'BEAR C', 'BULL E', 'BULL F', 'BEAR D', 'IMPULSE UP')
     # 1h candles of every coin (fetcher._hourly_candles_loop): ~8 days for the weekly / daily / session pools
     h1_candles: int = 200
     h1_refresh_sec: int = 3600
@@ -794,7 +795,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-8"
+    logic_version: str = "eng-9"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
