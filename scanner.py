@@ -97,6 +97,8 @@ class Scanner:
         self.notifier = Notifier()
         from executor import DemoExecutor
         self.demo = DemoExecutor()
+        from extdata import ExternalData
+        self.ext = ExternalData(self.fetcher)
         self.book = SignalBook()
         self.market_data: Dict[str, MarketData] = {}
         self._running = False
@@ -195,6 +197,9 @@ class Scanner:
                  self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop()]
         if self.demo.enabled:
             loops.append(self.demo.reconcile_loop(lambda: self._running))
+        running = lambda: self._running
+        loops += [self.ext.deribit_loop(running), self.ext.funding_loop(running), self.ext.books_loop(running),
+                  self._seed_okx_later()]
         if CONFIG.recorder.enabled:
             import recorder
             loops.append(recorder.record_loop(self.fetcher, self._maps_executor, CONFIG.recorder.root,
@@ -206,6 +211,10 @@ class Scanner:
             self._background_thread(self.journal.refresh_regime_stats)
             self._background_thread(self.journal.refresh_confirm_stats)
         self._tasks = [asyncio.create_task(c) for c in loops]
+
+    async def _seed_okx_later(self):
+        await asyncio.sleep(5)                  # the streams' start time is known by then
+        await self.ext.seed_okx_flow()
 
     def _background_task(self, coro):
         task = asyncio.create_task(coro)
@@ -237,6 +246,7 @@ class Scanner:
         self._save_state()
         await self.notifier.close()
         await self.demo.close()
+        await self.ext.close()
         await self.positioning.close()
         await self.fetcher.stop()
         logger.info("Scanner stopped gracefully")
@@ -812,6 +822,8 @@ class Scanner:
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
         """Live context that is not part of the scored row."""
         sig.update(self.market_state)
+        sig.update(self.ext.market)
+        sig.update(self.ext.of(symbol))
         ctx = self.detector.context.get(symbol)
         sig['coin_trend'] = ctx.trend if ctx is not None else None
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
@@ -1090,7 +1102,13 @@ class Scanner:
     async def universe_loop(self):
         """Re-select the universe hourly: new listings join, dropped coins leave (open cards finish first)."""
         while self._running:
-            await asyncio.sleep(CONFIG.exchange.universe_refresh_sec)
+            try:
+                # hourly, or a minute after Binance announced a listing / status change (!contractInfo)
+                await asyncio.wait_for(self.fetcher.contract_event.wait(), CONFIG.exchange.universe_refresh_sec)
+                self.fetcher.contract_event.clear()
+                await asyncio.sleep(60)
+            except asyncio.TimeoutError:
+                pass
             try:
                 symbols = await self.fetcher.fetch_top_symbols()
                 keep = {s.symbol for s in self.book.signals.values() if not s.finished}

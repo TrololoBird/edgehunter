@@ -23,7 +23,7 @@ from config import CONFIG
 BUY, SELL, LIQ_LONG, LIQ_SHORT = range(4)
 N_FIELDS = 4
 FUTURES_VENUES = ('binance', 'bybit', 'okx', 'bitget', 'hyperliquid')
-SPOT_VENUES = ('coinbase',)
+SPOT_VENUES = ('coinbase', 'bybit_spot')
 
 
 class VenueFlow:

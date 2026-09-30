@@ -61,6 +61,7 @@ class MarketData:
     # Open time of the newest FINAL futures 1m candle (kline x=true): the last deque entry may still be running
     minute_closed_until: int = 0
     spot_minute_klines: deque = field(default_factory=lambda: deque(maxlen=60))
+    _alt_minute: Optional[list] = None          # the Bybit spot minute being built [ts, o, h, l, c, q, Q]
     avg_minute_usd: float = 0.0
     # Intraday periodicity (indicators.seasonal_factors, 4 weeks of 1h candles, refreshed daily)
     season: Optional[Dict] = None
@@ -125,6 +126,22 @@ class MarketData:
     w1_ref: Optional[tuple] = None
     w1_loaded: float = 0.0
 
+
+    def alt_spot_trade(self, ts_ms: int, price: float, usd: float, side: int):
+        """A Bybit spot trade into the current minute; a new minute closes the last one into spot_minute_klines."""
+        minute = ts_ms // 60_000 * 60_000
+        cur = self._alt_minute
+        if cur is not None and minute > cur[0]:
+            self.spot_minute_klines.append(cur)
+            cur = None
+        if cur is None:
+            cur = self._alt_minute = [minute, price, price, price, price, 0.0, 0.0]
+        elif minute < cur[0]:
+            return
+        cur[2], cur[3], cur[4] = max(cur[2], price), min(cur[3], price), price
+        cur[5] += usd
+        if side > 0:
+            cur[6] += usd
     def frame(self, market: str) -> Optional[pl.DataFrame]:
         return self.spot_df if market == 'spot' else self.futures_df
 
@@ -378,6 +395,8 @@ class DataFetcher:
         self._backfill_semaphore = asyncio.Semaphore(3)
         self.funding_interval_hours: Dict[str, int] = {}
         self.streams_started_ms = 0               # the flow windows before it are seeded from REST klines
+        # set by a Binance listing / contract status event (!contractInfo): the universe is re-selected early
+        self.contract_event = asyncio.Event()
         self.reference_prices: Dict[str, float] = {}
         self._htf_loading: set = set()
         self._deriv_cache: Dict[str, Tuple[float, Dict[str, float]]] = {}
@@ -475,7 +494,7 @@ class DataFetcher:
                         logger.warning(f"{venue}: market list unavailable ({type(e).__name__} {e}); venue disabled")
                         return
                     await asyncio.sleep(3 * attempt)
-            self.symbol_map.add_venue(venue, rows, spot=venue == 'coinbase')
+            self.symbol_map.add_venue(venue, rows, spot=venue in ('coinbase', 'bybit_spot'))
             dropped = self.symbol_map.verify_prices(venue, prices, self.reference_prices)
             if dropped:
                 logger.info(f"Symbol map: {venue} {', '.join(dropped)} dropped (a different token under the same ticker)")
@@ -855,7 +874,7 @@ class DataFetcher:
             listed = int((markets[s].get('info') or {}).get('onboardDate') or 0)
             spread = self.spreads.get(s)
             reason = None
-            if cfg.require_spot and not self._spot_symbol_for(s):
+            if cfg.require_spot and not self._spot_symbol_for(s) and 'bybit_spot' not in coverage.get(s, []):
                 reason = 'no spot pair'
             elif len(futures_venues) < cfg.min_futures_venues:
                 reason = f'< {cfg.min_futures_venues} other futures venues'
@@ -886,6 +905,11 @@ class DataFetcher:
         if base.startswith('1000') and '/' in base:
             return base[4:]
         return base
+
+    def needs_alt_spot(self, key: str) -> bool:
+        """A universe coin whose spot market is Bybit's (no Binance spot pair): its Bybit spot trades are streamed."""
+        return key in self.markets and not self._spot_symbol_for(key) and \
+            'bybit_spot' in self.symbol_map.venues_of(key)
 
     def _spot_symbol_for(self, futures_symbol: str) -> Optional[str]:
         """Spot pair for a futures symbol: same name, else the un-prefixed 1000x name (1000PEPE -> PEPE)."""
@@ -1423,7 +1447,7 @@ class DataFetcher:
             ('spot', 'Binance spot klines', [f"{i.lower()}@kline_1m" for i in ids['spot']], 120),
             ('futures', 'Binance futures klines', [f"{i.lower()}@kline_1m" for i in ids['futures']], 120),
             # Every taker order (CVD, sweeps, footprint, price) and all liquidations
-            ('futures', 'Binance futures trades', [f"{i.lower()}@aggTrade" for i in ids['futures']] + ['!forceOrder@arr'], 40),
+            ('futures', 'Binance futures trades', [f"{i.lower()}@aggTrade" for i in ids['futures']] + ['!forceOrder@arr', '!contractInfo'], 40),
         ]
         for market, name, streams, per_socket in plans:
             stream = BinanceStream(self, self.symbol_map, market, streams, name)
@@ -1497,6 +1521,10 @@ class DataFetcher:
             md = self.markets.get(self._binance_keys.get((market_type, data.get('s'))))
             if md is not None:
                 md.apply_kline(market_type, data['k'])
+        elif event == 'contractInfo':
+            if data.get('ct') == 'PERPETUAL' and str(data.get('s', '')).endswith('USDT'):
+                logger.info(f"Binance contract event: {data.get('s')} {data.get('cs')}")
+                self.contract_event.set()
         elif event == 'forceOrder':
             o = data['o']
             key = self._binance_keys.get(('futures', o.get('s')))
@@ -1525,6 +1553,12 @@ class DataFetcher:
             return
         usd = self.symbol_map.usd(market, price, size)
         self.flow.trade(market.venue, market.key, ts_ms, usd, side, recv_ms)
+        if market.venue == 'bybit_spot':
+            md = self.markets.get(market.key)
+            if md is not None:
+                # the coin's spot 1m candles from Bybit (no Binance spot klines exist for it): spot confirmations
+                md.alt_spot_trade(ts_ms, price / market.multiplier * self.symbol_map.key_multiplier.get(market.key, 1.0),
+                                  usd, side)
         if market.venue == 'coinbase':
             md = self.markets.get(market.key)
             if md is not None:
@@ -1652,7 +1686,7 @@ class DataFetcher:
         if md is None:
             return {}
         orderflow = self.orderflow_confirm(symbol, extreme_ms or since_ms, until_ms, direction)
-        spot = list(md.spot_minute_klines) if self._spot_symbol_for(symbol) else None
+        spot = list(md.spot_minute_klines) if self._spot_symbol_for(symbol) or self.needs_alt_spot(symbol) else None
         # OI over the last hour: across venues (OI-weighted, as the phases' agg_oi_change_1h) when >= 2 report, else
         # Binance's samples (seeded with the last hour at start-up); the entry is evaluated at its trigger, i.e. now
         derivs = self.deriv_snapshot(symbol)

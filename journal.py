@@ -156,6 +156,10 @@ EXTRA_COLUMNS = {
     'trend_w': 'REAL', 'breadth_w': 'REAL',
     # ICT premium / discount: the entry's place in the 48h dealing range for its direction (0 = cheapest end)
     'range_pos': 'REAL',
+    # extdata.py: Deribit BTC DVOL and its 1h change, BTC options put / call OI; the next-funding spread across
+    # Binance / Bybit / Hyperliquid (8h-equivalent); OKX / Bybit book imbalance within 0.5%
+    'dvol_btc': 'REAL', 'dvol_chg_1h': 'REAL', 'pc_oi_btc': 'REAL', 'funding_spread': 'REAL',
+    'okx_book_imb': 'REAL', 'bybit_book_imb': 'REAL',
 }
 
 FEATURE_KEYS = {
@@ -171,6 +175,8 @@ FEATURE_KEYS = {
     'agg_funding_8h': 'agg_funding_8h', 'ls_bybit': 'ls_bybit', 'ls_okx': 'ls_okx', 'hour_utc': 'hour_utc',
     'weekend': 'weekend', 'liq_on_wick': 'liq_on_wick', 'oi_change_sweep': 'oi_change_sweep', 'adx': 'adx',
     'trend_w': 'trend_w', 'breadth_w': 'breadth_w',
+    'dvol_btc': 'dvol_btc', 'dvol_chg_1h': 'dvol_chg_1h', 'pc_oi_btc': 'pc_oi_btc', 'funding_spread': 'funding_spread',
+    'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb',
 }
 
 # (setup, regime) -> (results, upper end of the 90% interval of its 4h Edge): refreshed hourly from the journal

@@ -478,6 +478,14 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
     ('ICT premium / discount (entry in the 48h range)', lambda r: None if _col(r, 'range_pos') is None else
         ('deep discount < 30%' if _col(r, 'range_pos') < 0.3 else 'discount 30-50%' if _col(r, 'range_pos') < 0.5
          else 'premium >= 50%')),
+    ('BTC DVOL 1h change (Deribit)', lambda r: None if _col(r, 'dvol_chg_1h') is None else
+        ('vol rising >= +1' if _col(r, 'dvol_chg_1h') >= 1 else 'vol falling <= -1' if _col(r, 'dvol_chg_1h') <= -1 else 'flat')),
+    ('funding spread across venues', lambda r: None if _col(r, 'funding_spread') is None else
+        ('wide >= 0.03% / 8h' if _col(r, 'funding_spread') >= 0.0003 else 'narrow')),
+    ('OKX + Bybit books vs the signal', lambda r: None if _col(r, 'okx_book_imb') is None or _col(r, 'direction') is None else
+        ('books with it' if _col(r, 'direction') * ((_col(r, 'okx_book_imb') or 0) + (_col(r, 'bybit_book_imb') or 0)) > 0.1
+         else 'books against it' if _col(r, 'direction') * ((_col(r, 'okx_book_imb') or 0) + (_col(r, 'bybit_book_imb') or 0)) < -0.1
+         else 'balanced')),
     ('confirmations positive', lambda r: None if _col(r, 'conf_n') is None else f"{_col(r, 'conf_n')} of 4"),
     ('market regime', lambda r: _col(r, 'regime')),
     ('P(edge) model', lambda r: None if _col(r, 'p_edge') is None else ('p >= 0.5' if _col(r, 'p_edge') >= 0.5 else 'p < 0.5')),

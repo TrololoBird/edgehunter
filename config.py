@@ -748,7 +748,7 @@ class VenuesConfig:
     Extra exchanges that enrich the Binance universe (trades -> aggregated CVD / sweeps, liquidations, OI, funding).
     The universe itself stays the Binance USD-M top list; other venues are mapped onto it by base coin.
     """
-    enabled: tuple = ('bybit', 'okx', 'hyperliquid', 'bitget', 'coinbase')
+    enabled: tuple = ('bybit', 'okx', 'hyperliquid', 'bitget', 'coinbase', 'bybit_spot')
     # Hyperliquid allows 1000 subscriptions: asset contexts for every coin, trades only for this many hot coins
     hyperliquid_trades_max: int = 150
     # Bitget: at most this many channels per connection (their recommendation is < 50)
@@ -806,7 +806,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-18"
+    logic_version: str = "eng-19"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

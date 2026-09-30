@@ -629,8 +629,21 @@ class CoinbaseStream(VenueStream):
                     self.sink.on_trade(market, _iso_ms(t['time']), _f(t['price']), _f(t['size']), side, recv_ms)
 
 
+class BybitSpotStream(BybitStream):
+    """Bybit spot trades, only for the coins without a Binance spot pair (the sink decides): their spot flow and spot
+    1m candles, so they join the universe with a spot market."""
+    venue = 'bybit_spot'
+    url = 'wss://stream.bybit.com/v5/public/spot'
+
+    def subscriptions(self):
+        wanted = getattr(self.sink, 'needs_alt_spot', lambda key: False)
+        return [f"publicTrade.{n}" for n in self.symbols.natives(self.venue)
+                if wanted(self.symbols.lookup(self.venue, n).key)]
+
+
 VENUE_STREAMS = {
     'bybit': BybitStream,
+    'bybit_spot': BybitSpotStream,
     'okx': OkxStream,
     'hyperliquid': HyperliquidStream,
     'bitget': BitgetStream,
@@ -649,6 +662,8 @@ VENUE_MARKETS = {
     'bitget': ('bitget', {'defaultType': 'swap', 'fetchMarkets': {'types': ['swap']}},
                lambda m: m.get('swap') and m.get('settle') == 'USDT'),
     'coinbase': ('coinbase', {}, lambda m: m.get('spot') and m.get('quote') == 'USD'),
+    'bybit_spot': ('bybit', {'defaultType': 'spot', 'fetchMarkets': {'types': ['spot']}},
+                   lambda m: m.get('spot') and m.get('quote') == 'USDT'),
 }
 
 
