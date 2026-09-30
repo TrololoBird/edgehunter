@@ -48,7 +48,9 @@ def _book_in_zone(rally_frame, confirm):
     return book, s, price, candles, pf, cf
 
 
-def test_continuation_lifecycle_with_orderflow_confirm(rally_frame):
+def test_continuation_lifecycle_with_orderflow_confirm(rally_frame, monkeypatch):
+    # the synthetic rally has no swing between its origin and the pullback: no protected swing (strategies/ict.py)
+    monkeypatch.setattr('strategies.ict.protected_swing', lambda *a, **k: None)
     confirm = lambda sym, strategy, d, since, until, extreme: {'flow': True, 'oi': True, 'orderflow': 'imbalance'}
     book, s, price, candles, pf, cf = _book_in_zone(rally_frame, confirm)
     now = CUR15 / 1000 + 4 * 300 + 5

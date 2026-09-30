@@ -475,6 +475,9 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
     # entry confirmations (strategies/confirm.py): each one's Edge with and without it; the journal promotes one to
     # required for a strategy once entries without it prove negative
     *[(f"confirm: {name}", (lambda n: lambda r: _confirm_value(r, n))(name)) for name in ('flow', 'spot', 'oi', 'orderflow')],
+    ('ICT premium / discount (entry in the 48h range)', lambda r: None if _col(r, 'range_pos') is None else
+        ('deep discount < 30%' if _col(r, 'range_pos') < 0.3 else 'discount 30-50%' if _col(r, 'range_pos') < 0.5
+         else 'premium >= 50%')),
     ('confirmations positive', lambda r: None if _col(r, 'conf_n') is None else f"{_col(r, 'conf_n')} of 4"),
     ('market regime', lambda r: _col(r, 'regime')),
     ('P(edge) model', lambda r: None if _col(r, 'p_edge') is None else ('p >= 0.5' if _col(r, 'p_edge') >= 0.5 else 'p < 0.5')),

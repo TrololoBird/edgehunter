@@ -164,6 +164,10 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
             if ref is not None:
                 label = 'beyond the test wick'
             ref = extreme
+        prot = plan.get('protected')
+        if prot is not None and direction * (entry - prot) > 0 and (ref is None or direction * (ref - prot) > 0):
+            # ICT: the stop beyond the swing that broke structure, not right behind an unswept pool
+            ref, label = prot, 'beyond the protected swing (BOS)'
         base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label)
     measured = overshoot(plan.get('symbol'), kind_of_label(src, plan.get('tf', '15m')), base)
     if measured is not None:
@@ -274,6 +278,13 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     fixed_tp = exit['tp'][0] in ('pct', 'rr')
     structural = structure_stop(zones, entry, direction, atr, floor, plan.get('symbol'), plan.get('tf', '15m')) \
         if fixed_stop else None
+    prot = plan.get('protected')
+    if structural is not None and prot is not None and direction * (entry - prot) > 0 \
+            and direction * (structural[0] - prot) > 0:
+        # ICT: beyond the protected swing (the one that broke structure) when it lies beyond the nearest structure
+        buffer = overshoot(plan.get('symbol'), 'swing_15m', prot)
+        base, src = stop_beyond(zones, prot, entry, direction, atr, 'beyond the protected swing (BOS)')
+        structural = (base - direction * (buffer if buffer is not None else CONFIG.levels.stop_buffer_atr * atr), src)
     if structural is not None:
         stop, sl_src = structural
     else:

@@ -34,6 +34,7 @@ Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CO
 """
 import copy
 import logging
+from strategies.ict import range_position
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -573,6 +574,7 @@ class SignalBook:
         if not levels or d * (price - levels['sl']) <= 0:
             return None
         levels['zone_src'] = s.plan.get('zone_src')
+        levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], d)
         reason = None
         # the spring candle's average FUTURES minute (the pullback minutes are futures candles); a card restored from
         # an older state has only the spot figure: no test rather than a test in the wrong units
@@ -614,6 +616,7 @@ class SignalBook:
         if not levels or s.direction * (price - levels['sl']) <= 0:
             return None
         levels['zone_src'] = 'setup confirmation'
+        levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], s.direction)
         anchor = s.plan.get('anchor') or {}
         # the confirming event: a breakout's candle, a reversed leg's end, else the anchor
         since = int(anchor.get('break_ts') or anchor.get('end_ts') or anchor.get('ts') or now_ms - 900_000)

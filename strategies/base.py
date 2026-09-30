@@ -113,6 +113,13 @@ def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> D
         'trigger': 'shift', 'exit': None, 'confirm_only': False, 'session': None, 'trigger_from_ms': None,
         'invalid_close_min': None,
     }
+    from strategies.ict import dealing_range, protected_swing
+    if x.df is not None and not x.df.is_empty():
+        plan['protected'] = protected_swing(x.df['high'].to_list(), x.df['low'].to_list(), x.df['close'].to_list(),
+                                            x.direction)
+    else:
+        plan['protected'] = None
+    plan['dealing_range'] = dealing_range(x.h1 or [])
     plan.update(fields)
     return plan
 

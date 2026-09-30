@@ -154,6 +154,8 @@ EXTRA_COLUMNS = {
     # the coin's weekly trend (distance from its weekly EMA in weekly standard deviations) and the universe's share
     # above its weekly EMA: context, never a filter (the weekly EMA tested as no level of its own, 2026-09-27)
     'trend_w': 'REAL', 'breadth_w': 'REAL',
+    # ICT premium / discount: the entry's place in the 48h dealing range for its direction (0 = cheapest end)
+    'range_pos': 'REAL',
 }
 
 FEATURE_KEYS = {
@@ -508,6 +510,7 @@ class SignalJournal:
                                   if not k.startswith('_') and confirm.positive(v)),
                     'perp_led': 0, 'p_edge': tracked.sig.get('p_edge'),
                     'tp1_src': lv.get('tp1_src'), 'tp2_src': lv.get('tp2_src'), 'tp3_src': lv.get('tp3_src'),
+                    'range_pos': lv.get('range_pos'),
                     'sl_src': lv.get('sl_src'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
                     'anchor': _anchor_json(tracked.plan)})

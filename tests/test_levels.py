@@ -74,7 +74,8 @@ def test_entry_levels_reversal_stop_beyond_leg_end(rally_frame):
 
 
 def test_low_rr_flag(rally_frame):
-    plan = STRATEGIES['trend'].plan(_x(rally_frame, +1, 'BULL F'))
+    # the synthetic rally has no swing between its origin and the pullback: no protected swing (strategies/ict.py)
+    plan = dict(STRATEGIES['trend'].plan(_x(rally_frame, +1, 'BULL F')), protected=None)
     atr = plan['atr']
     far = STRATEGIES['trend'].plan(_x(rally_frame, +1, 'BULL F'))['targets'][0]
     tight = entry_levels(dict(plan, retarget=False, targets=[far, far + atr, far + 2 * atr], target_src=['a', 'b', 'c']),
