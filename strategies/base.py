@@ -100,7 +100,7 @@ class Strategy:
 def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> Dict:
     """The fields every plan has; strategies add / override the rest."""
     plan = {
-        'symbol': x.symbol, 'strategy': strategy, 'setup': x.setup, 'direction': x.direction, 'anchor': anchor, 'tf': tf,
+        'symbol': x.symbol, 'volume_24h': x.sig.get('volume_24h'), 'strategy': strategy, 'setup': x.setup, 'direction': x.direction, 'anchor': anchor, 'tf': tf,
         'trigger_minutes': TRIGGER_MINUTES.get(tf, 5), 'atr': x.atr, 'recent_atr': x.recent_atr, 'leg_atr': x.atr,
         'entry': 'pullback', 'invalid': None, 'fix_invalid': False, 'reset': None, 'missable': True,
         'stop_ref': None, 'stop_mid': None, 'retarget': False, 'intent': 'extension', 'fillers': (),

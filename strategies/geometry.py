@@ -19,13 +19,16 @@ from zones import STRUCTURE_KINDS, Zone, is_pool, stop_beyond
 MEAN_KINDS = ('vwap', 'poc', 'va', 'hvn')
 
 
-def cost_of(price: float) -> float:
+def cost_of(price: float, volume_24h: Optional[float] = None) -> float:
     """
+    (volume_24h: the coin's; the slippage then grows as liquidity falls, levels.slippage_bps - the same model the
+    journal's replay fills with, so an entry that passes R:R here is not a loser there by construction)
     Execution cost of a round trip in price units: the taker fees (0.05% a side at Binance VIP0) plus the slippage of
     a market entry and of a stop exit (levels.slippage_bps each). Fees alone made a 1-ATR stop on a quiet coin look
     ~0.3R cheaper than it trades.
     """
-    return (CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4) * price
+    from levels import slippage_bps
+    return (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h) / 1e4) * price
 
 
 _OVERSHOOT: Optional[Dict] = None
@@ -305,7 +308,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         targets, sources = select_targets(zones, entry, direction, atr, 'opposite_liquidity')
         if targets and sources[0] != 'ATR step':
             tp1, tp2, tp3 = targets[:3]
-            fee = cost_of(entry)
+            fee = cost_of(entry, plan.get('volume_24h'))
             rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
             return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
                     'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < CONFIG.levels.min_rr_tp1,
@@ -323,7 +326,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         if tp2 is None or direction * (tp2 - tp1) <= 0:
             tp2, src2 = tp1 + direction * gap, 'ATR step'
     tp3 = tp2 + direction * gap
-    fee = cost_of(entry)
+    fee = cost_of(entry, plan.get('volume_24h'))
     rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
     # our minimum applies to the ported systems too (their own flag only knew the author's R:R rule: REZ FIB 0.5 was
     # entered at 0.74)
@@ -366,7 +369,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
     if not targets:
         return None
     tp1, tp2, tp3 = targets[:3]
-    fee = cost_of(entry)
+    fee = cost_of(entry, plan.get('volume_24h'))
     rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
     return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3,
             'rr_tp1': rr1, 'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < CONFIG.levels.min_rr_tp1,

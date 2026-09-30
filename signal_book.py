@@ -518,8 +518,13 @@ class SignalBook:
         tp1 = plan['targets'][0]
         if plan.get('missable') and d * (price - tp1) >= 0:
             reasons = ', '.join(sorted(set(s.veto_log)))
+            # two different failures: price never came back to the zone (the zone is too far from where the move
+            # turns) vs it did and no trigger fired (the trigger is too strict)
+            where = (f"in the zone {plan['zone_lo']:.6g}-{plan['zone_hi']:.6g} since "
+                     f"{_dur(now - s.zone_since_ms / 1000)}" if s.status == 'ZONE' and s.zone_since_ms
+                     else f"price never came back to the zone {plan['zone_lo']:.6g}-{plan['zone_hi']:.6g}")
             skipped = (f"; {s.vetoed_triggers} trigger(s) vetoed" + (f": {reasons}" if reasons else '')
-                       if s.vetoed_triggers else f"; no {plan['trigger_minutes']}m trigger")
+                       if s.vetoed_triggers else f"; no {plan['trigger_minutes']}m trigger") + f" ({where})"
             self._finish(s, 'MISSED', now, f"TP1 {tp1:.6g} ({plan['target_src'][0]}) reached before an entry" + skipped)
             return None
         if plan.get('reset') is not None and s.status == 'ZONE' and d * (price - plan['reset']) > 0:
