@@ -156,8 +156,12 @@ class Tier0Config:
     # (std of 15m changes over ~24h / sqrt(3)); 2% in 5m is noise for a memecoin and an event for BTC
     oi_change_5m_threshold: float = 0.008
     price_change_5m_threshold: float = 0.01
-    price_z_threshold: float = 4.0
-    oi_z_threshold: float = 4.0
+    # measured on the live journal (research/tier0_thresholds.md): an effect beyond the coin's usual 4h move only from
+    # |z| >= 6 (was 4)
+    price_z_threshold: float = 6.0
+    oi_z_threshold: float = 6.0
+    # the rules that flag an anomaly (the rest are journaled features): rvol / whales / venue measured x1.0
+    flag_rules: tuple = ('price', 'oi', 'cluster', 'liq')
     window_sec: int = 300
     # No signals / journal rows this long after a start: the 5m flow windows are seeded from REST 1m klines (Binance),
     # so a minute is enough for the streams to connect (was window_sec = 5 minutes)
@@ -223,7 +227,8 @@ class LiquidationConfig:
     # A liquidation cascade: liquidations over window_sec >= this share of the coin's average minute volume
     # and at least cascade_min_usd
     cascade_avg_minute_share: float = 1.0
-    cascade_min_usd: float = 50_000
+    # $10-200k in 5 minutes measured x0.90 (nothing), >= $200k x1.20 (research/tier0_thresholds.md; was $50k)
+    cascade_min_usd: float = 200_000
 
 
 @dataclass(frozen=True)
@@ -813,7 +818,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-25"
+    logic_version: str = "eng-26"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

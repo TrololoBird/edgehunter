@@ -161,7 +161,15 @@ class PhaseScorer:
                      (pl.col('top_venue_net').abs() >= venues.one_venue_min_usd))
         whales = pl.col('whale_net_5m').abs() >= t0.whale_net_units
         cluster = pl.col('cluster') != 0
-        rule = (rvol | price | oi | whales | cluster | cascade | one_venue).fill_null(False)
+        # Only the rules whose events move the coin beyond its usual volatility flag an anomaly (research_tier0.py,
+        # research/tier0_thresholds.md: RVOL, whale sweeps and one-venue flow were x1.0 at every threshold); the others
+        # stay journaled as features / labels
+        parts = {'rvol': rvol, 'price': price, 'oi': oi, 'whales': whales, 'cluster': cluster, 'liq': cascade,
+                 'venue': one_venue}
+        rule = pl.lit(False)
+        for name in t0.flag_rules:
+            rule = rule | parts[name]
+        rule = rule.fill_null(False)
         # Once the IsolationForest is fitted it decides (an unusual COMBINATION of the coin's features); the
         # rules only label the event and serve as the fallback before the first fit
         ml = pl.col('ml_anomaly') > 0

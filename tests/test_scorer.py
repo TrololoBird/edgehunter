@@ -133,8 +133,17 @@ def _t0(**values):
     return base
 
 
-def test_tier0_flags():
-    t = CONFIG.tier0
+def test_tier0_flags(monkeypatch):
+    # the formulas of every rule at the thresholds the rows were built for (the deployment flags with fewer rules
+    # at measured thresholds: research/tier0_thresholds.md)
+    import dataclasses
+    import config as config_mod
+    monkeypatch.setattr(config_mod.CONFIG, 'tier0', dataclasses.replace(
+        config_mod.CONFIG.tier0, price_z_threshold=4.0, oi_z_threshold=4.0,
+        flag_rules=('rvol', 'price', 'oi', 'whales', 'cluster', 'liq', 'venue')))
+    monkeypatch.setattr(config_mod.CONFIG, 'liquidations', dataclasses.replace(
+        config_mod.CONFIG.liquidations, cascade_min_usd=50_000))
+    t = config_mod.CONFIG.tier0
     rows = {
         'rvol_small_minute': _t0(rvol_1m=6.0, minute_usd=10_000.0),
         'rvol_ok': _t0(rvol_1m=6.0, minute_usd=30_000.0),
