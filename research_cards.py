@@ -62,6 +62,20 @@ def _oi_change(oi_ts: np.ndarray, oi_v: np.ndarray, since: float, until: float) 
     return float(oi_v[b] / oi_v[a] - 1)
 
 
+def make_placebo(m_ts: np.ndarray, key: str):
+    """A random entry time of the same coin within +-7 days (away from the window's edges): the placebo trade."""
+    import random
+    rng = random.Random(sum(map(ord, key)))
+
+    def pick(entered_ms: float):
+        for _ in range(10):
+            t = (entered_ms + rng.uniform(-7, 7) * 86_400_000) // MINUTE_MS * MINUTE_MS
+            if m_ts[0] + 3 * 86_400_000 < t < m_ts[-1] - 3 * 86_400_000:
+                return t
+        return None
+    return pick
+
+
 def replay_coin(job: tuple) -> List[Dict]:
     key, fut_id, spot_id, start_iso, end_iso, days_ok, what = job
     out: List[Dict] = []
@@ -106,6 +120,7 @@ def replay_events(job: tuple) -> List[Dict]:
     fut_all = compute_indicators_batch({key: _raw_frame(c15, oi15)}, {key: (0.0, 0.0)})
     atr_by_ts = {int(t): a for t, a in zip(fut_all['timestamp'].to_list(), fut_all['atr'].to_list())}
     m_ts = fut[:, 0]
+    placebo = make_placebo(m_ts, key)
     minutes_all = fut[:, STREAM_COLS]
     h1 = _bucket(fut, HOUR_MS)
     h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in h1]
@@ -161,13 +176,14 @@ def replay_events(job: tuple) -> List[Dict]:
             row = {'symbol': key, 'ts_ms': now_ms, 'setup': event['setup'], 'strategy': strategy.name, 'direction': d,
                    'vetoed': vetoed or '', 'status': 'NO_PLAN', 'vetoed_triggers': 0, 'veto_log': '', 'r_tp1': None, 'r_tp2': None,
                    'r_be': None, 'rr_tp1': None, 'risk_pct': None, 'outcome': None, 'hold_min': None,
-                   'vx_reason': '', 'vx_r_tp1': None, 'vx_r_tp2': None, 'vx_rr_tp1': None}
+                   'vx_reason': '', 'vx_r_tp1': None, 'vx_r_tp2': None, 'vx_rr_tp1': None,
+                   'pl_r_tp1': None, 'pl_r_tp2': None}
             if plan is None or not plan.get('targets'):
                 out.append(row)
                 continue
             finished_ms = _lifecycle(plan, strategy, d, row, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
                                      entry_levels, ltf_trigger, resample, simulate, _asof,
-                                     features=features, samples=samples)
+                                     features=features, samples=samples, placebo=placebo)
             if not vetoed:
                 busy_until[d] = finished_ms
             out.append(row)
@@ -221,6 +237,7 @@ def replay_phases(job: tuple) -> List[Dict]:
     scored = scorer.calculate_scores(spot_all, fut_all, None, None).sort('timestamp')
     fut_ts = fut_all['timestamp'].to_numpy()
     m_ts = fut[:, 0]
+    placebo = make_placebo(m_ts, key)
     minutes_all = fut[:, STREAM_COLS]
     h1 = _bucket(fut, HOUR_MS)
     h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in h1]
@@ -293,7 +310,8 @@ def replay_phases(job: tuple) -> List[Dict]:
         rec = {'symbol': key, 'ts_ms': now_ms, 'setup': group_key, 'strategy': strategy.name, 'direction': d,
                'vetoed': vetoed or '', 'status': 'NO_PLAN', 'vetoed_triggers': 0, 'veto_log': '', 'r_tp1': None,
                'r_tp2': None, 'r_be': None, 'rr_tp1': None, 'risk_pct': None, 'outcome': None, 'hold_min': None,
-               'vx_reason': '', 'vx_r_tp1': None, 'vx_r_tp2': None, 'vx_rr_tp1': None}
+               'vx_reason': '', 'vx_r_tp1': None, 'vx_r_tp2': None, 'vx_rr_tp1': None,
+                   'pl_r_tp1': None, 'pl_r_tp2': None}
         if plan is None or plan.get('skip') or not plan.get('targets'):
             if plan and plan.get('skip'):
                 rec['status'] = f"NO_PLAN ({plan['skip']})"
@@ -323,7 +341,7 @@ def replay_phases(job: tuple) -> List[Dict]:
 
         finished = _lifecycle(plan, strategy, d, rec, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
                               entry_levels, ltf_trigger, resample, simulate, _asof, replan=replan, extra_veto=spring_test,
-                              features=features, samples=samples)
+                              features=features, samples=samples, placebo=placebo)
         if not vetoed:
             busy_until[d] = finished
         out.append(rec)
@@ -832,6 +850,9 @@ def main():
                         help='every taken and first vetoed trade with its entry features (research_meta.py)')
     parser.add_argument('--entry', choices=('market', 'maker'), default='market',
                         help='entry execution: the journal\'s market fill, or a resting limit at the trigger (maker fee)')
+    parser.add_argument('--holdout', type=int, default=0,
+                        help='> 0: the report splits the window into development and the last N months (holdout), '
+                             'with the placebo comparison (research_maniac.report)')
     parser.add_argument('--what', choices=('events', 'phases', 'all'), default='events',
                         help='events: SWEEP / BREAKOUT; phases: trend / wyckoff phase setups')
     args = parser.parse_args()
@@ -864,7 +885,11 @@ def main():
     if samples:
         pl.DataFrame(samples, infer_schema_length=None).write_parquet(args.samples)
         logger.info(f"cards: {len(samples)} trade samples with features -> {args.samples}")
-    text = report(df, start, end)
+    if args.holdout:
+        from research_maniac import report as split_report
+        text = split_report(df, start, end, end - timedelta(days=30 * args.holdout), title='our classes')
+    else:
+        text = report(df, start, end)
     os.makedirs(os.path.dirname(args.out) or '.', exist_ok=True)
     with open(args.out, 'w', encoding='utf-8') as fh:
         fh.write(text)

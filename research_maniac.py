@@ -172,11 +172,11 @@ def replay_coin(job: tuple):
     return out
 
 
-def report(df: pl.DataFrame, start: date, end: date, split: date) -> str:
+def report(df: pl.DataFrame, start: date, end: date, split: date, title: str = "crypto_maniac's systems") -> str:
     from research_edges import bh
     split_ms = int(datetime(split.year, split.month, split.day, tzinfo=timezone.utc).timestamp() * 1000)
     f = lambda v, d=3: '—' if v is None or v != v else f"{v:+.{d}f}"  # noqa: E731
-    lines = ["# crypto_maniac's systems on the archive (card replay, his parameters)", '',
+    lines = [f"# {title} on the archive (card replay, placebo, holdout)", '',
              f"Window {start} .. {end}: development before {split}, HOLDOUT from {split}. {df['symbol'].n_unique()} coins, "
              f"{len(df)} cards. R = net R of an entry replayed like the journal (next full minute's open + "
              f"{CONFIG.levels.slippage_bps:g} bps, stop exits slipped, funding, {CONFIG.journal.fee_round_trip * 100:.2f}% "
@@ -186,6 +186,10 @@ def report(df: pl.DataFrame, start: date, end: date, split: date) -> str:
              '| Setup | part | cards | entries | expired | invalid | win TP1 | R TP1 [90%] | placebo R | system - placebo [90%] | R TP2 |',
              '|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|']
     rows, ps = [], []
+    if 'vetoed' in df.columns:
+        # a vetoed class (e.g. a sweep against the trend) is its own row, never mixed with the passed one
+        df = df.with_columns(pl.when(pl.col('vetoed').fill_null('') == '').then(pl.col('setup'))
+                             .otherwise(pl.col('setup') + ' [' + pl.col('vetoed') + ']').alias('setup'))
     for setup in sorted(df['setup'].unique().to_list()):
         for part, cond in (('dev', pl.col('ts_ms') < split_ms), ('HOLDOUT', pl.col('ts_ms') >= split_ms)):
             g = df.filter((pl.col('setup') == setup) & cond)
