@@ -497,21 +497,19 @@ class StrategiesConfig:
     entry timeframe is 3-6x finer than the structure (Elder's factor of ~5): 15m -> 5m, 1h -> 15m, 4h -> 1h. Sizes are
     in 15m ATRs; lifetimes are (waiting, trigger in the zone, open trade) seconds.
     """
-    # Strategies that produce cards (a disabled one is still detected and journaled with vetoed='disabled').
-    # sweep / breakout are off: their cards replayed on 6 months x 360 coins of the archive with this exact lifecycle
-    # lost net of costs in every class (breakout up -0.18R [-0.26..-0.11], down -0.13R; sweep low -0.27R, sweep high
-    # -0.06R [-0.18..+0.06]; research/cards_6m.md, research_cards.py). Re-enable in config.local.toml
-    # ([strategies] enabled = [...]) once a change is shown to turn them positive on that replay.
-    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'absorption', 'exhaustion',
+    # Every strategy produces cards again (eng-10, the owner's decision 2026-09-30): the archive replay cannot see the
+    # live-only inputs (confirmations from spot / other venues / footprint, liquidations, books), and a disabled
+    # strategy produced no card, so no entry, no confirmations and no replay were ever measured live. Setups that lost
+    # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
+    # CLAUDE.md ("Live verdict"): kept or deleted from the code.
+    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'sweep', 'absorption', 'exhaustion', 'breakout',
                       'supply_demand', 'auction', 'smt', 'trendline', 'thirdeye', 'fib05', 'bomberman', 'csi',
                       'oi_accum')
-    # Single setups whose cards are off (journaled with vetoed='disabled'): proven to lose net of costs (BH q <= 0.10)
-    # on the same card replay (research/phases_6m.md, 6 months x 357 coins): BEAR C -0.24R, BULL A -0.20R, BULL F
-    # -0.25R, BULL B -0.14R, IMPULSE UP -0.29R, BEAR D -0.19R. BULL E (+0.32R, 45 entries; -0.17R on 171 entries over
-    # 12 months after the MTF fix, research/cards_fixed_12m.md) and IMPULSE DOWN (+0.06R)
-    # are not proven either way and stay on (with absorption / exhaustion, which the archive cannot replay).
-    # BULL E off too (2026-09-30, owner's decision): its plus was noise and it never showed one since.
-    disabled_setups: tuple = ('BULL A', 'BULL B', 'BEAR C', 'BULL E', 'BULL F', 'BEAR D', 'IMPULSE UP')
+    disabled_setups: tuple = ()
+    # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
+    # a warning on the card, not a filter
+    archive_negative: tuple = ('SWEEP LOW', 'SWEEP HIGH', 'BREAKOUT UP', 'BREAKOUT DOWN', 'BULL A', 'BULL B', 'BEAR C',
+                               'BULL E', 'BULL F', 'BEAR D', 'IMPULSE UP')
     # 1h candles of every coin (fetcher._hourly_candles_loop): ~8 days for the weekly / daily / session pools
     h1_candles: int = 200
     h1_refresh_sec: int = 3600
@@ -795,7 +793,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-9"
+    logic_version: str = "eng-10"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

@@ -128,7 +128,9 @@ const STRATEGY_OF = {
 const familyOf = setup => STRATEGY_OF[setup] || '';
 const setupLabel = setup => {
   const fam = FAMILY[familyOf(setup)];
-  return `${esc(setup)}${SETUP_RU[setup] ? ' <span class="dim">· ' + esc(SETUP_RU[setup]) + '</span>' : ''}` +
+  const neg = ((S && S.archive_negative) || []).includes(setup)
+    ? ' <span class="pill warn" title="На архиве (6–12 мес.) этот сетап терял после издержек. Карточка показывается ради живой проверки с данными, которых нет в архиве">архив −</span>' : '';
+  return `${esc(setup)}${neg}${SETUP_RU[setup] ? ' <span class="dim">· ' + esc(SETUP_RU[setup]) + '</span>' : ''}` +
     (fam ? `<br><span class="family" title="${esc(fam[1])}">${esc(fam[0])}</span>` : '');
 };
 // The plan's anchor in words: a leg, a level, a range
