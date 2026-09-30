@@ -72,3 +72,19 @@
 2. Названия фаз A–F не совпадают с фазами Вайкоффа; ATR считается простым средним. Решение за владельцем.
 3. Полный тест на подглядывание для живого пути требует записанного потока.
 4. 12-месячный прогон (проверка устойчивости выводов) запущен в облаке; результат будет в `research/` отдельным коммитом, если сессия успеет.
+
+## Задание для облачной сессии (2026-09-30): прогон на архиве с плацебо и холдаутом
+Цель: сравнить наши классы и перенесённые системы crypto_maniac одним протоколом и решить судьбу каждого класса
+(оставить / одна починка с проверкой только на холдауте / удалить код полностью). Параметры НЕ подбирать.
+Архив Binance скачивается сам (`history.py`, data.binance.vision) в `history_cache/`.
+
+```bash
+pip install -r requirements.txt
+python research_maniac.py --months 6 --holdout 2 --limit 100 --workers <ядер-1> --end 2026-09-27
+python research_cards.py  --months 6 --holdout 2 --limit 100 --workers <ядер-1> --what all --end 2026-09-27 \
+    --out research/ours_placebo_6m.md --rows research_ours_placebo.parquet --samples research_ours_samples.parquet
+```
+Результаты: `research/maniac_6m.md`, `research/ours_placebo_6m.md` (+ parquet со всеми карточками).
+Скорость на машине владельца: ~7 минут на монету за 6 месяцев на процесс (детекторы maniac на каждом закрытии 15m).
+Класс РАБОТАЕТ, только если R TP1 > 0 и на dev, и на HOLDOUT, 90%-интервал на HOLDOUT выше 0 и
+«system − placebo» на HOLDOUT выше 0. Закоммитить отчёты и parquet (или положить parquet в artifact, если велик).
