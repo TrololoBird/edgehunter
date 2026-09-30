@@ -221,7 +221,7 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
         run('bomberman', maniac.bomberman_event, h1)
         if symbol:
             try:
-                signals = auction_signals(symbol, h1)
+                signals = auction_signals(symbol, h1, m15)
             except Exception as e:
                 log.warning(f"auction of {symbol} failed: {type(e).__name__} {e}")
                 signals = []
@@ -255,14 +255,21 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
     # Events of the candle that just closed (only while it is fresh: a rebuild after a restart or a backfill must not
     # fire an old candle again)
     if now_ms - cut <= CONFIG.strategies.close_event_max_age_sec * 1000:
-        from strategies.breakout import breakout_at_close
         from strategies.level import sweep_at_close
         pools = pools_before(candles_15m, candles_1h, atr, last_open)
-        for event in (sweep_at_close(candles_15m, pools, atr, ctx.trend), breakout_at_close(candles_15m, atr, closed_1h)):
-            if event:
-                ctx.events.append(event)
+        sweep = sweep_at_close(candles_15m, pools, atr, ctx.trend)
+        if sweep:
+            ctx.events.append(sweep)
         m15 = merge_candles(m15_long, candles_15m, cut, QUARTER_MS)
         h1 = hours_from(candles_15m, list(h1_long) or list(candles_1h), cut)
+        if cut % HOUR_MS == 0:
+            # 1h events at the hour's close: the Turtles' 20-day breakout, Wyckoff's spring / UTAD of a trading range
+            from strategies.breakout import breakout_donchian
+            from strategies.wyckoff_range import wyckoff_events
+            brk = breakout_donchian(h1)
+            if brk:
+                ctx.events.append(brk)
+            ctx.events.extend(wyckoff_events(h1))
         corr15 = merge_candles(corr, [], cut, QUARTER_MS) if corr else None
         ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut))
     return ctx
@@ -279,6 +286,35 @@ def part_candles(part) -> Tuple[List[List[float]], Optional[float]]:
     candles = [[ts, o, h, l, c, qv or 0.0, ((qv or 0.0) + (td or 0.0)) / 2] for ts, o, h, l, c, qv, td in rows]
     atr = part['atr'][-1] if 'atr' in part.columns else None
     return candles, atr
+
+
+def pick_correlate(symbol: str, m15, corr: Dict[str, list]) -> Optional[list]:
+    """
+    SMT needs a CLOSELY correlated pair (ICT: ES / NQ): of BTC and ETH, the one whose 15m returns correlate more with
+    the coin's over the last 200 candles (BTC <-> ETH for the two themselves).
+    """
+    import numpy as np
+    if symbol.startswith('BTC/'):
+        return corr.get('ETH')
+    if symbol.startswith('ETH/'):
+        return corr.get('BTC')
+    best, best_r = corr.get('BTC'), -2.0
+    own = {int(c[0]): c[4] for c in list(m15)[-201:]}
+    for name in ('BTC', 'ETH'):
+        other = corr.get(name)
+        if not other:
+            continue
+        ref = {int(c[0]): c[4] for c in other[-201:]}
+        ts = sorted(set(own) & set(ref))
+        if len(ts) < 50:
+            continue
+        a = np.diff(np.log([own[t] for t in ts]))
+        b = np.diff(np.log([ref[t] for t in ts]))
+        if a.std() > 0 and b.std() > 0:
+            r = float(np.corrcoef(a, b)[0, 1])
+            if r > best_r:
+                best, best_r = other, r
+    return best
 
 
 def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> Dict[str, tuple]:
@@ -303,7 +339,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
             profile = candles_4d or candles_1h[-96:]
             raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile)
             if with_context:
-                correlate = corr.get('ETH' if symbol.startswith('BTC/') else 'BTC')
+                correlate = pick_correlate(symbol, m15, corr)
                 m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
                 h1l = h1_long.tolist() if hasattr(h1_long, 'tolist') else list(h1_long)
                 context = build_context(candles, candles_1h, atr, merge(raw, atr), now_ms, symbol=symbol,

@@ -32,10 +32,11 @@ from strategies.cascade import ExhaustionStrategy
 from strategies.leg import MomentumStrategy, TrendStrategy, WyckoffStrategy
 from strategies.level import AbsorptionStrategy, SweepStrategy
 from strategies.maniac_strategies import MANIAC_STRATEGIES
+from strategies.wyckoff_range import WyckoffRangeStrategy
 
 STRATEGIES: Dict[str, Strategy] = {s.name: s for s in (
     TrendStrategy(), MomentumStrategy(), WyckoffStrategy(), SweepStrategy(), AbsorptionStrategy(),
-    ExhaustionStrategy(), BreakoutStrategy(), *MANIAC_STRATEGIES)}
+    ExhaustionStrategy(), BreakoutStrategy(), WyckoffRangeStrategy(), *MANIAC_STRATEGIES)}
 
 # Setup name -> (strategy name, direction)
 SETUPS: Dict[str, Tuple[str, int]] = {setup: (s.name, d) for s in STRATEGIES.values() for setup, d in s.setups.items()}

@@ -129,6 +129,7 @@ class AuctionEngine:
     def __init__(self):
         self.cfg = CONFIG.strategies
         self.h: List[float] = []
+        self.sub: Dict[int, list] = {}         # hour open ms -> its 15m (high, low, quote volume)
         self.l: List[float] = []
         self.c: List[float] = []
         self.v: List[float] = []
@@ -329,7 +330,13 @@ class AuctionEngine:
             if abs(float(cc[-1]) - float(cc[0])) / rng > cfg.auction_max_net_ratio:
                 continue
             bins = int(np.clip(round(rng / (cfg.auction_bin_atr * atr)), 12, 60))
-            poc, val, vah, share, total = volume_profile(hh, ll, vv, bins, win_lo, win_hi)
+            parts = [self.sub.get(t) for t in self.ts[s:i + 1]]
+            if all(p and len(p) == 4 for p in parts):
+                flat = [q for p in parts for q in p]
+                poc, val, vah, share, total = volume_profile(np.asarray([q[0] for q in flat]), np.asarray([q[1] for q in flat]),
+                                                             np.asarray([q[2] for q in flat]), bins, win_lo, win_hi)
+            else:
+                poc, val, vah, share, total = volume_profile(hh, ll, vv, bins, win_lo, win_hi)
             if total <= 0:
                 continue
             conc = share * bins
@@ -364,17 +371,26 @@ class AuctionEngine:
 ENGINES: Dict[str, AuctionEngine] = {}
 
 
-def auction_signals(symbol: str, candles_1h: Sequence[Sequence[float]]) -> List[Dict]:
+def auction_signals(symbol: str, candles_1h: Sequence[Sequence[float]],
+                    candles_15m: Sequence[Sequence[float]] = ()) -> List[Dict]:
     """
+    `candles_15m`: the POC is built from them where they cover a window (volume at price needs candles short against
+    the window: 1h candles put a 4-day POC 3% off, 15m matched 1m within a bucket - Dalton's profile is volume AT price).
     Feed the closed 1h candles the symbol's engine has not seen; returns the signals of the NEW bars. A history that
     does not continue the engine's (a gap, a restart) rebuilds the engine silently: its warm-up bars give no signals.
     """
     if not candles_1h:
         return []
+    subs: Dict[int, list] = {}
+    for c in candles_15m:
+        subs.setdefault(int(c[0]) // 3_600_000 * 3_600_000, []).append((float(c[2]), float(c[3]), float(c[5])))
     engine = ENGINES.get(symbol)
+    if engine is not None:
+        engine.sub.update(subs)
     last = engine.ts[-1] if engine is not None and engine.ts else None
     if last is None or not any(int(c[0]) == last for c in candles_1h[-50:]) or int(candles_1h[-1][0]) < last:
         engine = ENGINES[symbol] = AuctionEngine()
+        engine.sub.update(subs)
         for c in candles_1h[:-1]:
             engine.on_bar(int(c[0]), c[2], c[3], c[4], c[5])
         new = candles_1h[-1:]

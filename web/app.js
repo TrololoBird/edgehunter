@@ -84,6 +84,7 @@ const VETO = {
 };
 // Strategies: each has its own anchor, entry and targets (strategies/)
 const FAMILY = {
+  wyckoff_range: ['Вайкофф: спринг / UTAD', 'торговый диапазон на 1h (24–168 ч) после остановки тренда; прокол края и возврат внутрь; вход на тесте (откат к спрингу, слом структуры 15m), стоп за экстремумом спринга, цель — противоположный край диапазона'],
   trend: ['продолжение тренда', 'пробой BB с ростом OI на 15m; нога по длительности (15m/1h/4h), вход на откате 0.382–0.786 по слому структуры 5m/15m/1h; цели — продолжение'],
   momentum: ['импульс', 'импульс за 5 минут с ростом OI и потоком — торгуется откат ноги, к которой он относится; нога по длительности, вход 5m/15m/1h; цели — продолжение'],
   wyckoff: ['Вайкофф-разворот', 'фазы на 15m: накопление, spring, капитуляция, распределение; вход на подтверждении или на ретесте; цели — сторона диапазона (A, B) или возврат к среднему (C, E)'],
@@ -103,8 +104,9 @@ const FAMILY = {
   oi_accum: ['набор OI (maniac)', 'OI +5% за час при росте цены не больше половины этого, OI за сутки обгоняет цену; только лонг, вход сразу; стоп 2%, тейки 4% и 6%'],
 };
 const SETUP_RU = {
-  'BULL A': 'накопление', 'BULL B': 'spring', 'BULL E': 'капитуляция', 'BEAR C': 'распределение',
-  'BULL F': 'пробой вверх', 'BEAR D': 'пробой вниз', 'IMPULSE UP': 'импульс вверх', 'IMPULSE DOWN': 'импульс вниз',
+  'BULL A': 'сжатие + рост OI (не Вайкофф)', 'BULL B': 'spring 15m (старый)', 'BULL E': 'кульминация продаж (не вход по Вайкоффу)',
+  'BEAR C': 'дивергенция дельты на хае (не Вайкофф)', 'SPRING': 'спринг Вайкоффа (1h диапазон)', 'UTAD': 'UTAD Вайкоффа (1h диапазон)',
+  'BULL F': 'закрытие над полосой Боллинджера', 'BEAR D': 'закрытие под полосой Боллинджера', 'IMPULSE UP': 'импульс вверх', 'IMPULSE DOWN': 'импульс вниз',
   'SWEEP LOW': 'сняты стопы снизу', 'SWEEP HIGH': 'сняты стопы сверху', 'FLUSH REVERSAL': 'после слива лонгов',
   'SQUEEZE REVERSAL': 'после сквиза шортов', 'ABSORB BID': 'продажи поглощены', 'ABSORB ASK': 'покупки поглощены',
   'BREAKOUT UP': 'пробой вверх', 'BREAKOUT DOWN': 'пробой вниз',
@@ -116,7 +118,7 @@ const SETUP_RU = {
 };
 const STRATEGY_OF = {
   'BULL F': 'trend', 'BEAR D': 'trend', 'IMPULSE UP': 'momentum', 'IMPULSE DOWN': 'momentum',
-  'BULL A': 'wyckoff', 'BULL B': 'wyckoff', 'BULL E': 'wyckoff', 'BEAR C': 'wyckoff',
+  'BULL A': 'wyckoff', 'BULL B': 'wyckoff', 'BULL E': 'wyckoff', 'BEAR C': 'wyckoff', 'SPRING': 'wyckoff_range', 'UTAD': 'wyckoff_range',
   'SWEEP LOW': 'sweep', 'SWEEP HIGH': 'sweep', 'ABSORB BID': 'absorption', 'ABSORB ASK': 'absorption',
   'FLUSH REVERSAL': 'exhaustion', 'SQUEEZE REVERSAL': 'exhaustion', 'BREAKOUT UP': 'breakout', 'BREAKOUT DOWN': 'breakout',
   'SD DEMAND': 'supply_demand', 'SD SUPPLY': 'supply_demand', 'AUCTION LONG': 'auction', 'AUCTION SHORT': 'auction',

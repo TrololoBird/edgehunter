@@ -121,18 +121,20 @@ def is_bear_pinbar(o: float, h: float, l: float, c: float) -> bool:
     return upper >= 0.55 * span and upper >= 2 * lower
 
 
-def in_session(ts_ms: int, session: Tuple[str, str, str]) -> bool:
-    """[start, end) of the day in the session's time zone (DST handled; windows across midnight too)."""
+def in_session(ts_ms: int, session: Tuple[str, ...]) -> bool:
+    """Inside any of the session's [start, end) windows of the day in its time zone: (tz, start, end[, start, end...])
+    (DST handled; windows across midnight too)."""
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
-    tz, start, end = session
+    tz = session[0]
     local = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone(ZoneInfo(tz))
     cur = local.hour * 60 + local.minute
-    lo = int(start[:2]) * 60 + int(start[3:])
-    hi = int(end[:2]) * 60 + int(end[3:])
-    if lo == hi:
-        return True
-    return lo <= cur < hi if lo < hi else (cur >= lo or cur < hi)
+    for start, end in zip(session[1::2], session[2::2]):
+        lo = int(start[:2]) * 60 + int(start[3:])
+        hi = int(end[:2]) * 60 + int(end[3:])
+        if lo == hi or (lo <= cur < hi if lo < hi else (cur >= lo or cur < hi)):
+            return True
+    return False
 
 
 # ------------------------------------------------------------------------------------------------ supply / demand
@@ -156,7 +158,7 @@ def _sd_departure(c15, i: int, zone: Dict, atr: float, kind: str) -> Optional[Tu
     if not confirmed:
         return None
     j = confirmed[0]
-    score = min(4.0, dist[j] / atr) + min(1.5, body / atr) + (1.0 if kind == 'order' else 0.5)
+    score = min(4.0, dist[j] / atr) + min(1.5, body / atr) + (1.0 if kind in ('order', 'base') else 0.5)
     return j, round(score, 2)
 
 
@@ -179,26 +181,23 @@ def sd_zone_events(c15: Sequence[Sequence[float]]) -> List[Dict]:
         atr = float(tr[i - cfg.sd_atr_period:i].mean())
         if not atr > 0:
             continue
-        o_, h_, l_, c_ = c15[i][1], c15[i][2], c15[i][3], c15[i][4]
-        bull_rej, bear_rej = is_bull_pinbar(o_, h_, l_, c_), is_bear_pinbar(o_, h_, l_, c_)
-        candidates = []
-        if bull_rej:
-            candidates.append((1, 'rejection'))
-        elif c_ < o_ and not bear_rej:
-            candidates.append((1, 'order'))
-        if bear_rej:
-            candidates.append((-1, 'rejection'))
-        elif c_ > o_ and not bull_rej:
-            candidates.append((-1, 'order'))
+        # Sam Seiden's base: 1-6 "boring" candles (body <= half the candle) right before the departure; demand =
+        # lowest wick (distal) to the highest body (proximal), supply mirrored. (The order-block / pinbar source of
+        # the ported code was ICT's, not Seiden's.)
+        k = i
+        while k >= 0 and i - k < 6 and c15[k][2] > c15[k][3] \
+                and abs(c15[k][4] - c15[k][1]) <= 0.5 * (c15[k][2] - c15[k][3]):
+            k -= 1
+        base = c15[k + 1:i + 1]
+        if not base:
+            continue
+        candidates = [(1, 'base'), (-1, 'base')]
         for side, kind in candidates:
-            low, high = (l_, max(o_, c_)) if side > 0 else (min(o_, c_), h_)
+            if side > 0:
+                low, high = min(x[3] for x in base), max(max(x[1], x[4]) for x in base)
+            else:
+                low, high = min(min(x[1], x[4]) for x in base), max(x[2] for x in base)
             if high <= low or high - low > cfg.sd_max_zone_atr * atr:
-                continue
-            before = c15[i - cfg.sd_prior_bars:i]
-            first_close, last_close = before[0][4], before[-1][4]
-            if side > 0 and not (first_close - last_close >= 0.75 * atr and low <= min(x[3] for x in before) + 0.3 * atr):
-                continue
-            if side < 0 and not (last_close - first_close >= 0.75 * atr and high >= max(x[2] for x in before) - 0.3 * atr):
                 continue
             zone = {'type': side, 'low': low, 'high': high}
             dep = _sd_departure(c15, i, zone, atr, kind)
@@ -214,7 +213,7 @@ def sd_zone_events(c15: Sequence[Sequence[float]]) -> List[Dict]:
         out.append({'setup': 'SD DEMAND' if side > 0 else 'SD SUPPLY', 'direction': side,
                     'setup_note': f"15m {'demand' if side > 0 else 'supply'} zone {low:.6g}-{high:.6g} "
                                   f"({kind} candle, score {score:.1f}) confirmed by a {'rally' if side > 0 else 'drop'} "
-                                  f"of {cfg.sd_min_move_atr:g}+ ATR; entry on a 5m pinbar retest",
+                                  f"of {cfg.sd_min_move_atr:g}+ ATR; entry at the proximal line, first touch only",
                     'zone_lo': low, 'zone_hi': high, 'zone_kind': kind, 'zone_score': score,
                     'anchor_level': high if side > 0 else low, 'anchor_extreme': low if side > 0 else high,
                     'anchor_label': f"{'demand' if side > 0 else 'supply'} zone ({kind})",

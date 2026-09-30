@@ -109,8 +109,10 @@ class SweepStrategy(Strategy):
         close = sig.get('anchor_close', level)
         edge = (max(close, level) if d > 0 else min(close, level)) + d * CONFIG.strategies.sweep_zone_atr * atr
         zone = sorted((extreme, edge))
-        return base_plan(x, self.name, _level_anchor(sig, '15m'), '15m', entry='pullback', zone_lo=zone[0],
-                         zone_hi=zone[1], zone_src=f"sweep of {sig.get('anchor_label', 'the level')} (5m shift)",
+        # ICT: after the sweep, displacement with a fair value gap and a structure shift; the entry is the retrace into
+        # that gap (5m), not the shift's close
+        return base_plan(x, self.name, _level_anchor(sig, '15m'), '15m', entry='pullback', trigger='fvg', zone_lo=zone[0],
+                         zone_hi=zone[1], zone_src=f"sweep of {sig.get('anchor_label', 'the level')} (5m FVG retrace)",
                          invalid=invalid,
                          fix_invalid=True, missable=True, stop_ref=extreme, intent='opposite_liquidity',
                          targets=targets, target_src=sources, zones=zones, reached=reached,

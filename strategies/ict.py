@@ -53,3 +53,65 @@ def range_position(rng: Optional[Sequence[float]], price: float, direction: int)
     pos = (price - lo) / (hi - lo)
     pos = pos if direction > 0 else 1 - pos
     return max(0.0, min(1.0, pos))
+
+
+def fvg_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int) -> Optional[dict]:
+    """
+    ICT entry after a liquidity sweep: displacement (a candle with a body >= half its range in the trade's direction)
+    that leaves a fair value gap (long: low[i] > high[i-2]) and shifts structure (a close beyond the highest high /
+    lowest low since the sweep, before the displacement); the entry is the first later candle that retraces into the
+    gap and closes without closing through it. A close through the gap kills it; the next displacement is searched.
+    """
+    start = next((k for k, x in enumerate(ltf) if x[0] + interval_ms > since_ms), None)
+    if start is None or len(ltf) - start < 4:
+        return None
+    o = [x[1] for x in ltf]
+    h = [x[2] for x in ltf]
+    l = [x[3] for x in ltf]
+    c = [x[4] for x in ltf]
+    for i in range(start + 2, len(ltf) - 1):
+        j = i - 1                                          # the displacement candle
+        body, span = abs(c[j] - o[j]), h[j] - l[j]
+        if span <= 0 or body < 0.5 * span or (c[j] - o[j]) * direction <= 0:
+            continue
+        if direction > 0:
+            if not l[i] > h[i - 2]:
+                continue
+            gap_lo, gap_hi = h[i - 2], l[i]
+            swing = max(h[start:j]) if j > start else h[start]
+            if max(c[j], c[i]) <= swing:
+                continue
+        else:
+            if not h[i] < l[i - 2]:
+                continue
+            gap_lo, gap_hi = h[i], l[i - 2]
+            swing = min(l[start:j]) if j > start else l[start]
+            if min(c[j], c[i]) >= swing:
+                continue
+        for k in range(i + 1, len(ltf)):
+            if (c[k] < gap_lo) if direction > 0 else (c[k] > gap_hi):
+                break                                      # closed through the gap: dead
+            touched = l[k] <= gap_hi if direction > 0 else h[k] >= gap_lo
+            if touched:
+                seg = ltf[start:k + 1]
+                ext = min(seg, key=lambda x: x[3]) if direction > 0 else max(seg, key=lambda x: x[2])
+                return {'entry': c[k], 'extreme': ext[3] if direction > 0 else ext[2],
+                        'time': int(ltf[k][0]) + interval_ms, 'extreme_time': int(ext[0])}
+    return None
+
+
+def touch_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int,
+                  zone_lo: float, zone_hi: float) -> Optional[dict]:
+    """
+    Sam Seiden's entry: a resting limit at the fresh zone's PROXIMAL line, filled by the first candle that trades into
+    it (at the open if it gapped past the line); the extreme is that candle's wick.
+    """
+    for x in ltf:
+        if x[0] + interval_ms <= since_ms:
+            continue
+        o, hi, lo = x[1], x[2], x[3]
+        if direction > 0 and lo <= zone_hi:
+            return {'entry': min(o, zone_hi), 'extreme': lo, 'time': int(x[0]) + interval_ms, 'extreme_time': int(x[0])}
+        if direction < 0 and hi >= zone_lo:
+            return {'entry': max(o, zone_lo), 'extreme': hi, 'time': int(x[0]) + interval_ms, 'extreme_time': int(x[0])}
+    return None

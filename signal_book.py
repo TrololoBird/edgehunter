@@ -34,7 +34,7 @@ Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CO
 """
 import copy
 import logging
-from strategies.ict import range_position
+from strategies.ict import fvg_trigger, range_position, touch_trigger
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -558,6 +558,10 @@ class SignalBook:
         kind = s.plan.get('trigger', 'shift')
         if kind == 'pinbar':
             trigger = pinbar_trigger(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
+        elif kind == 'fvg':
+            trigger = fvg_trigger(ltf, d, s.zone_since_ms, interval_ms)
+        elif kind == 'touch':
+            trigger = touch_trigger(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
         elif kind == 'ifvg':
             trigger = ifvg_trigger(ltf, d, int(s.plan.get('trigger_from_ms') or s.zone_since_ms), s.zone_since_ms,
                                    interval_ms)
@@ -595,6 +599,10 @@ class SignalBook:
         if reason:
             # Keep waiting for the next trigger after this one
             s.zone_since_ms = trigger['time']
+            if s.plan.get('single_touch'):
+                vetoed = self._enter(s, levels, now_ms, reason, confirms)
+                self._finish(s, 'EXPIRED', now_ms / 1000, f"the zone's first touch was vetoed ({reason}): no longer fresh")
+                return vetoed
         return self._enter(s, levels, now_ms, reason, confirms)
 
     @staticmethod

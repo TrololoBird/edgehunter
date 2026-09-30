@@ -21,7 +21,11 @@ RAW_B = frame(BASE + [B_CLOSE], open_=BASE + [PRIOR_LOW + 0.3], high=[c + 0.2 fo
               low=LOWS + [PRIOR_LOW - 0.5], qv=[1e5] * (N - 1) + [3e5], delta=[0.0] * (N - 1) + [-6e4])
 
 
-def test_spring_alone_alerts_and_carries_range():
+def test_spring_alone_alerts_and_carries_range(monkeypatch):
+    # the legacy 15m B / C scores (off in the deployment, replaced by strategies/wyckoff_range.py)
+    import dataclasses
+    import config as config_mod
+    monkeypatch.setattr(sc, 'cfg', dataclasses.replace(config_mod.CONFIG.metrics, legacy_wyckoff_bc=True))
     rb = last(RAW_B)
     assert rb['phase_b_active'] and rb['total_long_score'] >= 3
     sig = sc.signal_from_row(rb)
@@ -48,7 +52,11 @@ def test_accumulation_is_absorbed_selling():
     assert last(frame(tight, delta=[0.0] * (N - 10) + [3e4] * 10))['score_phase_a'] <= 1
 
 
-def test_distribution_funding_and_spot_points():
+def test_distribution_funding_and_spot_points(monkeypatch):
+    # the legacy 15m B / C scores (off in the deployment, replaced by strategies/wyckoff_range.py)
+    import dataclasses
+    import config as config_mod
+    monkeypatch.setattr(sc, 'cfg', dataclasses.replace(config_mod.CONFIG.metrics, legacy_wyckoff_bc=True))
     up = [100 + 0.1 * i for i in range(N)]
     kwargs = dict(delta=[5e3] * 70 + [-8e3] * 29, oi=[1e6 * (1 + 0.001 * i) for i in range(N)])
     rc = last(frame(up, **kwargs), funding=0.0001)

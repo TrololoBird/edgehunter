@@ -84,6 +84,9 @@ class MetricsConfig:
     # Phase B (Wyckoff spring): the prior spring_lookback candles must form a trading range no wider than this many
     # ATRs, and the sweep below its low must be shallow (at most spring_max_depth_atr ATRs) before closing back inside
     spring_range_atr: float = 6.0
+    # The 15m "B spring / C distribution" scores (5-hour windows, C without a range): off, replaced by the 1h Wyckoff
+    # range events (strategies/wyckoff_range.py)
+    legacy_wyckoff_bc: bool = False
     spring_max_depth_atr: float = 1.0
     # ... and it must be sideways: the net close-to-close move over the lookback at most this share of its high-low
     # span (a 6-ATR channel down also fits "range <= 6 ATR"; live, springs scored in such declines went the signal's
@@ -502,10 +505,12 @@ class StrategiesConfig:
     # strategy produced no card, so no entry, no confirmations and no replay were ever measured live. Setups that lost
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
-    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'sweep', 'absorption', 'exhaustion', 'breakout',
+    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'wyckoff_range', 'sweep', 'absorption', 'exhaustion', 'breakout',
                       'supply_demand', 'auction', 'smt', 'trendline', 'thirdeye', 'fib05', 'bomberman', 'csi',
                       'oi_accum')
-    disabled_setups: tuple = ()
+    # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
+    # spring's test: wyckoff_range); journaled, no card
+    disabled_setups: tuple = ('BULL E',)
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
     # a warning on the card, not a filter
     archive_negative: tuple = ('SWEEP LOW', 'SWEEP HIGH', 'BREAKOUT UP', 'BREAKOUT DOWN', 'BULL A', 'BULL B', 'BEAR C',
@@ -627,7 +632,8 @@ class StrategiesConfig:
     smt_sl_buffer_atr: float = 0.1
     smt_min_rr: float = 2.0
     smt_fallback_rr: float = 2.5
-    smt_session: tuple = ('America/New_York', '02:00', '10:00')
+    # ICT kill zones (New York time): London open 02:00-05:00 and New York open 07:00-10:00 (not one 02-10 window)
+    smt_session: tuple = ('America/New_York', '02:00', '05:00', '07:00', '10:00')
     smt_ttl: tuple = (9 * 900, 9 * 900, 8 * 3600)
     # trendline_bot (15m, sloped lines only)
     tl_lookback: int = 400
@@ -793,7 +799,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-15"
+    logic_version: str = "eng-16"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

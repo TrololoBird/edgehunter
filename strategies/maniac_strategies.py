@@ -70,7 +70,8 @@ class SupplyDemandStrategy(_System):
         zones = merge(list(x.raw_levels or []), atr)
         near = hi if d > 0 else lo
         targets, sources = select_targets(zones, near, d, atr, 'opposite_liquidity')
-        plan = base_plan(x, self.name, _anchor(sig, '15m'), '15m', entry='pullback', trigger='pinbar',
+        # Seiden: a resting limit at the proximal line, the stop beyond the distal line, the zone's FIRST touch only
+        plan = base_plan(x, self.name, _anchor(sig, '15m'), '15m', entry='pullback', trigger='touch', single_touch=True,
                          zone_lo=lo, zone_hi=hi, zone_src=f"{sig.get('anchor_label', 'zone')} (5m pinbar)",
                          # not missable: the zone is confirmed only once price left it by 2 ATR, so a target
                          # measured from the zone is often behind price already; his zone waits for the return

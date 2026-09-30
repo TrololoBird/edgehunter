@@ -229,6 +229,10 @@ class PhaseScorer:
             pl.col('long_lower_wick') &
             (pl.col('delta_ratio') < 0)
         ).fill_null(False)
+        if not self.cfg.legacy_wyckoff_bc:
+            # replaced by strategies/wyckoff_range.py (a 1h trading range after a trend's stop): a 5-hour window is no
+            # Wyckoff range
+            spring = pl.lit(False)
         return df.with_columns(
             self._points(spring, self.sc.spring_weight).alias('score_phase_b'),
             spring.alias('phase_b_active'),
@@ -255,6 +259,9 @@ class PhaseScorer:
             self._points(crowded, self.sc.distribution_crowded_weight) +
             self._points(spot_selling, self.sc.spot_perp_confirm_weight)
         )
+        if not self.cfg.legacy_wyckoff_bc:
+            # a new high on net selling is a CVD divergence, not Wyckoff's UTAD (strategies/wyckoff_range.py)
+            score, divergence = pl.lit(0), pl.lit(False)
         return df.with_columns(
             score.alias('score_phase_c'),
             divergence.fill_null(False).alias('phase_c_active'),
