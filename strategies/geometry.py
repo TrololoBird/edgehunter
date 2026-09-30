@@ -122,7 +122,8 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
             ref = extreme
         base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label)
     stop = base - direction * cfg.stop_buffer_atr * (plan.get('leg_atr') or atr)
-    floor = stop_floor(atr, plan.get('recent_atr'))
+    # the floor in the structure's own ATR too (a 1h / 4h leg's stop floored by the 15m ATR sat inside its noise)
+    floor = stop_floor(max(atr, plan.get('leg_atr') or 0.0), plan.get('recent_atr'))
     if direction * (entry - stop) < floor:
         stop = entry - direction * floor
         src = f"{src}, widened to the {cfg.min_stop_atr:g}x volatility floor"

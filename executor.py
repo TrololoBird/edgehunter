@@ -108,12 +108,12 @@ class DemoExecutor:
         if symbol is None:
             return
         ex = await self._exchange()
-        balance = await self._balance()
+        balance = min(await self._balance(), cfg.account_usd)
         stop_dist = abs(lv['entry'] - lv['sl'])
         if balance <= 0 or stop_dist <= 0:
             return
         risk_usd = balance * cfg.risk_pct / 100
-        qty = min(risk_usd / stop_dist, balance * cfg.max_leverage / lv['entry'])
+        qty = min(risk_usd / stop_dist, balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         qty = float(ex.amount_to_precision(symbol, qty))
         min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
         if qty <= 0 or qty < min_qty:

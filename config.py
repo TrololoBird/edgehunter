@@ -793,7 +793,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-12"
+    logic_version: str = "eng-13"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
@@ -831,7 +831,11 @@ class ExecutorConfig:
     enabled: bool = True
     api_key: str = ""
     api_secret: str = ""
-    risk_pct: float = 1.0           # the stop costs this share of the demo balance
+    risk_pct: float = 1.0           # the stop costs this share of account_usd
+    # Sizing base, not the demo balance: the demo holds ~330k VST, and 1% of that exceeded BingX's per-symbol position
+    # limits (5-10k USDT on XRP / TRX at 20x). R is what is compared, so the base only has to be tradable
+    account_usd: float = 10_000.0
+    max_notional_usd: float = 4_000.0
     max_leverage: int = 20
 
 
