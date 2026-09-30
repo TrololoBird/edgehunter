@@ -1,3 +1,5 @@
+from config import CONFIG
+from levels import fib_price
 from conftest import CUR15, minute
 from levels import find_impulse, fill_price, ltf_trigger, pullback_volume_ok, resample, retracement_of, simulate
 from strategies import STRATEGIES, PlanInput
@@ -25,7 +27,7 @@ def test_impulse_plan_continuation_and_reversal(rally_frame):
     assert imp and imp['end'] > 119 and imp['start'] < 101 and imp['candles'] >= 4
     plan = STRATEGIES['trend'].plan(_x(rally_frame, +1, 'BULL F'))
     assert plan['zone_lo'] < plan['zone_hi'] and plan['targets'][0] >= imp['end'] - 1e-9
-    assert plan['invalid'] == imp['start'] and plan['reset'] == imp['end'] and not plan['missable']
+    assert plan['invalid'] == fib_price(imp, CONFIG.levels.continuation_invalid) and plan['reset'] == imp['end'] and not plan['missable']
     assert 0.382 <= retracement_of(imp, 109.5) <= 0.786
     rplan = STRATEGIES['wyckoff'].plan(_x(rally_frame, -1, 'BEAR C'))
     # Targets start beyond the lowest price reached since the leg's end; the invalidation sits beyond the end

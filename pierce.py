@@ -44,3 +44,15 @@ def measured_kind(kinds: Iterable[str]) -> Optional[str]:
         if k in ZONE_KIND:
             return ZONE_KIND[k]
     return None
+
+
+def kind_of_label(label: str, tf: str = '15m') -> str:
+    """The measured kind behind a pool / level text label (pools carry labels only)."""
+    s = label or ''
+    if 'EQ' in s or 'equal' in s:
+        return 'equal'
+    if any(k in s for k in ('PDH', 'PDL', 'PWH', 'PWL', 'London', 'New York', 'Asia', 'day high', 'day low', 'week')):
+        return 'pdhl'
+    if 'round' in s:
+        return 'round'
+    return 'swing_1h' if tf in ('1h', '4h') or '1h' in s else 'swing_15m'

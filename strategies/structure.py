@@ -257,7 +257,7 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
     if now_ms - cut <= CONFIG.strategies.close_event_max_age_sec * 1000:
         from strategies.level import sweep_at_close
         pools = pools_before(candles_15m, candles_1h, atr, last_open)
-        sweep = sweep_at_close(candles_15m, pools, atr, ctx.trend)
+        sweep = sweep_at_close(candles_15m, pools, atr, ctx.trend, symbol)
         if sweep:
             ctx.events.append(sweep)
         m15 = merge_candles(m15_long, candles_15m, cut, QUARTER_MS)

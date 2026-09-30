@@ -590,7 +590,7 @@ class SignalBook:
         spring_minute = s.sig.get('fut_candle_minute_usd')
         if spring_minute is None and not s.sig.get('has_spot'):
             spring_minute = s.sig.get('candle_minute_usd')
-        if s.group_key == 'BULL B' and not pullback_volume_ok(minutes, s.zone_since_ms, trigger['time'],
+        if s.group_key in ('BULL B', 'SPRING', 'UTAD') and not pullback_volume_ok(minutes, s.zone_since_ms, trigger['time'],
                                                              spring_minute or 0.0):
             reason = 'no_spring_test'
         confirms = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, trigger['time'], trigger.get('extreme_time')) \

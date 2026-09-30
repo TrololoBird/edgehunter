@@ -19,18 +19,20 @@ live journal, fix, note the result here. No archive runs until the list is done.
       Was: Stop: protected swing + measured pierce; `kind_of_label` guesses the level kind from a text label.
 - [x] B2. FIXED (eng-23): a pool is 'just behind' when within the p90 pierce of its kind (pierce.py), no ATR maximum with the model; estimated liquidations never push.
       Was: Stop pools: which kinds push the stop (liq_est removed); the max distance of a push.
-- [ ] B3. Targets: select_targets order, the 1-ATR minimum gap, 'ATR step' fillers, primary kinds per intent.
+- [x] B3. OK: targets sit at the zone's near edge (before the level), filled 2 bp through; ATR steps only where the map is empty.
+      Was: Targets: select_targets order, the 1-ATR minimum gap, 'ATR step' fillers, primary kinds per intent.
 - [x] B4. FIXED (eng-22): the planner's cost_of uses the coin's liquidity-based slippage like the replay.
       Was: R:R: the planner uses a flat 5 bp slippage (cost_of), the replay the liquidity-based one: align.
-- [ ] B5. Zone widths in ATR (zone_half_atr, sweep_zone_atr, breakout_zone_atr): source / measurement.
+- [~] B5. Kept for now: zone widths only bound where the trigger is searched (not stop / targets); a measured width is a separate study.
+      Was: Zone widths in ATR (zone_half_atr, sweep_zone_atr, breakout_zone_atr): source / measurement.
 
 ## C. Strategies (detector -> plan -> trigger), each against its source
-- [ ] C1 trend (BB close + flow + OI; pullback: map level / EMA20 with ADX)   - [ ] C2 momentum (Tier-0 impulse)
-- [ ] C3 wyckoff legacy A / F / D (still scored)   - [ ] C4 wyckoff_range (spring / UTAD)
-- [ ] C5 sweep (pools, depth, FVG trigger)   - [ ] C6 absorption   - [ ] C7 exhaustion
-- [ ] C8 breakout (Donchian 20)   - [ ] C9 supply_demand (base, touch)   - [ ] C10 auction
-- [ ] C11 smt   - [ ] C12 trendline   - [ ] C13 thirdeye   - [ ] C14 fib05   - [ ] C15 bomberman
-- [ ] C16 csi   - [ ] C17 oi_accum
+- [x] C1 trend: FIXED (eng-24) invalid beyond 0.786 of the leg (was the leg's start: cards waited in a reversed market) (BB close + flow + OI; pullback: map level / EMA20 with ADX)   - [x] C2 momentum (same plan) (Tier-0 impulse)
+- [x] C3 wyckoff legacy A / F / D (still scored)   - [x] C4 wyckoff_range: FIXED (eng-24) Wyckoff's low-volume test applies to SPRING / UTAD (spring / UTAD)
+- [x] C5 sweep: FIXED (eng-24) the deepest sweep = the pool kind's p90 pierce (was 1 ATR) (pools, depth, FVG trigger)   - [x] C6 absorption   - [x] C7 exhaustion
+- [x] C8 breakout (Donchian 20)   - [x] C9 supply_demand (base, touch)   - [x] C10 auction
+- [x] C11 smt   - [x] C12 trendline   - [x] C13 thirdeye   - [x] C14 fib05   - [x] C15 bomberman
+- [x] C16 csi   - [x] C17 oi_accum
 
 ## D. Anomalies (Tier-0)
 - [ ] D1. Rules and thresholds (RVOL, price z, OI z, cascade, one-venue, algo), hysteresis, seasonal scaling.
@@ -44,3 +46,5 @@ live journal, fix, note the result here. No archive runs until the list is done.
 
 ## F. Data correctness
 - [ ] F1. Alt-spot 1m candles (Bybit) vs Binance spot semantics.   - [ ] F2. Seeds (flow, OKX) double counting.
+
+C6-C17 reviewed again after eng-12..eng-21 (source alignment, structural exits, oi side): no new deviation found.

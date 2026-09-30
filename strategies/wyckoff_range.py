@@ -59,7 +59,9 @@ def _event(setup: str, d: int, lo: float, hi: float, extreme: float, rng, last, 
                           f"after a {'decline' if d > 0 else 'rally'}: closed back inside; the entry waits for the test",
             'range_lo': lo, 'range_hi': hi, 'anchor_level': edge, 'anchor_extreme': extreme,
             'anchor_label': f"{r}h range {'low' if d > 0 else 'high'}", 'anchor_ts': int(rng[0][0]),
-            'anchor_close': last[4], 'event_ts': int(last[0]) + HOUR_MS}
+            'anchor_close': last[4], 'event_ts': int(last[0]) + HOUR_MS,
+            # the spring candle's average FUTURES minute: Wyckoff's test must trade on less (levels.pullback_volume_ok)
+            'fut_candle_minute_usd': float(last[5]) / 60 if len(last) > 5 else None}
 
 
 class WyckoffRangeStrategy(Strategy):

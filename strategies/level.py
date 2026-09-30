@@ -47,7 +47,8 @@ def pool_rank(label: str) -> int:
     return 1
 
 
-def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], atr: float, trend: int) -> Optional[Dict]:
+def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], atr: float, trend: int,
+                   symbol: Optional[str] = None) -> Optional[Dict]:
     """The candle that just closed took a pool and closed back beyond it on volume -> the sweep event."""
     cfg = CONFIG.strategies
     if len(candles_15m) < 21 or not atr:
@@ -67,7 +68,12 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
             depth, back = price - c[3], c[4] > price
         # one candle can take several pools: the most significant one names the sweep (a week low taken with a
         # minor 1h swing is a week-low sweep), the shallowest among equals
-        if back and lo_depth <= depth <= hi_depth and (best is None or (pool_rank(label), -depth) > (pool_rank(best[3]), -best[0])):
+        # the deepest a sweep may go: the usual pierce of this kind of level on this coin (p90, pierce.py), not
+        # 1 ATR - deeper and back is a failed breakout, not a raid of the stops just beyond
+        from pierce import kind_of_label, overshoot
+        measured = overshoot(symbol, kind_of_label(label), price, 'p90')
+        limit = measured if measured is not None else hi_depth
+        if back and lo_depth <= depth <= limit and (best is None or (pool_rank(label), -depth) > (pool_rank(best[3]), -best[0])):
             best = (depth, price, side, label)
     if best is None:
         return None

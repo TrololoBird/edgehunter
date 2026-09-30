@@ -359,6 +359,8 @@ class LevelsConfig:
     # pullback); no level and no EMA20 inside: no card ('no_level'). Automated tests found no edge in Fibonacci
     # ratios themselves (ESWA 2021): a Fibonacci-only zone was a line with nothing behind it.
     continuation_zone: tuple = (0.382, 0.618)
+    # a continuation card is INVALID once the pullback retraces deeper than this share of the leg (was the leg's start)
+    continuation_invalid: float = 0.786
     continuation_targets: tuple = (1.0, 1.272, 1.618)
     # Reversal: price must still be within this retracement of the reversed leg's end (accumulation: a bit wider)
     reversal_zone_max: float = 0.236
@@ -811,7 +813,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-23"
+    logic_version: str = "eng-24"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

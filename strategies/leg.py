@@ -107,7 +107,11 @@ class LegContinuation(Strategy):
         tf = impulse['tf']
         return base_plan(x, self.name, _leg_anchor(impulse), tf, trigger_minutes=TRIGGER_MINUTES.get(tf, 5),
                          leg_atr=impulse['atr'], entry='pullback', zone_lo=zone[0], zone_hi=zone[1], zone_src=zone_src,
-                         invalid=impulse['start'], reset=impulse['end'], missable=False, retarget=True,
+                         # a pullback deeper than 0.786 of the leg is the trend's failure (the classic last line of
+                         # a Fibonacci pullback; the zone is 0.382-0.618), not a deeper entry: the leg's start was the
+                         # invalidation, so a card kept waiting in a reversed market
+                         invalid=fib_price(impulse, CONFIG.levels.continuation_invalid), reset=impulse['end'],
+                         missable=False, retarget=True,
                          stop_ref=stop_ref, stop_ref_src=stop_ref_src,
                          intent='extension', fillers=tuple(extensions), fill_label='fib ext', targets=targets,
                          target_src=sources, zones=zones, key=(impulse['end_ts'], impulse['end']), impulse=impulse)
