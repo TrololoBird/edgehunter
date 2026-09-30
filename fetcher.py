@@ -1602,13 +1602,16 @@ class DataFetcher:
         # opposite side liquidated in the same 5 minutes). A sweep whose size is mostly forced flow of its side in
         # the same seconds is no whale decision: left out of the whale book (Binance's forceOrder feed is sampled,
         # Bybit's / OKX's complete - the check misses some forced flow, never adds any).
-        from flow import LIQ_LONG, LIQ_SHORT
-        forced = self.flow.symbol_range(sweep.symbol, LIQ_SHORT if sweep.side > 0 else LIQ_LONG,
-                                        int(sweep.t_first // 1000) - 1, int(sweep.t_last // 1000) + 2,
-                                        now_sec=int(sweep.t_last // 1000) + 1)
-        if forced >= CONFIG.sweeps.forced_share * sweep.usd:
-            return
-        whale, _ = self.whales.thresholds(sweep.symbol)
+        # Checked only for sweeps big enough to count (notable / whale size): thousands of small sweeps a second each
+        # read every venue's ring, and with the machine short of RAM those reads paged and stalled the loop
+        whale, notable = self.whales.thresholds(sweep.symbol)
+        if sweep.usd >= (notable or whale):
+            from flow import LIQ_LONG, LIQ_SHORT
+            forced = self.flow.symbol_range(sweep.symbol, LIQ_SHORT if sweep.side > 0 else LIQ_LONG,
+                                            int(sweep.t_first // 1000) - 1, int(sweep.t_last // 1000) + 2,
+                                            now_sec=int(sweep.t_last // 1000) + 1)
+            if forced >= CONFIG.sweeps.forced_share * sweep.usd:
+                return
         self.whales.add(sweep)
         if sweep.usd >= whale and sweep.venue == 'binance':
             ratio = self.depth.sweep_vs_depth(sweep.symbol, sweep.usd, sweep.side)
