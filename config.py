@@ -507,7 +507,8 @@ class StrategiesConfig:
                       'oi_accum')
     # Single setups whose cards are off (journaled with vetoed='disabled'): proven to lose net of costs (BH q <= 0.10)
     # on the same card replay (research/phases_6m.md, 6 months x 357 coins): BEAR C -0.24R, BULL A -0.20R, BULL F
-    # -0.25R, BULL B -0.14R, IMPULSE UP -0.29R, BEAR D -0.19R. BULL E (+0.32R, 45 entries) and IMPULSE DOWN (+0.06R)
+    # -0.25R, BULL B -0.14R, IMPULSE UP -0.29R, BEAR D -0.19R. BULL E (+0.32R, 45 entries; -0.17R on 171 entries over
+    # 12 months after the MTF fix, research/cards_fixed_12m.md) and IMPULSE DOWN (+0.06R)
     # are not proven either way and stay on (with absorption / exhaustion, which the archive cannot replay).
     disabled_setups: tuple = ('BULL A', 'BULL B', 'BEAR C', 'BULL F', 'BEAR D', 'IMPULSE UP')
     # 1h candles of every coin (fetcher._hourly_candles_loop): ~8 days for the weekly / daily / session pools
