@@ -63,3 +63,7 @@ def all_strategies_enabled(monkeypatch):
     from strategies import STRATEGIES
     monkeypatch.setattr(config_mod.CONFIG, 'strategies', dataclasses.replace(
         config_mod.CONFIG.strategies, enabled=tuple(STRATEGIES), disabled_setups=()))
+    # the lifecycle fixtures were built for R:R 1 and no confirmation minimum (the deployment's thresholds are policy)
+    monkeypatch.setattr(config_mod.CONFIG, 'levels', dataclasses.replace(config_mod.CONFIG.levels, min_rr_tp1=1.0))
+    monkeypatch.setattr(config_mod.CONFIG, 'orderflow', dataclasses.replace(config_mod.CONFIG.orderflow,
+                                                                            min_confirmations=0))

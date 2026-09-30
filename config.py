@@ -292,6 +292,8 @@ class OrderflowConfig:
     # independent results (15m clusters) and a 90% interval of the 4h Edge entirely below 0 (journal, hourly)
     promote_confirmations: bool = True
     promote_min_clusters: int = 30
+    # an entry needs at least this many positive confirmations (flow / spot / oi / orderflow); 0 = off
+    min_confirmations: int = 1
 
 
 @dataclass(frozen=True)
@@ -379,7 +381,8 @@ class LevelsConfig:
     min_stop_atr: float = 1.0
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
     # (vetoed='low_rr') and the card keeps waiting, so the screen only shows entries worth taking by hand
-    min_rr_tp1: float = 1.0
+    # 2:1, the practitioners' minimum for intraday trades (breakeven win rate 33% before costs); was 1.0
+    min_rr_tp1: float = 2.0
     veto_low_rr: bool = True
     # Manual execution: the journal replays entries filled this long after the trigger, plus slippage
     fill_delay_sec: int = 30
@@ -808,7 +811,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-20"
+    logic_version: str = "eng-21"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

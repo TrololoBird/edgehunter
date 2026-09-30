@@ -325,8 +325,10 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     tp3 = tp2 + direction * gap
     fee = cost_of(entry)
     rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
+    # our minimum applies to the ported systems too (their own flag only knew the author's R:R rule: REZ FIB 0.5 was
+    # entered at 0.74)
     return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
-            'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': low,
+            'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': low or rr1 < CONFIG.levels.min_rr_tp1,
             'tp1_src': src1, 'tp2_src': src2, 'tp3_src': 'ATR step', 'sl_src': sl_src}
 
 
