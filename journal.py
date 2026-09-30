@@ -531,7 +531,8 @@ class SignalJournal:
                              f"{tracked.status} {tracked.group_key}", tracked.direction, price, tracked.sig)
         targets = plan.get('targets') or []
         sources = plan.get('target_src') or []
-        row.update({'reason': tracked.finish_reason, 'setup_ts_ms': int(tracked.created * 1000),
+        notes = getattr(tracked, 'veto_notes', None) or []
+        row.update({'reason': tracked.finish_reason + (f" | {notes[-1]}" if notes else ''), 'setup_ts_ms': int(tracked.created * 1000),
                     'strategy': tracked.mode, 'anchor': _anchor_json(tracked.plan),
                     'zone_src': plan.get('zone_src'), 'perp_led': 0,
                     'entry': lv.get('entry'), 'sl': lv.get('sl'),

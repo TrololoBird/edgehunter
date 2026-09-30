@@ -707,7 +707,8 @@ function drawCoin(fit) {
       ${c.levels ? `<span>вход / стоп</span><span>${fp(c.levels.entry)} / ${fp(c.levels.sl)} <span class="src">${esc(c.levels.sl_src || '')}</span></span>` : ''}
       ${c.sizing ? `<span>позиция</span><span>${sizingText(c.sizing)}</span>` : ''}
       <span>цели</span><span>${targetsCell(c.levels ? [c.levels.tp1, c.levels.tp2, c.levels.tp3] : c.targets, c.levels ? [c.levels.tp1_src, c.levels.tp2_src, c.levels.tp3_src] : c.target_src)}</span>
-      ${c.vetoed_triggers ? `<span>отсеяно</span><span>${c.vetoed_triggers}${c.veto_log.length ? ': ' + esc(vetoRu([...new Set(c.veto_log)].join(','))) : ''}</span>` : ''}</div>`;
+      ${c.vetoed_triggers ? `<span>отсеяно</span><span>${c.vetoed_triggers}${c.veto_log.length ? ': ' + esc(vetoRu([...new Set(c.veto_log)].join(','))) : ''}</span>` : ''}
+      ${(c.veto_notes || []).length ? `<span title="стоп за структурой не окупается целью: почему сигнал возник в этой точке">стоп далеко</span><span class="src">${esc(c.veto_notes[c.veto_notes.length - 1])}</span>` : ''}</div>`;
   }
   body += scenarioHtml(d.scenario, d.price);
   body += `<h3>Карта уровней <small>ближайшие к цене; сила = сумма весов источников</small></h3>` +

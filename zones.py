@@ -434,7 +434,9 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
     within max_stop_atr ATR. Returns (base price before the ATR buffer, label).
     """
     cfg = CONFIG.zones
-    behind = [z for z in zones if is_pool(z)
+    # Real resting stops only: an ESTIMATED liquidation cluster is a model, not orders (live eng-6: stops pushed beyond
+    # one were the widest, 3.4% median, -0.16R, and 0 of 22 stopped trades reached TP1 afterwards)
+    behind = [z for z in zones if any(k in POOL_KINDS and k != 'liq_est' for k in z.kinds)
               and 0 <= direction * (invalidation - (z.lo if direction > 0 else z.hi)) <= cfg.stop_pool_atr * atr]
     if behind:
         far = min(behind, key=lambda z: z.lo) if direction > 0 else max(behind, key=lambda z: z.hi)

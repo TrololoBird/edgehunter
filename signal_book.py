@@ -114,6 +114,8 @@ class TrackedSignal:
     vetoed_triggers: int = 0
     # Veto reasons of the triggers skipped so far, and why / where the card finished
     veto_log: list = field(default_factory=list)
+    # Why a far stop did not pay (low_rr): stop / TP1 / the entry's distance from the zone's edge, the last few
+    veto_notes: list = field(default_factory=list)
     finish_reason: Optional[str] = None
     finish_price: Optional[float] = None
     # First plan taken (anchor checked, opposite card closed); the fixed target reference and invalidation; whether
@@ -633,6 +635,15 @@ class SignalBook:
             vetoed.levels, vetoed.entered_at, vetoed.vetoed = levels, entered_at, reason
             vetoed.of_confirm, vetoed.confirms = of, dict(confirms)
             s.vetoed_triggers += 1
+            if reason == 'low_rr' and levels.get('entry'):
+                # A stop that far does not pay: the question is why the signal came here (entry vs the zone's edge)
+                e = levels['entry']
+                edge = (s.plan or {}).get('zone_lo' if s.direction > 0 else 'zone_hi')
+                text = (f"low_rr: stop {abs(e - levels['sl']) / e:.2%} ({levels.get('sl_src')}), "
+                        f"TP1 {abs(levels['tp1'] - e) / e:.2%} ({levels.get('tp1_src')})"
+                        + (f", entry {abs(e - edge) / e:.2%} from the zone edge ({levels.get('zone_src')})"
+                           if edge else ''))
+                s.veto_notes = (s.veto_notes + [text])[-5:]
             s.veto_log.append(reason)
             return vetoed
         s.levels, s.entered_at, s.status, s.of_confirm, s.confirms = levels, entered_at, 'ENTRY', of, dict(confirms)

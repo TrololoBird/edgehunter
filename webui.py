@@ -227,7 +227,7 @@ def card_view(s, now: float) -> Dict:
         'levels': {k: (v if isinstance(v, str) else _num(v)) for k, v in lv.items()} if lv else None,
         'sizing': sizing_view(lv, s.direction, s.sig.get('funding_rate')) if lv else None,
         'r_now': _num(s.r_now), 'best_target': s.best_target, 'final_r': _num(s.final_r),
-        'vetoed_triggers': s.vetoed_triggers, 'veto_log': list(s.veto_log), 'of_confirm': s.of_confirm,
+        'vetoed_triggers': s.vetoed_triggers, 'veto_log': list(s.veto_log), 'veto_notes': list(s.veto_notes), 'of_confirm': s.of_confirm,
         'confirms': s.confirms, 'required': list(confirm.required(s.mode)), 'crowd': s.sig.get('market_crowd'),
         'why': explain(s.group_key, s.sig), 'sig': _sig_view(s.sig),
     }

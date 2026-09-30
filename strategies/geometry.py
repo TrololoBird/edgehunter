@@ -28,6 +28,50 @@ def cost_of(price: float) -> float:
     return (CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4) * price
 
 
+_OVERSHOOT: Optional[Dict] = None
+
+
+def _overshoot_model() -> Dict:
+    global _OVERSHOOT
+    if _OVERSHOOT is None:
+        import json
+        import os
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', 'overshoot.json')
+        try:
+            with open(path, encoding='utf-8') as f:
+                _OVERSHOOT = json.load(f)
+        except (OSError, ValueError):
+            _OVERSHOOT = {}
+    return _OVERSHOOT
+
+
+def overshoot(symbol: Optional[str], kind: str, price: float) -> Optional[float]:
+    """
+    Stop buffer beyond a level, measured: how far price pierces a level of this kind on this coin before turning back
+    (p80 of rejections, research_overshoot.py -> models/overshoot.json; the coin's own figure when it has >= 20
+    rejections, else all coins'). In price units; None without the model (then the old ATR rule applies).
+    """
+    model = _overshoot_model()
+    if not model:
+        return None
+    kind = kind if kind in ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'round') else 'swing_15m'
+    row = ((model.get('coins') or {}).get(symbol) or {}).get(kind) or (model.get('global') or {}).get(kind) or {}
+    p80 = row.get('p80')
+    return price * p80 / 100 if p80 else None
+
+
+def kind_of_label(label: str, tf: str) -> str:
+    """The level kind behind a stop's source label (for its measured buffer)."""
+    s = label or ''
+    if 'EQ' in s:
+        return 'equal'
+    if any(k in s for k in ('PDH', 'PDL', 'PWH', 'PWL', 'London', 'New York', 'Asia', 'day high', 'day low')):
+        return 'pdhl'
+    if 'round' in s:
+        return 'round'
+    return 'swing_1h' if tf in ('1h', '4h') or '1h' in s else 'swing_15m'
+
+
 def stop_floor(atr: float, recent_atr: Optional[float]) -> float:
     """Minimum stop distance: min_stop_atr x the larger of ATR14 and the last hour's ATR (ATR14 lags a waking market)."""
     return CONFIG.levels.min_stop_atr * max(atr, recent_atr or 0.0)
@@ -121,6 +165,12 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
                 label = 'beyond the test wick'
             ref = extreme
         base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label)
+    measured = overshoot(plan.get('symbol'), kind_of_label(src, plan.get('tf', '15m')), base)
+    if measured is not None:
+        # the measured pierce of this kind of level on this coin, no ATR constants: a stop closer than where price
+        # usually pierces before turning back is inside the level's noise; a stop so far that it does not pay is a
+        # wrong entry (low_rr), not a reason to move it closer
+        return base - direction * measured, f"{src} + measured pierce {measured / base:.2%}"
     stop = base - direction * cfg.stop_buffer_atr * (plan.get('leg_atr') or atr)
     # the floor in the structure's own ATR too (a 1h / 4h leg's stop floored by the 15m ATR sat inside its noise)
     floor = stop_floor(max(atr, plan.get('leg_atr') or 0.0), plan.get('recent_atr'))
@@ -175,7 +225,8 @@ def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: in
     return t, s, direction * (t - entry) / risk < spec[1]
 
 
-def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, floor: float) -> Optional[Tuple[float, str]]:
+def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, floor: float,
+                   symbol: Optional[str] = None, tf: str = '15m') -> Optional[Tuple[float, str]]:
     """
     Stop beyond the nearest price-action structure on the stop side (swings, equal highs / lows, previous day / week /
     sessions, range edges, round numbers, book bands) that leaves at least `floor` of risk, pushed beyond a stop pool
@@ -183,18 +234,26 @@ def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, 
     then the fixed rule is all there is).
     """
     cfg = CONFIG.levels
-    buffer = cfg.stop_buffer_atr * atr
     cands = []
     for z in zones:
         if not any(k in STRUCTURE_KINDS for k in z.kinds):
             continue
         edge = z.lo if direction > 0 else z.hi
-        dist = direction * (entry - edge) + buffer
-        if dist >= floor and dist <= CONFIG.zones.max_stop_atr * atr:
-            cands.append((dist, edge, z))
+        if direction * (entry - edge) <= 0:
+            continue
+        kind = next((k for k in z.kinds if k in ('equal', 'pdhl', 'round', 'swing_1h', 'swing_15m')), 'swing_15m')
+        measured = overshoot(symbol, kind, edge)
+        if measured is not None:
+            # measured buffer; no minimum and no maximum: a structure too far away makes the entry low_rr
+            cands.append((direction * (entry - edge) + measured, edge, z, measured))
+        else:
+            buffer = cfg.stop_buffer_atr * atr
+            dist = direction * (entry - edge) + buffer
+            if floor <= dist <= CONFIG.zones.max_stop_atr * atr:
+                cands.append((dist, edge, z, buffer))
     if not cands:
         return None
-    _, edge, z = min(cands, key=lambda c: c[0])
+    _, edge, z, buffer = min(cands, key=lambda c: c[0])
     base, src = stop_beyond(zones, edge, entry, direction, atr, f"beyond {z.label}")
     return base - direction * buffer, src
 
@@ -213,13 +272,14 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     zones: List[Zone] = plan.get('zones') or []
     fixed_stop = exit['stop'][0] in ('pct', 'atr')
     fixed_tp = exit['tp'][0] in ('pct', 'rr')
-    structural = structure_stop(zones, entry, direction, atr, floor) if fixed_stop else None
+    structural = structure_stop(zones, entry, direction, atr, floor, plan.get('symbol'), plan.get('tf', '15m')) \
+        if fixed_stop else None
     if structural is not None:
         stop, sl_src = structural
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
     risk = direction * (entry - stop)
-    if 0 < risk < floor:
+    if 0 < risk < floor and not _overshoot_model():
         stop, risk = entry - direction * floor, floor
         sl_src = f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
     if fixed_tp and zones:
