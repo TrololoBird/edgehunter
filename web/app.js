@@ -663,6 +663,11 @@ function drawCoin(fit) {
     const strong = z.strength >= 2;
     line(z.price, KIND_COLORS[kind] || '#888', strong ? z.label.split(' · ')[0] : '', strong ? 0 : 2, z.strength >= 4 ? 2 : 1, strong);
   }
+  // order-book densities that stayed and price has not reached yet (webui.untaken_densities)
+  for (const den of d.densities || []) {
+    const usd = den.usd >= 1e6 ? (den.usd / 1e6).toFixed(1) + 'M' : (den.usd / 1e3).toFixed(0) + 'k';
+    line(den.price, den.side > 0 ? '#2ecc71' : '#ff5c5c', `плотн. ${den.side > 0 ? 'bid' : 'ask'} $${usd}`, 1, 2);
+  }
   const card = (d.cards || []).find(c => !c.finished) || (d.cards || [])[0];
   if (card) {
     if (card.zone && card.zone[0] && !card.entered_at) { line(card.zone[0], '#f5c542', 'зона', 1, 2); line(card.zone[1], '#f5c542', 'зона', 1, 2); }
@@ -751,22 +756,25 @@ function drawHeat() {
   }
   const spacing = chart.timeScale().options().barSpacing;
   const plotWidth = box.width - chart.priceScale('right').width();
-  let max = 0;
+  // brightness = the bucket against the MEDIAN bucket of its own bar: only real densities light up (scaled to one
+  // screen-wide maximum, every bucket of a deep book looked alike)
   const cells = [];
   for (const [t, bar] of bars) {
     const x = chart.timeScale().timeToCoordinate(t); if (x === null) continue;
+    const vals = [...bar.v.values()].map(v => Math.abs(v / bar.n)).sort((a, b) => a - b);
+    const med = vals.length ? vals[Math.floor(vals.length / 2)] : 0;
+    if (!med) continue;
     for (const [price, sum] of bar.v) {
       const usd = sum / bar.n;
       const y1 = series.priceToCoordinate(price + hm.step / 2), y2 = series.priceToCoordinate(price - hm.step / 2);
       if (y1 === null || y2 === null) continue;
-      cells.push([x, y1, y2, usd]); max = Math.max(max, Math.abs(usd));
+      cells.push([x, y1, y2, usd, Math.abs(usd) / med]);
     }
   }
-  if (!max) return;
-  for (const [x, y1, y2, usd] of cells) {
-    if (x - spacing / 2 > plotWidth) continue;
-    const a = Math.min(0.55, Math.pow(Math.abs(usd) / max, 0.6) * 0.55);
-    if (a < 0.03) continue;
+  for (const [x, y1, y2, usd, ratio] of cells) {
+    if (x - spacing / 2 > plotWidth || ratio < 2) continue;
+    const a = Math.min(0.7, 0.18 * Math.log2(ratio));
+    if (a < 0.05) continue;
     ctx.fillStyle = usd > 0 ? `rgba(46,204,113,${a})` : `rgba(255,92,92,${a})`;
     ctx.fillRect(x - spacing / 2, Math.min(y1, y2), spacing, Math.max(1, Math.abs(y2 - y1)));
   }

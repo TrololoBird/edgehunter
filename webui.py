@@ -376,6 +376,51 @@ class JournalReader:
 
 # ---------------------------------------------------------------------------------------------------- server
 
+def untaken_densities(snapshots, candles_15m, price, hours: int = 24, multiple: float = 2.5,
+                      presence: float = 0.6, keep: int = 4):
+    """
+    Order-book densities that STAYED and price has not reached since they appeared: per snapshot of the last `hours`,
+    the price buckets holding >= `multiple` x that snapshot's median bucket; a bucket that did so in >= `presence` of
+    the snapshots since it first did (at least 6) is a density; untaken = no 15m candle traded through it since. The
+    `keep` largest per side: [{price, side +1 bid / -1 ask, usd, since_ms}] (what the chart's heat should point at,
+    not every bucket shaded alike).
+    """
+    import statistics
+    if not snapshots or not price:
+        return []
+    cutoff = snapshots[-1][0] - hours * 3_600_000
+    recent = [s for s in snapshots if s[0] >= cutoff]
+    seen = {}                              # price -> [first ms, hits, usd sum, side sum, snapshots since first]
+    for ts, cells in recent:
+        if not cells:
+            continue
+        med = statistics.median(abs(v) for _, v in cells) or 0.0
+        big = {round(p, 10): v for p, v in cells if med and abs(v) >= multiple * med}
+        for p in list(seen):
+            seen[p][4] += 1
+        for p, v in big.items():
+            row = seen.setdefault(p, [ts, 0, 0.0, 0, 0])
+            if row[4] == 0:
+                row[4] = 1
+            row[1] += 1
+            row[2] += abs(v)
+            row[3] += 1 if v > 0 else -1
+    out = []
+    for p, (first, hits, usd, side, n) in seen.items():
+        if hits < 6 or hits < presence * n:
+            continue
+        s = 1 if side > 0 else -1
+        after = [c for c in candles_15m if c[0] + 900_000 > first]
+        if s > 0 and (p >= price or any(c[3] <= p for c in after)):
+            continue                       # a bid density price already reached (or above price: not support)
+        if s < 0 and (p <= price or any(c[2] >= p for c in after)):
+            continue
+        out.append({'price': p, 'side': s, 'usd': usd / hits, 'since_ms': int(first)})
+    bids = sorted((d for d in out if d['side'] > 0), key=lambda d: -d['usd'])[:keep]
+    asks = sorted((d for d in out if d['side'] < 0), key=lambda d: -d['usd'])[:keep]
+    return bids + asks
+
+
 class WebUI:
     def __init__(self, scanner):
         self.scanner = scanner
@@ -491,6 +536,11 @@ class WebUI:
                                      'snapshots': past['snapshots'] + live['snapshots']}
         except Exception as e:
             logging.getLogger(__name__).warning(f"Heatmap history of {symbol}: {type(e).__name__} {e}")
+        try:
+            detail['densities'] = untaken_densities((detail.get('heatmap') or {}).get('snapshots') or [],
+                                                    detail.get('candles_15m') or [], detail.get('price'))
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Densities of {symbol}: {type(e).__name__} {e}")
         return self._json(detail)
 
     async def _history(self, request):
