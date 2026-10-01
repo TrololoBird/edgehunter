@@ -235,9 +235,12 @@ class SignalBook:
         # cards of an older signal logic (restored from the state): an entered one closes at market, a waiting one
         # expires - their stops / targets / filters are not the current rules (live 2026-10-01: an eng-7 auction card
         # with 0 confirmations and ATR-step targets still traded beside eng-35 cards)
-        for old in [o for o in self.signals.values() if not o.finished and o.logic_version != CONFIG.journal.logic_version]:
-            reason = f"closed at start: opened by the older signal logic {old.logic_version or '<eng-35'}"
-            self._finish(old, 'CLOSED' if old.entered_at else 'EXPIRED', now, reason)
+        # An ENTERED one keeps its trade to the end under its own levels (eng-43: closing every trade at each version
+        # bump left the demo with almost no finished trades); only a WAITING card of an older logic expires
+        for old in [o for o in self.signals.values() if not o.finished and not o.entered_at
+                    and o.logic_version != CONFIG.journal.logic_version]:
+            reason = f"expired at start: a waiting card of the older signal logic {old.logic_version or '<eng-35'}"
+            self._finish(old, 'EXPIRED', now, reason)
 
         candidates = []
         directional: List[Tuple[int, Dict]] = []

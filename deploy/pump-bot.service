@@ -1,0 +1,23 @@
+[Unit]
+Description=Microstructure Scanner (pump bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pump
+WorkingDirectory=/opt/pump
+ExecStart=/opt/pump/.venv/bin/python main.py
+# main.py shuts down gracefully on SIGTERM (saves cards / state, closes the journal); give it time
+KillSignal=SIGTERM
+TimeoutStopSec=90
+Restart=on-failure
+RestartSec=20
+# the bot is network-bound: a VPS without swap pauses the loop when RAM runs out (see deploy/README.md)
+MemoryHigh=2G
+Nice=-2
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

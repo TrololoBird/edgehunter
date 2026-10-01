@@ -548,6 +548,9 @@ class SignalJournal:
         plan = tracked.plan or {}
         row = self._base_row(int((tracked.finished_at or time.time()) * 1000), tracked.symbol, 'card',
                              f"{tracked.status} {tracked.group_key}", tracked.direction, price, tracked.sig)
+        # the card belongs to the logic that opened it (a trade kept across a version bump finishes under its version)
+        if getattr(tracked, 'logic_version', None):
+            row['logic_version'] = tracked.logic_version
         targets = plan.get('targets') or []
         sources = plan.get('target_src') or []
         notes = getattr(tracked, 'veto_notes', None) or []
