@@ -197,3 +197,30 @@ def test_state_save_and_restore(tmp_path, monkeypatch):
     sc2 = scanner_with({})
     sc2._load_state()
     assert sc2.fetcher.whales.hist['A'].sum() == 1 and sc2.book.session_results['TP2'] == 1
+
+
+def test_build_maps_worker_path_returns_a_context():
+    """
+    The maps worker end to end (build_raw -> merge -> build_context with the long histories and an SMT correlate):
+    live 2026-10-01 a variable read one line before its assignment failed EVERY coin's context for 5 hours (no
+    sweep / breakout / Wyckoff / ported-system events) while the error went to the worker's console only.
+    """
+    import time
+    import numpy as np
+    import polars as pl
+    from strategies.structure import PART_COLUMNS, build_maps
+    rng = np.random.default_rng(1)
+    n = 400
+    now = int(time.time() * 1000) // 900_000 * 900_000
+    ts = [now - (n - i) * 900_000 for i in range(n)]
+    p = 100 * np.exp(np.cumsum(rng.normal(0, 0.004, n)))
+    o = np.r_[100, p[:-1]]
+    h, l, q = np.maximum(o, p) * 1.002, np.minimum(o, p) * 0.998, np.full(n, 1e6)
+    data = {'timestamp': ts, 'open': o, 'high': h, 'low': l, 'close': p, 'quote_volume': q, 'taker_delta': q * 0.1,
+            'atr': np.full(n, 0.4)}
+    part = pl.DataFrame({c: data.get(c, np.zeros(n)) for c in PART_COLUMNS})
+    h1 = [[ts[i], o[i], h[i:i + 4].max(), l[i:i + 4].min(), p[i + 3], 4e6, 2e6] for i in range(0, n - 4, 4)]
+    m15 = np.array([[ts[i], o[i], h[i], l[i], p[i], q[i], q[i] / 2] for i in range(n)])
+    job = ('X/USDT:USDT', part, h1, [], [], [], now + 60_000, [], True, m15, np.array(h1))
+    raw, context = build_maps([job], {'BTC': m15, 'ETH': m15})['X/USDT:USDT']
+    assert raw and context is not None

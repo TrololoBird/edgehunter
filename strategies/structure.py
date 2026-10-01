@@ -30,6 +30,7 @@ class Context:
     trend: int                               # the coin's 1h trend: +1 up, -1 down, 0 none
     tail: List[List[float]] = field(default_factory=list)   # the last 24 closed 15m candles
     events: List[Dict] = field(default_factory=list)       # setups of the candle that just closed
+    smt_pair: Optional[str] = None                          # the SMT correlate (corr >= smt_min_correlation), None = none
 
     @property
     def vol_ratio(self) -> float:
@@ -295,15 +296,17 @@ def pick_correlate(symbol: str, m15, corr: Dict[str, list]) -> Optional[list]:
     """
     import numpy as np
     if symbol.startswith('BTC/'):
+        pick_correlate.last_name = 'ETH'
         return corr.get('ETH')
     if symbol.startswith('ETH/'):
+        pick_correlate.last_name = 'BTC'
         return corr.get('BTC')
     # only a pair correlated >= smt_min_correlation (crypto SMT guides: > 0.7), else no SMT for the coin
     best, best_r = None, CONFIG.strategies.smt_min_correlation
     own = {int(c[0]): c[4] for c in list(m15)[-201:]}
-    for name in ('BTC', 'ETH'):
+    for name in ('BTC', 'ETH', 'SOL'):
         other = corr.get(name)
-        if not other:
+        if not other or symbol.startswith(name + '/'):     # never the coin itself (SOL vs SOL: r = 1)
             continue
         ref = {int(c[0]): c[4] for c in other[-201:]}
         ts = sorted(set(own) & set(ref))
@@ -315,6 +318,7 @@ def pick_correlate(symbol: str, m15, corr: Dict[str, list]) -> Optional[list]:
             r = float(np.corrcoef(a, b)[0, 1])
             if r > best_r:
                 best, best_r = other, r
+                pick_correlate.last_name = name
     return best
 
 
@@ -342,10 +346,13 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
             if with_context:
                 m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
                 # after m15 exists (eng-16 read it one line early: every coin's context failed, no worker events)
+                pick_correlate.last_name = None
                 correlate = pick_correlate(symbol, m15 or candles, corr)
                 h1l = h1_long.tolist() if hasattr(h1_long, 'tolist') else list(h1_long)
                 context = build_context(candles, candles_1h, atr, merge(raw, atr, symbol=symbol), now_ms, symbol=symbol,
                                         m15_long=m15, h1_long=h1l, corr=correlate)
+                if context is not None:
+                    context.smt_pair = pick_correlate.last_name if correlate is not None else None
             else:
                 context = None
         except Exception as e:

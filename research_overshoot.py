@@ -143,6 +143,8 @@ def main():
     ap.add_argument('--workers', type=int, default=1)
     ap.add_argument('--end', default=None)
     ap.add_argument('--min-volume', type=float, default=3e6)
+    ap.add_argument('--model-out', default=os.path.join('models', 'overshoot.json'),
+                    help="where the model goes (an archive replay's pre-window model: models/overshoot_pre.json)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
     from history import Archive
@@ -190,7 +192,7 @@ def main():
         cover = float(np.mean(np.array(new) <= p80_old)) if old and new else None
         rows.append((k, len(v), breaks[k][1] / max(1, breaks[k][0]), pct(v, 50), pct(v, 80), pct(v, 90), p80_old, cover))
     os.makedirs('models', exist_ok=True)
-    with open(os.path.join('models', 'overshoot.json'), 'w', encoding='utf-8') as f:
+    with open(args.model_out, 'w', encoding='utf-8') as f:
         json.dump(model, f, indent=1)
     lines = [f"# Level overshoot before a rejection ({len(results)} coins, {start} .. {end})", '',
              'Depth = how far beyond the level price traded before a 15m close back within 1h, % of the level. '

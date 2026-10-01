@@ -1722,27 +1722,32 @@ class DataFetcher:
         start = max(extreme_ms if extreme_ms is not None else since_ms, until_ms - confirm.HOUR_MS)
         a, b, now_sec = int(start // 1000), int(until_ms // 1000), int(time.time())
 
-        def venue_delta(venues) -> float:
+        def venue_delta(venues) -> Optional[float]:
+            """Net taker USD of the venues whose ring covers the window; None when none does (no reading, not 0)."""
             row = self.flow.rows.get(symbol)
             if row is None:
-                return 0.0
-            total = 0.0
+                return None
+            total, counted = 0.0, 0
             for v in venues:
                 vf = self.flow.venues.get(v)
-                if vf is None:
+                # a venue whose ring is shorter than the window (Bitget / Hyperliquid / spot venues keep 15 min)
+                # would add only its last part: left out rather than a partial sum skewing the total
+                if vf is None or b - a > vf.H:
                     continue
                 total += vf.row_range_sum(BUY, row, a, b, now_sec) - vf.row_range_sum(SELL, row, a, b, now_sec)
-            return total
+                counted += 1
+            return total if counted else None
 
         flow_usd = venue_delta(FUTURES_VENUES)
         spot_usd = None
         if spot is not None:
             if self.needs_alt_spot(symbol):
+                # None (the 15-min spot rings do not cover the window) -> evaluate() reads the Bybit-built 1m candles
                 spot_usd = venue_delta(('bybit_spot', 'coinbase'))
             else:
-                spot_usd = confirm.delta(spot, start, until_ms) + venue_delta(('coinbase',))
+                spot_usd = confirm.delta(spot, start, until_ms) + (venue_delta(('coinbase',)) or 0.0)
         out = confirm.evaluate(strategy, direction, list(md.minute_klines), spot, oi, since_ms, until_ms,
-                               extreme_ms, orderflow, flow_usd=flow_usd or None, spot_usd=spot_usd)
+                               extreme_ms, orderflow, flow_usd=flow_usd, spot_usd=spot_usd)
         # the window the readings were taken over (journaled: a REST check can recompute them exactly)
         out['_window'] = [int(since_ms), int(until_ms), int(extreme_ms) if extreme_ms is not None else None]
         return out

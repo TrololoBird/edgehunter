@@ -97,7 +97,7 @@ class AuctionStrategy(_System):
         sig = x.sig
         if sig.get('auction_stop') is None:
             return None
-        exit = {'stop': ['price', sig['auction_stop']], 'stop_src': f"beyond the POC test + {cfg.auction_stop_pad_atr:g} ATR",
+        exit = {'stop': ['price', sig['auction_stop']], 'stop_src': "beyond the POC test + measured pierce",
                 'tp': ['level', sig.get('auction_target'), cfg.auction_min_rr, cfg.auction_fallback_rr],
                 'tp_src': 'naked strong POC', 'atr': sig.get('atr_1h') or x.atr}
         return _confirm_plan(x, self.name, '1h', exit, f"POC {sig['anchor_level']:.6g} retest reaction ({sig.get('auction_kind')})")

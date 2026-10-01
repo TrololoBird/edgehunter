@@ -100,8 +100,9 @@ def replay_events(job: tuple) -> List[Dict]:
     from pretrain import _asof, _bucket, _raw_frame
     from strategies import strategy_of
     from strategies.base import PlanInput
-    from strategies.breakout import breakout_at_close
+    from strategies.breakout import breakout_donchian
     from strategies.level import sweep_at_close
+    from strategies.wyckoff_range import wyckoff_events
     from strategies.structure import Context, coin_trend, pools_before, recent_atr
     from zones import build_raw, merge
 
@@ -150,9 +151,13 @@ def replay_events(job: tuple) -> List[Dict]:
             continue
         window = c15_list[q - 98:q + 1]
         h = int(np.searchsorted(h1_close, cut, side='right'))
-        h1_window = h1_list[max(0, h - 200):h]
+        h1_long = h1_list[max(0, h - 520):h]
+        h1_window = h1_long[-200:]
         trend = coin_trend(h1_window)
-        events = [breakout_at_close(window, atr, h1_window)]
+        events = []
+        if cut % HOUR_MS == 0:
+            events.append(breakout_donchian(h1_long))
+            events.extend(wyckoff_events(h1_long))
         if sweep_possible[q]:
             events.append(sweep_at_close(window, pools_before(window, h1_window, atr, last_open), atr, trend))
         for event in [e for e in events if e]:
@@ -183,7 +188,8 @@ def replay_events(job: tuple) -> List[Dict]:
                 continue
             finished_ms = _lifecycle(plan, strategy, d, row, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
                                      entry_levels, ltf_trigger, resample, simulate, _asof,
-                                     features=features, samples=samples, placebo=placebo)
+                                     features=features, samples=samples, placebo=placebo,
+                                     spot_minutes=spot[:, STREAM_COLS] if len(spot) else None)
             if not vetoed:
                 busy_until[d] = finished_ms
             out.append(row)
@@ -582,7 +588,7 @@ def feature_builder(fut: np.ndarray, spot: np.ndarray, btc15: np.ndarray, fut_al
 
 def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
                entry_levels, ltf_trigger, resample, simulate, _asof, replan=None, extra_veto=None,
-               features=None, samples=None, placebo=None) -> float:
+               features=None, samples=None, placebo=None, spot_minutes=None) -> float:
     """
     Walk the card minute by minute from start_ms; fills `row`; returns when the card finished (ms). `replan(t_ms)`:
     the strategy's plan as of a 15m close (the live plan follows the chart until the entry; a continuation's plan is
@@ -595,11 +601,22 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
     required_oi = strategy.name == 'breakout'
     interval = plan['trigger_minutes'] * MINUTE_MS
 
-    def veto(levels, until_ms) -> Optional[str]:
-        if required_oi:
-            oi = _oi_change(oi_ts, oi_v, until_ms - HOUR_MS, until_ms)
-            if oi is not None and oi <= 0:
-                return 'no_oi'
+    def veto(levels, until_ms, extreme_ms=None) -> Optional[str]:
+        # the live order: required / minimum confirmations (strategies/confirm.py), then the R:R minimum
+        from strategies import confirm
+        a = int(np.searchsorted(m_ts, until_ms - 2 * HOUR_MS, side='left'))
+        b = int(np.searchsorted(m_ts, until_ms, side='left'))
+        mins = minutes_all[a:b].tolist()
+        spot = None
+        if spot_minutes is not None and len(spot_minutes):
+            s_ts = spot_minutes[:, 0]
+            spot = spot_minutes[int(np.searchsorted(s_ts, until_ms - 2 * HOUR_MS)):int(np.searchsorted(s_ts, until_ms))].tolist()
+        oi = _oi_change(oi_ts, oi_v, until_ms - HOUR_MS, until_ms)
+        confirms = confirm.evaluate(strategy.name, d, mins, spot, oi, until_ms - HOUR_MS, until_ms,
+                                    int(extreme_ms) if extreme_ms else None, None)
+        reason = confirm.missing(strategy.name, confirms)
+        if reason:
+            return reason
         if CONFIG.levels.veto_low_rr and levels.get('low_rr'):
             return 'low_rr'
         return None
@@ -701,6 +718,7 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
     close_tf = (plan.get('invalid_close_min') or 0) * MINUTE_MS
     kind = plan.get('trigger', 'shift')
     from strategies.maniac import ifvg_trigger, in_session, pinbar_trigger
+    from strategies.ict import fvg_trigger, touch_trigger
     near_edge = plan['zone_hi'] if d > 0 else plan['zone_lo']
     horizon = start_ms + (watch_ttl + zone_ttl) * 1000 + HOUR_MS
     current = plan
@@ -741,11 +759,15 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
         if status != 'ZONE' and d * (against - near_edge) <= 0:
             status, zone_since = 'ZONE', float(m_ts[j])
         if status == 'ZONE':
-            a = int(np.searchsorted(m_ts, zone_since - (CONFIG.levels.ltf_break_lookback + 2) * interval, side='left'))
+            a = int(np.searchsorted(m_ts, zone_since - (4 * CONFIG.levels.ltf_break_lookback + 2) * interval, side="left"))
             if kind == 'ifvg':
                 a = int(np.searchsorted(m_ts, int(plan['trigger_from_ms']) - 45 * interval, side='left'))
             ltf = resample(minutes_all[a:j + 1].tolist(), plan['trigger_minutes'], t_close)
-            if kind == 'pinbar':
+            if kind == 'fvg':
+                trigger = fvg_trigger(ltf, d, int(zone_since), interval)
+            elif kind == 'touch':
+                trigger = touch_trigger(ltf, d, int(zone_since), interval, plan['zone_lo'], plan['zone_hi'])
+            elif kind == 'pinbar':
                 trigger = pinbar_trigger(ltf, d, int(zone_since), interval, plan['zone_lo'], plan['zone_hi'])
             elif kind == 'ifvg':
                 trigger = ifvg_trigger(ltf, d, int(plan['trigger_from_ms']), int(zone_since), interval)
@@ -760,13 +782,16 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
                         reason = extra_veto(levels, zone_since, trigger['time']) if extra_veto else None
                         if reason is None and plan.get('session') and not in_session(trigger['time'], tuple(plan['session'])):
                             reason = 'off_session'
-                        reason = reason or veto(levels, trigger['time'])
+                        reason = reason or veto(levels, trigger['time'], trigger.get('extreme_time'))
                         if reason is None:
                             return enter(levels, t_close + 5_000)
                         row['vetoed_triggers'] += 1
                         row['veto_log'] += reason + ' '
                         vetoed_trade(levels, t_close + 5_000, reason)
                         zone_since = trigger['time']
+                        if plan.get('single_touch'):
+                            row['status'] = 'EXPIRED'         # Seiden: the first touch was the zone's only chance
+                            return t_close
             if t_close - zone_since > zone_ttl * 1000:
                 row['status'] = 'EXPIRED'
                 return t_close

@@ -128,6 +128,7 @@ class AuctionEngine:
 
     def __init__(self):
         self.cfg = CONFIG.strategies
+        self.symbol: Optional[str] = None       # set by auction_signals (the measured pierce is per coin)
         self.h: List[float] = []
         self.sub: Dict[int, list] = {}         # hour open ms -> its 15m (high, low, quote volume)
         self.l: List[float] = []
@@ -176,10 +177,12 @@ class AuctionEngine:
 
     def _update_levels(self, i, h, l, c, atr, signals):
         cfg = self.cfg
-        tol = cfg.auction_touch_atr * atr
+        from pierce import overshoot
         for lvl in self.levels:
             if not lvl.alive:
                 continue
+            # a touch = price within the usual pierce of a 1h level (p50, pierce.py) of the POC, not +-0.25 ATR
+            tol = overshoot(self.symbol, 'swing_1h', lvl.price, 'p50') or cfg.auction_touch_atr * atr
             if i - lvl.created_idx > cfg.auction_level_ttl:
                 lvl.alive = False
                 continue
@@ -238,7 +241,10 @@ class AuctionEngine:
         cfg = self.cfg
         entry = c
         base = min(p.extreme, lvl.price) if d > 0 else max(p.extreme, lvl.price)
-        stop = base - d * cfg.auction_stop_pad_atr * atr
+        from pierce import overshoot
+        # beyond the test's extreme by the usual pierce (p80) of a 1h level, as every structural stop (was 0.35 ATR)
+        pad = overshoot(self.symbol, 'swing_1h', base, 'p80')
+        stop = base - d * (pad if pad is not None else cfg.auction_stop_pad_atr * atr)
         risk = (entry - stop) * d
         if risk < cfg.auction_min_risk_atr * atr:
             return None
@@ -386,10 +392,12 @@ def auction_signals(symbol: str, candles_1h: Sequence[Sequence[float]],
         subs.setdefault(int(c[0]) // 3_600_000 * 3_600_000, []).append((float(c[2]), float(c[3]), float(c[5])))
     engine = ENGINES.get(symbol)
     if engine is not None:
+        engine.symbol = symbol
         engine.sub.update(subs)
     last = engine.ts[-1] if engine is not None and engine.ts else None
     if last is None or not any(int(c[0]) == last for c in candles_1h[-50:]) or int(candles_1h[-1][0]) < last:
         engine = ENGINES[symbol] = AuctionEngine()
+        engine.symbol = symbol
         engine.sub.update(subs)
         for c in candles_1h[:-1]:
             engine.on_bar(int(c[0]), c[2], c[3], c[4], c[5])

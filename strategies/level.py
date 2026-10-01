@@ -73,7 +73,10 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
         from pierce import kind_of_label, overshoot
         measured = overshoot(symbol, kind_of_label(label), price, 'p90')
         limit = measured if measured is not None else hi_depth
-        if back and lo_depth <= depth <= limit and (best is None or (pool_rank(label), -depth) > (pool_rank(best[3]), -best[0])):
+        # any trade beyond the pool takes the stops resting right behind it (ICT); the volume and the close back
+        # filter weak pokes - the 0.1 ATR minimum only without the pierce model
+        floor = 0.0 if measured is not None else lo_depth
+        if back and floor < depth <= limit and (best is None or (pool_rank(label), -depth) > (pool_rank(best[3]), -best[0])):
             best = (depth, price, side, label)
     if best is None:
         return None

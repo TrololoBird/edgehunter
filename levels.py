@@ -197,7 +197,8 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
     {'entry', 'extreme', 'time', 'extreme_time'} for the first trigger, else None.
     """
     cfg = CONFIG.levels
-    usable = [c for c in candles if c[0] + interval_ms > since_ms - cfg.ltf_break_lookback * interval_ms]
+    # 4 x the lookback before the zone: room for the swing the shift breaks (the zone's own candles decide the extreme)
+    usable = [c for c in candles if c[0] + interval_ms > since_ms - 4 * cfg.ltf_break_lookback * interval_ms]
     zone_idx = [i for i, c in enumerate(usable) if c[0] + interval_ms > since_ms]
     if len(zone_idx) < 2:
         return None
@@ -209,8 +210,22 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
     else:
         extreme_idx = max(zone_idx, key=lambda i: usable[i][2])
         extreme = usable[extreme_idx][2]
-    structure = usable[max(0, extreme_idx - cfg.ltf_break_lookback):extreme_idx + 1]
-    level = max(c[2] for c in structure) if direction > 0 else min(c[3] for c in structure)
+    # ICT's market structure shift: the break of the LAST swing (a 2/2 fractal) the move made before the extreme - the
+    # lower high a long breaks; without one in the lookback, the high / low of the ltf_break_lookback candles up to it
+    level = None
+    for j in range(extreme_idx - 2, max(1, extreme_idx - 4 * cfg.ltf_break_lookback) - 1, -1):
+        if j + 2 >= len(usable) or j - 2 < 0:
+            continue
+        w = usable[j - 2:j + 3]
+        if direction > 0 and usable[j][2] == max(c[2] for c in w) and sum(c[2] == usable[j][2] for c in w) == 1:
+            level = usable[j][2]
+            break
+        if direction < 0 and usable[j][3] == min(c[3] for c in w) and sum(c[3] == usable[j][3] for c in w) == 1:
+            level = usable[j][3]
+            break
+    if level is None:
+        structure = usable[max(0, extreme_idx - cfg.ltf_break_lookback):extreme_idx + 1]
+        level = max(c[2] for c in structure) if direction > 0 else min(c[3] for c in structure)
 
     for i in range(extreme_idx + 1, len(usable)):
         close = usable[i][4]

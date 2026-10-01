@@ -17,7 +17,10 @@ _MODEL: Optional[Dict] = None
 def model() -> Dict:
     global _MODEL
     if _MODEL is None:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', 'overshoot.json')
+        # PIERCE_MODEL: an archive replay points it at a model measured BEFORE its window (research_overshoot.py --end
+        # <the replay's start>), so the stop buffer does not know the months it is tested on
+        path = os.environ.get('PIERCE_MODEL') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models',
+                                                               'overshoot.json')
         try:
             with open(path, encoding='utf-8') as f:
                 _MODEL = json.load(f)

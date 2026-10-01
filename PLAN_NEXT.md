@@ -32,13 +32,14 @@ Why: SMT needs a tight correlation - normally > 0.7 (BTC/ETH ~0.85; BTC/SOL, ETH
 SMT pair") - TradingFinder / Bitsgap / Quantum Algo. The bot picks the better of BTC / ETH but never checks the level.
 - [x] 3.1 (+ a signal needs SMT or QM: without a pair it passed as a plain sweep) Correlation of 15m returns over the last 200 candles >= 0.7 or the coin gets no SMT signal (journaled
       vetoed='low_correlation').
-- [~] 3.2 BTC / ETH only for now Candidates: BTC, ETH, SOL (and the coin's own sector leader once sectors.py maps it).
-- [ ] 3.3 Check: the share of coins with an SMT pair, logged once an hour.
+- [x] 3.2 BTC / ETH / SOL (never the coin itself) Candidates: BTC, ETH, SOL (and the coin's own sector leader once sectors.py maps it).
+- [x] 3.3 'smt pairs x/y' in the Health line Check: the share of coins with an SMT pair, logged once an hour.
 
 ## 4. Archive validation of the CURRENT logic (after 1-3)
 Why: every archive number (cards, placebo, exits) was measured before today's changes (structural stops, measured
 pierce, R:R 2, confirmations, source-aligned strategies). The old placebo run (eng-10 logic) finished 01:31.
-- [ ] 4.1 research_cards.py already updated (new detectors, fvg / touch triggers, confirmations, single touch).
+- [x] 4.1 prep: PIERCE_MODEL env + research_overshoot.py --model-out; at run time: research_overshoot.py --end <replay start> --model-out models/overshoot_pre.json, then PIERCE_MODEL=models/overshoot_pre.json for the replays.
+      Was: research_cards.py already updated (new detectors, fvg / touch triggers, confirmations, single touch).
       Remaining: the pierce model must not see the future - in the replay use the older-half p80 (or the global
       one), not the 12-month file.
 - [ ] 4.2 Smoke run: 1 coin, 1 month; the report's rows look sane.
@@ -65,3 +66,11 @@ pierce, R:R 2, confirmations, source-aligned strategies). The old placebo run (e
 Sources: BabyPips forum "wick or body", FXStreet Learning Center (support / resistance), TradingStrategyGuides
 "Drawing support and resistance", ATAS / TradingFinder (ICT order blocks, mean threshold), TradingView ATR-zone
 scripts (the ATR convention), TradingFinder / Bitsgap / Quantum Algo (SMT correlation > 0.7).
+
+## Done 2026-10-01 night (eng-28)
+- [x] worker-path test (tests/test_runtime.py::test_build_maps_worker_path_returns_a_context)
+- [x] auction: touch band = p50 pierce of a 1h level, stop pad = p80 (was 0.25 / 0.35 ATR)
+- [x] sweep: no ATR minimum depth with the pierce model (any trade beyond the pool, volume + close back filter)
+- [x] confirmations: a venue counts only if its ring covers the window; no reading -> None, never a false 0
+- [x] trigger: ICT MSS = break of the last 2/2 swing before the extreme (fallback: the 5-candle high / low)
+- [~] alt-spot seed at start: impossible - Bybit's REST klines carry no taker split

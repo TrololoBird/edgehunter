@@ -734,7 +734,7 @@ class Scanner:
     def _correlates(self) -> Dict[str, np.ndarray]:
         """The SMT correlates' 15m histories (BTC for every coin, ETH for BTC): the long REST history + the frame."""
         out = {}
-        for name in ('BTC', 'ETH'):
+        for name in ('BTC', 'ETH', 'SOL'):
             symbol = f"{name}/USDT:USDT"
             md = self.market_data.get(symbol)
             if md is None:
@@ -1186,8 +1186,11 @@ class Scanner:
             if proc is not None:
                 # cpu: % of one core over the last minute
                 process = f", cpu {proc.cpu_percent(None):.0f}%, mem {proc.memory_info().rss / 2**20:.0f}MB"
+            ctxs = [c for c in self.detector.context.values() if c is not None]
+            pairs = sum(1 for c in ctxs if getattr(c, 'smt_pair', None))
             logger.info(f"Health: tier0 {self.last_tier0_sec:.2f}s, scan {self.last_scan_sec:.2f}s "
-                        f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, streams " + ", ".join(rates))
+                        f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
+                        f"smt pairs {pairs}/{len(ctxs)}, streams " + ", ".join(rates))
 
     def _save_state(self):
         path = CONFIG.journal.state_path
