@@ -178,8 +178,9 @@ class DemoExecutor:
                               {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True})
         third = float(ex.amount_to_precision(symbol, qty / 3))
         parts = [third, third, float(ex.amount_to_precision(symbol, qty - 2 * third))]
+        trailing = bool((getattr(s, 'plan', None) or {}).get('trail_days'))   # Turtles: out on the channel, no TPs
         for k, amount in zip((1, 2, 3), parts):
-            if amount > 0 and amount >= min_qty:
+            if not trailing and amount > 0 and amount >= min_qty:
                 await ex.create_order(symbol, 'market', exit_side, amount, None,
                                       {'takeProfitPrice': float(ex.price_to_precision(symbol, lv[f'tp{k}'])),
                                        'reduceOnly': True})

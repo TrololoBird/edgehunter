@@ -353,8 +353,7 @@ def veto_reason(group_key: str, sig: Dict) -> Optional[str]:
         # Perps lead spot in price discovery (a perp-led move is the normal case, and perp taker imbalance predicts
         # 4-12h continuation): the risk is CROWDED leverage (high funding / basis with OI building predicts
         # liquidations, BIS WP 1087). Vetoed only perp-led AND crowded AND OI rising; else journaled perp_led=1.
-        direction = {'BEAR D': -1, 'BULL F': 1, 'BREAKOUT UP': 1, 'BREAKOUT DOWN': -1,
-                     'IMPULSE UP': 1, 'IMPULSE DOWN': -1}.get(group_key)
+        direction = {'BEAR D': -1, 'BULL F': 1, 'IMPULSE UP': 1, 'IMPULSE DOWN': -1}.get(group_key)
         if direction is not None:
             if group_key.startswith('IMPULSE'):
                 perp = perp_flow_5m(sig)

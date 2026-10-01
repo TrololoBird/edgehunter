@@ -149,6 +149,7 @@ class Scanner:
         self._level_sig: Dict[str, tuple] = {}
         self.book.levels_of = self._levels_of
         # 1h candles of the coin: the 8 days every coin has (hourly), else a card coin's level-map history
+        self.book.daily_of = lambda symbol: (lambda md: md.d1 if md else None)(self.market_data.get(symbol))
         self.book.htf_of = lambda symbol: (lambda md: (md.h1 or md.htf_klines) if md else None)(self.market_data.get(symbol))
         self.book.context_of = lambda symbol: self.detector.context.get(symbol)
         self.book.plan_key_of = self._plan_key
@@ -167,6 +168,8 @@ class Scanner:
         self._context_task: Optional[asyncio.Task] = None
         self._maps_pool = None          # ProcessPoolExecutor (one worker) for level maps: see _maps_executor
         self._connors_checked: Dict[str, int] = {}   # symbol -> the daily close Connors' RSI(2) was checked at
+        self._turtle_checked: Dict[str, int] = {}    # symbol -> the last final minute the Turtle channel was checked on
+        self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -643,6 +646,9 @@ class Scanner:
             connors = self._connors_daily(symbol, md, now_ms)
             if connors:
                 setups.append(connors)
+            turtle = self._turtle_breakout(symbol, md, now_ms)
+            if turtle:
+                setups.append(turtle)
             for setup in setups:
                 sig = dict(md.tier0)
                 sig.update(is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
@@ -662,6 +668,30 @@ class Scanner:
                 logger.info(f"Setup detected: {symbol} {setup['setup']} - {setup['setup_note']}")
                 out.append((symbol, sig))
         return out
+
+    def _turtle_breakout(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
+        """The Turtles' channel breakout on the touch (strategies.turtle), checked on each new final minute, once per
+        coin, direction and day."""
+        if len(md.d1) < 60:
+            return None
+        minute = md.minute_closed_until
+        if not minute or self._turtle_checked.get(symbol) == minute:
+            return None
+        self._turtle_checked[symbol] = minute
+        minutes = self._minute_candles(symbol)
+        day_start = int(now_ms // 86_400_000 * 86_400_000)
+        today = [c for c in minutes if c[0] >= day_start]
+        if not today or int(md.d1[-1][0]) + 86_400_000 < day_start:
+            return None                           # yesterday's daily candle not loaded yet
+        from strategies.turtle import turtle_breakout
+        found = turtle_breakout(md.d1, max(c[2] for c in today), min(c[3] for c in today), now_ms)
+        if found is None:
+            return None
+        key = (symbol, found['direction'], day_start)
+        if key in self._turtle_fired:
+            return None
+        self._turtle_fired.add(key)
+        return found
 
     def _connors_daily(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
         """Connors' RSI(2) on the coin's daily candles, once per closed day (fresh within the day's first 2 hours)."""

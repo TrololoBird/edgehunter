@@ -278,6 +278,17 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     """
     exit = plan['exit']
     atr = exit.get('atr') or plan['atr']
+    if exit['tp'][0] == 'trail':
+        # a system without a profit target (the Turtles: out on the opposite N-day channel, SignalBook trails it):
+        # its own stop; TP1-3 are 100 / 200 / 300 R placeholders the lifecycle never reaches (R:R never vetoes it)
+        stop = exit['stop'][1]
+        risk = direction * (entry - stop)
+        if risk <= 0:
+            return None
+        label = exit.get('tp_src', 'none (trailing exit)')
+        return {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
+                'tp3': entry + direction * 300 * risk, 'rr_tp1': 100.0, 'rr_tp2': 200.0, 'low_rr': False,
+                'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': exit.get('stop_src', 'the system stop')}
     floor = stop_floor(max(atr, plan['atr']), plan.get('recent_atr'))
     zones: List[Zone] = plan.get('zones') or []
     fixed_stop = exit['stop'][0] in ('pct', 'atr')

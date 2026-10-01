@@ -197,3 +197,11 @@ OI accumulation (derivatives, not chart TA).
   Open, the owner's decision: `breakout` is the Turtles' 20-day channel but not their trade (they enter on the touch,
   stop 2N = 2 x the 20-day ATR, exit on the 10-day opposite breakout; ours enters on an accepted 1h close with a
   structure stop and map targets).
+- eng-32: `breakout` = the Turtles' systems in full (`strategies/turtle.py`, the owner's decision): daily candles; N = the
+  20-day exponential true range; System 1 on the touch of the 20-day high / low unless the last S1 breakout won, System 2
+  (55 days) as its fail-safe; entered at once (`Scanner._turtle_breakout`, once per coin / direction / day); stop 2N; no
+  profit target (`exit['tp'] = ['trail']`: 100 / 200 / 300 R placeholders) - the card closes on the 10-day (S1) / 20-day
+  (S2) opposite channel (`SignalBook._manage_trade`, `trail_days`, `daily_of`); no volume / flow / OI / spot / perp-led /
+  confirmation filters (`orderflow.confirm_exempt`); trade lifetime 90 days; the demo places no take-profits. Not done:
+  pyramiding (+1 unit per 1/2 N up to 4) and unit sizing (1% of equity per N). The journal's 8h replay marks these
+  trades to the horizon; the card row and the demo hold the real result.

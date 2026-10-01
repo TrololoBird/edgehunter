@@ -173,6 +173,7 @@ class SignalBook:
         # symbol -> the coin's level map / 1h candles / structure context; set by the scanner
         self.levels_of: Optional[Callable[[str], Optional[list]]] = None
         self.htf_of: Optional[Callable[[str], Optional[list]]] = None
+        self.daily_of: Optional[Callable[[str], Optional[list]]] = None     # closed daily candles (Turtle exits)
         self.context_of: Optional[Callable[[str], Optional[object]]] = None
         # symbol -> hashable key of everything a plan depends on (None: always recompute); plans cached per card
         self.plan_key_of: Optional[Callable[[str], Optional[tuple]]] = None
@@ -684,6 +685,13 @@ class SignalBook:
             return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
         if s.best_target:
             s.status = f"TP{s.best_target}"
+        days = (s.plan or {}).get('trail_days')
+        if days and self.daily_of:
+            from strategies.turtle import trail_level
+            level = trail_level(self.daily_of(s.symbol) or [], days, d)
+            if level is not None and d * (price - level) <= 0:
+                return self._finish(s, 'CLOSED', now, f"exit on the {days}-day {'low' if d > 0 else 'high'} "
+                                                      f"{level:.6g} (Turtles)")
         strategy = self.strategy(s)
         trade_ttl = strategy.ttls(self._tf(s))[2] if strategy else CONFIG.levels.trade_ttl_sec
         if now - s.entered_at > trade_ttl:

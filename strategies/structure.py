@@ -265,12 +265,8 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
         h1 = hours_from(candles_15m, list(h1_long) or list(candles_1h), cut)
         if cut % HOUR_MS == 0:
             # 1h events at the hour's close: the Turtles' 20-day breakout, Wyckoff's spring / UTAD of a trading range
-            from strategies.breakout import breakout_donchian
             from strategies.wyckoff_range import wyckoff_events
-            brk = breakout_donchian(h1)
-            if brk:
-                ctx.events.append(brk)
-            ctx.events.extend(wyckoff_events(h1))
+            ctx.events.extend(wyckoff_events(h1))     # (the breakout is the Turtles' daily system, loop-side)
         corr15 = merge_candles(corr, [], cut, QUARTER_MS) if corr else None
         ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut))
         # classic published methods (strategies/classic.py): Dalton's 80% rule, Crabel's ORB, Connors' RSI(2)

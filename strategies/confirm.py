@@ -64,6 +64,8 @@ def missing(strategy: str, confirms: Dict) -> Optional[str]:
     # Order-flow practice (Trader Dale, ATAS: enter only once delta / absorption confirm the level): an entry with NOT
     # ONE positive reading is not taken (live eng-6: 0 of 4 confirmations -0.44R on 67 entries; still journaled as a
     # vetoed entry and replayed, so the rule stays measurable)
+    if strategy in CONFIG.orderflow.confirm_exempt:
+        return None
     readings = {k: v for k, v in confirms.items() if not k.startswith('_')}
     if CONFIG.orderflow.min_confirmations and readings and             sum(1 for v in readings.values() if positive(v)) < CONFIG.orderflow.min_confirmations:
         return 'no_confirmation'

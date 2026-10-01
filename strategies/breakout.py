@@ -11,10 +11,7 @@ Anchor: the range of the breakout_range_candles 15m candles before the breakout 
 from typing import Dict, Optional, Sequence
 
 from config import CONFIG
-from strategies.base import PlanInput, Strategy, base_plan
-from strategies.geometry import select_targets
-from strategies.level import reached_since
-from zones import RawLevel, merge
+from strategies.base import PlanInput, Strategy
 
 QUARTER_MS = 900_000
 
@@ -92,35 +89,29 @@ def breakout_donchian(h1: Sequence[Sequence[float]]) -> Optional[Dict]:
 
 
 class BreakoutStrategy(Strategy):
+    """
+    The Turtles' breakout (strategies/turtle.py, eng-31): entered at once on the touch of the 20-day (System 1) / 55-day
+    (System 2) channel, stop 2N, no target - the trade ends on the 10-day / 20-day opposite channel (SignalBook trails
+    it, `trail_days`). No volume, flow, OI, spot or confirmation filter: the Turtles used none.
+    """
     name = 'breakout'
-    requires = ('spot',)
     anchor_type = 'range'
     setups = {'BREAKOUT UP': 1, 'BREAKOUT DOWN': -1}
     ttl_key = 'breakout_ttl'
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
-        return (x.sig.get('break_ts'), x.sig.get('range_hi')) if x.sig.get('range_hi') is not None else None
+        return (x.sig.get('anchor_ts'), x.sig.get('turtle_system')) if x.sig.get('turtle_n') else None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
-        sig, d, atr = x.sig, x.direction, x.atr
-        if sig.get('range_hi') is None or not atr:
+        from strategies.maniac_strategies import _confirm_plan
+        sig, d = x.sig, x.direction
+        if not sig.get('turtle_n'):
             return None
-        lo, hi = sig['range_lo'], sig['range_hi']
-        edge = hi if d > 0 else lo
-        zones = merge(list(x.raw_levels or []) + [RawLevel(hi, 'range', '20-day high', +1),
-                                                   RawLevel(lo, 'range', '20-day low', -1)], atr, symbol=x.symbol)
-        reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
-        targets, sources = select_targets(zones, reached, d, atr, 'measured')
-        # the retest area = the broken edge +- the typical pierce of a 1h swing (p50: how far a retest overshoots)
-        from pierce import overshoot
-        pad = overshoot(x.symbol, 'swing_1h', edge, 'p50') or CONFIG.strategies.breakout_zone_atr * atr
-        zone = sorted((edge - pad, edge + pad))
-        anchor = {'type': 'range', 'tf': '1h', 'lo': lo, 'hi': hi, 'ts': sig['anchor_ts'], 'break_ts': sig.get('break_ts')}
-        # a 20-day range's middle is no stop: the breakout candle's origin is the structure (the protected swing and
-        # the measured pierce of the geometry go beyond it); back below it the breakout failed
-        extreme = sig.get('break_extreme', edge)
-        return base_plan(x, self.name, anchor, '1h', entry='confirm', zone_lo=zone[0], zone_hi=zone[1],
-                         zone_src='retest of the 20-day edge', invalid=extreme, fix_invalid=True, missable=True,
-                         stop_ref=extreme, stop_ref_src='beyond the breakout candle', intent='measured',
-                         targets=targets, target_src=sources, zones=zones, reached=reached,
-                         key=(sig['break_ts'], edge))
+        stop = sig['anchor_level'] - d * 2 * sig['turtle_n']
+        exit = {'stop': ['price', stop], 'stop_src': '2N from the breakout (Turtles)', 'tp': ['trail'],
+                'tp_src': f"none: exit on the {sig['trail_days']}-day {'low' if d > 0 else 'high'}", 'atr': x.atr}
+        plan = _confirm_plan(x, self.name, '4h', exit, f"Turtle System {sig['turtle_system']} breakout")
+        if plan is not None:
+            plan['trail_days'] = sig['trail_days']
+            plan['key'] = (sig['anchor_ts'], sig['turtle_system'], d)
+        return plan

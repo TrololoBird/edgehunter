@@ -297,7 +297,9 @@ class OrderflowConfig:
     divergence_lookback_min: int = 60
     # Entry confirmations required by rule ('<strategy>:<confirmation>', strategies/confirm.py): a breakout needs
     # rising OI (new positions behind it), as the D / F phases and directional impulses already do
-    required_confirmations: tuple = ('breakout:oi',)
+    required_confirmations: tuple = ()
+    # strategies whose source has no confirmation rule: min_confirmations does not apply (the Turtles: eng-31)
+    confirm_exempt: tuple = ('breakout',)
     # A confirmation becomes required for a strategy once its entries WITHOUT it have >= promote_min_clusters
     # independent results (15m clusters) and a 90% interval of the 4h Edge entirely below 0 (journal, hourly)
     promote_confirmations: bool = True
@@ -621,7 +623,7 @@ class StrategiesConfig:
     breakout_measured_moves: tuple = (1.0, 1.618, 2.618)
     breakout_min_move_atr: float = 1.5
     breakout_zone_atr: float = 0.25
-    breakout_ttl: tuple = (2 * 3600, 2 * 3600, 8 * 3600)
+    breakout_ttl: tuple = (3600, 3600, 90 * 86400)   # Turtles: entered at once, out on the trailing channel
     # ---- crypto_maniac's systems (github.com/roman-boop; strategies/maniac.py): his parameters as he ships them.
     # Longer histories they need: 15m / 1h candles of every coin (fetcher._hourly_candles_loop, limit 499 = weight 2)
     long_history_candles: int = 499
@@ -852,7 +854,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-31"
+    logic_version: str = "eng-32"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
