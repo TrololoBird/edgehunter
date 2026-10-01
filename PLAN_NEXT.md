@@ -25,7 +25,7 @@ zone_half_atr 0.25 (pullback zone around a level), sweep_zone_atr 0.25, breakout
 - [x] 2.4 sweep / breakout done; auction's engine keeps its own +-0.25 ATR retest band (the author's system) - Sweep entry area = wick to the sweep candle's body (already close); breakout retest = the breakout candle's
       body-to-edge; auction = the POC's value area (VAL-VAH of the consolidation), not +-0.25 ATR.
 - [x] 2.5 ATR stays only where nothing is measured (fillers when the map is empty).
-- [ ] 2.6 Check: tests pass; on the live chart the zones match the candles at the levels (owner's eye on 5 coins).
+- [x] 2.6 (checked on SOL / BTC / ETH 1h charts: zones = the bodies-to-wicks of the extreme candles; a chaining bug that merged half the chart into one zone fixed in 72827d1; widths now 0.1-2.4%) Check: tests pass; on the live chart the zones match the candles at the levels (owner's eye on 5 coins).
 
 ## 3. SMT only on correlated pairs (logic change, before the archive run)
 Why: SMT needs a tight correlation - normally > 0.7 (BTC/ETH ~0.85; BTC/SOL, ETH/SOL usable; BTC vs DOGE is "not an
