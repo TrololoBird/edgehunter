@@ -860,6 +860,7 @@ class IcebergConfig:
     window_sec: int = 120
     multiple: float = 3.0
     min_usd: float = 50_000
+    min_refills: int = 2           # book snapshots showing the level again after it was hit (a real refill)
 
 
 @dataclass(frozen=True)

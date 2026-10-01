@@ -323,11 +323,13 @@ def classify(sig: Dict) -> Tuple[str, str, int]:
         return 'anomaly', 'IMPULSE UNCONFIRMED', 0
     if cascade:
         return 'anomaly', 'LIQ CASCADE', 0
-    if abs(whales) >= t0.whale_net_units:
-        return 'anomaly', 'WHALES BUY' if whales > 0 else 'WHALES SELL', 1 if whales > 0 else -1
+    # the algo cluster is what flags (CONFIG.tier0.flag_rules); net whale sweeps alone measured x1.0, so a cluster
+    # names the event even when the sweeps also add up to whales
     cluster = sig.get('cluster', 0) or 0
     if cluster:
         return 'anomaly', 'ALGO BUY' if cluster > 0 else 'ALGO SELL', 1 if cluster > 0 else -1
+    if abs(whales) >= t0.whale_net_units:
+        return 'anomaly', 'WHALES BUY' if whales > 0 else 'WHALES SELL', 1 if whales > 0 else -1
     if oi_anomaly(sig):
         return 'anomaly', 'OI SURGE' if oi > 0 else 'OI FLUSH', 0
     if one_venue(sig):

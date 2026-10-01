@@ -71,17 +71,27 @@ class DemoExecutor:
             self._markets_ready = True
         return self.ex
 
-    async def _market_of(self, symbol: str, price: float) -> Optional[str]:
-        """The same contract on BingX, price-checked (a ticker can be a different token there)."""
+    async def _market_of(self, symbol: str, price: float):
+        """
+        The same contract on BingX, price-checked (a ticker can be a different token there), and the price scale
+        BingX's contract has against Binance's: 1000FLOKI on Binance is FLOKI on BingX (scale 1/1000), and the other way.
+        Returns (BingX symbol, scale) or (None, reason).
+        """
         ex = await self._exchange()
-        if symbol not in ex.markets:
-            return None
-        ticker = await ex.fetch_ticker(symbol)
-        last = ticker.get('last')
-        if not last or abs(last / price - 1) > 0.02:
-            logger.info(f"Demo: {symbol} skipped, BingX price {last} vs {price:.6g}")
-            return None
-        return symbol
+        base, rest = symbol.split('/', 1)
+        bare = base[4:] if base.startswith('1000') else base
+        candidates = [(symbol, 1.0), (f"{bare}/{rest}", 1e-3 if bare != base else 1.0),
+                      (f"1000{bare}/{rest}", 1e3 if bare == base else 1.0)]
+        seen, last = set(), None
+        for name, scale in candidates:
+            if name in seen or name not in ex.markets:
+                continue
+            seen.add(name)
+            last = (await ex.fetch_ticker(name)).get('last')
+            if last and abs(last / (price * scale) - 1) <= 0.02:
+                return name, scale
+        reason = f"BingX price {last} vs {price:.6g}" if seen else 'not listed on BingX'
+        return None, reason
 
     async def _balance(self) -> float:
         ex = await self._exchange()
@@ -107,10 +117,18 @@ class DemoExecutor:
 
     async def _open(self, card_id: str, s) -> None:
         cfg = CONFIG.executor
-        lv, d = s.levels, s.direction
-        symbol = await self._market_of(s.symbol, lv['entry'])
+        d = s.direction
+        symbol, scale = await self._market_of(s.symbol, s.levels['entry'])
         if symbol is None:
+            # recorded, so the demo / journal comparison knows which entries could not be traded (live GRAM)
+            logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {scale}")
+            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                          'direction': d, 'opened_ms': int(time.time() * 1000), 'error': str(scale)[:300],
+                          'closed_ms': int(time.time() * 1000), 'close_reason': 'NO_MARKET'})
             return
+        # prices in BingX's units (a 1000x contract quotes 1000x the price); risk in USD is the same
+        lv = {k: (v * scale if isinstance(v, (int, float)) and k in ('entry', 'sl', 'tp1', 'tp2', 'tp3') else v)
+              for k, v in s.levels.items()}
         ex = await self._exchange()
         balance = min(await self._balance(), cfg.account_usd)
         stop_dist = abs(lv['entry'] - lv['sl'])
