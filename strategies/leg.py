@@ -72,8 +72,6 @@ class LegContinuation(Strategy):
         the 15m structure) not against the trade, and BTC (alts follow it: BTC -> alt Granger causality) not
         moving hard against it over the last hour. Breakouts take no trend filter (Turtle / Bollinger method I).
         """
-        if sig.get('coin_trend') == -direction:
-            return 'against_tide'
         btc = sig.get('btc_1h')
         if btc is not None and direction * btc <= -CONFIG.strategies.tide_btc_against:
             return 'against_tide'
@@ -86,6 +84,11 @@ class LegContinuation(Strategy):
         atr = x.atr
         if impulse is None or not atr:
             return None
+        # Elder's tide on the timeframe ~5x the leg's (his factor of five): a 15m leg needs the 1h trend, a 1h leg the
+        # 4h one, a 4h leg the daily one - not against the trade (was the 1h trend for every leg)
+        tide = {'15m': 'coin_trend', '1h': 'trend_4h', '4h': 'trend_1d'}.get(impulse['tf'], 'coin_trend')
+        if x.sig.get(tide) == -d:
+            return {'skip': 'against_tide'}
         if CONFIG.strategies.require_displacement:
             candles = _rows(x.df) if impulse['tf'] == '15m' else [list(c) for c in (x.h1 or [])]
             if not displacement(candles, impulse['start_ts'], impulse['end_ts'], d):

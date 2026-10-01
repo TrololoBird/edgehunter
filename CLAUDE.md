@@ -236,3 +236,14 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   with displacement, a limit at its CE, stop beyond the raid, target the hour's opposite side; loop-side
   `Scanner._silver_bullet`). Cards carry their `logic_version`; at a start every card of an older logic is closed
   (entered: CLOSED at market, journaled; waiting: EXPIRED) - an eng-7 card kept trading beside eng-35 ones.
+- eng-37 (timeframes by their sources, before any data collection - the owner's rule): Elder's tide ~5x the leg
+  (`continuation`: 15m leg -> the 1h trend, 1h -> 4h `trend_4h`, 4h -> daily `trend_1d`, else `against_tide`); ICT's
+  three layers for `sweep` (the raid must run into a 1h+ PD array - OB / FVG / BPR / breaker, else `no_htf_poi`; longs
+  only in the discount half of the 48h dealing range, shorts in the premium, else `premium` / `discount`; TP by the
+  `draw_liquidity` intent: previous day / week / sessions, equal highs / lows, daily swings); Seiden: supply / demand
+  zones of 4h candles with the 1h touch and his curve (`curve_pos` in the 20-day daily range: demand only in the lower
+  half, else `curve`); Wyckoff's spring / UTAD vetoed `against_htf` when the daily trend and the weekly bias both oppose
+  it; trendlines of 1h candles with the stop on 15m pivots (Edwards & Magee); a `htf_zone` confirmation on every entry
+  (the price inside a 4h / daily / weekly zone: ICT / Seiden's nesting). Card rows journal `card_r` (the lifecycle's own
+  exit, units) - `stats.card_results_table`; `research_turtle.py` replays the Turtles on daily archive candles.
+  Lighter data for the laptop: universe 70 (`max_pairs`), 25 order books, Hyperliquid trades for 70 coins.

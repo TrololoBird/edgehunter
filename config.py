@@ -33,7 +33,7 @@ class ExchangeConfig:
     # tradable spread; the most liquid of them up to max_pairs. The top 300 by volume had no spot on a third of the
     # coins and no book / positioning on most, and saturated the link (Binance ~190 KB/s, stalls). The market
     # baseline for Edge still uses every USDT perpetual (REST mark prices, no streams).
-    max_pairs: int = 150
+    max_pairs: int = 70           # pinned + the strategies' pools (was 150: the laptop's RAM / CPU / link)
     min_24h_quote_volume_usd: float = 10_000_000
     require_spot: bool = True
     min_futures_venues: int = 2          # of Bybit, OKX, Bitget, Hyperliquid
@@ -240,7 +240,7 @@ class LiquidationConfig:
 class DepthConfig:
     """Order book (Binance <sym>@depth20@500ms) for hot symbols only: open cards and active anomalies."""
     # 40 with the data-complete universe (~150 coins instead of 300 freed ~half of the trade / kline bandwidth)
-    max_symbols: int = 40
+    max_symbols: int = 25          # (was 40: the laptop; pinned + open cards first)
     # Sockets the order books are spread over (~1.5 KB / 500ms per book; one socket carries ~40-70 KB/s)
     sockets: int = 6
     band_pcts: tuple = (0.005, 0.01)
@@ -635,7 +635,7 @@ class StrategiesConfig:
     sd_min_move_atr: float = 2.0
     sd_max_zone_atr: float = 1.2
     sd_min_score: float = 3.5
-    sd_ttl: tuple = (72 * 3600, 8 * 3600, 24 * 3600)   # 1h zones (Seiden: the higher timeframe) live longer
+    sd_ttl: tuple = (7 * 86400, 86400, 3 * 86400)   # 4h zones (Seiden: 4h or higher) live a week
     # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
     classic_ttl: tuple = (3600, 3600, 12 * 3600)
     silver_bullet_ttl: tuple = (3600, 3600, 4 * 3600)   # the window's hour to come back to the FVG, 4h trade
@@ -716,7 +716,7 @@ class StrategiesConfig:
     tl_max_depth_atr: float = 1.2
     tl_close_pos_max: float = 0.40
     tl_min_rr: float = 1.0
-    trendline_ttl: tuple = (900, 900, 24 * 3600)
+    trendline_ttl: tuple = (3600, 3600, 48 * 3600)   # 1h lines
     # thirdeye_strategy_algo (1h): CCI length, fixed SL / TP from his realtime.py
     te_cci_length: int = 20               # Lambert's CCI(20) (his robot: 25)
     te_sl_pct: float = 0.01
@@ -806,7 +806,7 @@ class VenuesConfig:
     """
     enabled: tuple = ('bybit', 'okx', 'hyperliquid', 'bitget', 'coinbase', 'bybit_spot')
     # Hyperliquid allows 1000 subscriptions: asset contexts for every coin, trades only for this many hot coins
-    hyperliquid_trades_max: int = 150
+    hyperliquid_trades_max: int = 70   # = the universe (max_pairs)
     # Bitget: at most this many channels per connection (their recommendation is < 50)
     bitget_channels_per_connection: int = 45
     # Mapping sanity: a coin is dropped for a venue when its price differs from Binance by more than this
@@ -862,7 +862,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-36"
+    logic_version: str = "eng-37"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

@@ -47,7 +47,6 @@ def replay_coin(job: tuple):
     from strategies.auction_engine import ENGINES
     from strategies.base import PlanInput
     from strategies.geometry import entry_levels
-    from strategies.maniac import oi_accumulation
     from strategies.structure import Context, maniac_events, recent_atr
     from zones import build_raw, merge
 
@@ -146,28 +145,10 @@ def replay_coin(job: tuple):
         h1 = h1_list[max(0, h - LONG):h]
         k = int(np.searchsorted(corr_close, cut, side='right'))
         corr = corr_list[max(0, k - LONG):k]
-        for event in maniac_events(key, m15, h1, corr, cut):
+        # 4h / daily candles built from the 1h archive (supply / demand zones of 4h, Seiden's curve on the daily)
+        from zones import bars_of
+        for event in maniac_events(key, m15, h1, corr, cut, bars_of(h1, 4), bars_of(h1, 24)):
             run_event(event, now_ms, q)
-        # the OI robot, every 5 minutes of this quarter (the archive's OI resolution)
-        for t5 in range(last_open + 5 * MINUTE_MS, cut + 1, 5 * MINUTE_MS):
-            while oi_ptr < len(oi5) and oi5[oi_ptr][0] <= t5:
-                oi_ptr += 1
-            if oi_ptr < 289 or t5 - oi_fired < CONFIG.strategies.oi_cooldown_sec * 1000:
-                continue
-            a = int(np.searchsorted(m_ts, t5 - MINUTE_MS, side='right'))
-            b = int(np.searchsorted(m_ts, t5 - HOUR_MS - MINUTE_MS, side='right'))
-            c = int(np.searchsorted(m_ts, t5 - 24 * HOUR_MS - MINUTE_MS, side='right'))
-            if min(a, b, c) <= 0:
-                continue
-            found = oi_accumulation(oi5[oi_ptr - 289:oi_ptr], float(fut[a - 1, 4]), float(fut[b - 1, 4]),
-                                    float(fut[c - 1, 4]), c15_list[max(0, q - 49):q + 1])
-            if found is None:
-                continue
-            oi_fired = t5
-            price = float(fut[a - 1, 4])
-            run_event({'setup': 'OI ACCUMULATION', 'direction': 1, 'anchor_level': price,
-                       'anchor_extreme': found['swing_low'], 'anchor_label': 'OI accumulation', 'anchor_ts': t5,
-                       'anchor_close': price, 'event_ts': t5}, t5 + 5_000, q)
     ENGINES.pop(key, None)
     return out
 

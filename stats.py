@@ -607,6 +607,27 @@ def vetoes_table(console: Console, rows: List):
     console.print(table)
 
 
+def card_results_table(console: Console, rows: List):
+    """Entered cards by their OWN exit (card_r: the lifecycle's trailing channel / pyramided units / TTL close): the only
+    result of the Turtles or Connors, whose trades outlive the 8h replay."""
+    cards = [r for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
+    if not cards:
+        return
+    table = Table(title="Entered cards by their own exit (card_r, R of one unit)", header_style="bold magenta",
+                  border_style="blue")
+    for name in ("Strategy", "Cards", "Mean R", "Win", "Avg units"):
+        table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
+    groups: Dict[str, List] = {}
+    for r in cards:
+        groups.setdefault(_col(r, 'strategy') or '?', []).append(r)
+    for name, members in sorted(groups.items()):
+        rs = [r['card_r'] for r in members]
+        units = [_col(r, 'units') or 1 for r in members]
+        table.add_row(name, str(len(rs)), Text(f"{statistics.fmean(rs):+.2f}R", style="green" if statistics.fmean(rs) > 0 else "red"),
+                      f"{sum(x > 0 for x in rs) / len(rs):.0%}", f"{statistics.fmean(units):.1f}")
+    console.print(table)
+
+
 def demo_table(console: Console, db: str = 'demo_trades.db'):
     """The BingX demo fills next to the journal's replay of the same cards: do the two agree?"""
     if not os.path.exists(db):
@@ -770,6 +791,7 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     levels_table(console, {k: v for k, v in groups.items() if k.startswith('ENTRY')})
     sources_table(console, rows)
     vetoes_table(console, rows)
+    card_results_table(console, rows)
     cards_table(console, rows)
     demo_table(console)
     features_table(console, rows, baseline)

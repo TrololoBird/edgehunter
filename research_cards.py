@@ -100,7 +100,6 @@ def replay_events(job: tuple) -> List[Dict]:
     from pretrain import _asof, _bucket, _raw_frame
     from strategies import strategy_of
     from strategies.base import PlanInput
-    from strategies.breakout import breakout_donchian
     from strategies.level import sweep_at_close
     from strategies.wyckoff_range import wyckoff_events
     from strategies.structure import Context, coin_trend, pools_before, recent_atr
@@ -156,7 +155,7 @@ def replay_events(job: tuple) -> List[Dict]:
         trend = coin_trend(h1_window)
         events = []
         if cut % HOUR_MS == 0:
-            events.append(breakout_donchian(h1_long))
+            # (the breakout is the Turtles' daily system since eng-32: research_turtle.py)
             events.extend(wyckoff_events(h1_long))
         if sweep_possible[q]:
             events.append(sweep_at_close(window, pools_before(window, h1_window, atr, last_open), atr, trend))

@@ -191,7 +191,7 @@ def hours_from(candles_15m: Sequence[Sequence[float]], h1: Sequence[Sequence[flo
 
 
 def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[float]],
-                  corr: Optional[List[List[float]]], cut: int) -> List[Dict]:
+                  corr: Optional[List[List[float]]], cut: int, h4: Sequence = (), d1: Sequence = ()) -> List[Dict]:
     """crypto_maniac's systems on the candle that just closed (15m), and on the hour when one closed (1h)."""
     from strategies import maniac
     from strategies.auction_engine import auction_signals
@@ -212,13 +212,28 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
         elif found:
             events.extend(clean(e) for e in found)
 
-    # Seiden draws supply / demand on the higher timeframe and enters on the lower one: zones of 1h candles (at the
-    # hour's close), the limit touch on 15m (was the sample's 15m zones with a 5m entry, eng-34)
-    if cut % HOUR_MS == 0 and len(h1) >= 40:
-        run('supply/demand', maniac.sd_zone_events, h1, HOUR_MS, '1h')
-    run('trendline', maniac.trendline_event, m15)
+    # Seiden draws supply / demand on 4h or higher and enters on the lower one: zones of 4h candles at the 4h close,
+    # the limit touch on 1h (eng-37; eng-34 1h zones, the sample's 15m before). His curve: demand is bought in the
+    # lower half of the daily range (20 days), supply sold in the upper half
+    if cut % (4 * HOUR_MS) == 0 and len(h4) >= 40:
+        found = []
+        run_into = lambda: maniac.sd_zone_events(h4, 4 * HOUR_MS, '4h')     # noqa: E731
+        try:
+            found = run_into()
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"supply/demand of {symbol} failed: {type(e).__name__} {e}", exc_info=True)
+        rows = list(d1)[-20:]
+        for e in found:
+            if len(rows) >= 10:
+                hi, lo = max(r[2] for r in rows), min(r[3] for r in rows)
+                mid = (e['zone_lo'] + e['zone_hi']) / 2
+                e['curve_pos'] = (mid - lo) / (hi - lo) if hi > lo else None
+            events.append({k: (v.item() if hasattr(v, 'item') and not isinstance(v, (list, dict)) else v)
+                           for k, v in e.items()})
     run('Bollinger W / M', maniac.bollinger_wm_event, m15)
     if cut % HOUR_MS == 0 and len(h1) >= 30:
+        # Edwards & Magee: a line's significance grows with its timeframe - lines of 1h candles (was 15m)
+        run('trendline', maniac.trendline_event, h1, HOUR_MS, '1h')
         if symbol:
             try:
                 signals = auction_signals(symbol, h1, m15)
@@ -261,7 +276,8 @@ def smt_divergence(corr: Optional[Sequence[Sequence[float]]], formed_ms: Optiona
 def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]], atr: float,
                   zones: List[Zone], now_ms: float, symbol: Optional[str] = None,
                   m15_long: Sequence[Sequence[float]] = (), h1_long: Sequence[Sequence[float]] = (),
-                  corr: Optional[Sequence[Sequence[float]]] = None) -> Optional[Context]:
+                  corr: Optional[Sequence[Sequence[float]]] = None, h4: Sequence = (),
+                  d1: Sequence = ()) -> Optional[Context]:
     if not candles_15m or not atr:
         return None
     cut = int(candles_15m[-1][0]) + QUARTER_MS
@@ -290,7 +306,7 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
             from strategies.wyckoff_range import wyckoff_events
             ctx.events.extend(wyckoff_events(h1))     # (the breakout is the Turtles' daily system, loop-side)
         corr15 = merge_candles(corr, [], cut, QUARTER_MS) if corr else None
-        ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut))
+        ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut, list(h4 or []), list(d1 or [])))
         # classic published methods (strategies/classic.py): Dalton's 80% rule, Crabel's ORB, Connors' RSI(2)
         try:
             from strategies.classic import classic_events
@@ -379,7 +395,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
                 correlate = pick_correlate(symbol, m15 or candles, corr)
                 h1l = h1_long.tolist() if hasattr(h1_long, 'tolist') else list(h1_long)
                 context = build_context(candles, candles_1h, atr, merge(raw, atr, symbol=symbol), now_ms, symbol=symbol,
-                                        m15_long=m15, h1_long=h1l, corr=correlate)
+                                        m15_long=m15, h1_long=h1l, corr=correlate, h4=h4, d1=d1)
                 if context is not None:
                     context.smt_pair = pick_correlate.last_name if correlate is not None else None
             else:

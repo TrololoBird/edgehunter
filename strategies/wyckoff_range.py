@@ -72,6 +72,13 @@ class WyckoffRangeStrategy(Strategy):
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), x.sig.get('anchor_level')) if x.sig.get('range_lo') is not None else None
 
+    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        """Wyckoff reads a 1h range inside the larger picture: no spring against a falling daily trend's weekly
+        markdown, no UTAD against a rising one (both the daily trend and the weekly bias against the trade)."""
+        if sig.get('trend_1d') == -direction and sig.get('weekly_bias') == -direction:
+            return 'against_htf'
+        return None
+
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr
         if sig.get('range_lo') is None or not atr:

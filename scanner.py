@@ -901,6 +901,11 @@ class Scanner:
         if len(md.d1) >= 2:
             prev, last = md.d1[-2], md.d1[-1]
             sig['daily_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
+        # the trend of every higher timeframe (EMA20 slope, structure.coin_trend): Elder's tide is ~5x the leg's
+        # timeframe (15m leg -> 1h, 1h -> 4h, 4h -> daily), Seiden's curve and Wyckoff's context read the daily one
+        from strategies.structure import coin_trend
+        sig['trend_4h'] = coin_trend(md.h4) if len(md.h4) >= 30 else None
+        sig['trend_1d'] = coin_trend(md.d1) if len(md.d1) >= 30 else None
         # the weekly one, the top of ICT's top-down order (week -> day -> entry)
         if len(md.w1) >= 2:
             prev, last = md.w1[-2], md.w1[-1]

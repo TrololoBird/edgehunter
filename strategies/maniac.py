@@ -291,7 +291,7 @@ def _trendline(h, l, c, atr: float, kind: str) -> Optional[Dict]:
     return best
 
 
-def trendline_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
+def trendline_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '15m') -> Optional[Dict]:
     """
     trendline_bot: lines are built on the candles BEFORE the two confirming ones; both close beyond the line by
     >= 0.15 ATR, the last with a body >= 0.35 ATR, <= 1.2 ATR beyond it and closing in its outer 40%. A broken
@@ -323,14 +323,14 @@ def trendline_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
         if pos > cfg.tl_close_pos_max:
             continue
         return {'setup': 'TRENDLINE UP' if d > 0 else 'TRENDLINE DOWN', 'direction': d,
-                'setup_note': f"15m closed twice {'above a falling resistance' if d > 0 else 'below a rising support'} "
+                'setup_note': f"{tf} closed twice {'above a falling resistance' if d > 0 else 'below a rising support'} "
                               f"({line['pivot_touches']} pivots, {line['touches']} touches, angle {line['angle']:+.0f})",
                 'line_p1': line['p1'], 'line_slope': line['slope'], 'line_ts1': int(window[line['i1']][0]),
                 'line_value': value(i), 'atr_line': atr,
                 'anchor_level': value(i), 'anchor_extreme': l[i] if d > 0 else h[i],
                 'anchor_label': 'trendline', 'anchor_ts': int(window[line['i1']][0]),
                 'anchor_close': float(c[i]), 'target_price': line['p1'],
-                'event_ts': int(window[-1][0]) + QUARTER_MS}
+                'event_ts': int(window[-1][0]) + period_ms}
     return None
 
 

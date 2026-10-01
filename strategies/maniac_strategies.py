@@ -65,17 +65,21 @@ class SupplyDemandStrategy(_System):
         sig, d, atr = x.sig, x.direction, x.atr
         if sig.get('zone_lo') is None or not atr:
             return None
+        # Seiden's curve: demand only low on the higher-timeframe curve, supply only high (the daily range of 20 days)
+        curve = sig.get('curve_pos')
+        if curve is not None and (curve > 0.5 if d > 0 else curve < 0.5):
+            return {'skip': 'curve'}
         lo, hi = sig['zone_lo'], sig['zone_hi']
         far = lo if d > 0 else hi
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         near = hi if d > 0 else lo
         targets, sources = select_targets(zones, near, d, atr, 'opposite_liquidity')
         # Seiden: a resting limit at the proximal line, the stop beyond the distal line, the zone's FIRST touch only
-        plan = base_plan(x, self.name, _anchor(sig, '1h'), '1h', entry='pullback', trigger='touch', single_touch=True,
+        plan = base_plan(x, self.name, _anchor(sig, '4h'), '4h', entry='pullback', trigger='touch', single_touch=True,
                          zone_lo=lo, zone_hi=hi, zone_src=f"{sig.get('anchor_label', 'zone')} (5m pinbar)",
                          # not missable: the zone is confirmed only once price left it by 2 ATR, so a target
                          # measured from the zone is often behind price already; his zone waits for the return
-                         invalid=far, fix_invalid=True, invalid_close_min=60, missable=False, stop_ref=far,
+                         invalid=far, fix_invalid=True, invalid_close_min=240, missable=False, stop_ref=far,
                          exit={'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': atr,
                                'stop_src': 'beyond the pinbar and the zone'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
@@ -107,10 +111,10 @@ class AuctionStrategy(_System):
 
 # ------------------------------------------------------------------------------------------------ trendline
 
-def structural_stop(minutes, direction: int, entry: float, pad: float) -> Optional[float]:
+def structural_stop(minutes, direction: int, entry: float, pad: float, tf_min: int = 5) -> Optional[float]:
     """trendline_bot structural_stop: the last confirmed 5m pivot (3 / 3) beyond the entry, else the extreme of the
     last 40 5m bars, + a 0.1 ATR(5m) pad."""
-    bars = resample(minutes, 5, minutes[-1][0] + MINUTE_MS) if minutes else []
+    bars = resample(minutes, tf_min, minutes[-1][0] + MINUTE_MS) if minutes else []
     if len(bars) < 9:
         return None
     h = np.asarray([b[2] for b in bars])
@@ -140,16 +144,17 @@ class TrendlineStrategy(_System):
         sig, d = x.sig, x.direction
         if sig.get('target_price') is None or not x.minutes:
             return None
-        bars = resample(x.minutes, 5, x.minutes[-1][0] + MINUTE_MS)
+        # the stop on the structure one step below the line's 1h timeframe: 15m pivots
+        bars = resample(x.minutes, 15, x.minutes[-1][0] + MINUTE_MS)
         trs = [max(b[2] - b[3], abs(b[2] - p[4]), abs(b[3] - p[4])) for p, b in zip(bars, bars[1:])][-14:]
         pad = 0.1 * (sum(trs) / len(trs)) if trs else 0.0
-        stop = structural_stop(x.minutes, d, sig['anchor_close'], pad)
+        stop = structural_stop(x.minutes, d, sig['anchor_close'], pad, 15)
         if stop is None:
             return None
         # classic trendline break (Edwards & Magee): the targets are the next support / resistance levels (the map), not
         # the line's first anchor (his robot's target, kept in the setup note)
         exit = {'stop': ['price', stop], 'stop_src': '5m structure beyond the entry', 'tp': ['map', 1.0]}
-        return _confirm_plan(x, self.name, '15m', exit, 'trendline break (2 closes)')
+        return _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
 
 
 # ------------------------------------------------------------------------------------------------ indicator systems

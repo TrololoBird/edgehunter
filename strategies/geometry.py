@@ -96,7 +96,11 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     beyond = [z for z in zones if direction * (_near(z, direction) - ref) >= gap]
     beyond.sort(key=lambda z: direction * (_near(z, direction) - ref))
     strong = [z for z in beyond if z.strength >= cfg.min_strength]
-    if intent == 'opposite_liquidity':
+    if intent == 'draw_liquidity':
+        # ICT's draw on liquidity: the higher-timeframe pools (previous day / week / sessions, equal highs / lows,
+        # daily swings), not every round number or estimated liquidation
+        primary = [z for z in beyond if any(k in ('pdhl', 'equal', 'swing_1d', 'htf') for k in z.kinds)]
+    elif intent == 'opposite_liquidity':
         primary = [z for z in beyond if is_pool(z)]
     elif intent == 'mean':
         primary = [z for z in beyond if any(k in MEAN_KINDS for k in z.kinds)]

@@ -85,6 +85,16 @@ def is_directional(kind: str, group_key: str) -> bool:
     return strategy_of(group_key) is not None
 
 
+def htf_zone_at(zones, price: float) -> bool:
+    """A zone of 4h or higher (order block / FVG / BPR / breaker of 4h, daily, weekly; daily swings; HTF range)
+    contains the price."""
+    import re
+    for z in zones:
+        if z.lo <= price <= z.hi and any(re.search(r'_(4h|1d|1w)$', k) or k in ('swing_1d', 'htf') for k in z.kinds):
+            return True
+    return False
+
+
 def _dur(sec: float) -> str:
     """600 -> '10m', 7200 -> '2h' (reasons are parsed by the dashboard)."""
     return f"{int(sec // 3600)}h" if sec >= 3600 and sec % 3600 == 0 else f"{int(sec // 60)}m"
@@ -613,6 +623,9 @@ class SignalBook:
             reason = 'no_spring_test'
         confirms = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, trigger['time'], trigger.get('extreme_time')) \
             if confirm_of else {}
+        if confirms is not None and s.plan:
+            # ICT / Seiden: an entry whose price sits inside a zone of 4h or higher is the higher-probability one
+            confirms['htf_zone'] = htf_zone_at(s.plan.get('zones') or [], levels['entry'])
         if s.mode == 'sweep' and confirms is not None:
             # ICT's own confirmations of a sweep (eng-35): SMT divergence against the correlate, the entry in a kill zone
             if s.sig.get('smt_div') is not None:

@@ -11,6 +11,7 @@ Level strategies: the anchor is a price level and the extreme made at it, not a 
   a strong map zone, a book liquidity band) traded heavy volume without moving price, after a move into it. Entry on
   a 5m structure shift from the level; stop beyond the absorption extreme; targets: the mean (VWAP / POC / nodes).
 """
+import re
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
@@ -114,10 +115,21 @@ class SweepStrategy(Strategy):
             return None
         level, extreme = sig['anchor_level'], sig['anchor_extreme']
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
+        # ICT's three layers: the bias (context_veto), the ZONE - the raid ran into a point of interest of 1h or higher
+        # (order block, FVG, BPR, breaker), and the entry (5m FVG). A raid in empty space is no ICT setup.
+        poi = [z for z in zones if any(re.match(r'(ob|fvg|bpr|breaker)_(1h|4h|1d|1w)$', k) for k in z.kinds)
+               and z.lo <= max(extreme, level) and z.hi >= min(extreme, level)]
+        if not poi:
+            return {'skip': 'no_htf_poi'}
+        # premium / discount of the 48h dealing range: longs only in its discount half, shorts only in its premium
+        from strategies.ict import dealing_range, range_position
+        pos = range_position(dealing_range(x.h1 or []), extreme, d)
+        if pos is not None and pos > 0.5:
+            return {'skip': 'premium' if d > 0 else 'discount'}
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         invalid = base - d * CONFIG.levels.stop_buffer_atr * atr
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
-        targets, sources = select_targets(zones, reached, d, atr, 'opposite_liquidity')
+        targets, sources = select_targets(zones, reached, d, atr, 'draw_liquidity')
         # ICT: the sweep is only the setup, a wick is not yet a reversal. The entry waits for the 5m market structure
         # shift (a break of the last 5m swing with agreeing taker flow) inside the sweep's area: from the wick to the
         # sweep candle's close (+ a buffer), so the shift right after the sweep and a later retrace both qualify
@@ -130,7 +142,7 @@ class SweepStrategy(Strategy):
         return base_plan(x, self.name, _level_anchor(sig, '15m'), '15m', entry='pullback', trigger='fvg', zone_lo=zone[0],
                          zone_hi=zone[1], zone_src=f"sweep of {sig.get('anchor_label', 'the level')} (5m FVG retrace)",
                          invalid=invalid,
-                         fix_invalid=True, missable=True, stop_ref=extreme, intent='opposite_liquidity',
+                         fix_invalid=True, missable=True, stop_ref=extreme, intent='draw_liquidity',
                          targets=targets, target_src=sources, zones=zones, reached=reached,
                          key=(sig['anchor_ts'], level))
 
