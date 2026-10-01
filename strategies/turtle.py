@@ -76,10 +76,14 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
     return last
 
 
-def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: float, now_ms: int) -> Optional[Dict]:
+def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: float, now_ms: int,
+                    before_hi: Optional[float] = None, before_lo: Optional[float] = None) -> Optional[Dict]:
     """
     The breakout the live minute made against the CLOSED daily candles `d1` ([open_time, o, h, l, c, quote_vol]):
     System 1 (20 days, unless the last S1 breakout was a winner) or System 2 (55 days). None without one.
+    `before_hi` / `before_lo`: today's extremes BEFORE this minute - the Turtles enter on the touch, so a level
+    already crossed earlier today is no entry now (live eng-32: started mid-day, the bot entered MOVR 26% above a
+    55-day high crossed hours before).
     """
     if len(d1) < 60:
         return None
@@ -91,8 +95,10 @@ def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: fl
     hi55, lo55 = max(c[2] for c in d1[-55:]), min(c[3] for c in d1[-55:])
     skip = _last_s1_was_winner(d1, ns)
     for d, level20, level55, crossed20, crossed55 in (
-            (1, hi20, hi55, price_hi > hi20, price_hi > hi55),
-            (-1, lo20, lo55, price_lo < lo20, price_lo < lo55)):
+            (1, hi20, hi55, price_hi > hi20 and (before_hi is None or before_hi <= hi20),
+             price_hi > hi55 and (before_hi is None or before_hi <= hi55)),
+            (-1, lo20, lo55, price_lo < lo20 and (before_lo is None or before_lo >= lo20),
+             price_lo < lo55 and (before_lo is None or before_lo >= lo55))):
         system = None
         if crossed20 and not skip:
             system, level, exit_days = 1, level20, 10

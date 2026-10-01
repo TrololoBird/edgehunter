@@ -683,8 +683,16 @@ class Scanner:
         today = [c for c in minutes if c[0] >= day_start]
         if not today or int(md.d1[-1][0]) + 86_400_000 < day_start:
             return None                           # yesterday's daily candle not loaded yet
+        # today's range BEFORE the last final minute: the 15m candles of the day (complete from 00:00 UTC whatever
+        # the 1m history holds after a restart) plus the earlier minutes
+        last = today[-1]
+        m15 = [c for c in part_candles(self._frame_parts.get(symbol))[0] if day_start <= c[0] < last[0] // 900_000 * 900_000]
+        earlier = [c for c in today[:-1]] + m15
+        if not earlier:
+            return None                           # no record of the day before this minute: cannot tell a fresh touch
         from strategies.turtle import turtle_breakout
-        found = turtle_breakout(md.d1, max(c[2] for c in today), min(c[3] for c in today), now_ms)
+        found = turtle_breakout(md.d1, last[2], last[3], now_ms,
+                                max(c[2] for c in earlier), min(c[3] for c in earlier))
         if found is None:
             return None
         key = (symbol, found['direction'], day_start)
