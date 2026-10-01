@@ -100,6 +100,11 @@ class SweepStrategy(Strategy):
         return (x.sig.get('anchor_ts'), x.sig.get('anchor_level')) if x.sig.get('anchor_level') is not None else None
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        # ICT: a sweep is traded in the direction of the higher-timeframe bias (the daily one); with no daily bias the
+        # coin's 1h trend decides, as before
+        bias = sig.get('daily_bias')
+        if bias:
+            return 'against_bias' if bias == -direction else None
         return 'against_trend' if sig.get('coin_trend') == -direction else None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:

@@ -205,3 +205,13 @@ OI accumulation (derivatives, not chart TA).
   confirmation filters (`orderflow.confirm_exempt`); trade lifetime 90 days; the demo places no take-profits. Not done:
   pyramiding (+1 unit per 1/2 N up to 4) and unit sizing (1% of equity per N). The journal's 8h replay marks these
   trades to the horizon; the card row and the demo hold the real result.
+- eng-34: Turtle pyramiding and units (+1 unit every 1/2 N up to 4 per coin, at most 12 units per direction overall -
+  `unit_limit`; all units' stop moved to 2N from the newest; `TrackedSignal.units`, R = the sum of the units in
+  first-unit risk; the demo sizes a unit at 1% of the account per N and adds / re-stops on the card's ADD event).
+  ICT zones on every timeframe the bot holds - 15m, 1h, 4h (from 1h) and the daily (`MarketData.d1`, sent to the maps
+  worker): open FVGs, unmitigated order blocks and breakers (failed OBs), kinds `fvg_<tf>` / `ob_<tf>` / `breaker_<tf>`
+  weighted by timeframe (15m FVG 0.5 .. daily OB 3.0; order blocks / breakers are structure for stops). ICT's daily
+  bias (`daily_bias`: yesterday's close beyond the day before's high / low) vetoes sweeps and SMT against it
+  (`against_bias`; with no bias the 1h trend as before), journaled. Supply / demand zones on 1h with the 15m touch
+  (Seiden: zones on the higher timeframe). The coin panel's heatmap is backed by the recorder's depth files (4 days,
+  10-minute steps, `recorder.heat_history`): it showed only the ~4h held in memory.

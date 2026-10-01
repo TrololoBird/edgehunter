@@ -628,6 +628,9 @@ class Scanner:
             for tracked in entries:
                 if not tracked.vetoed and warmed_up:
                     self._background_task(self.demo.on_entry(tracked))
+            for tracked, event in self.book.events:
+                if event == 'ADD':
+                    self._background_task(self.demo.on_add(tracked))
             for tracked in self.book.finished_now:
                 self._background_task(self.demo.on_finish(tracked))
 
@@ -805,7 +808,7 @@ class Scanner:
         long_15m = np.asarray(md.m15_long, dtype=np.float64) if with_context and len(md.m15_long) else ()
         long_1h = np.asarray(md.h1_long, dtype=np.float64) if with_context and len(md.h1_long) else ()
         return (symbol, part.select(PART_COLUMNS), list(md.h1), list(md.htf_klines), list(md.htf_oi), liq, now_ms,
-                candles_4d, with_context, long_15m, long_1h)
+                candles_4d, with_context, long_15m, long_1h, list(md.d1)[-60:])
 
     def _correlates(self) -> Dict[str, np.ndarray]:
         """The SMT correlates' 15m histories (BTC for every coin, ETH for BTC): the long REST history + the frame."""
@@ -909,6 +912,11 @@ class Scanner:
         sig.update(self.fetcher.icebergs.features(symbol))
         ctx = self.detector.context.get(symbol)
         sig['coin_trend'] = ctx.trend if ctx is not None else None
+        # ICT's daily bias: yesterday closed above the day before's high = bullish (the draw is the next buy-side
+        # liquidity), below its low = bearish, inside = none (the 1h trend decides then)
+        if len(md.d1) >= 2:
+            prev, last = md.d1[-2], md.d1[-1]
+            sig['daily_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
         sig['trend_w'] = trend_w_of(md.w1_ref, self._price_of(symbol))
         sig['volume_24h'] = md.quote_volume_24h or None

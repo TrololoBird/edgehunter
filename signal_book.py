@@ -127,6 +127,8 @@ class TrackedSignal:
     confirm_checked: bool = False
     # When the card first had its 15m history and waited for the 1h history / level map
     pending_since: Optional[float] = None
+    # Turtle pyramiding: [entry price, time] of every unit (the first = the entry), at most turtle_max_units
+    units: list = field(default_factory=list)
 
     @property
     def finished(self) -> bool:
@@ -141,8 +143,14 @@ class TrackedSignal:
         """Current result in R (risk units) for an entered signal."""
         if not self.levels or not self.entered_at:
             return None
-        risk = abs(self.levels['entry'] - self.levels['sl'])
-        return self.direction * (self.last_price - self.levels['entry']) / risk if risk else None
+        # the risk of ONE unit at the entry (a pyramided stop moves; R stays in the first unit's risk)
+        risk = self.levels.get('risk0') or abs(self.levels['entry'] - self.levels['sl'])
+        if not risk:
+            return None
+        if self.units:
+            # Turtles: every unit is one first-unit risk in size, the result is their sum
+            return sum(self.direction * (self.last_price - u[0]) for u in self.units) / risk
+        return self.direction * (self.last_price - self.levels['entry']) / risk
 
 
 @dataclass
@@ -667,6 +675,14 @@ class SignalBook:
                 s.veto_notes = (s.veto_notes + [text])[-5:]
             s.veto_log.append(reason)
             return vetoed
+        levels['risk0'] = abs(levels['entry'] - levels['sl'])
+        if (s.plan or {}).get('trail_days'):
+            # the Turtles' portfolio limit: at most turtle_max_direction_units units in one direction across all coins
+            held = sum(len(o.units) for o in self.signals.values()
+                       if o is not s and not o.finished and o.units and o.direction == s.direction)
+            if held + 1 > CONFIG.strategies.turtle_max_direction_units:
+                return self._enter(s, levels, now_ms, 'unit_limit', confirms)
+            s.units = [[levels['entry'], entered_at]]
         s.levels, s.entered_at, s.status, s.of_confirm, s.confirms = levels, entered_at, 'ENTRY', of, dict(confirms)
         self.events.append((s, 'ENTRY'))
         return s
@@ -685,6 +701,19 @@ class SignalBook:
             return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
         if s.best_target:
             s.status = f"TP{s.best_target}"
+        n = (s.plan or {}).get('turtle_n')
+        if n and s.units and len(s.units) < CONFIG.strategies.turtle_max_units and \
+                d * (price - s.units[-1][0]) >= CONFIG.strategies.turtle_add_n * n:
+            held = sum(len(o.units) for o in self.signals.values()
+                       if not o.finished and o.units and o.direction == d)
+            if held < CONFIG.strategies.turtle_max_direction_units:
+                # the Turtles' pyramid: one more unit every 1/2 N in the trade's favour, the stop of ALL units moved
+                # to 2N from the newest one
+                add_at = s.units[-1][0] + d * CONFIG.strategies.turtle_add_n * n
+                s.units.append([add_at, now])
+                lv['sl'] = add_at - d * 2 * n
+                lv['sl_src'] = f"2N from unit {len(s.units)} (Turtles)"
+                self.events.append((s, 'ADD'))
         days = (s.plan or {}).get('trail_days')
         if days and self.daily_of:
             from strategies.turtle import trail_level

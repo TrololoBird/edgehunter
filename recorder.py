@@ -241,3 +241,56 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
                 loop.run_in_executor(pool, compact, root, now).add_done_callback(_log_failure)
         except Exception as e:
             logger.warning(f"Recorder: {e!r}")
+
+
+def heat_history(root: str, symbol: str, since_ms: int, until_ms: int, step: Optional[float] = None,
+                 every_sec: int = 600) -> Dict:
+    """
+    The order-book heatmap of `symbol` from the recorded depth files (0.1% bands of every 500-level snapshot): the
+    chart showed only the last ~4h held in memory (DepthBook.heat). One snapshot per `every_sec`, the bands put on a
+    fixed price grid of `step` (the in-memory grid when given, else 0.1% of the median mid) -> {'step', 'snapshots':
+    [[epoch ms, [[price, USD +bid / -ask], ...]], ...]}, the format of DepthBook.heatmap.
+    """
+    import glob
+    import polars as pl
+    from datetime import datetime, timezone
+    files = []
+    day = since_ms // 86_400_000 * 86_400_000
+    while day <= until_ms:
+        date = datetime.fromtimestamp(day / 1000, tz=timezone.utc).strftime('%Y-%m-%d')
+        files += glob.glob(os.path.join(root, 'depth', f'date={date}', '*.parquet'))
+        day += 86_400_000
+    if not files:
+        return {'step': step or 0.0, 'snapshots': []}
+    cols = ['ts', 'symbol', 'mid'] + [f'bid_{i:02d}' for i in range(N_BANDS)] + [f'ask_{i:02d}' for i in range(N_BANDS)]
+    frames = []
+    for f in files:
+        try:
+            frames.append(pl.scan_parquet(f).select([c for c in cols]).filter(pl.col('symbol').cast(pl.Utf8) == symbol))
+        except Exception:
+            continue
+    try:
+        df = pl.concat(frames, how='vertical_relaxed').collect()
+    except Exception:
+        return {'step': step or 0.0, 'snapshots': []}
+    if df.is_empty():
+        return {'step': step or 0.0, 'snapshots': []}
+    df = df.with_columns(pl.col('ts').dt.epoch('ms').alias('ms')).filter(
+        (pl.col('ms') >= since_ms) & (pl.col('ms') < until_ms)).sort('ms')
+    df = df.with_columns((pl.col('ms') // (every_sec * 1000)).alias('slot')).unique('slot', keep='last').sort('ms')
+    if df.is_empty():
+        return {'step': step or 0.0, 'snapshots': []}
+    step = step or float(df['mid'].median()) * BAND
+    out = []
+    for row in df.iter_rows(named=True):
+        mid, cells = row['mid'], {}
+        for i in range(N_BANDS):
+            for side, name in ((1, f'bid_{i:02d}'), (-1, f'ask_{i:02d}')):
+                usd = row[name]
+                if not usd:
+                    continue
+                price = mid * (1 - side * (i + 0.5) * BAND)
+                k = round(price / step)
+                cells[k] = cells.get(k, 0.0) + side * usd
+        out.append([int(row['ms']), [[k * step, round(v)] for k, v in cells.items()]])
+    return {'step': step, 'snapshots': out}

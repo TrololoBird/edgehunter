@@ -464,7 +464,11 @@ class ZonesConfig:
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 0.5), ('liq_hit', 1.0), ('wall', 1.0),
                       ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0),
                       ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 0.5),
-                      ('fvg', 1.0), ('ob', 1.5))
+                      # ICT zones by timeframe: the higher the timeframe, the more it holds (a 15m FVG is noise next
+                      # to a daily one)
+                      ('fvg_15m', 0.5), ('fvg_1h', 1.0), ('fvg_4h', 1.5), ('fvg_1d', 2.5),
+                      ('ob_15m', 1.0), ('ob_1h', 1.5), ('ob_4h', 2.0), ('ob_1d', 3.0),
+                      ('breaker_15m', 1.0), ('breaker_1h', 1.5), ('breaker_4h', 2.0), ('breaker_1d', 3.0))
     # Round-number levels / pools within this many ATR of price (zones.round_levels)
     round_span_atr: float = 3.0
     # Targets: a zone must be at least this strong to be an obstacle (TP1/TP2); TP3 prefers pools / liquidations
@@ -635,10 +639,17 @@ class StrategiesConfig:
     sd_min_move_atr: float = 2.0
     sd_max_zone_atr: float = 1.2
     sd_min_score: float = 3.5
-    sd_ttl: tuple = (24 * 3600, 4 * 3600, 8 * 3600)
+    sd_ttl: tuple = (72 * 3600, 8 * 3600, 24 * 3600)   # 1h zones (Seiden: the higher timeframe) live longer
     # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
     classic_ttl: tuple = (3600, 3600, 12 * 3600)
     connors_ttl: tuple = (3600, 3600, 7 * 86400)   # daily RSI(2): out at the SMA5 within days
+    # The Turtles' units (strategies/turtle.py): +1 unit every turtle_add_n x N in favour, at most turtle_max_units per
+    # coin and turtle_max_direction_units in one direction overall (their "12 units long / short" limit); a unit is
+    # turtle_unit_risk of the account per N (1%: the 2N stop risks 2%)
+    turtle_add_n: float = 0.5
+    turtle_max_units: int = 4
+    turtle_max_direction_units: int = 12
+    turtle_unit_risk: float = 0.01
     orb_minutes: int = 30                 # Crabel's opening range: the first 30 minutes after the US equity open
     orb_window_min: int = 150             # a break later than 2.5h after the open is no opening-range trade
     connors_rsi_low: float = 10.0         # Connors' RSI(2) buy level (shorts above connors_rsi_high)
@@ -854,7 +865,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-33"
+    logic_version: str = "eng-34"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

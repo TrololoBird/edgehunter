@@ -40,7 +40,8 @@ POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
 # Price-action levels whose edge the market drew with wicks (swings, equal highs / lows, previous day / week and
 # sessions, a range's edges, round numbers) or resting size that stayed (book liquidity bands): a stop belongs beyond
 # such a zone. VWAP, volume profile, Fibonacci and estimated liquidations have no 'broken here' edge.
-STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round', 'book', 'ob')
+STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round', 'book',
+                   'ob_15m', 'ob_1h', 'ob_4h', 'ob_1d', 'breaker_15m', 'breaker_1h', 'breaker_4h', 'breaker_1d')
 
 
 @dataclass
@@ -364,7 +365,10 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
     - order block (kind 'ob'): the last opposite candle before a displacement that broke structure - a down-close
       candle whose next three candles close above the highest high of the ten before it while leaving a bullish FVG
       (bearish mirrored); the zone runs from its body (open) to its wick (low); mitigated (traded back into) = dropped.
-    The `keep` nearest of each kind and side to the last close.
+    - breaker (kind 'breaker'): an order block that FAILED - price later closed through its far side - flips: a broken
+      bullish OB is resistance (ICT's breaker block), mirrored.
+    Kinds carry the timeframe ('fvg_4h', 'ob_1d', 'breaker_1h'): a daily order block outweighs a 15m one
+    (CONFIG.zones.weights). The `keep` nearest of each kind and side to the last close.
     """
     n = len(candles)
     if n < 15:
@@ -383,14 +387,14 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
             low_after = min(l[i + 1:], default=hi)
             if low_after > lo:
                 hi = min(hi, low_after)
-                out.append((abs(last - hi), RawLevel(hi, 'fvg', f"FVG {tf} bull", -1, ts=int(candles[i - 1][0]),
+                out.append((abs(last - hi), RawLevel(hi, f'fvg_{tf}', f"FVG {tf} bull", -1, ts=int(candles[i - 1][0]),
                                                      body=lo)))
         elif l[i - 2] > h[i] and l[i - 2] - h[i] >= min_gap:
             lo, hi = h[i], l[i - 2]
             high_after = max(h[i + 1:], default=lo)
             if high_after < hi:
                 lo = max(lo, high_after)
-                out.append((abs(last - lo), RawLevel(lo, 'fvg', f"FVG {tf} bear", +1, ts=int(candles[i - 1][0]),
+                out.append((abs(last - lo), RawLevel(lo, f'fvg_{tf}', f"FVG {tf} bear", +1, ts=int(candles[i - 1][0]),
                                                      body=hi)))
     for j in range(10, n - 3):
         nxt = range(j + 1, j + 4)
@@ -399,28 +403,50 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
             gap = any(h[k - 2] < l[k] for k in range(j + 2, j + 4))
             mitigated = min(l[j + 4:], default=h[j]) <= o[j]
             if broke and gap and not mitigated:
-                out.append((abs(last - o[j]), RawLevel(l[j], 'ob', f"OB {tf} bull", -1, ts=int(candles[j][0]),
+                out.append((abs(last - o[j]), RawLevel(l[j], f'ob_{tf}', f"OB {tf} bull", -1, ts=int(candles[j][0]),
                                                        body=o[j])))
+            elif broke and gap and any(x < l[j] for x in cl[j + 4:]):
+                # closed below the bullish OB's low: a breaker, resistance from below
+                out.append((abs(last - o[j]), RawLevel(o[j], f'breaker_{tf}', f"breaker {tf} bear", +1,
+                                                       ts=int(candles[j][0]), body=l[j])))
         elif cl[j] > o[j]:
             broke = any(cl[k] < min(l[j - 10:j]) for k in nxt)
             gap = any(l[k - 2] > h[k] for k in range(j + 2, j + 4))
             mitigated = max(h[j + 4:], default=l[j]) >= o[j]
             if broke and gap and not mitigated:
-                out.append((abs(last - o[j]), RawLevel(h[j], 'ob', f"OB {tf} bear", +1, ts=int(candles[j][0]),
+                out.append((abs(last - o[j]), RawLevel(h[j], f'ob_{tf}', f"OB {tf} bear", +1, ts=int(candles[j][0]),
                                                        body=o[j])))
+            elif broke and gap and any(x > h[j] for x in cl[j + 4:]):
+                out.append((abs(last - o[j]), RawLevel(o[j], f'breaker_{tf}', f"breaker {tf} bull", -1,
+                                                       ts=int(candles[j][0]), body=h[j])))
     picked: List[RawLevel] = []
-    for kind in ('fvg', 'ob'):
+    for kind in (f'fvg_{tf}', f'ob_{tf}', f'breaker_{tf}'):
         for side in (1, -1):
             group = sorted((x for x in out if x[1].kind == kind and x[1].side == side), key=lambda x: x[0])
             picked += [lv for _, lv in group[:keep]]
     return picked
 
 
+def bars_of(candles_1h: Sequence[Sequence[float]], hours: int) -> List[List[float]]:
+    """1h candles -> complete `hours` candles aligned to UTC multiples."""
+    size = hours * HOUR_MS
+    groups: Dict[int, List] = {}
+    for c in candles_1h:
+        groups.setdefault(int(c[0]) // size * size, []).append(c)
+    out = []
+    for start in sorted(groups):
+        g = sorted(groups[start], key=lambda c: c[0])
+        if len(g) == hours:
+            out.append([start, g[0][1], max(c[2] for c in g), min(c[3] for c in g), g[-1][4], sum(c[5] for c in g)])
+    return out
+
+
 # ---------------------------------------------------------------------------------------------------- map
 
 def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]],
               oi_1h: Sequence[Tuple[int, float]], liq_events: Iterable, atr: float, now_ms: float,
-              candles_4d: Optional[Sequence[Sequence[float]]] = None) -> List[RawLevel]:
+              candles_4d: Optional[Sequence[Sequence[float]]] = None,
+              candles_1d: Optional[Sequence[Sequence[float]]] = None) -> List[RawLevel]:
     """
     Card-independent levels of one coin (cached by the scanner; rebuilt on a new candle / new 1h history).
     `candles_4d`: 4 days of 5m candles for the 4-day volume profile (1h candles are too coarse for it).
@@ -437,8 +463,12 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     levels += estimated_liquidations(candles_1h, oi_1h, atr)
     levels += observed_liquidations(liq_events, atr, now_ms)
     levels += vwap(candles_15m, today, 'VWAP day')
-    # ICT / SMC zones: open fair value gaps and unmitigated order blocks of the 15m (last day) and 1h (8 days) candles
+    # ICT / SMC zones of every timeframe the bot holds: 15m (last day), 1h (8 days), 4h (from the 1h candles) and the
+    # daily (60 days): open FVGs, unmitigated order blocks, breakers - weighted by their timeframe
     levels += imbalances(list(candles_15m)[-96:], '15m') + imbalances(list(candles_1h)[-192:], '1h')
+    levels += imbalances(bars_of(candles_1h, 4), '4h')
+    if candles_1d:
+        levels += imbalances(list(candles_1d)[-60:], '1d')
     if candles_15m:
         last = candles_15m[-1][4]
         levels += [RawLevel(p, 'round', f"round {p:g}", +1 if p > last else -1)

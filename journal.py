@@ -161,7 +161,7 @@ EXTRA_COLUMNS = {
     'dvol_btc': 'REAL', 'dvol_chg_1h': 'REAL', 'pc_oi_btc': 'REAL', 'funding_spread': 'REAL',
     'okx_book_imb': 'REAL', 'bybit_book_imb': 'REAL',
     # iceberg.py: hidden limit orders refilled at one price over the last 5 minutes (bid - ask USD, count)
-    'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL',
+    'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL',
 }
 
 FEATURE_KEYS = {
@@ -179,7 +179,7 @@ FEATURE_KEYS = {
     'trend_w': 'trend_w', 'breadth_w': 'breadth_w',
     'dvol_btc': 'dvol_btc', 'dvol_chg_1h': 'dvol_chg_1h', 'pc_oi_btc': 'pc_oi_btc', 'funding_spread': 'funding_spread',
     'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb',
-    'iceberg_net_5m': 'iceberg_net_5m', 'iceberg_n_5m': 'iceberg_n_5m',
+    'iceberg_net_5m': 'iceberg_net_5m', 'iceberg_n_5m': 'iceberg_n_5m', 'daily_bias': 'daily_bias',
 }
 
 # anomaly label -> (median |4h move| / the coin's usual |4h move|, n): refreshed hourly (refresh_anomaly_effects)

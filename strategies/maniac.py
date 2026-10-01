@@ -162,7 +162,7 @@ def _sd_departure(c15, i: int, zone: Dict, atr: float, kind: str) -> Optional[Tu
     return j, round(score, 2)
 
 
-def sd_zone_events(c15: Sequence[Sequence[float]]) -> List[Dict]:
+def sd_zone_events(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '15m') -> List[Dict]:
     """
     supply_demand-v4 find_supply_demand_zones, the zones CONFIRMED by the candle that just closed. The source candle is
     the last counter-trend candle (an order block) or a rejection pinbar at a local extreme reached by a >= 0.75 ATR
@@ -211,14 +211,14 @@ def sd_zone_events(c15: Sequence[Sequence[float]]) -> List[Dict]:
             continue
         score, i, side, kind, low, high, atr = picked[0]
         out.append({'setup': 'SD DEMAND' if side > 0 else 'SD SUPPLY', 'direction': side,
-                    'setup_note': f"15m {'demand' if side > 0 else 'supply'} zone {low:.6g}-{high:.6g} "
+                    'setup_note': f"{tf} {'demand' if side > 0 else 'supply'} zone {low:.6g}-{high:.6g} "
                                   f"({kind} candle, score {score:.1f}) confirmed by a {'rally' if side > 0 else 'drop'} "
                                   f"of {cfg.sd_min_move_atr:g}+ ATR; entry at the proximal line, first touch only",
                     'zone_lo': low, 'zone_hi': high, 'zone_kind': kind, 'zone_score': score,
                     'anchor_level': high if side > 0 else low, 'anchor_extreme': low if side > 0 else high,
                     'anchor_label': f"{'demand' if side > 0 else 'supply'} zone ({kind})",
                     'anchor_ts': int(c15[i][0]), 'anchor_close': c15[-1][4],
-                    'event_ts': int(c15[-1][0]) + QUARTER_MS})
+                    'event_ts': int(c15[-1][0]) + period_ms})
     return out
 
 

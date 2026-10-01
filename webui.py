@@ -470,6 +470,24 @@ class WebUI:
             if detail is None:
                 return self._json({'error': f'no data for {symbol}'})
         detail['journal'] = await asyncio.to_thread(self.reader.history, 'all', 48, symbol, 300)
+        # the order-book heatmap older than the ~4h in memory, from the recorder's depth files (4 days, 10-min steps)
+        try:
+            import time as _time
+            from config import CONFIG
+            from recorder import heat_history
+            live = detail.get('heatmap') or {'step': 0.0, 'snapshots': []}
+            first = live['snapshots'][0][0] if live['snapshots'] else int(_time.time() * 1000)
+            past = await asyncio.to_thread(heat_history, CONFIG.recorder.root, symbol, first - 4 * 86_400_000, first,
+                                           live['step'] or None)
+            if past['snapshots']:
+                if live['step']:
+                    # the recorded bands on the live grid's step (both are 0.1% of price)
+                    past['snapshots'] = [[t, [[round(p / live['step']) * live['step'], v] for p, v in lv]]
+                                         for t, lv in past['snapshots']]
+                detail['heatmap'] = {'step': live['step'] or past['step'],
+                                     'snapshots': past['snapshots'] + live['snapshots']}
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Heatmap history of {symbol}: {type(e).__name__} {e}")
         return self._json(detail)
 
     async def _history(self, request):

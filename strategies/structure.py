@@ -212,7 +212,10 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
         elif found:
             events.extend(clean(e) for e in found)
 
-    run('supply/demand', maniac.sd_zone_events, m15)
+    # Seiden draws supply / demand on the higher timeframe and enters on the lower one: zones of 1h candles (at the
+    # hour's close), the limit touch on 15m (was the sample's 15m zones with a 5m entry, eng-34)
+    if cut % HOUR_MS == 0 and len(h1) >= 40:
+        run('supply/demand', maniac.sd_zone_events, h1, HOUR_MS, '1h')
     run('trendline', maniac.trendline_event, m15)
     run('SMT', maniac.smt_event, m15, corr)
     run('Bollinger W / M', maniac.bollinger_wm_event, m15)
@@ -338,6 +341,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
     for job in jobs:
         symbol, part, h1, card_1h, oi_1h, liq_events, now_ms, candles_4d, with_context = job[:9]
         m15_long, h1_long = (job[9], job[10]) if len(job) > 10 else ((), ())
+        d1 = job[11] if len(job) > 11 else []
         try:
             candles, atr = part_candles(part)
             if not candles or not atr:
@@ -345,7 +349,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
             # Estimated liquidations need the 1h OI history (card coins); swings / day / week / sessions use 8 days
             candles_1h = h1 if len(h1) >= len(card_1h) else card_1h
             profile = candles_4d or candles_1h[-96:]
-            raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile)
+            raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile, candles_1d=d1)
             if with_context:
                 m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
                 # after m15 exists (eng-16 read it one line early: every coin's context failed, no worker events)

@@ -149,6 +149,10 @@ class DemoExecutor:
         if balance <= 0 or stop_dist <= 0:
             return
         risk_usd = balance * cfg.risk_pct / 100
+        n = (getattr(s, 'plan', None) or {}).get('turtle_n')
+        if n:
+            # the Turtles' unit: 1% of the account per N (their "dollar volatility"), so the 2N stop risks 2%
+            risk_usd = balance * CONFIG.strategies.turtle_unit_risk * stop_dist / (n * scale)
         qty = min(risk_usd / stop_dist, balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         qty = float(ex.amount_to_precision(symbol, qty))
         min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
@@ -188,9 +192,45 @@ class DemoExecutor:
                  'opened_ms': int(time.time() * 1000), 'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty,
                  'sl': lv['sl'], 'tp1': lv['tp1'], 'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * stop_dist}
         trade['id'] = self._insert(trade)
+        trade['unit_qty'], trade['scale'] = qty, scale          # in memory only (the pyramid's unit, BingX's price scale)
         self.open[card_id] = trade
         logger.info(f"Demo ENTRY {symbol} {s.group_key} {'long' if d > 0 else 'short'} {qty} @ {fill:.6g}, "
                     f"SL {lv['sl']:.6g}, risk ${trade['risk_usd']:.2f}")
+
+    async def on_add(self, s) -> None:
+        """A Turtle unit added on the card: the same quantity again at market, the stop of the whole position moved."""
+        if not self.enabled or not s.entered_at:
+            return
+        card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
+        trade = self.open.get(card_id)
+        if trade is None:
+            return
+        async with self._lock:
+            try:
+                ex = await self._exchange()
+                symbol, d = trade['symbol'], trade['direction']
+                # after a restart the unit is the position over the units it already holds
+                unit = float(trade.get('unit_qty') or float(trade['qty']) / max(1, len(s.units) - 1))
+                order = await ex.create_order(symbol, 'market', 'buy' if d > 0 else 'sell', unit)
+                fill = float(order.get('average') or order.get('price') or s.last_price)
+                total = float(trade['qty']) + unit
+                trade['entry_fill'] = (float(trade['entry_fill']) * float(trade['qty']) + fill * unit) / total
+                trade['qty'], trade['unit_qty'] = total, unit
+                try:
+                    await ex.cancel_all_orders(symbol)
+                except Exception as e:
+                    logger.debug(f"Demo cancel {symbol}: {e}")
+                scale = float(trade.get('scale') or 1.0)
+                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', total, None,
+                                      {'stopLossPrice': float(ex.price_to_precision(symbol, s.levels['sl'] * scale)),
+                                       'reduceOnly': True})
+                with sqlite3.connect(self.db_path) as c:
+                    c.execute("UPDATE demo_trades SET qty = ?, entry_fill = ?, sl = ? WHERE id = ?",
+                              (total, trade['entry_fill'], s.levels['sl'] * scale, trade['id']))
+                logger.info(f"Demo ADD {symbol} unit {len(s.units)}: +{unit} @ {fill:.6g}, position {total}, "
+                            f"stop {s.levels['sl'] * scale:.6g}")
+            except Exception as e:
+                logger.warning(f"Demo add-unit failed for {trade['symbol']}: {e!r}")
 
     async def on_finish(self, s) -> None:
         if not self.enabled or not s.entered_at:

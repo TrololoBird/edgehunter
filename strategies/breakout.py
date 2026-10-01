@@ -113,5 +113,6 @@ class BreakoutStrategy(Strategy):
         plan = _confirm_plan(x, self.name, '4h', exit, f"Turtle System {sig['turtle_system']} breakout")
         if plan is not None:
             plan['trail_days'] = sig['trail_days']
+            plan['turtle_n'] = sig['turtle_n']
             plan['key'] = (sig['anchor_ts'], sig['turtle_system'], d)
         return plan
