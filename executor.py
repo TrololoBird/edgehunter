@@ -192,25 +192,39 @@ class DemoExecutor:
         await self._finalize(trade, reason, journal_r)
 
     async def _finalize(self, trade: Dict, reason: str, journal_r: Optional[float]) -> None:
-        """Realized result from the account's fills of this symbol since the entry."""
+        """
+        Realized result: OUR quantity x (the exit fills' volume-weighted price - the entry fill), minus taker fees on both
+        sides. The fills' prices are right but ccxt's BingX swap fills report the amount 100x the position (live REZ:
+        33,333,333 for 333,333 coins), and right after a close the exit fill may not be listed yet (retried).
+        """
         ex = await self._exchange()
-        fills = await ex.fetch_my_trades(trade['symbol'], since=trade['opened_ms'] - 5_000)
         d = trade['direction']
         exit_side = 'sell' if d > 0 else 'buy'
-        exits = [f for f in fills if f.get('side') == exit_side]
-        cash = sum((-1 if f['side'] == 'buy' else 1) * f['price'] * f['amount'] for f in fills)
-        fees = sum(float((f.get('fee') or {}).get('cost') or 0) for f in fills)
-        exit_qty = sum(f['amount'] for f in exits)
-        pnl = cash - fees
+        exits = []
+        for attempt in range(4):
+            fills = await ex.fetch_my_trades(trade['symbol'], since=trade['opened_ms'] - 5_000)
+            exits = [f for f in fills if f.get('side') == exit_side and f.get('price')]
+            if exits:
+                break
+            await asyncio.sleep(5)
+        qty, entry = float(trade.get('qty') or 0), float(trade.get('entry_fill') or 0)
+        weight = sum(f['amount'] for f in exits)
+        exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight if weight else None
+        if exit_avg is None or not qty or not entry:
+            logger.warning(f"Demo {reason} {trade['symbol']}: no exit fill found, result not recorded")
+            pnl = fees = None
+        else:
+            fees = CONFIG.journal.fee_round_trip / 2 * (entry + exit_avg) * qty
+            pnl = d * (exit_avg - entry) * qty - fees
         risk = trade.get('risk_usd') or 0
         with sqlite3.connect(self.db_path) as c:
             c.execute("UPDATE demo_trades SET closed_ms = ?, close_reason = ?, exit_avg = ?, fees_usd = ?, pnl_usd = ?, "
                       "r = ?, journal_r = ? WHERE id = ?",
-                      (int(time.time() * 1000), reason,
-                       sum(f['price'] * f['amount'] for f in exits) / exit_qty if exit_qty else None,
-                       fees, pnl, pnl / risk if risk else None, journal_r, trade['id']))
+                      (int(time.time() * 1000), reason, exit_avg, fees, pnl,
+                       pnl / risk if risk and pnl is not None else None, journal_r, trade['id']))
         self.open.pop(trade['card_id'], None)
-        logger.info(f"Demo {reason} {trade['symbol']}: {pnl:+.2f} USD ({pnl / risk if risk else 0:+.2f}R)")
+        if pnl is not None:
+            logger.info(f"Demo {reason} {trade['symbol']}: {pnl:+.2f} USD ({pnl / risk if risk else 0:+.2f}R)")
 
     async def reconcile_loop(self, running) -> None:
         """Finalize demo trades the exchange closed on its own (stop / last target)."""
@@ -233,7 +247,7 @@ class DemoExecutor:
                                 pass
                             await self._finalize(trade, 'EXCHANGE', None)
                     except Exception as e:
-                        logger.debug(f"Demo reconcile {trade['symbol']}: {e!r}")
+                        logger.warning(f"Demo reconcile {trade['symbol']}: {e!r}")
 
     def _insert(self, row: Dict) -> int:
         cols = [k for k in row if k != 'id']
