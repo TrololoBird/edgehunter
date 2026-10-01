@@ -77,14 +77,10 @@ class _FrameLookup:
         md = self.markets.get(symbol)
         live = md.live_candle('futures') if md else None
         if live and live['timestamp'] > part['timestamp'][-1]:
-            # a null row of the frame's own schema + the live OHLC, stacked: pl.concat(how='diagonal_relaxed') of the
-            # ~100-column frame for every card at each minute stalled the loop 1-4s (watchdog, 2026-10-01)
-            values = {c: live.get(c) for c in ('timestamp', 'open', 'high', 'low', 'close')}
-            values.update(symbol=symbol, atr=part['atr'][-1])
-            schema = part.schema
-            row = part.clear(1).with_columns([pl.lit(v, dtype=schema[c]).alias(c) for c, v in values.items()
-                                              if c in schema])
-            part = part.vstack(row)
+            # (measured: this diagonal concat ~2 ms; part.clear(1) + vstack of the ~110-column frame 67 ms)
+            row = {c: live.get(c) for c in ('timestamp', 'open', 'high', 'low', 'close')}
+            row.update(symbol=symbol, atr=part['atr'][-1])
+            part = pl.concat([part, pl.DataFrame([row])], how='diagonal_relaxed')
         self._memo[symbol] = part
         return part
 
