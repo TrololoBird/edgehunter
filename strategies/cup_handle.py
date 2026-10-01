@@ -81,7 +81,7 @@ class CupHandleStrategy(_System):
     name = 'cup_handle'
     setups = {'CUP HANDLE': 1}
     ttl_key = 'cup_ttl'
-    min_rr = 3.0                                     # O'Neil: cut at 7-8%, take 20-25%
+    min_rr = 1.0                                     # the measured target must pay more than the risk (O'Neil's 3:1 is an exit rule)
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig = x.sig

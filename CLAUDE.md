@@ -254,8 +254,8 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   one more unit at half the way to the stop, the stop kept, R summed over the units; the demo adds and re-places the
   stop and take-profits). Loop-side `Scanner._pumps`.
 - eng-40: R:R from each method's source (`Strategy.min_rr` -> `plan['min_rr']`, `geometry._min_rr`; None = the global
-  `min_rr_tp1` 2): supply / demand 3 (Seiden), cup with handle 3 (O'Neil's 7-8% loss / 20-25% gain), Bollinger W/M,
+  `min_rr_tp1` 2): supply / demand 3 (Seiden), cup with handle 1, Bollinger W/M,
   Market Profile, ORB, Silver Bullet 1 (their targets are references, no ratio rule), Connors 0 (no stop / ratio rule).
-  `cup_handle` (`strategies/cup_handle.py`, CUP HANDLE long on 1h / 4h: O'Neil's rules - prior +30%, U cup 12-50%
+  (cup with handle: min R:R 1, stop the nearer of the handle low and 8% below the entry - O'Neil) `cup_handle` (`strategies/cup_handle.py`, CUP HANDLE long on 1h / 4h: O'Neil's rules - prior +30%, U cup 12-50%
   deep with rims within 5%, a handle in the upper half <= 12% on lower volume, the close above the pivot on >= 1.4x
   volume; stop below the handle, target the cup's depth from the pivot - Bulkowski).
