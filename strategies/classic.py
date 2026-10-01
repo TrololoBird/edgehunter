@@ -12,9 +12,9 @@ Classic published methods added as their authors define them (eng-29), detected 
               York, DST-aware): the largest volume shift of the day. Crabel's narrow-range days (NR4 / NR7: yesterday's
               range the smallest of 4 / 7) precede the larger expansions: journaled (`nr7`), not a filter.
 - connors     Larry Connors' RSI(2) ("Short Term Trading Strategies That Work", 2008): with the trend (close above the
-              200-period SMA) buy when RSI(2) < 10, exit on a close above the 5-period SMA (shorts mirrored: below the
-              SMA200, RSI(2) > 90, out below the SMA5). Connors trades daily bars; the bot's 1h candles are the
-              closest it holds with 200 periods. He uses no stop: ours is the structure beyond the entry (the journal
+              200-day SMA) buy when RSI(2) < 10, exit on a close above the 5-day SMA (shorts mirrored: below the
+              SMA200, RSI(2) > 90, out below the SMA5), on DAILY candles (fetcher._daily_candles_loop), checked
+              loop-side once per coin after each daily close (Scanner._connors_daily). He uses no stop: ours is the structure beyond the entry (the journal
               needs an R), the target is the SMA5 at the entry (his exit is a close beyond it). Expected: high hit
               rate, small targets - most entries fail R:R >= 2 and are journaled `low_rr`, the replay measures them.
 """
@@ -181,10 +181,14 @@ def rsi(closes: Sequence[float], period: int) -> Optional[float]:
     return 100 - 100 / (1 + avg_g / avg_l)
 
 
-def connors_event(h1: Sequence[Sequence[float]], first: bool = True) -> Optional[Dict]:
-    """The hour RSI(2) crossed into the extreme (`first`: not already there an hour earlier: Connors is in until the
-    SMA5 exit, a run of oversold hours is one trade)."""
+def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional[Dict]:
+    """
+    Connors on DAILY candles (his system; the 1h version of eng-29's first draft was another system): the day that
+    closed with RSI(2) in the extreme (`first`: not already there the day before - he is in until the SMA5 exit, a
+    run of oversold days is one trade).
+    """
     cfg = CONFIG.strategies
+    h1 = d1
     if len(h1) < 202:
         return None
     if first and connors_event(h1[:-1], first=False) is not None:
@@ -205,11 +209,11 @@ def connors_event(h1: Sequence[Sequence[float]], first: bool = True) -> Optional
         return None
     extreme = min(x[3] for x in h1[-3:]) if side > 0 else max(x[2] for x in h1[-3:])
     return {'setup': 'RSI2 LONG' if side > 0 else 'RSI2 SHORT', 'direction': side,
-            'setup_note': f"1h RSI(2) {r:.0f} {'below 10 above' if side > 0 else 'above 90 below'} the SMA200 "
+            'setup_note': f"daily RSI(2) {r:.0f} {'below 10 above' if side > 0 else 'above 90 below'} the SMA200 "
                           f"{sma200:.6g} (Connors); exit at the SMA5 {sma5:.6g}",
             'anchor_level': c, 'anchor_extreme': extreme, 'anchor_label': 'RSI(2) extreme',
             'anchor_ts': int(last[0]), 'anchor_close': c, 'connors_sma5': sma5, 'rsi2': r,
-            'event_ts': int(last[0]) + HOUR_MS}
+            'event_ts': int(last[0]) + DAY_MS}
 
 
 def classic_events(m15: List[List[float]], h1: List[List[float]], cut: int) -> List[Dict]:
@@ -217,8 +221,4 @@ def classic_events(m15: List[List[float]], h1: List[List[float]], cut: int) -> L
     for found in (value_area_event(m15, cut), orb_event(m15, h1, cut)):
         if found:
             out.append(found)
-    if cut % HOUR_MS == 0:
-        found = connors_event(h1)
-        if found:
-            out.append(found)
-    return out
+    return out                     # Connors' RSI(2) runs on daily candles, loop-side (Scanner._connors_daily)

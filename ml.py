@@ -88,6 +88,12 @@ class AnomalyModel:
     # ---------------------------------------------------------------- worker process
 
     def _executor(self):
+        if self._pool is not None and getattr(self._pool, '_broken', False):
+            # the worker died (killed when RAM ran out): a broken pool fails every call forever - Tier-0's check
+            # raised BrokenProcessPool every 2s until a restart (live 2026-09-30 23:28), so a new one is started
+            logger.warning("ML anomalies: the worker process died; starting a new one")
+            self._pool.shutdown(wait=False, cancel_futures=True)
+            self._pool, self._worker_ready = None, False
         if self._pool is None:
             import multiprocessing
             import os
@@ -103,10 +109,17 @@ class AnomalyModel:
         import pickle
         if self.model is None or not len(X):
             return None
+        from concurrent.futures.process import BrokenProcessPool
         loop = asyncio.get_running_loop()
-        if not self._worker_ready:
-            self._worker_ready = await loop.run_in_executor(self._executor(), _worker_load, pickle.dumps(self.model))
-        return await loop.run_in_executor(self._executor(), _worker_score, X)
+        try:
+            if not self._worker_ready:
+                self._worker_ready = await loop.run_in_executor(self._executor(), _worker_load,
+                                                                pickle.dumps(self.model))
+            return await loop.run_in_executor(self._executor(), _worker_score, X)
+        except BrokenProcessPool:
+            # no scores this pass (the rules still flag); the next call starts a new worker and reloads the model
+            self._worker_ready = False
+            return None
 
     async def afit(self) -> None:
         """Fit in the worker process on the sampled window; the old model keeps scoring until the new one is in."""

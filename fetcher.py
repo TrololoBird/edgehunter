@@ -125,6 +125,10 @@ class MarketData:
     # context feature only (trend_w / breadth_w in the journal); reloaded after each weekly close
     w1_ref: Optional[tuple] = None
     w1_loaded: float = 0.0
+    # 210 closed daily candles [open_time, o, h, l, c, quote_vol] of every universe coin (Connors' RSI(2) is a daily
+    # system: SMA200 + RSI(2) of DAILY closes), reloaded once per UTC day by _daily_candles_loop
+    d1: list = field(default_factory=list)
+    d1_day: int = 0
 
 
     def alt_spot_trade(self, ts_ms: int, price: float, usd: float, side: int):
@@ -1212,6 +1216,42 @@ class DataFetcher:
             now = time.time()
             await asyncio.sleep(max(60.0, 3600 - now % 3600 + 60))
 
+    async def _daily_candles_loop(self):
+        """
+        210 daily candles of every universe coin (limit 210, weight 2) once per UTC day, a minute after the daily close,
+        and for coins that join: Connors' RSI(2) system reads daily closes (~240 weight a day).
+        """
+        while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
+            await asyncio.sleep(10)
+        while self._running:
+            now = time.time()
+            day = int(now // 86400)
+            symbols = [s for s, md in self.markets.items() if md.d1_day < day]
+            sem = asyncio.Semaphore(4)
+
+            async def one(symbol: str):
+                binance_symbol = self._ccxt_to_binance_symbol(symbol)
+                md = self.markets.get(symbol)
+                if not binance_symbol or md is None:
+                    return
+                async with sem:
+                    try:
+                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                                     {'symbol': binance_symbol, 'interval': '1d', 'limit': 210},
+                                                     priority=2, weight=2)
+                    except Exception as e:
+                        logger.debug(f"daily candles failed for {symbol}: {e}")
+                        return
+                md.d1 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
+                         for k in self._closed_only(rows or [])]
+                md.d1_day = day
+
+            if symbols and now - day * 86400 >= 60:
+                await asyncio.gather(*(one(s) for s in symbols))
+                logger.info(f"Daily candles: {sum(1 for s in symbols if len(self.markets.get(s).d1 or []) >= 202) if symbols else 0}"
+                            f" of {len(symbols)} coins have >= 202 closed days")
+            await asyncio.sleep(300)
+
     async def _weekly_candles_loop(self):
         """
         Weekly candles of every universe coin (limit 60, weight 1): the weekly trend reference (weekly_ref), loaded
@@ -1431,6 +1471,7 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._hourly_candles_loop()))
         self._tasks.append(asyncio.create_task(self._seasonal_loop()))
         self._tasks.append(asyncio.create_task(self._weekly_candles_loop()))
+        self._tasks.append(asyncio.create_task(self._daily_candles_loop()))
 
     async def _start_binance_streams(self, symbols: List[str]):
         ids = {'spot': [], 'futures': []}

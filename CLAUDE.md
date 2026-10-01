@@ -159,7 +159,7 @@ The market regime changes, so nothing is fitted once on the past: models start f
 - New classic strategies (`strategies/classic.py`, cards `classic_strategies.py`, entry at the signal's close):
   `value_area` VA80 LONG / SHORT (Dalton's 80% rule on the UTC day's value area, 30m periods), `orb` ORB UP / DOWN
   (Crabel's 30m range after the US equity open, first 15m close beyond it within 2.5h, stop at the range's other side,
-  NR4 / NR7 noted), `connors` RSI2 LONG / SHORT (1h RSI(2) < 10 above the SMA200 / > 90 below, target the SMA5).
+  NR4 / NR7 noted), `connors` RSI2 LONG / SHORT (DAILY RSI(2) < 10 above the 200-day SMA / > 90 below, target the 5-day SMA; daily candles by `fetcher._daily_candles_loop`, checked loop-side `Scanner._connors_daily`).
 - `macro_calendar.py`: entries 30 min before .. 60 min after CPI / FOMC are vetoed `macro_event` (dates for 2026 only).
 - Pinned coins (`CONFIG.exchange.pinned_bases`: BTC ETH XAU XRP SOL SUI BNB DOGE HYPE): always in the universe and in
   every strategy's pool, bypassing the volume / spot / venue / commodity exclusions; the rest of each pool is picked by
@@ -170,3 +170,9 @@ The market regime changes, so nothing is fitted once on the past: models start f
   stays only if what it rejects does worse) and `demo_table` (BingX demo R next to the journal R of the same card;
   `EARLY_CLOSE` = REZ / GRT / NMR closed 2026-10-01 while their cards were open, not results). Freeze the signal logic
   for 7 days after a version bump before judging anything (eng-26 .. eng-29 changed within one day).
+- Robustness (eng-29): a dead worker process (killed when RAM runs out) no longer breaks its pool for good - the maps
+  and anomaly pools are recreated (`_broken`), the failing pass is skipped (live 2026-09-30 23:28: Tier-0 raised
+  BrokenProcessPool every 2s until a restart). The demo trades one card per coin (BingX one-way mode nets orders of a
+  coin into one position): a second card on a held coin is recorded `OVERLAP`. Lint before a restart:
+  `ruff check --select F` and `pylint --disable=all --enable=E0601,E0602,E0606` (both would have caught this
+  session's two outages).

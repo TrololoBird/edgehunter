@@ -626,7 +626,7 @@ def demo_table(console: Console, db: str = 'demo_trades.db'):
     for r in rows:
         groups.setdefault(r[0] or '?', []).append(r)
     for strategy, members in sorted(groups.items()):
-        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE') and r[2] is not None]
+        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE', 'OVERLAP') and r[2] is not None]
         demo = [r[2] for r in done]
         jr = [r[3] for r in done if r[3] is not None]
         both = [(r[2], r[3]) for r in done if r[3] is not None]

@@ -251,8 +251,15 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
         out.append(RawLevel(center(k), 'hvn', f"HVN {tag}"))
     # LVN (Dalton / volume-profile practice): a valley between two volume nodes - price spent little time there, so it
     # passes through it fast and a rejection there returns it to the node it came from; a target / edge, not support
+    # running maxima from each side: max(smooth[:k]) per bucket was quadratic (profiles go up to 5000 buckets)
+    pre, suf = [0.0] * (n + 1), [0.0] * (n + 1)
+    for k in range(n):
+        pre[k + 1] = max(pre[k], smooth[k])
+    for k in range(n - 1, -1, -1):
+        suf[k] = max(suf[k + 1], smooth[k])
+
     def valley(k: int) -> bool:
-        left, right = max(smooth[:k]), max(smooth[k + 1:])
+        left, right = pre[k], suf[k + 1]
         return smooth[k] == min(smooth[k - 2:k + 3]) and min(left, right) >= median and             smooth[k] <= cfg.lvn_ratio * min(left, right)
     lvns = [k for k in range(2, n - 2) if valley(k)]
     for k in sorted(lvns, key=smooth.__getitem__)[:4]:

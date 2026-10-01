@@ -170,6 +170,7 @@ class Scanner:
         self._oi_fired: Dict[str, int] = {}
         self._context_task: Optional[asyncio.Task] = None
         self._maps_pool = None          # ProcessPoolExecutor (one worker) for level maps: see _maps_executor
+        self._connors_checked: Dict[str, int] = {}   # symbol -> the daily close Connors' RSI(2) was checked at
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -643,6 +644,9 @@ class Scanner:
             oi_setup = self._oi_accumulation(symbol, md, now_ms)
             if oi_setup:
                 setups.append(oi_setup)
+            connors = self._connors_daily(symbol, md, now_ms)
+            if connors:
+                setups.append(connors)
             for setup in setups:
                 sig = dict(md.tier0)
                 sig.update(is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
@@ -662,6 +666,17 @@ class Scanner:
                 logger.info(f"Setup detected: {symbol} {setup['setup']} - {setup['setup_note']}")
                 out.append((symbol, sig))
         return out
+
+    def _connors_daily(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
+        """Connors' RSI(2) on the coin's daily candles, once per closed day (fresh within the day's first 2 hours)."""
+        if len(md.d1) < 202:
+            return None
+        day_close = int(md.d1[-1][0]) + 86_400_000
+        if self._connors_checked.get(symbol) == day_close or now_ms - day_close > 2 * 3_600_000:
+            return None
+        self._connors_checked[symbol] = day_close
+        from strategies.classic import connors_event
+        return connors_event(md.d1)
 
     def _oi_accumulation(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
         """
@@ -721,6 +736,12 @@ class Scanner:
         One worker PROCESS for level maps (zones.build_raw + detector contexts, pure Python): in threads they held the
         GIL after every 15m close while ~300 maps were rebuilt, and the loop stalled 1-4s.
         """
+        if self._maps_pool is not None and getattr(self._maps_pool, '_broken', False):
+            # a worker that died (killed when RAM ran out) breaks the pool for good: every later map failed until a
+            # restart (live 2026-09-30 23:28) - a new pool instead
+            logger.warning("Maps worker process died: starting a new one")
+            self._maps_pool.shutdown(wait=False, cancel_futures=True)
+            self._maps_pool = None
         if self._maps_pool is None:
             import multiprocessing
             import os
@@ -766,7 +787,12 @@ class Scanner:
         if not jobs:
             return {}
         corr = self._correlates() if any(job[8] for job in jobs) else None
-        return await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs, corr)
+        from concurrent.futures.process import BrokenProcessPool
+        try:
+            return await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs, corr)
+        except BrokenProcessPool:
+            logger.warning(f"Maps worker died during a pass of {len(jobs)} maps: retried on the next pass")
+            return {}
 
     async def _refresh_contexts(self):
         """Quick level maps / sweep pools of every coin whose closed 15m candles changed (worker process)."""

@@ -106,6 +106,18 @@ class DemoExecutor:
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}"
         if card_id in self.open:
             return
+        busy = next((t for t in self.open.values() if t['symbol'].split('/')[0].replace('1000', '') ==
+                     s.symbol.split('/')[0].replace('1000', '')), None)
+        if busy is not None:
+            # BingX's one-way mode nets every order of a coin into ONE position: a second card on the same coin would
+            # merge with the first (one card's exit closes the other, their fills mix in both results) - recorded, not
+            # traded
+            logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {busy.get('setup') or busy['card_id']} already holds the coin")
+            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                          'direction': s.direction, 'opened_ms': int(time.time() * 1000),
+                          'error': f"coin held by {busy.get('setup') or busy['card_id']}", 'closed_ms': int(time.time() * 1000),
+                          'close_reason': 'OVERLAP'})
+            return
         async with self._lock:
             try:
                 await self._open(card_id, s)

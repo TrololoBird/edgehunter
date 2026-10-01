@@ -633,6 +633,7 @@ class StrategiesConfig:
     sd_ttl: tuple = (24 * 3600, 4 * 3600, 8 * 3600)
     # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
     classic_ttl: tuple = (3600, 3600, 12 * 3600)
+    connors_ttl: tuple = (3600, 3600, 7 * 86400)   # daily RSI(2): out at the SMA5 within days
     orb_minutes: int = 30                 # Crabel's opening range: the first 30 minutes after the US equity open
     orb_window_min: int = 150             # a break later than 2.5h after the open is no opening-range trade
     connors_rsi_low: float = 10.0         # Connors' RSI(2) buy level (shorts above connors_rsi_high)

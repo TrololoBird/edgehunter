@@ -44,7 +44,7 @@ class ConnorsStrategy(_System):
     """Connors' RSI(2): out at the SMA5 (the target), stop from the structure (he uses none)."""
     name = 'connors'
     setups = {'RSI2 LONG': 1, 'RSI2 SHORT': -1}
-    ttl_key = 'classic_ttl'
+    ttl_key = 'connors_ttl'
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig = x.sig
@@ -52,7 +52,7 @@ class ConnorsStrategy(_System):
             return None
         exit = {'stop': ['pct', 0.02], 'tp': ['level', sig['connors_sma5'], 0.0, None], 'atr': x.atr,
                 'tp_src': 'SMA5 (Connors exit)'}
-        return _confirm_plan(x, self.name, '1h', exit, 'RSI(2) extreme with the SMA200 trend')
+        return _confirm_plan(x, self.name, '4h', exit, 'daily RSI(2) extreme with the SMA200 trend')
 
 
 CLASSIC_STRATEGIES = (ValueAreaStrategy(), OrbStrategy(), ConnorsStrategy())
