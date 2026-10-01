@@ -174,7 +174,7 @@ class BollingerStrategy(_System):
         if sig.get('bb_stop') is None:
             return None
         exit = {'stop': ['ref', 0.0], 'stop_src': 'beyond the W / M retest',
-                'tp': ['level', sig['bb_target'], 1.0, None], 'tp_src': 'the opposite Bollinger band', 'atr': x.atr}
+                'tp': ['level', sig['bb_target'], 1.0, None], 'tp_src': 'the W / M height from the break (measured move)', 'atr': x.atr}
         return _confirm_plan(x, self.name, '15m', exit, 'Bollinger W / M confirmed', stop_ref=sig['bb_stop'])
 
 

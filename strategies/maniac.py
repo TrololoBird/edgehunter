@@ -478,7 +478,8 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
     John Bollinger's reversal method ("Bollinger on Bollinger Bands", 2001, method III; W / M patterns after Arthur
     Merrill): a band tag is NOT a signal by itself. W-bottom: a low that closed BELOW the lower band (%b < 0), a rally,
     a retest low whose close stays INSIDE the band (%b >= 0, the price low may be lower), then the first close above the
-    rally's high between them -> long at that close; stop below the retest low; target the upper band, then the map.
+    rally's high between them -> long at that close; stop below the retest low; target the pattern's height from the
+    break (the double bottom's measured move), then the map.
     M-top mirrored. BB(20, 2), within the last 30 15m candles. (Replaces crypto_maniac's CSI system: a close beyond
     BB(40, 1.5) read as a reversal contradicts Bollinger's own rule, and its "candle sentiment index" is his invention.)
     """
@@ -515,7 +516,10 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
         if not broke_now or broke_before:
             continue
         stop = l[b_] if d > 0 else h[b_]
-        target = upper[i] if d > 0 else lower[i]
+        # W / M = Merrill's double bottom / top: the target is the pattern's height projected from the break
+        # (Edwards & Magee, Bulkowski) - the opposite band was no source rule and sat at the entry (live: R:R ~0)
+        extreme = min(l[a_], l[b_]) if d > 0 else max(h[a_], h[b_])
+        target = level + (level - extreme)
         return {'setup': 'BB W-BOTTOM' if d > 0 else 'BB M-TOP', 'direction': d,
                 'setup_note': f"15m {'W-bottom' if d > 0 else 'M-top'} on BB(20, 2): first {'low' if d > 0 else 'high'} "
                               f"closed outside the band, the retest held inside (%b {pb[b_]:.2f}), close beyond the "
