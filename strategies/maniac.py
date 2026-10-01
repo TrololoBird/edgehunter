@@ -809,7 +809,7 @@ def oi_accumulation(oi_5m: Sequence[Tuple[float, float]], price_now: float, pric
     p1, p24 = (price_now / price_1h - 1) * 100, (price_now / price_24h - 1) * 100
     if not (g1 >= cfg.oi_1h_threshold and p1 <= g1 * cfg.oi_price_ratio and g24 > p24):
         return None
-    recent = c15[-50:]
+    recent = (c15() if callable(c15) else c15)[-50:]      # c15 may be built lazily (only past the OI conditions)
     if not recent:
         return None
     lows = [(i, recent[i][3]) for i in range(1, len(recent) - 1)

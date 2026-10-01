@@ -668,8 +668,10 @@ class Scanner:
         day_ago = [c for c in md.h1_long if c[0] <= now_ms - 25 * 3_600_000] if len(md.h1_long) else []
         if not price or not hour_ago or not day_ago:
             return None
-        candles, _ = part_candles(self._frame_parts.get(symbol))
-        found = oi_accumulation(list(md.oi_5m), price, hour_ago[-1][4], day_ago[-1][4], candles)
+        # the 15m candles only once the OI conditions held (converting every coin's frame each minute stalled the
+        # loop 4s live, 2026-10-01)
+        found = oi_accumulation(list(md.oi_5m), price, hour_ago[-1][4], day_ago[-1][4],
+                                lambda: part_candles(self._frame_parts.get(symbol))[0])
         if found is None:
             return None
         if cfg.oi_structure_filter and found.get('structure_broken'):
