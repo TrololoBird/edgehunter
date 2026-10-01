@@ -285,7 +285,7 @@ class DemoExecutor:
                                 pass
                             await self._finalize(trade, 'EXCHANGE', None)
                     except Exception as e:
-                        logger.warning(f"Demo reconcile {trade['symbol']}: {e!r}")
+                        logger.warning(f"Demo reconcile {trade['symbol']}: {e!r}", exc_info=True)
 
     def _insert(self, row: Dict) -> int:
         cols = [k for k in row if k != 'id']
