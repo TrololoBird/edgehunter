@@ -9,7 +9,8 @@ Patterns"), on 1h and 4h candles at their close:
   rim, on lower volume than the cup's;
 - the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
 - stop below the handle's low; target the pivot + the cup's depth (Bulkowski's measured move); O'Neil's own rule
-  (cut losses at 7-8%, take 20-25%) is a ~3:1 reward / risk - the strategy's minimum R:R.
+  (cut losses at 7-8%, take 20-25%) is an exit rule, not an entry filter: the stop is the nearer of the handle's low
+  and 8% below the entry, the minimum R:R to the measured target is 1.
 """
 from typing import Dict, List, Optional, Sequence
 
@@ -87,7 +88,10 @@ class CupHandleStrategy(_System):
         sig = x.sig
         if sig.get('ch_stop') is None:
             return None
-        exit = {'stop': ['price', sig['ch_stop']], 'stop_src': 'below the handle (O\'Neil)',
+        # O'Neil: sell at 7-8% below the buy point; Bulkowski: below the handle - the nearer of the two
+        stop = max(sig['ch_stop'], sig['anchor_close'] * 0.92)
+        src = 'below the handle' if stop == sig['ch_stop'] else "8% below the buy point (O'Neil)"
+        exit = {'stop': ['price', stop], 'stop_src': src,
                 'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': 'the cup depth from the pivot (Bulkowski)',
                 'atr': x.atr}
         return _confirm_plan(x, self.name, sig.get('ch_tf', '1h'), exit, 'close above the handle pivot on volume')
