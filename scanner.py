@@ -683,9 +683,14 @@ class Scanner:
         today = [c for c in minutes if c[0] >= day_start]
         if not today or int(md.d1[-1][0]) + 86_400_000 < day_start:
             return None                           # yesterday's daily candle not loaded yet
+        last = today[-1]
+        # cheap gate first: the minute reached the nearer of the 20 / 55-day channels at all (building the 15m candles
+        # of every coin each minute stalled the loop 1.4s live)
+        recent = md.d1[-20:]
+        if not (last[2] > max(c[2] for c in recent) or last[3] < min(c[3] for c in recent)) and                 not (last[2] > max(c[2] for c in md.d1[-55:]) or last[3] < min(c[3] for c in md.d1[-55:])):
+            return None
         # today's range BEFORE the last final minute: the 15m candles of the day (complete from 00:00 UTC whatever
         # the 1m history holds after a restart) plus the earlier minutes
-        last = today[-1]
         m15 = [c for c in part_candles(self._frame_parts.get(symbol))[0] if day_start <= c[0] < last[0] // 900_000 * 900_000]
         earlier = [c for c in today[:-1]] + m15
         if not earlier:
