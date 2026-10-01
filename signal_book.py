@@ -645,6 +645,10 @@ class SignalBook:
                confirms: Dict) -> TrackedSignal:
         """Enter, or journal the entry that would have been taken with the veto reason (the card keeps waiting)."""
         entered_at = now_ms / 1000
+        if reason is None:
+            from macro_calendar import blackout
+            if blackout(now_ms):
+                reason = 'macro_event'
         of = confirms.get('orderflow') or None
         if reason:
             vetoed = copy.copy(s)

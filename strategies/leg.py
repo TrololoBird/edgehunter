@@ -2,9 +2,9 @@
 Leg strategies: a real leg (levels.find_impulse: its end on the last 12h of 15m candles, its start searched back over
 15m and 1h history; its timeframe by duration 15m / 1h / 4h, the entry 3-6x finer).
 
-- trend (BULL F / BEAR D) and momentum (IMPULSE UP / DOWN): continuation. The pullback zone is the strongest support
-  inside 0.382-0.786 of the leg (else the Fibonacci band); entry on a structure shift there; invalid beyond the leg's
-  start; a new extreme resets the card to waiting; targets re-measured from the entry toward the leg's extensions.
+- trend (BULL F / BEAR D) and momentum (IMPULSE UP / DOWN): continuation by ICT's optimal trade entry (eng-29): a
+  leg with displacement (it left a fair value gap), the pullback zone = the strongest support inside 0.62-0.79 of the
+  leg (else the EMA20 there, Raschke); entry on a structure shift there; invalid beyond the leg's start; a new extreme resets the card to waiting; targets re-measured from the entry toward the leg's extensions.
 - wyckoff (BULL A / B / E, BEAR C): reversal of the leg. Entry at the confirmation when R:R allows it, else a pullback
   near the leg's end; invalid beyond the end and the stop pool behind it; targets fixed beyond the furthest price
   reached since: a trading range's far side (A, B) or the mean (C, E), the leg's retracements fill empty slots.
@@ -44,6 +44,18 @@ def _ema_of_tf(x: PlanInput, tf: str, span: int) -> Optional[float]:
     return ema
 
 
+def displacement(candles: List[List[float]], start_ts: int, end_ts: int, direction: int) -> bool:
+    """
+    ICT's displacement: the leg left a fair value gap in its direction - three candles inside the leg where the first's
+    high is below the third's low (up; mirrored down): price moved too fast for the other side to trade there.
+    """
+    leg = [c for c in candles if start_ts <= c[0] <= end_ts]
+    for a, c in zip(leg, leg[2:]):
+        if (direction > 0 and a[2] < c[3]) or (direction < 0 and a[3] > c[2]):
+            return True
+    return False
+
+
 class LegContinuation(Strategy):
     anchor_type = 'leg'
     requires = ('spot',)
@@ -74,6 +86,10 @@ class LegContinuation(Strategy):
         atr = x.atr
         if impulse is None or not atr:
             return None
+        if CONFIG.strategies.require_displacement:
+            candles = _rows(x.df) if impulse['tf'] == '15m' else [list(c) for c in (x.h1 or [])]
+            if not displacement(candles, impulse['start_ts'], impulse['end_ts'], d):
+                return {'skip': 'no_displacement'}
         zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None), atr, symbol=x.symbol)
         lo_ratio, hi_ratio = cfg.continuation_zone
         fib_lo, fib_hi = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
@@ -111,9 +127,8 @@ class LegContinuation(Strategy):
         tf = impulse['tf']
         return base_plan(x, self.name, _leg_anchor(impulse), tf, trigger_minutes=TRIGGER_MINUTES.get(tf, 5),
                          leg_atr=impulse['atr'], entry='pullback', zone_lo=zone[0], zone_hi=zone[1], zone_src=zone_src,
-                         # a pullback deeper than 0.786 of the leg is the trend's failure (the classic last line of
-                         # a Fibonacci pullback; the zone is 0.382-0.618), not a deeper entry: the leg's start was the
-                         # invalidation, so a card kept waiting in a reversed market
+                         # ICT: the idea is wrong beyond the impulse's start (the 100% level), not at 0.786 inside
+                         # the OTE band
                          invalid=fib_price(impulse, CONFIG.levels.continuation_invalid), reset=impulse['end'],
                          missable=False, retarget=True,
                          stop_ref=stop_ref, stop_ref_src=stop_ref_src,

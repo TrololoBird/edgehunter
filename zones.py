@@ -200,7 +200,9 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
     - POC: the bucket with the most volume;
     - value area (CBOT method): from the POC, repeatedly add the two buckets above or the two below, whichever pair
       holds more volume, until `value_area` of the volume is inside; VAH / VAL = the area's outer edges;
-    - HVN: peaks of the 3-bucket smoothed profile (the highest within +-2 buckets) with >= hvn_ratio x the median.
+    - HVN: peaks of the 3-bucket smoothed profile (the highest within +-2 buckets) with >= hvn_ratio x the median;
+    - LVN: valleys of it (the lowest within +-2 buckets) at <= lvn_ratio x the lower of the nodes on both sides
+      (the highest on each side, each >= the median).
     """
     cfg = CONFIG.zones
     if len(candles) < 10 or not atr:
@@ -247,6 +249,14 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
              and smooth[k] == max(smooth[max(0, k - 2):k + 3])]
     for k in sorted(nodes, key=smooth.__getitem__, reverse=True)[:4]:
         out.append(RawLevel(center(k), 'hvn', f"HVN {tag}"))
+    # LVN (Dalton / volume-profile practice): a valley between two volume nodes - price spent little time there, so it
+    # passes through it fast and a rejection there returns it to the node it came from; a target / edge, not support
+    def valley(k: int) -> bool:
+        left, right = max(smooth[:k]), max(smooth[k + 1:])
+        return smooth[k] == min(smooth[k - 2:k + 3]) and min(left, right) >= median and             smooth[k] <= cfg.lvn_ratio * min(left, right)
+    lvns = [k for k in range(2, n - 2) if valley(k)]
+    for k in sorted(lvns, key=smooth.__getitem__)[:4]:
+        out.append(RawLevel(center(k), 'lvn', f"LVN {tag}"))
     return out
 
 

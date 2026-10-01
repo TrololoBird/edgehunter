@@ -37,6 +37,8 @@ class Pools:
         """True when pools are off, not built yet, or the coin is in the strategy's pool."""
         if not CONFIG.pools.enabled or not self.updated:
             return True
+        if symbol.split('/')[0] in CONFIG.exchange.pinned_bases:
+            return True                          # pinned coins trade every strategy (CONFIG.exchange.pinned_bases)
         pool = self.members.get(strategy)
         if pool is None:
             # no rule for this strategy: the whole universe minus the coins its journal proved losing
@@ -56,11 +58,24 @@ class Pools:
             if n >= cfg.min_entries and r is not None and r <= cfg.exclude_below_r:
                 bad.setdefault(strategy, {})[symbol] = (int(n), float(r))
         members: Dict[str, Set[str]] = {}
-        for strategy, classes, excl_sectors, min_atr in cfg.rules:
+        pinned = [s for s in info if s.split('/')[0] in CONFIG.exchange.pinned_bases]
+        for strategy, classes, excl_sectors, min_atr, order in cfg.rules:
             allowed = None if classes == 'all' else set(c.strip() for c in classes.split(',') if c.strip())
             excl = set(x.strip() for x in excl_sectors.split(',') if x.strip())
-            pool = []
-            for sym, _ in ranked:
+            pool = list(pinned)
+            # the rest of the pool in the order the method wants its coins: 'volume' (liquid, two-sided auctions:
+            # value area, mean reversion, absorption), 'volatility' (1h ATR %: trend / breakout methods need range
+            # expansion - the Turtles took every market with movement), 'alts' (outside the 30 most traded: the
+            # supply / demand and liquidity-run systems their authors traded on altcoins)
+            if order == 'volatility':
+                candidates = sorted(ranked, key=lambda kv: -(info[kv[0]]['atr_1h_pct'] or 0.0))
+            elif order == 'alts':
+                candidates = [kv for kv in ranked if info[kv[0]]['rank'] > 30]
+            else:
+                candidates = ranked
+            for sym, _ in candidates:
+                if sym in pool:
+                    continue
                 c = info[sym]
                 if allowed is not None and c['class'] not in allowed:
                     continue
@@ -69,7 +84,7 @@ class Pools:
                 if min_atr and (c['atr_1h_pct'] is None or c['atr_1h_pct'] < min_atr):
                     continue
                 pool.append(sym)
-                if len(pool) >= cfg.size:
+                if len(pool) >= cfg.size + len(pinned):
                     break
             members[strategy] = set(pool)
         self.members, self.excluded, self.info, self.updated = members, bad, info, time.time()

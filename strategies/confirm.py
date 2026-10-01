@@ -11,8 +11,12 @@ readings order-flow traders check before taking it, each recorded for every entr
              for sweeps and cascade exhaustion (the stops / liquidations were flushed); 'n/a' for Wyckoff (its phases
              score OI themselves) and absorption (absorbed market orders open positions on both sides);
 - orderflow  at the extreme: stacked footprint imbalances, absorption (a heavy 1m delta against the trade that barely
-             moved price) or, for reversals, a CVD divergence (price made a new extreme beyond the previous swing,
-             cumulative delta did not: the aggressive side is exhausted); False when none of them happened.
+             moved price), a finished auction (the footprint's extreme price traded only by the side that was pushing:
+             nobody left to trade there, ATAS / Market Profile) or, for reversals, a CVD divergence (price made a new
+             extreme beyond the previous swing, cumulative delta did not: the aggressive side is exhausted); False
+             when none of them happened;
+- vsa        Volume Spread Analysis on the 5m bars since the extreme (strategies/vsa.py, Tom Williams): no supply /
+             stopping volume / reverse upthrust for longs, no demand / buying climax / upthrust for shorts.
 
 Keys starting with '_' are metadata ('_window' = [since, until, extreme] ms, set by fetcher.confirmations), not readings.
 Values: True / False, the order-flow kind (a string = present), NA ('n/a') where the reading cannot exist for this
@@ -26,7 +30,7 @@ from typing import Dict, Optional, Sequence, Set, Tuple
 
 from config import CONFIG
 
-NAMES = ('flow', 'spot', 'oi', 'orderflow')
+NAMES = ('flow', 'spot', 'oi', 'orderflow', 'vsa')
 NA = 'n/a'
 OI_EXPECT = {'trend': 1, 'momentum': 1, 'breakout': 1, 'sweep': -1, 'exhaustion': -1}
 REVERSALS = ('wyckoff', 'sweep', 'absorption', 'exhaustion')
@@ -134,4 +138,9 @@ def evaluate(strategy: str, direction: int, minutes: Sequence[Sequence[float]],
         out['orderflow'] = 'divergence'
     else:
         out['orderflow'] = False
+    from levels import resample
+    from strategies import vsa
+    bars = resample([c for c in minutes if c[0] >= until_ms - 3 * HOUR_MS and c[0] < until_ms], 5)
+    anchor = extreme_ms if extreme_ms is not None else since_ms
+    out['vsa'] = vsa.confirm(bars, anchor // (5 * MINUTE_MS) * (5 * MINUTE_MS), direction)
     return out

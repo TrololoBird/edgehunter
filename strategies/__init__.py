@@ -21,6 +21,11 @@ crypto_maniac's systems (github.com/roman-boop, strategies/maniac.py), each with
     csi         CSI LONG / SHORT                    BB       15m / at the close       3 bars (SL 0.4%)
     oi_accum    OI ACCUMULATION                     OI       1m OI / at once          4% / 6% (SL 2%)
 
+Classic methods (strategies/classic.py), each at its signal's close:
+    value_area  VA80 LONG / SHORT                  value area 15m / 30m periods   the far edge (Dalton's 80% rule)
+    orb         ORB UP / DOWN                      opening range 15m close        the map (stop: the range's other side)
+    connors     RSI2 LONG / SHORT                  1h RSI(2) + SMA200             the SMA5
+
 Phases (trend, wyckoff) are scored by scorer.py on closed 15m candles, the impulse by Tier-0; the other four are
 detected by LiveDetector (1m / liquidations, loop-side) and structure.build_context (15m closes, worker process).
 """
@@ -33,10 +38,11 @@ from strategies.leg import MomentumStrategy, TrendStrategy, WyckoffStrategy
 from strategies.level import AbsorptionStrategy, SweepStrategy
 from strategies.maniac_strategies import MANIAC_STRATEGIES
 from strategies.wyckoff_range import WyckoffRangeStrategy
+from strategies.classic_strategies import CLASSIC_STRATEGIES
 
 STRATEGIES: Dict[str, Strategy] = {s.name: s for s in (
     TrendStrategy(), MomentumStrategy(), WyckoffStrategy(), SweepStrategy(), AbsorptionStrategy(),
-    ExhaustionStrategy(), BreakoutStrategy(), WyckoffRangeStrategy(), *MANIAC_STRATEGIES)}
+    ExhaustionStrategy(), BreakoutStrategy(), WyckoffRangeStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES)}
 
 # Setup name -> (strategy name, direction)
 SETUPS: Dict[str, Tuple[str, int]] = {setup: (s.name, d) for s in STRATEGIES.values() for setup, d in s.setups.items()}

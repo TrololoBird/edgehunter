@@ -273,6 +273,13 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
             ctx.events.extend(wyckoff_events(h1))
         corr15 = merge_candles(corr, [], cut, QUARTER_MS) if corr else None
         ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut))
+        # classic published methods (strategies/classic.py): Dalton's 80% rule, Crabel's ORB, Connors' RSI(2)
+        try:
+            from strategies.classic import classic_events
+            ctx.events.extend(classic_events(m15, h1, cut))
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"classic events of {symbol} failed: {type(e).__name__} {e}",
+                                                exc_info=True)
     return ctx
 
 

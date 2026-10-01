@@ -62,8 +62,10 @@ def all_strategies_enabled(monkeypatch):
     import config as config_mod
     from strategies import STRATEGIES
     monkeypatch.setattr(config_mod.CONFIG, 'strategies', dataclasses.replace(
-        config_mod.CONFIG.strategies, enabled=tuple(STRATEGIES), disabled_setups=()))
-    # the lifecycle fixtures were built for R:R 1 and no confirmation minimum (the deployment's thresholds are policy)
-    monkeypatch.setattr(config_mod.CONFIG, 'levels', dataclasses.replace(config_mod.CONFIG.levels, min_rr_tp1=1.0))
+        config_mod.CONFIG.strategies, enabled=tuple(STRATEGIES), disabled_setups=(), require_displacement=False))
+    # the lifecycle fixtures were built for R:R 1, no confirmation minimum and the 0.382-0.618 pullback zone (the
+    # deployment's thresholds are policy: eng-29 uses ICT's 0.62-0.79 with displacement)
+    monkeypatch.setattr(config_mod.CONFIG, 'levels', dataclasses.replace(
+        config_mod.CONFIG.levels, min_rr_tp1=1.0, continuation_zone=(0.382, 0.618), continuation_invalid=0.786))
     monkeypatch.setattr(config_mod.CONFIG, 'orderflow', dataclasses.replace(config_mod.CONFIG.orderflow,
                                                                             min_confirmations=0))

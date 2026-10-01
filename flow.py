@@ -539,6 +539,25 @@ class Footprint:
         """
         return stacked_imbalance(self.merged(symbol, since_ms, until_ms), direction)
 
+    def finished_auction(self, symbol: str, since_ms: int, until_ms: Optional[int], direction: int,
+                         share: float = 0.02) -> bool:
+        """
+        A finished auction at the extreme (footprint reading, ATAS / Market Profile: "a zero on the bid at the low"):
+        at the window's lowest price (almost) no taker SOLD - the low was printed by buyers lifting offers, sellers
+        were no longer hitting bids there: the sell auction ended. Mirrored at the highest price for shorts (no
+        taker buys at the high). `share`: the limit of that side as a share of the price bucket's volume.
+        """
+        levels = self.merged(symbol, since_ms, until_ms)
+        if len(levels) < 3:
+            return False
+        edge = min(levels) if direction > 0 else max(levels)
+        buy, sell = levels[edge]
+        total = buy + sell
+        if total <= 0:
+            return False
+        late = sell if direction > 0 else buy        # the side that would have continued the auction
+        return late <= share * total
+
 
 def absorption_in(minutes: Sequence[Sequence[float]], since_ms: int, until_ms: int, direction: int,
                   atr: float) -> bool:

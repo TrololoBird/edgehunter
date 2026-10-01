@@ -814,8 +814,9 @@ class DataFetcher:
             if not (s.endswith(f"/{quote}") or s.endswith(f"/{quote}:{quote}")):
                 continue
             market = self.futures_exchange.markets.get(s) or {}
-            if market.get('info', {}).get('underlyingType') in excluded_types or \
-                    market.get('base') in CONFIG.exchange.excluded_bases:
+            pinned = market.get('base') in CONFIG.exchange.pinned_bases
+            if not pinned and (market.get('info', {}).get('underlyingType') in excluded_types or
+                               market.get('base') in CONFIG.exchange.excluded_bases):
                 excluded += 1
                 continue
             if market.get('swap') is False:
@@ -830,8 +831,9 @@ class DataFetcher:
             except (TypeError, ValueError):
                 quote_vol = 0.0
             is_active = t.get('active', info.get('active', True))
-            if quote_vol >= CONFIG.exchange.min_24h_quote_volume_usd and is_active:
-                usdt_pairs.append((s, quote_vol))
+            if (pinned or quote_vol >= CONFIG.exchange.min_24h_quote_volume_usd) and is_active:
+                # pinned coins first (CONFIG.exchange.pinned_bases), then by volume
+                usdt_pairs.append((s, float('inf') if pinned else quote_vol))
 
         # Last prices of the universe: the reference for the other venues' symbol mapping check
         self.reference_prices = {s: float(t['last']) for s, t in tickers.items() if t.get('last')}
@@ -871,6 +873,9 @@ class DataFetcher:
         selected: List[str] = []
         for s in candidates:
             if s not in markets:
+                continue
+            if markets[s].get('base') in cfg.pinned_bases:
+                selected.append(s)               # pinned: in the universe whatever its data coverage
                 continue
             futures_venues = [v for v in coverage.get(s, []) if v not in SPOT_VENUES]
             listed = int((markets[s].get('info') or {}).get('onboardDate') or 0)
@@ -1697,6 +1702,8 @@ class DataFetcher:
         atr = self._zone_atr.get(symbol)
         if md is not None and atr and absorption_in(md.minute_klines, since_ms, until_ms, direction, atr):
             return 'absorption'
+        if self.footprint.finished_auction(symbol, since_ms, until_ms, direction):
+            return 'finished_auction'
         return None
 
     def confirmations(self, symbol: str, strategy: str, direction: int, since_ms: int, until_ms: int,

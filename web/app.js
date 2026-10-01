@@ -103,6 +103,9 @@ const FAMILY = {
   fib05: ['Фибо 0.5 (maniac)', '1h: импульс по структуре HH/HL; свеча прокалывает 0.5 импульса и закрывается обратно; вход на закрытии; стоп — начало импульса; цель — конец импульса (дальше у автора трейлинг)'],
   bomberman: ['Bomberman (maniac)', '1h: пересечение MACD и сигнальной по стороне EMA100 после QML, без сжатия BB; вход на закрытии; стоп 1.5 ATR, цель 2R'],
   csi: ['Боллинджер + CSI (maniac)', '15m: закрытие за BB(40, 1.5) внутри кластера свечного сентимента CSI той же стороны, RSI(96); вход на закрытии; стоп 0.4%, выход через 3 свечи'],
+  value_area: ['правило 80% (Далтон)', 'день открылся вне вчерашней value area (70% объёма), вернулся в неё и простоял два 30-минутных периода; вход на закрытии; цель — противоположный край VA; стоп за краем, через который вошли'],
+  orb: ['пробой диапазона открытия (Крэбел)', 'диапазон первых 30 минут после открытия США (09:30 Нью-Йорк); первое закрытие 15m за ним в течение 2.5 ч; вход на закрытии; стоп — другая сторона диапазона; цель по карте; NR4/NR7 отмечаются'],
+  connors: ['RSI(2) (Коннорс)', '1h: выше SMA200 и RSI(2) < 10 — лонг (ниже SMA200 и > 90 — шорт); вход на закрытии; цель — SMA5 (выход Коннорса); стоп по структуре (у автора стопа нет)'],
   oi_accum: ['набор OI (maniac)', 'OI +5% за час при росте цены не больше половины этого, OI за сутки обгоняет цену; только лонг, вход сразу; стоп 2%, тейки 4% и 6%'],
 };
 const SETUP_RU = {
@@ -117,6 +120,9 @@ const SETUP_RU = {
   'THIRD EYE LONG': 'CCI + Ишимоку вверх', 'THIRD EYE SHORT': 'CCI + Ишимоку вниз', 'FIB 0.5 LONG': 'откат к 0.5 вверх', 'FIB 0.5 SHORT': 'откат к 0.5 вниз',
   'BOMBERMAN LONG': 'MACD + QML вверх', 'BOMBERMAN SHORT': 'MACD + QML вниз', 'CSI LONG': 'BB + CSI вверх', 'CSI SHORT': 'BB + CSI вниз',
   'OI ACCUMULATION': 'набор OI без цены',
+  'VA80 LONG': 'возврат в value area снизу', 'VA80 SHORT': 'возврат в value area сверху',
+  'ORB UP': 'пробой диапазона открытия вверх', 'ORB DOWN': 'пробой диапазона открытия вниз',
+  'RSI2 LONG': 'RSI(2) перепродан в тренде', 'RSI2 SHORT': 'RSI(2) перекуплен в тренде',
 };
 const STRATEGY_OF = {
   'BULL F': 'trend', 'BEAR D': 'trend', 'IMPULSE UP': 'momentum', 'IMPULSE DOWN': 'momentum',
@@ -128,6 +134,8 @@ const STRATEGY_OF = {
   'THIRD EYE LONG': 'thirdeye', 'THIRD EYE SHORT': 'thirdeye', 'FIB 0.5 LONG': 'fib05', 'FIB 0.5 SHORT': 'fib05',
   'BOMBERMAN LONG': 'bomberman', 'BOMBERMAN SHORT': 'bomberman', 'CSI LONG': 'csi', 'CSI SHORT': 'csi',
   'OI ACCUMULATION': 'oi_accum',
+  'VA80 LONG': 'value_area', 'VA80 SHORT': 'value_area', 'ORB UP': 'orb', 'ORB DOWN': 'orb',
+  'RSI2 LONG': 'connors', 'RSI2 SHORT': 'connors',
 };
 const familyOf = setup => STRATEGY_OF[setup] || '';
 const setupLabel = setup => {

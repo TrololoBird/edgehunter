@@ -44,6 +44,10 @@ class ExchangeConfig:
     excluded_underlying_types: tuple = ('EQUITY', 'HK_EQUITY', 'KR_EQUITY', 'CN_EQUITY', 'PREMARKET', 'COMMODITY')
     # Tokenized gold / silver trade the metal, not crypto flows (PAXG / XAUT were flagged 'whales' on metal hedges)
     excluded_bases: tuple = ('PAXG', 'XAUT', 'XAU', 'XAG', 'XPT', 'XPD')
+    # Pinned coins (the owner's, 2026-10-01): always in the universe and in EVERY strategy's pool, whatever the volume,
+    # spot pair, venue count or the exclusions above say (XAU = Binance's gold TradFi perpetual: no spot pair, so the
+    # strategies that require spot veto it 'no_data'). BNB / DOGE / HYPE added: the largest perpetual volumes after them
+    pinned_bases: tuple = ('BTC', 'ETH', 'XAU', 'XRP', 'SOL', 'SUI', 'BNB', 'DOGE', 'HYPE')
     # The universe (top max_pairs by 24h volume) is re-selected this often: new listings join, dropped coins leave
     universe_refresh_sec: int = 3600
 
@@ -363,9 +367,11 @@ class LevelsConfig:
     # the zone is a real map level inside it, else the EMA20 of the leg's timeframe (Raschke's "Holy Grail"
     # pullback); no level and no EMA20 inside: no card ('no_level'). Automated tests found no edge in Fibonacci
     # ratios themselves (ESWA 2021): a Fibonacci-only zone was a line with nothing behind it.
-    continuation_zone: tuple = (0.382, 0.618)
+    continuation_zone: tuple = (0.62, 0.79)        # ICT OTE (was Raschke / Fibonacci 0.382-0.618)
     # a continuation card is INVALID once the pullback retraces deeper than this share of the leg (was the leg's start)
-    continuation_invalid: float = 0.786
+    continuation_invalid: float = 1.0              # ICT: beyond the impulse's start (was 0.786)
+    macro_before_min: int = 30          # macro_calendar.py: no entry 30 min before .. 60 min after CPI / FOMC
+    macro_after_min: int = 60
     continuation_targets: tuple = (1.0, 1.272, 1.618)
     # Reversal: price must still be within this retracement of the reversed leg's end (accumulation: a bit wider)
     reversal_zone_max: float = 0.236
@@ -434,6 +440,7 @@ class ZonesConfig:
     profile_buckets_per_atr: float = 4.0
     value_area: float = 0.7
     hvn_ratio: float = 2.0
+    lvn_ratio: float = 0.6           # LVN: a profile valley <= this x the nodes on both sides
     # Liquidation estimate: leverage tiers and the share of new OI assumed at each; maintenance margin share
     liq_leverages: tuple = (10, 25, 50, 100)
     liq_leverage_weights: tuple = (0.3, 0.35, 0.25, 0.1)
@@ -451,7 +458,7 @@ class ZonesConfig:
     weights: tuple = (('swing_1h', 1.5), ('swing_15m', 1.0), ('equal', 2.0), ('pdhl', 2.0), ('poc', 1.5),
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 1.5), ('liq_hit', 1.0), ('wall', 1.0),
                       ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0),
-                      ('swing_1d', 2.5), ('htf', 2.5))
+                      ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 0.5))
     # Round-number levels / pools within this many ATR of price (zones.round_levels)
     round_span_atr: float = 3.0
     # Targets: a zone must be at least this strong to be an obstacle (TP1/TP2); TP3 prefers pools / liquidations
@@ -501,11 +508,19 @@ class PoolsConfig:
     min_entries: int = 8
     exclude_below_r: float = -0.3
     # (strategy, classes 'major,large,mid,small' or 'all', sectors to exclude (sectors.py names), min ATR(1h) in %)
-    rules: tuple = (('trend', 'all', '', 0.0), ('momentum', 'all', '', 0.0), ('wyckoff', 'all', '', 0.0),
-                    ('absorption', 'all', '', 0.0), ('exhaustion', 'all', '', 0.0), ('sweep', 'all', '', 0.0),
-                    ('breakout', 'all', '', 0.0))
-    # strategies without a rule (crypto_maniac's systems) run on every coin of the universe; a coin whose journaled
-    # entries of a strategy lose (exclude_below_r) is still excluded from it: see pools.Pools.allows
+    # (+ the order the rest is picked in: 'volume' / 'volatility' / 'alts', see pools.Pools.rebuild). The pinned coins
+    # (CONFIG.exchange.pinned_bases) are in every pool on top of `size`. A hypothesis per method, not a measurement:
+    # the journal's per-coin exclusion still applies to the rest.
+    rules: tuple = (('trend', 'all', '', 0.0, 'volatility'), ('momentum', 'all', '', 0.0, 'volatility'),
+                    ('breakout', 'all', '', 0.0, 'volatility'), ('orb', 'all', '', 0.0, 'volatility'),
+                    ('oi_accum', 'all', '', 0.0, 'volatility'), ('trendline', 'all', '', 0.0, 'volatility'),
+                    ('thirdeye', 'all', '', 0.0, 'volatility'), ('bomberman', 'all', '', 0.0, 'volatility'),
+                    ('value_area', 'all', '', 0.0, 'volume'), ('auction', 'all', '', 0.0, 'volume'),
+                    ('connors', 'all', '', 0.0, 'volume'), ('absorption', 'all', '', 0.0, 'volume'),
+                    ('exhaustion', 'all', '', 0.0, 'volume'), ('csi', 'all', '', 0.0, 'volume'),
+                    ('smt', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
+                    ('wyckoff_range', 'all', '', 0.0, 'volume'), ('fib05', 'all', '', 0.0, 'volume'),
+                    ('sweep', 'all', '', 0.0, 'alts'), ('supply_demand', 'all', '', 0.0, 'alts'))
 
 
 @dataclass(frozen=True)
@@ -524,7 +539,7 @@ class StrategiesConfig:
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     enabled: tuple = ('trend', 'momentum', 'wyckoff', 'wyckoff_range', 'sweep', 'absorption', 'exhaustion', 'breakout',
                       'supply_demand', 'auction', 'smt', 'trendline', 'thirdeye', 'fib05', 'bomberman', 'csi',
-                      'oi_accum')
+                      'oi_accum', 'value_area', 'orb', 'connors')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     disabled_setups: tuple = ('BULL E',)
@@ -613,6 +628,15 @@ class StrategiesConfig:
     sd_max_zone_atr: float = 1.2
     sd_min_score: float = 3.5
     sd_ttl: tuple = (24 * 3600, 4 * 3600, 8 * 3600)
+    # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
+    classic_ttl: tuple = (3600, 3600, 12 * 3600)
+    orb_minutes: int = 30                 # Crabel's opening range: the first 30 minutes after the US equity open
+    orb_window_min: int = 150             # a break later than 2.5h after the open is no opening-range trade
+    connors_rsi_low: float = 10.0         # Connors' RSI(2) buy level (shorts above connors_rsi_high)
+    connors_rsi_high: float = 90.0
+    # ICT optimal trade entry for the continuations (trend / momentum): the pullback into 0.62-0.79 of a leg that left
+    # a fair value gap (displacement); invalid beyond the leg's start (ICT: "past the 100% level")
+    require_displacement: bool = True
     # auction_theory_in_code (1h): consolidation windows, POC concentration, impulse, retest reaction, targets
     auction_atr_period: int = 14
     auction_windows: tuple = (24, 48, 96)
@@ -820,7 +844,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-28"
+    logic_version: str = "eng-29"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
