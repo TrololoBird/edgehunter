@@ -725,7 +725,9 @@ function drawCoin(fit) {
   }
   // Journal events as markers on the bar they happened in
   const size = tf * 60;   // bar size in seconds (5 / 15 / 60 minutes)
-  const markers = (d.journal || []).filter(r => r.kind !== 'structured').map(r => {
+  // entries always; anomalies / setups / cards only with «события» on (they buried the candles and the grid)
+  const evOn = $('#ev-on').checked;
+  const markers = (d.journal || []).filter(r => r.kind !== 'structured' && (evOn || r.kind === 'entry')).map(r => {
     const t = Math.floor(r.ts_ms / 1000 / size) * size + tzShift;
     if (r.kind === 'setup') return { time: t, position: r.direction > 0 ? 'belowBar' : 'aboveBar', color: '#e0a0ff', shape: 'circle', text: (SETUP_RU[r.group_key] || r.group_key).split(' ')[0] };
     if (r.kind === 'anomaly') return { time: t, position: r.direction < 0 ? 'aboveBar' : 'belowBar', color: r.direction > 0 ? '#2ecc71' : r.direction < 0 ? '#ff5c5c' : '#9aa6b8', shape: 'circle', text: r.group_key.split(' ')[0].slice(0, 6) };
@@ -821,6 +823,7 @@ function drawHeat() {
 }
 $('#heat-on').addEventListener('change', drawHeat);
 $('#fib-on').addEventListener('change', () => drawCoin(false));
+$('#ev-on').addEventListener('change', () => drawCoin(false));
 window.addEventListener('resize', () => requestAnimationFrame(drawHeat));
 // The price scale can move without an event (auto-scale): redraw while the panel is open
 setInterval(() => { if (coin) drawHeat(); }, 1000);
