@@ -271,3 +271,9 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   Kept as ATR (scale, not price levels): the 1-ATR spacing between targets, detectors' significance thresholds
   (Seiden's 2-ATR departure, trendline tolerances, the auction's bins), the Turtles' N, the fallbacks used only
   without the pierce model.
+- eng-42: continuation targets are the TREND-BASED Fibonacci extension (Carney / Pesavento's ABC, TradingView's
+  Trend-Based Fib Extension, the owner's screenshots): the impulse A -> B projected from the pullback's extreme C at
+  1.0 / 1.2 / 1.272 / 1.618 (was the 2-point extension from A); labelled 'ext k', '+ <zone>' when a 4h / daily /
+  weekly zone sits within the pierce of it. The card view carries the grid (`webui.fib_view`) and the chart draws it
+  (toggle «фибо»): the dashed legs A -> B -> C, the retracements with the OTE band 0.62-0.79 (gold), the extensions
+  (green); with the grid on, only strong map zones are drawn. ICT zones / LVN / opens have legend colours by family.

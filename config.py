@@ -375,7 +375,9 @@ class LevelsConfig:
     continuation_invalid: float = 1.0              # ICT: beyond the impulse's start (was 0.786)
     macro_before_min: int = 30          # macro_calendar.py: no entry 30 min before .. 60 min after CPI / FOMC
     macro_after_min: int = 60
-    continuation_targets: tuple = (1.0, 1.272, 1.618)
+    # trend-based Fibonacci extension (3 points: the impulse A-B projected from the pullback's extreme C; Carney /
+    # Pesavento's ABC, TradingView's Trend-Based Fib Extension): 1.0 / 1.2 / 1.272 / 1.618
+    continuation_targets: tuple = (1.0, 1.2, 1.272, 1.618)
     # Reversal: price must still be within this retracement of the reversed leg's end (accumulation: a bit wider)
     reversal_zone_max: float = 0.236
     # must stay below the first reversal target (0.382), or there is no room left for the trade
@@ -874,7 +876,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-41"
+    logic_version: str = "eng-42"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

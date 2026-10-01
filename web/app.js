@@ -188,15 +188,21 @@ function reasonRu(r) {
   return r;
 }
 const KIND_COLORS = {
-  equal: '#b28cff', pdhl: '#ff9f43', poc: '#3cc7e8', va: '#3cc7e8', hvn: '#3cc7e8', liq_est: '#ff5c8a',
-  liq_hit: '#ff8ac0', swing_1h: '#9aa6b8', swing_15m: '#6f7a8c', wall: '#f5c542', vwap: '#5b8cff', fib: '#8e7cc3',
-  range: '#ff9f43', liq_hl: '#ff3b3b', book: '#e0a0ff',
+  equal: '#b28cff', pdhl: '#ff9f43', poc: '#3cc7e8', va: '#3cc7e8', hvn: '#3cc7e8', lvn: '#2a8fa8', liq_est: '#ff5c8a',
+  liq_hit: '#ff8ac0', swing_1h: '#9aa6b8', swing_15m: '#6f7a8c', swing_1d: '#c9d1dd', wall: '#f5c542', vwap: '#5b8cff',
+  fib: '#8e7cc3', range: '#ff9f43', liq_hl: '#ff3b3b', book: '#e0a0ff', round: '#7d8590', open: '#d4a017', htf: '#c9d1dd',
 };
+// ICT zones by family (the timeframe is the suffix): order blocks orange, FVGs teal, breakers violet, BPR gold
+const ICT_COLORS = { ob: '#ff8c42', fvg: '#2ec4b6', breaker: '#a06cd5', bpr: '#e9c46a' };
+const ICT_NAMES = { ob: 'ордерблок', fvg: 'FVG', breaker: 'breaker', bpr: 'BPR (наложение FVG)' };
 const KIND_NAMES = {
-  equal: 'равные хаи/лои (стопы)', pdhl: 'хай/лоу дня', poc: 'POC', va: 'value area', hvn: 'узел объёма',
+  equal: 'равные хаи/лои (стопы)', pdhl: 'хай/лоу дня', poc: 'POC', va: 'value area', hvn: 'узел объёма', lvn: 'провал объёма (LVN)',
   book: 'ликвидность стакана (стояла ≥10м)', liq_est: 'ликвидации (оценка)', liq_hit: 'ликвидации (факт)', swing_1h: 'свинг 1h', swing_15m: 'свинг 15m',
-  wall: 'стена стакана', vwap: 'VWAP', fib: 'Фибоначчи', range: 'край диапазона', liq_hl: 'ликвидации крупных счетов HL',
+  swing_1d: 'свинг дня', wall: 'стена стакана', vwap: 'VWAP', fib: 'Фибоначчи', range: 'край диапазона', liq_hl: 'ликвидации крупных счетов HL',
+  round: 'круглое число', open: 'открытие дня / недели', htf: 'старший ТФ',
 };
+const kindColor = k => KIND_COLORS[k] || ICT_COLORS[(k || '').split('_')[0]] || '#888';
+const kindName = k => KIND_NAMES[k] || (ICT_NAMES[(k || '').split('_')[0]] ? `${ICT_NAMES[k.split('_')[0]]} ${k.split('_')[1]}` : k);
 
 // ------------------------------------------------------------------------------------------------ tables
 
@@ -566,7 +572,7 @@ function connect() {
 
 // ------------------------------------------------------------------------------------------------ coin drawer
 
-let coin = null, coinLoaded = 0, chart = null, series = null, tf = 15, coinData = null, priceLines = [];
+let coin = null, coinLoaded = 0, chart = null, series = null, tf = 15, coinData = null, priceLines = [], fibSeries = [];
 const tzShift = -new Date().getTimezoneOffset() * 60;
 
 function openCoin(symbol, leg) {
@@ -661,19 +667,48 @@ function drawCoin(fit) {
     if (price === null || price === undefined) return;
     priceLines.push(series.createPriceLine({ price, color, lineWidth: width, lineStyle: style, axisLabelVisible: axis, title }));
   };
-  const zones = (d.zones || []).slice().sort((a, b) => b.strength - a.strength).slice(0, 28);
+  const card0 = (d.cards || []).find(c => !c.finished) || (d.cards || [])[0];
+  const fibOn = $('#fib-on').checked && card0 && card0.fib;
+  // with the Fibonacci grid on, the map keeps only its strong zones: the grid is the story, the rest is noise
+  const zones = (d.zones || []).slice().filter(z => !fibOn || z.strength >= 2.5).sort((a, b) => b.strength - a.strength).slice(0, fibOn ? 10 : 28);
   const usedKinds = new Set();
   for (const z of zones) {
     const kind = z.kinds[0]; usedKinds.add(kind);
     const strong = z.strength >= 2;
-    line(z.price, KIND_COLORS[kind] || '#888', strong ? z.label.split(' · ')[0] : '', strong ? 0 : 2, z.strength >= 4 ? 2 : 1, strong);
+    line(z.price, kindColor(kind), strong ? z.label.split(' · ')[0] : '', strong ? 0 : 2, z.strength >= 4 ? 2 : 1, strong);
   }
   // order-book densities that stayed and price has not reached yet (webui.untaken_densities)
   for (const den of d.densities || []) {
     const usd = den.usd >= 1e6 ? (den.usd / 1e6).toFixed(1) + 'M' : (den.usd / 1e3).toFixed(0) + 'k';
     line(den.price, den.side > 0 ? '#2ecc71' : '#ff5c5c', `плотн. ${den.side > 0 ? 'bid' : 'ask'} $${usd}`, 1, 2);
   }
-  const card = (d.cards || []).find(c => !c.finished) || (d.cards || [])[0];
+  // The Fibonacci grid of a continuation card (the screenshots' layout): the impulse A -> B and the pullback B -> C as
+  // dashed legs, the retracements with the OTE band 0.62-0.79, the trend-based extensions 1.0 / 1.2 / 1.272 / 1.618 from C
+  fibSeries.forEach(s => chart.removeSeries(s)); fibSeries = [];
+  if (fibOn) {
+    const f = card0.fib;
+    const t = ms => Math.floor(ms / 1000 / (tf * 60)) * (tf * 60) + tzShift;
+    const legLine = (pts, color) => {
+      const ls = chart.addLineSeries({ color, lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        crosshairMarkerVisible: false });
+      ls.setData(pts.filter(p => p.time !== undefined && !Number.isNaN(p.time)).sort((a, b) => a.time - b.time)
+        .filter((p, i, arr) => i === 0 || p.time > arr[i - 1].time));
+      fibSeries.push(ls);
+    };
+    if (f.a_ts && f.b_ts) {
+      const pts = [{ time: t(f.a_ts), value: f.a }, { time: t(f.b_ts), value: f.b }];
+      legLine(pts, 'rgba(201,209,221,.85)');
+      if (f.c !== undefined && card0.entered_at) legLine([{ time: t(f.b_ts), value: f.b }, { time: t(card0.entered_at * 1000), value: f.c }], 'rgba(201,209,221,.5)');
+    }
+    line(f.a, '#7d8590', 'A · начало импульса', 2, 1); line(f.b, '#7d8590', 'B · конец импульса', 2, 1);
+    for (const [r, p] of f.retr) {
+      const ote = r >= 0.618;
+      line(p, ote ? '#f5c542' : '#7d8590', r === 0.705 ? 'OTE 0.705' : String(r), r === 0.705 ? 0 : 2, ote ? 2 : 1);
+    }
+    for (const [k, p] of f.ext || []) line(p, '#2ecc71', `ext ${k}`, 1, k === 1.618 ? 2 : 1);
+    if (f.c !== undefined) line(f.c, '#9aa6b8', 'C · дно коррекции', 2, 1);
+  }
+  const card = card0;
   if (card) {
     if (card.zone && card.zone[0] && !card.entered_at) { line(card.zone[0], '#f5c542', 'зона', 1, 2); line(card.zone[1], '#f5c542', 'зона', 1, 2); }
     if (card.levels) {
@@ -703,7 +738,7 @@ function drawCoin(fit) {
   drawHeat();
 
   $('#d-title').innerHTML = `${esc(d.symbol.replace(':USDT', '').replace('/USDT', ''))} <small>${fp(d.price)} · ATR 15m ${fp(d.atr)}${d.note ? ' · монета вне текущей вселенной: без карты уровней' : d.htf_loaded ? '' : ' · 1h история ещё грузится'}</small>`;
-  $('#legend').innerHTML = [...usedKinds].map(k => `<span><i style="background:${KIND_COLORS[k] || '#888'}"></i>${esc(KIND_NAMES[k] || k)}</span>`).join('') +
+  $('#legend').innerHTML = [...usedKinds].map(k => `<span><i style="background:${kindColor(k)}"></i>${esc(kindName(k))}</span>`).join('') +
     '<span class="dim">сплошные — сильные зоны (конфлюэнция ≥ 2), пунктир — слабые</span>';
 
   let body = '';
@@ -785,6 +820,7 @@ function drawHeat() {
   }
 }
 $('#heat-on').addEventListener('change', drawHeat);
+$('#fib-on').addEventListener('change', () => drawCoin(false));
 window.addEventListener('resize', () => requestAnimationFrame(drawHeat));
 // The price scale can move without an event (auto-scale): redraw while the panel is open
 setInterval(() => { if (coin) drawHeat(); }, 1000);

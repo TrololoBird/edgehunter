@@ -441,6 +441,21 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     return finish_levels(plan, entry, stop, prices[:3], labels[:3], direction, sl_src)
 
 
+def _ext_label(target: float, label: str, ratios: Dict[float, float], plan: Dict, direction: int) -> str:
+    """'ext 1.272' for an extension target, '+ <zone>' when a 4h / daily / weekly zone sits within the pierce of it."""
+    import re
+    if label != 'ext':
+        return label
+    k = next((r for f, r in ratios.items() if abs(f - target) <= 1e-12 * max(1.0, abs(f))), None)
+    text = f"ext {k:g}" if k is not None else 'ext'
+    p50 = overshoot(plan.get('symbol'), 'swing_1h', target, 'p50') or 0.0
+    for z in plan.get('zones') or []:
+        if z.lo - p50 <= target <= z.hi + p50 and \
+                any(re.search(r'_(4h|1d|1w)$', k_) or k_ in ('swing_1d', 'htf', 'pdhl') for k_ in z.kinds):
+            return f"{text} + {z.label.split(' · ')[0]}"
+    return text
+
+
 def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
     """Entry / stop / targets for an entry at `entry` (targets behind the entry are dropped, refilled beyond it)."""
     if plan.get('exit'):
@@ -451,9 +466,21 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
         return None
     atr = plan.get('leg_atr') or plan['atr']            # targets are spaced in the structure's own ATR
     if plan.get('retarget'):
-        # Continuation: re-measured from the real entry
+        # Continuation: re-measured from the real entry. The impulse's objectives are the TREND-BASED extension:
+        # the impulse A->B projected from the pullback's extreme C (C + k x |B - A|), not from A (eng-42)
+        fillers, fill_label = plan.get('fillers', ()), plan.get('fill_label', 'fib')
+        imp = plan.get('impulse')
+        if imp and extreme is not None:
+            leg = abs(imp['end'] - imp['start'])
+            fillers = tuple(extreme + direction * k * leg for k in CONFIG.levels.continuation_targets)
+            fill_label = 'ext'
         targets, sources = select_targets(plan.get('zones') or [], entry, direction, atr, plan['intent'],
-                                          plan.get('fillers', ()), plan.get('fill_label', 'fib'))
+                                          fillers, fill_label)
+        if imp and extreme is not None:
+            # name each extension by its ratio, and mark the ones a higher-timeframe zone confirms (the screenshots'
+            # daily + 4h extensions landing on one price)
+            ratios = dict(zip(fillers, CONFIG.levels.continuation_targets))
+            sources = [_ext_label(t, s, ratios, plan, direction) for t, s in zip(targets, sources)]
     else:
         ahead = [(t, s) for t, s in zip(plan['targets'], plan['target_src']) if direction * (t - entry) > 0]
         kept: List[Tuple[float, str]] = []
@@ -475,7 +502,10 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
             sources.append('ATR step')
     if not targets:
         return None
-    return finish_levels(plan, entry, stop, list(targets[:3]), list(sources[:3]), direction, sl_src)
+    out = finish_levels(plan, entry, stop, list(targets[:3]), list(sources[:3]), direction, sl_src)
+    if out is not None and extreme is not None:
+        out['extreme'] = extreme
+    return out
 
 
 def cap_for_rr(tp1: float, stop_est: float, direction: int, atr: float, recent_atr: Optional[float],

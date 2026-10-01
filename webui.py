@@ -203,6 +203,26 @@ def sizing_view(levels: Optional[Dict], direction: int, funding_8h: Optional[flo
     return out
 
 
+def fib_view(plan: Dict, levels: Optional[Dict], direction: int) -> Optional[Dict]:
+    """
+    The Fibonacci grid of a leg card for the chart: the impulse A -> B (with its times), the retracements 0.5 / 0.618
+    / 0.705 / 0.786 (the OTE band 0.62-0.79), and after the entry the trend-based extensions from the pullback's
+    extreme C (1.0 / 1.2 / 1.272 / 1.618).
+    """
+    anchor = (plan or {}).get('anchor') or {}
+    if anchor.get('type') != 'leg' or anchor.get('start') is None or anchor.get('end') is None:
+        return None
+    a, b = float(anchor['start']), float(anchor['end'])
+    leg = b - a
+    out = {'a': a, 'b': b, 'a_ts': anchor.get('start_ts'), 'b_ts': anchor.get('end_ts'),
+           'retr': [[r, b - r * leg] for r in (0.5, 0.618, 0.705, 0.786)]}
+    c = (levels or {}).get('extreme')
+    if c is not None:
+        out['c'] = float(c)
+        out['ext'] = [[k, float(c) + k * leg] for k in CONFIG.levels.continuation_targets]
+    return out
+
+
 def card_view(s, now: float) -> Dict:
     plan = s.plan or {}
     lv = s.levels or {}
@@ -224,6 +244,7 @@ def card_view(s, now: float) -> Dict:
         'targets': [_num(t) for t in plan.get('targets', [])], 'target_src': plan.get('target_src', []),
         # The plan's anchor (a leg / a level / a range), its structure and entry timeframes
         'anchor': _anchor_view(plan.get('anchor')), 'tf': plan.get('tf'),
+        'fib': fib_view(plan, lv, s.direction),
         'trigger_minutes': plan.get('trigger_minutes'),
         'levels': {k: (v if isinstance(v, str) else _num(v)) for k, v in lv.items()} if lv else None,
         'sizing': sizing_view(lv, s.direction, s.sig.get('funding_rate')) if lv else None,
