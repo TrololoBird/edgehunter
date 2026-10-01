@@ -60,6 +60,7 @@ class DemoExecutor:
             import ccxt.async_support as ccxt
             cfg = CONFIG.executor
             self.ex = ccxt.bingx({'apiKey': cfg.api_key, 'secret': cfg.api_secret, 'enableRateLimit': True,
+                                  'timeout': 30_000,   # the VST contract list (~1200 markets) took > 10s under load
                                   'options': {'defaultType': 'swap'}})
             self.ex.set_sandbox_mode(True)       # VST demo: forced, the only mode this module has
         if not self._markets_ready:
