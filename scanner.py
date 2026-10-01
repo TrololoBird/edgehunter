@@ -97,6 +97,9 @@ class Scanner:
         self.notifier = Notifier()
         from executor import DemoExecutor
         self.demo = DemoExecutor()
+        self.demo.card_is_open = lambda card_id: any(
+            f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}" == card_id and not s.finished
+            for s in self.book.signals.values())
         from extdata import ExternalData
         self.ext = ExternalData(self.fetcher)
         self.book = SignalBook()

@@ -41,6 +41,10 @@ class DemoExecutor:
         self.ex = None
         self.open: Dict[str, Dict] = {}          # card id -> trade
         self._lock = asyncio.Lock()
+        # set by the scanner: is this card (symbol|setup|entered_at) still an open trade in the book? A card that
+        # expired while the bot was down is never restored, so its finish never comes (3 demo positions stayed
+        # open for 15h, 2026-10-01): the reconcile loop closes such orphans
+        self.card_is_open = lambda card_id: True
         self._markets_ready = False
         with sqlite3.connect(db_path) as c:
             c.execute(SCHEMA)
@@ -124,7 +128,19 @@ class DemoExecutor:
         except Exception as e:
             logger.debug(f"Demo leverage {symbol}: {e}")
         side, exit_side = ('buy', 'sell') if d > 0 else ('sell', 'buy')
-        order = await ex.create_order(symbol, 'market', side, qty)
+        try:
+            order = await ex.create_order(symbol, 'market', side, qty)
+        except Exception as e:
+            # BingX caps the position per coin (1000 USDT on small caps, live HUMA 2026-10-01) and names the cap in
+            # the error: retry once at 90% of it
+            import re
+            m = re.search(r'position limit of ([0-9.]+) USDT', str(e))
+            if not m:
+                raise
+            qty = float(ex.amount_to_precision(symbol, 0.9 * float(m.group(1)) / lv['entry']))
+            if qty <= 0 or qty < min_qty:
+                raise
+            order = await ex.create_order(symbol, 'market', side, qty)
         fill = float(order.get('average') or order.get('price') or lv['entry'])
         await ex.create_order(symbol, 'market', exit_side, qty, None,
                               {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True})
@@ -205,6 +221,10 @@ class DemoExecutor:
             async with self._lock:
                 for trade in list(self.open.values()):
                     try:
+                        if time.time() * 1000 - trade['opened_ms'] > 120_000 and not self.card_is_open(trade['card_id']):
+                            logger.info(f"Demo: {trade['symbol']} has no open card any more: closing the orphan")
+                            await self._close(trade, 'ORPHAN', None)
+                            continue
                         if await self._position_qty(trade['symbol']) == 0:
                             await self._exchange()
                             try:
