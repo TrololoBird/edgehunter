@@ -162,7 +162,7 @@ EXTRA_COLUMNS = {
     'okx_book_imb': 'REAL', 'bybit_book_imb': 'REAL',
     # iceberg.py: hidden limit orders refilled at one price over the last 5 minutes (bid - ask USD, count)
     'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'card_r': 'REAL',
-    'units': 'REAL', 'trend_4h': 'REAL', 'trend_1d': 'REAL',
+    'units': 'REAL', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
 }
 
 FEATURE_KEYS = {
@@ -519,6 +519,7 @@ class SignalJournal:
                              tracked.direction, lv['entry'], tracked.sig)
         row.update({'entry': lv['entry'], 'sl': lv['sl'], 'tp1': lv['tp1'], 'tp2': lv['tp2'], 'tp3': lv['tp3'],
                     'rr_tp1': lv.get('rr_tp1'), 'low_rr': int(bool(lv.get('low_rr'))),
+                    'rr_blend': lv.get('rr_blend'), 'rr_reason': lv.get('rr_reason'),
                     'vetoed': getattr(tracked, 'vetoed', None), 'of_confirm': getattr(tracked, 'of_confirm', None),
                     'confirms': json.dumps(getattr(tracked, 'confirms', None) or {}),
                     'conf_n': sum(1 for k, v in (getattr(tracked, 'confirms', None) or {}).items()
@@ -724,6 +725,27 @@ class SignalJournal:
         REGIME_MUTED.clear()
         REGIME_MUTED.update(muted)
         return len(stats)
+
+    def refresh_hit_rates(self) -> int:
+        """
+        p(TP1 before the stop) per strategy from the replayed entries of the last 30 days (passed and vetoed: the
+        replay is the same), >= 30 decided ones (TP1 / TP2 / TP3 vs SL) -> strategies.geometry.HIT_RATE, which turns
+        the entry check from a fixed R:R into the expectancy p x R:R1 - (1 - p).
+        """
+        from strategies import geometry
+        since = int((time.time() - 30 * 86400) * 1000)
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT strategy, outcome FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND outcome IN "
+                "('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL", (since,)).fetchall()
+        counts: Dict[str, List[int]] = {}
+        for strategy, outcome in rows:
+            c = counts.setdefault(strategy, [0, 0])
+            c[0 if outcome == 'SL' else 1] += 1
+        rates = {s: (hit / (hit + sl), hit + sl) for s, (sl, hit) in counts.items() if hit + sl >= 30}
+        geometry.HIT_RATE.clear()
+        geometry.HIT_RATE.update(rates)
+        return len(rates)
 
     def refresh_confirm_stats(self) -> int:
         """

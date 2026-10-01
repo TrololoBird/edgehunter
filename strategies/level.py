@@ -127,7 +127,8 @@ class SweepStrategy(Strategy):
         if pos is not None and pos > 0.5:
             return {'skip': 'premium' if d > 0 else 'discount'}
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
-        invalid = base - d * CONFIG.levels.stop_buffer_atr * atr
+        from pierce import overshoot as _pierce
+        invalid = base - d * (_pierce(x.symbol, 'swing_15m', base) or CONFIG.levels.stop_buffer_atr * atr)
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
         targets, sources = select_targets(zones, reached, d, atr, 'draw_liquidity')
         # ICT: the sweep is only the setup, a wick is not yet a reversal. The entry waits for the 5m market structure

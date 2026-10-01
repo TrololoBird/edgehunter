@@ -121,7 +121,8 @@ class ExhaustionStrategy(Strategy):
         levels = list(x.raw_levels or []) + vwap(x.minutes, leg['start_ts'], 'VWAP pre-cascade')
         zones = merge(levels, atr, symbol=x.symbol)
         end = leg['end']
-        stop_est = end - d * CONFIG.levels.stop_buffer_atr * atr
+        from pierce import overshoot
+        stop_est = end - d * (overshoot(x.symbol, 'swing_15m', end) or CONFIG.levels.stop_buffer_atr * atr)
         reached = x.reached if x.reached is not None else reached_since(x.minutes, leg['end_ts'] + MINUTE_MS, end, d)
         retraces = [fib_price(leg, r) for r in CONFIG.levels.reversal_targets]
         targets, sources = select_targets(zones, reached, d, atr, 'mean', retraces, 'retrace')

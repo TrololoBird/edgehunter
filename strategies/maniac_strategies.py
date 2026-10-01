@@ -37,8 +37,10 @@ def _confirm_plan(x: PlanInput, name: str, tf: str, exit: Dict, zone_src: str, *
         return None
     close = sig['anchor_close']
     zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
+    from pierce import overshoot
+    half = overshoot(x.symbol, 'swing_15m', close, 'p50') or 0.25 * atr
     plan = base_plan(x, name, _anchor(sig, tf), tf, entry='confirm', confirm_only=True,
-                     zone_lo=close - 0.25 * atr, zone_hi=close + 0.25 * atr, zone_src=zone_src, missable=False,
+                     zone_lo=close - half, zone_hi=close + half, zone_src=zone_src, missable=False,
                      exit=exit, zones=zones, targets=[], target_src=[], key=(sig['anchor_ts'], name), **fields)
     return _finish(x, plan, close, sig.get('anchor_extreme'))
 
@@ -104,7 +106,8 @@ class AuctionStrategy(_System):
         if sig.get('auction_stop') is None:
             return None
         exit = {'stop': ['price', sig['auction_stop']], 'stop_src': "beyond the POC test + measured pierce",
-                'tp': ['level', sig.get('auction_target'), cfg.auction_min_rr, cfg.auction_fallback_rr],
+                # no 'x R' fallback target (eng-41): the next POC or the map's level, else no trade
+                'tp': ['level', sig.get('auction_target'), cfg.auction_min_rr, None],
                 'tp_src': 'naked strong POC', 'atr': sig.get('atr_1h') or x.atr}
         return _confirm_plan(x, self.name, '1h', exit, f"POC {sig['anchor_level']:.6g} retest reaction ({sig.get('auction_kind')})")
 

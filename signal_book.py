@@ -696,7 +696,7 @@ class SignalBook:
                 # A stop that far does not pay: the question is why the signal came here (entry vs the zone's edge)
                 e = levels['entry']
                 edge = (s.plan or {}).get('zone_lo' if s.direction > 0 else 'zone_hi')
-                text = (f"low_rr: stop {abs(e - levels['sl']) / e:.2%} ({levels.get('sl_src')}), "
+                text = (f"low_rr ({levels.get('rr_reason') or 'R:R'}): stop {abs(e - levels['sl']) / e:.2%} ({levels.get('sl_src')}), "
                         f"TP1 {abs(levels['tp1'] - e) / e:.2%} ({levels.get('tp1_src')})"
                         + (f", entry {abs(e - edge) / e:.2%} from the zone edge ({levels.get('zone_src')})"
                            if edge else ''))

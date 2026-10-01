@@ -259,3 +259,15 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   (cup with handle: min R:R 1, stop the nearer of the handle low and 8% below the entry - O'Neil) `cup_handle` (`strategies/cup_handle.py`, CUP HANDLE long on 1h / 4h: O'Neil's rules - prior +30%, U cup 12-50%
   deep with rims within 5%, a handle in the upper half <= 12% on lower volume, the close above the pivot on >= 1.4x
   volume; stop below the handle, target the cup's depth from the pivot - Bulkowski).
+- eng-41: one R:R path for every plan (`geometry.finish_levels`): level targets sit in front of their level by the
+  kind's p50 pierce; R:R is judged on level targets only (`is_synthetic`: ATR steps, 'x R', placeholders; ATR steps
+  count only where the map holds nothing beyond the entry - price discovery); a third with no level beyond exits at
+  the last level (the demo places no order in empty space); the deciding R:R is the BLENDED one of the three thirds;
+  risk >= 5x the execution cost; with >= 30 replayed decisions of a strategy in 30 days (`journal.refresh_hit_rates` ->
+  `geometry.HIT_RATE`) the check is the expectancy p x R:R1 - (1 - p) > 0 instead of the minimum R:R. Journal
+  `rr_blend` / `rr_reason`. The pump's averaging plan risks 1.5 units: the demo sizes each unit to 1/1.5 of the risk.
+  `cap_for_rr` takes the method's minimum. Stop buffers of the sweep invalidation / the cascade estimate and the
+  confirm-at-close zone are the measured pierce (were 0.3 / 0.25 ATR). The auction lost its '2.5 R' fallback target.
+  Kept as ATR (scale, not price levels): the 1-ATR spacing between targets, detectors' significance thresholds
+  (Seiden's 2-ATR departure, trendline tolerances, the auction's bins), the Turtles' N, the fallbacks used only
+  without the pierce model.

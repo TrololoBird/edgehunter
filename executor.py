@@ -153,6 +153,9 @@ class DemoExecutor:
         if n:
             # the Turtles' unit: 1% of the account per N (their "dollar volatility"), so the 2N stop risks 2%
             risk_usd = balance * CONFIG.strategies.turtle_unit_risk * stop_dist / (n * scale)
+        # an averaging plan (one more unit at half the way to the stop) risks 1.5 units: each unit is sized so the
+        # whole position risks risk_pct
+        risk_usd /= float(s.levels.get('risk_units') or 1.0)
         qty = min(risk_usd / stop_dist, balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         qty = float(ex.amount_to_precision(symbol, qty))
         min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0

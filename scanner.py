@@ -228,6 +228,7 @@ class Scanner:
             self._background_thread(self.journal.warm_start)
             self._background_thread(self.journal.refresh_regime_stats)
             self._background_thread(self.journal.refresh_confirm_stats)
+            self._background_thread(self.journal.refresh_hit_rates)
             self._background_thread(self.journal.refresh_anomaly_effects)
         self._tasks = [asyncio.create_task(c) for c in loops]
 

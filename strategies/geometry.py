@@ -84,6 +84,89 @@ def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: flo
             last = price
 
 
+def is_synthetic(label: Optional[str]) -> bool:
+    """A target that is no price level: an ATR step, an R multiple, a placeholder ('none: ...')."""
+    if not label:
+        return True
+    import re
+    return label == 'ATR step' or bool(re.fullmatch(r'[0-9.]+ R', label)) or label.startswith('none')
+
+
+# (strategy -> p(TP1 before the stop)) measured by the journal's replay (journal.refresh_hit_rates, hourly): with a
+# measured p the entry is judged by its expectancy, not by a fixed R:R
+HIT_RATE: Dict[str, Tuple[float, int]] = {}
+
+
+def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], sources: List[str], direction: int,
+                  sl_src: str, low: bool = False) -> Optional[Dict]:
+    """
+    Entry / stop / three targets and the R:R checks, the same for every path (eng-41):
+    - a LEVEL target sits in front of its level by the level kind's typical pierce (p50): price often turns before
+      the level, and the replay counts a target only once traded through it - the old target on the level overstated
+      R:R by about that pierce;
+    - R:R is measured on the level targets only (an ATR step / an R multiple / a placeholder passes any threshold by
+      construction - SMT's '2.5 R' targets: 2 of 44 reached); ATR steps count where the map holds nothing beyond the
+      entry at all (price discovery - the owner's rule);
+    - the R:R that decides is the BLENDED one of the actual exit (a third at each target; a missing level slot exits
+      at the last level);
+    - risk must be >= 5x the execution cost (else the costs, not the trade, decide);
+    - with a journal-measured p(TP1 before the stop) for the strategy (>= 30 replays) the entry must have a positive
+      expectancy p x R:R1 - (1 - p); else the method's minimum R:R (Strategy.min_rr, else the global one).
+    """
+    risk = direction * (entry - stop)
+    if risk <= 0 or not targets:
+        return None
+    sym, tf = plan.get('symbol'), plan.get('tf', '15m')
+    zones: List[Zone] = plan.get('zones') or []
+    adj = []
+    for t, s in zip(targets, sources):
+        if not is_synthetic(s):
+            kind = kind_at(zones, t) or kind_of_label(s, tf)
+            p50 = overshoot(sym, kind, t, 'p50') if kind else None
+            if p50 and direction * (t - direction * p50 - entry) > 0:
+                t = t - direction * p50
+        adj.append(t)
+    targets = adj
+    while len(targets) < 3:
+        targets.append(targets[-1])
+        sources.append(sources[-1])
+    fee = cost_of(entry, plan.get('volume_24h'))
+    rrs = [(abs(t - entry) - fee) / (risk + fee) for t in targets[:3]]
+    beyond_map = not any(direction * ((z.lo if direction > 0 else z.hi) - entry) > 0 for z in zones)
+    real = [not is_synthetic(s) or (s == 'ATR step' and beyond_map) for s in sources[:3]]
+    blend = []
+    last_real = None
+    for k, (rr, ok) in enumerate(zip(rrs, real)):
+        if ok:
+            last_real = rr
+        elif last_real is not None:
+            # no level beyond: this third exits at the last level too (the demo places its order there, not at an
+            # ATR step / R multiple in empty space)
+            targets[k], rrs[k] = targets[k - 1], rrs[k - 1]
+            sources[k] = f"{sources[k - 1]} (no level beyond)" if 'no level beyond' not in sources[k - 1] else sources[k - 1]
+        blend.append(last_real)
+    reason = None
+    if last_real is None and not any(real):
+        reason = 'no level target'
+    blended = sum(b for b in blend if b is not None) / 3 if any(b is not None for b in blend) else None
+    if risk < 5 * fee:
+        reason = reason or 'costs >= 1/5 of the risk'
+    hit = HIT_RATE.get(plan.get('strategy'))
+    if reason is None:
+        if hit and real[0]:
+            p = hit[0]
+            if p * rrs[0] - (1 - p) <= 0:
+                reason = f"expectancy {p * rrs[0] - (1 - p):+.2f}R at the measured p {p:.0%}"
+        elif blended is not None and blended < _min_rr(plan):
+            reason = f"blended R:R {blended:.2f} < {_min_rr(plan):g}"
+    # the averaging add (pump: one more unit at half the way to the stop) makes the position's risk 1.5 units
+    risk_units = 1.5 if plan.get('add_half') else 1.0
+    return {'entry': entry, 'sl': stop, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+            'rr_tp1': rrs[0], 'rr_tp2': rrs[1], 'rr_blend': blended, 'low_rr': bool(low or reason),
+            'rr_reason': reason, 'risk_units': risk_units,
+            'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
+
+
 def _min_rr(plan: Dict) -> float:
     """The plan's minimum R:R to TP1: its method's own (Strategy.min_rr, from the source) else the global rule."""
     v = plan.get('min_rr')
@@ -297,7 +380,8 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
             return None
         label = exit.get('tp_src', 'none (trailing exit)')
         return {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
-                'tp3': entry + direction * 300 * risk, 'rr_tp1': 100.0, 'rr_tp2': 200.0, 'low_rr': False,
+                'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
+                'low_rr': False, 'risk_units': 1.0,
                 'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': exit.get('stop_src', 'the system stop')}
     floor = stop_floor(max(atr, plan['atr']), plan.get('recent_atr'))
     zones: List[Zone] = plan.get('zones') or []
@@ -333,12 +417,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     if fixed_tp and zones:
         targets, sources = select_targets(zones, entry, direction, atr, 'opposite_liquidity')
         if targets and sources[0] != 'ATR step':
-            tp1, tp2, tp3 = targets[:3]
-            fee = cost_of(entry, plan.get('volume_24h'))
-            rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
-            return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
-                    'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < _min_rr(plan),
-                    'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
+            return finish_levels(plan, entry, stop, list(targets[:3]), list(sources[:3]), direction, sl_src)
     if risk <= 0 or (exit.get('min_risk_atr') and risk < exit['min_risk_atr'] * atr):
         return None
     tp1, src1, low = exit_target(exit, plan, entry, risk, direction)
@@ -357,15 +436,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     while len(prices) < 3:
         prices.append(prices[-1] + direction * gap)
         labels.append('ATR step')
-    tp2, tp3 = prices[1], prices[2]
-    src2, src3 = labels[1], labels[2]
-    fee = cost_of(entry, plan.get('volume_24h'))
-    rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
-    # our minimum applies to the ported systems too (their own flag only knew the author's R:R rule: REZ FIB 0.5 was
-    # entered at 0.74)
-    return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
-            'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': low or rr1 < _min_rr(plan),
-            'tp1_src': src1, 'tp2_src': src2, 'tp3_src': src3, 'sl_src': sl_src}
+    return finish_levels(plan, entry, stop, prices[:3], labels[:3], direction, sl_src, low=low)
 
 
 def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
@@ -402,20 +473,16 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
             sources.append('ATR step')
     if not targets:
         return None
-    tp1, tp2, tp3 = targets[:3]
-    fee = cost_of(entry, plan.get('volume_24h'))
-    rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
-    return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3,
-            'rr_tp1': rr1, 'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < _min_rr(plan),
-            'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
+    return finish_levels(plan, entry, stop, list(targets[:3]), list(sources[:3]), direction, sl_src)
 
 
-def cap_for_rr(tp1: float, stop_est: float, direction: int, atr: float, recent_atr: Optional[float]) -> float:
+def cap_for_rr(tp1: float, stop_est: float, direction: int, atr: float, recent_atr: Optional[float],
+               min_rr: Optional[float] = None) -> float:
     """
     The furthest entry (from the extreme toward TP1) that still pays min_rr_tp1 (net of fees) to TP1 with the stop at `stop_est`
     or the stop floor, whichever is wider: a waiting zone ends there.
     """
-    rr = CONFIG.levels.min_rr_tp1
+    rr = CONFIG.levels.min_rr_tp1 if min_rr is None else min_rr
     fee = cost_of(tp1)                                  # R:R is net of the execution cost (entry_levels)
     by_stop = (tp1 + rr * stop_est - direction * (1 + rr) * fee) / (1 + rr)
     by_floor = tp1 - direction * (rr * stop_floor(atr, recent_atr) + (1 + rr) * fee)
