@@ -215,7 +215,7 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
     run('supply/demand', maniac.sd_zone_events, m15)
     run('trendline', maniac.trendline_event, m15)
     run('SMT', maniac.smt_event, m15, corr)
-    run('CSI', maniac.csi_event, m15)
+    run('Bollinger W / M', maniac.bollinger_wm_event, m15)
     if cut % HOUR_MS == 0 and len(h1) >= 30:
         run('Third Eye', maniac.thirdeye_event, h1)
         run('fib 0.5', maniac.fib05_event, h1)

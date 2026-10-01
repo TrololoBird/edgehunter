@@ -18,7 +18,7 @@ crypto_maniac's systems (github.com/roman-boop, strategies/maniac.py), each with
     thirdeye    THIRD EYE LONG / SHORT              cloud    1h / at the close        5% (SL 1%)
     fib05       FIB 0.5 LONG / SHORT                impulse  1h / at the close        the impulse's end
     bomberman   BOMBERMAN LONG / SHORT              QML      1h / at the close        2R (SL 1.5 ATR)
-    csi         CSI LONG / SHORT                    BB       15m / at the close       3 bars (SL 0.4%)
+    bollinger   BB W-BOTTOM / BB M-TOP             W / M    15m / at the close       the opposite band (Bollinger method III)
     oi_accum    OI ACCUMULATION                     OI       1m OI / at once          4% / 6% (SL 2%)
 
 Classic methods (strategies/classic.py), each at its signal's close:

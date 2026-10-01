@@ -520,7 +520,7 @@ class PoolsConfig:
                     ('thirdeye', 'all', '', 0.0, 'volatility'), ('bomberman', 'all', '', 0.0, 'volatility'),
                     ('value_area', 'all', '', 0.0, 'volume'), ('auction', 'all', '', 0.0, 'volume'),
                     ('connors', 'all', '', 0.0, 'volume'), ('absorption', 'all', '', 0.0, 'volume'),
-                    ('exhaustion', 'all', '', 0.0, 'volume'), ('csi', 'all', '', 0.0, 'volume'),
+                    ('exhaustion', 'all', '', 0.0, 'volume'), ('bollinger', 'all', '', 0.0, 'volume'),
                     ('smt', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
                     ('wyckoff_range', 'all', '', 0.0, 'volume'), ('fib05', 'all', '', 0.0, 'volume'),
                     ('sweep', 'all', '', 0.0, 'alts'), ('supply_demand', 'all', '', 0.0, 'alts'))
@@ -541,7 +541,7 @@ class StrategiesConfig:
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     enabled: tuple = ('trend', 'momentum', 'wyckoff', 'wyckoff_range', 'sweep', 'absorption', 'exhaustion', 'breakout',
-                      'supply_demand', 'auction', 'smt', 'trendline', 'thirdeye', 'fib05', 'bomberman', 'csi',
+                      'supply_demand', 'auction', 'smt', 'trendline', 'thirdeye', 'fib05', 'bomberman', 'bollinger',
                       'oi_accum', 'value_area', 'orb', 'connors')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
@@ -705,7 +705,7 @@ class StrategiesConfig:
     tl_min_rr: float = 1.0
     trendline_ttl: tuple = (900, 900, 24 * 3600)
     # thirdeye_strategy_algo (1h): CCI length, fixed SL / TP from his realtime.py
-    te_cci_length: int = 25
+    te_cci_length: int = 20               # Lambert's CCI(20) (his robot: 25)
     te_sl_pct: float = 0.01
     te_tp_pct: float = 0.05
     thirdeye_ttl: tuple = (3600, 3600, 72 * 3600)
@@ -723,6 +723,7 @@ class StrategiesConfig:
     csi_bear_quant: float = 0.22
     csi_sl_pct: float = 0.004
     csi_ttl: tuple = (900, 900, 3 * 900)
+    bollinger_ttl: tuple = (900, 900, 12 * 3600)   # W / M: the trade lives until the opposite band, hours
     # oi_trading_robot v7.4 (long only): OI +5% / 1h, price growth <= 0.5 x OI growth, OI 24h > price 24h; his
     # defaults SL 2%, TP 4% / 6%, a 3h cooldown per coin, the 15m structure filter off
     oi_1h_threshold: float = 5.0
@@ -848,7 +849,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-29"
+    logic_version: str = "eng-30"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

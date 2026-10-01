@@ -175,8 +175,9 @@ class TrendlineStrategy(_System):
         stop = structural_stop(x.minutes, d, sig['anchor_close'], pad)
         if stop is None:
             return None
-        exit = {'stop': ['price', stop], 'stop_src': '5m structure beyond the entry',
-                'tp': ['level', sig['target_price'], CONFIG.strategies.tl_min_rr, None], 'tp_src': "the line's first anchor"}
+        # classic trendline break (Edwards & Magee): the targets are the next support / resistance levels (the map), not
+        # the line's first anchor (his robot's target, kept in the setup note)
+        exit = {'stop': ['price', stop], 'stop_src': '5m structure beyond the entry', 'tp': ['map', 1.0]}
         return _confirm_plan(x, self.name, '15m', exit, 'trendline break (2 closes)')
 
 
@@ -223,16 +224,20 @@ class BombermanStrategy(_System):
         return _confirm_plan(x, self.name, '1h', exit, 'MACD cross after a QML')
 
 
-class CsiStrategy(_System):
-    """bollinger_bands-with-clusters v6: close beyond BB in a CSI cluster; entry at the close, SL 0.4%, out after 3
-    15m bars (the card's trade lifetime); a 3 R cap stands in for his missing target."""
-    name = 'csi'
-    setups = {'CSI LONG': 1, 'CSI SHORT': -1}
-    ttl_key = 'csi_ttl'
+class BollingerStrategy(_System):
+    """Bollinger's W-bottom / M-top (method III): entry at the close beyond the middle peak, the stop beyond the retest,
+    the first target the opposite band (then the map)."""
+    name = 'bollinger'
+    setups = {'BB W-BOTTOM': 1, 'BB M-TOP': -1}
+    ttl_key = 'bollinger_ttl'
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
-        exit = {'stop': ['pct', CONFIG.strategies.csi_sl_pct], 'tp': ['rr', 3.0]}
-        return _confirm_plan(x, self.name, '15m', exit, 'Bollinger + CSI cluster')
+        sig = x.sig
+        if sig.get('bb_stop') is None:
+            return None
+        exit = {'stop': ['ref', 0.0], 'stop_src': 'beyond the W / M retest',
+                'tp': ['level', sig['bb_target'], 1.0, None], 'tp_src': 'the opposite Bollinger band', 'atr': x.atr}
+        return _confirm_plan(x, self.name, '15m', exit, 'Bollinger W / M confirmed', stop_ref=sig['bb_stop'])
 
 
 class OiAccumulationStrategy(_System):
@@ -249,5 +254,5 @@ class OiAccumulationStrategy(_System):
 
 
 MANIAC_STRATEGIES: List[Strategy] = [SupplyDemandStrategy(), AuctionStrategy(), SmtStrategy(), TrendlineStrategy(),
-                                     ThirdEyeStrategy(), Fib05Strategy(), BombermanStrategy(), CsiStrategy(),
+                                     ThirdEyeStrategy(), Fib05Strategy(), BombermanStrategy(), BollingerStrategy(),
                                      OiAccumulationStrategy()]

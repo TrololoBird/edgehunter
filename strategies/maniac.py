@@ -473,67 +473,69 @@ def smt_event(c15: Sequence[Sequence[float]], corr: Optional[Sequence[Sequence[f
 
 # ------------------------------------------------------------------------------------------------ Bollinger + CSI
 
-def csi_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
+def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
     """
-    bollinger_bands-with-clusters v6: CSI = direction x (0.5 body/range + 0.3 volume/max50 + 0.2 range z-score) / ATR14;
-    bull / bear sentiment = CSI above its 78% / below its 22% quantile, a cluster = >= 3 in a row; a long needs the
-    close BELOW the lower BB(40, 1.5) with CSI > 0 and rising, inside a bull cluster, RSI(96, SMA) < 60 (short mirrored).
-    Quantiles over the history we hold (his window is 10000 bars).
+    John Bollinger's reversal method ("Bollinger on Bollinger Bands", 2001, method III; W / M patterns after Arthur
+    Merrill): a band tag is NOT a signal by itself. W-bottom: a low that closed BELOW the lower band (%b < 0), a rally,
+    a retest low whose close stays INSIDE the band (%b >= 0, the price low may be lower), then the first close above the
+    rally's high between them -> long at that close; stop below the retest low; target the upper band, then the map.
+    M-top mirrored. BB(20, 2), within the last 30 15m candles. (Replaces crypto_maniac's CSI system: a close beyond
+    BB(40, 1.5) read as a reversal contradicts Bollinger's own rule, and its "candle sentiment index" is his invention.)
     """
-    cfg = CONFIG.strategies
     n = len(c15)
     if n < 60:
         return None
-    o, h, l, c, v = (_arr(c15, k) for k in (1, 2, 3, 4, 5))
-    rng = h - l
-    body_ratio = np.where(rng > 0, np.abs(c - o) / np.where(rng > 0, rng, 1), np.nan)
-    direction = np.where(c > o, 1.0, -1.0)
-    vol_score = v / rolling_max(v, 50)
-    range_z = np.clip((rng - rng.mean()) / (rng.std() or 1.0), -3, 3)
-    atr = rolling_mean(true_range(h, l, c), 14)
-    csi = direction * (0.5 * body_ratio + 0.3 * vol_score + 0.2 * range_z) / atr
-    valid = ~np.isnan(csi)
-    if valid.sum() < 30 or np.isnan(csi[-1]) or np.isnan(csi[-2]):
-        return None
-    bull_thr, bear_thr = np.quantile(csi[valid], cfg.csi_bull_quant), np.quantile(csi[valid], cfg.csi_bear_quant)
-    sentiment = np.where(csi >= bull_thr, 1, np.where(csi <= bear_thr, -1, 0))
-    run = 0
-    for s in sentiment[::-1]:
-        if s == sentiment[-1] and s != 0:
-            run += 1
-        else:
-            break
-    if run < cfg.csi_min_cluster:
-        return None
-    ma, sd = rolling_mean(c, cfg.csi_bb_period), rolling_std(c, cfg.csi_bb_period)
-    upper, lower = ma + cfg.csi_bb_std * sd, ma - cfg.csi_bb_std * sd
-    delta = np.diff(c, prepend=c[0])
-    gain, loss = rolling_mean(np.clip(delta, 0, None), cfg.csi_rsi_period), rolling_mean(np.clip(-delta, 0, None), cfg.csi_rsi_period)
-    rsi = 100 - 100 / (1 + gain[-1] / loss[-1]) if loss[-1] else 100.0
-    d = 0
-    if sentiment[-1] > 0 and c[-1] < lower[-1] and csi[-1] > 0 and csi[-1] > csi[-2] and rsi < cfg.csi_rsi:
-        d = 1
-    elif sentiment[-1] < 0 and c[-1] > upper[-1] and csi[-1] < 0 and csi[-1] < csi[-2] and rsi > 100 - cfg.csi_rsi:
-        d = -1
-    if not d:
-        return None
-    return {'setup': 'CSI LONG' if d > 0 else 'CSI SHORT', 'direction': d,
-            'setup_note': f"15m close {'below the lower' if d > 0 else 'above the upper'} BB({cfg.csi_bb_period}, "
-                          f"{cfg.csi_bb_std:g}) inside a {run}-bar {'bull' if d > 0 else 'bear'} CSI cluster, RSI {rsi:.0f}",
-            'anchor_level': float(lower[-1] if d > 0 else upper[-1]), 'anchor_extreme': float(l[-1] if d > 0 else h[-1]),
-            'anchor_label': 'Bollinger band', 'anchor_ts': int(c15[-1][0]), 'anchor_close': float(c[-1]),
-            'event_ts': int(c15[-1][0]) + QUARTER_MS}
+    h, l, c = _arr(c15, 2), _arr(c15, 3), _arr(c15, 4)
+    ma, sd = rolling_mean(c, 20), rolling_std(c, 20)
+    upper, lower = ma + 2 * sd, ma - 2 * sd
+    width = upper - lower
+    pb = np.where(width > 0, (c - lower) / np.where(width > 0, width, 1), np.nan)
+    i = n - 1
+    start = n - 30
+    for d in (1, -1):
+        # first test: closed outside the band
+        firsts = [k for k in range(start, i - 3) if (pb[k] < 0 if d > 0 else pb[k] > 1)]
+        if not firsts:
+            continue
+        a_ = firsts[-1]
+        mid = range(a_ + 1, i)
+        if len(mid) < 3:
+            continue
+        peak = max(mid, key=lambda k: h[k]) if d > 0 else min(mid, key=lambda k: l[k])
+        retest = [k for k in range(peak + 1, i)]
+        if not retest:
+            continue
+        b_ = min(retest, key=lambda k: l[k]) if d > 0 else max(retest, key=lambda k: h[k])
+        inside = pb[b_] >= 0 if d > 0 else pb[b_] <= 1
+        if not inside:
+            continue
+        level = h[peak] if d > 0 else l[peak]
+        broke_now = c[i] > level if d > 0 else c[i] < level
+        broke_before = any((c[k] > level) if d > 0 else (c[k] < level) for k in range(b_ + 1, i))
+        if not broke_now or broke_before:
+            continue
+        stop = l[b_] if d > 0 else h[b_]
+        target = upper[i] if d > 0 else lower[i]
+        return {'setup': 'BB W-BOTTOM' if d > 0 else 'BB M-TOP', 'direction': d,
+                'setup_note': f"15m {'W-bottom' if d > 0 else 'M-top'} on BB(20, 2): first {'low' if d > 0 else 'high'} "
+                              f"closed outside the band, the retest held inside (%b {pb[b_]:.2f}), close beyond the "
+                              f"middle {'peak' if d > 0 else 'trough'} {level:.6g} (Bollinger)",
+                'anchor_level': float(level), 'anchor_extreme': float(stop), 'anchor_label': 'Bollinger W / M',
+                'bb_stop': float(stop), 'bb_target': float(target),
+                'anchor_ts': int(c15[a_][0]), 'anchor_close': float(c[i]), 'event_ts': int(c15[-1][0]) + QUARTER_MS}
+    return None
 
 
 # ------------------------------------------------------------------------------------------------ 1h systems
 
 def thirdeye_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
     """
-    thirdeye_strategy_algo (1h): CCI(25) of hlc3 crosses +98 up (long) / -98 down (short); close above (below) the
-    Ichimoku cloud (10 / 26 / 24, displacement 26) with both the conversion and base lines above (below) it; close
-    above (below) EMA200; ADX(10) 16-55 (short 14-41), RSI(18) 55-69 (short 30-50), NATR(13) 0.85-3.5% (short
-    0.6-3.3%), BB(29, 2.1) width >= 2%. After a long only a short may come until price revisits the cloud (and vice
-    versa: his allow flags, replayed over the history).
+    Third Eye (crypto_maniac's idea: CCI momentum with the Ichimoku trend) on the CLASSIC parameters (eng-30): Lambert's
+    CCI(20) of the typical price crossing +100 up (long) / -100 down (short); Hosoda's Ichimoku 9 / 26 / 52, displaced
+    26: the close above (below) the cloud, the conversion line above (below) the base line, the lagging span above
+    (below) the close 26 candles back; the close above (below) EMA200; Wilder's ADX(14) >= 20 (a trend to follow).
+    His 10 / 26 / 24 cloud, CCI +-98 and the RSI / NATR / BB-width bands were fitted ranges, not a method: dropped.
+    After a long only a short may come until price revisits the cloud (and vice versa: his allow flags).
     """
     cfg = CONFIG.strategies
     n = len(c1h)
@@ -541,10 +543,10 @@ def thirdeye_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
         return None
     h, l, c = _arr(c1h, 2), _arr(c1h, 3), _arr(c1h, 4)
     hlc3 = (h + l + c) / 3
-    conv = (rolling_max(h, 10) + rolling_min(l, 10)) / 2
+    conv = (rolling_max(h, 9) + rolling_min(l, 9)) / 2
     base = (rolling_max(h, 26) + rolling_min(l, 26)) / 2
-    lead1, lead2 = (conv + base) / 2, (rolling_max(h, 24) + rolling_min(l, 24)) / 2
-    shift = 25
+    lead1, lead2 = (conv + base) / 2, (rolling_max(h, 52) + rolling_min(l, 52)) / 2
+    shift = 26
     span_a = np.concatenate([np.full(shift, np.nan), lead1[:-shift]])
     span_b = np.concatenate([np.full(shift, np.nan), lead2[:-shift]])
     top, bot = np.fmax(span_a, span_b), np.fmin(span_a, span_b)
@@ -559,22 +561,17 @@ def thirdeye_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
     up, down = np.diff(h, prepend=h[0]), -np.diff(l, prepend=l[0])
     plus_dm = np.where((up > down) & (up > 0), up, 0.0)
     minus_dm = np.where((down > up) & (down > 0), down, 0.0)
-    trs = wilder(tr, 10)
-    pdi, mdi = 100 * wilder(plus_dm, 10) / (trs + 1e-10), 100 * wilder(minus_dm, 10) / (trs + 1e-10)
-    adx = wilder(100 * np.abs(pdi - mdi) / (pdi + mdi + 1e-10), 10)
-    delta = np.diff(c, prepend=c[0])
-    ag, al = wilder(np.clip(delta, 0, None), 18), wilder(np.clip(-delta, 0, None), 18)
-    rsi = 100 - 100 / (1 + ag / (al + 1e-10))
-    natr = 100 * wilder(tr, 13) / c
-    bbw = 100 * (2 * 2.1 * rolling_std(c, 29)) / (rolling_mean(c, 29) + 1e-10)
+    trs = wilder(tr, 14)
+    pdi, mdi = 100 * wilder(plus_dm, 14) / (trs + 1e-10), 100 * wilder(minus_dm, 14) / (trs + 1e-10)
+    adx = wilder(100 * np.abs(pdi - mdi) / (pdi + mdi + 1e-10), 14)
 
     def long_at(i):
-        return (cci[i - 1] < 98 and cci[i] > 98 and has[i] and c[i] > top[i] and conv[i] > top[i] and base[i] > top[i]
-                and c[i] > ma[i] and 16 <= adx[i] <= 55 and 55 <= rsi[i] <= 69 and 0.85 <= natr[i] <= 3.5 and bbw[i] >= 2.0)
+        return (cci[i - 1] < 100 and cci[i] > 100 and has[i] and c[i] > top[i] and conv[i] > base[i]
+                and c[i] > c[i - 26] and c[i] > ma[i] and adx[i] >= 20)
 
     def short_at(i):
-        return (cci[i - 1] > -98 and cci[i] < -98 and has[i] and c[i] < bot[i] and conv[i] < bot[i] and base[i] < bot[i]
-                and c[i] < ma[i] and 14 <= adx[i] <= 41 and 30 <= rsi[i] <= 50 and 0.6 <= natr[i] <= 3.3 and bbw[i] >= 2.0)
+        return (cci[i - 1] > -100 and cci[i] < -100 and has[i] and c[i] < bot[i] and conv[i] < base[i]
+                and c[i] < c[i - 26] and c[i] < ma[i] and adx[i] >= 20)
 
     # his allow flags: a side is re-armed when price revisits the cloud (flat assumed: cards manage the trade)
     allow_long = allow_short = True
@@ -592,8 +589,8 @@ def thirdeye_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
     if not d:
         return None
     return {'setup': 'THIRD EYE LONG' if d > 0 else 'THIRD EYE SHORT', 'direction': d,
-            'setup_note': f"1h CCI({cfg.te_cci_length}) crossed {'+' if d > 0 else '-'}98 {'above' if d > 0 else 'below'} "
-                          f"the cloud and EMA200 (ADX {adx[-1]:.0f}, RSI {rsi[-1]:.0f}, NATR {natr[-1]:.2f}%)",
+            'setup_note': f"1h CCI({cfg.te_cci_length}) crossed {'+' if d > 0 else '-'}100 {'above' if d > 0 else 'below'} "
+                          f"the Ichimoku cloud (9/26/52) and EMA200 (ADX {adx[-1]:.0f})",
             'anchor_level': float(top[-1] if d > 0 else bot[-1]), 'anchor_extreme': float(l[-1] if d > 0 else h[-1]),
             'anchor_label': 'Ichimoku cloud', 'anchor_ts': int(c1h[-1][0]), 'anchor_close': float(c[-1]),
             'event_ts': int(c1h[-1][0]) + HOUR_MS}

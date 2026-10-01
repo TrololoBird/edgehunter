@@ -176,3 +176,15 @@ The market regime changes, so nothing is fitted once on the past: models start f
   coin into one position): a second card on a held coin is recorded `OVERLAP`. Lint before a restart:
   `ruff check --select F` and `pylint --disable=all --enable=E0601,E0602,E0606` (both would have caught this
   session's two outages).
+
+### The ported systems answer to classic methodology (eng-30, the owner's rule 2026-10-01)
+crypto_maniac's repositories are SAMPLES: where a sample contradicts classic technical analysis or the method's own
+source, the source wins. Changed: `csi` (a close beyond BB(40, 1.5) read as a reversal contradicts Bollinger; the
+"candle sentiment index" is his invention) -> `bollinger` BB W-BOTTOM / BB M-TOP (Bollinger's method III: the first
+test closes outside the band, the retest holds inside, entry on the close beyond the middle peak, stop beyond the
+retest, target the opposite band); `thirdeye` on the classic parameters (Lambert's CCI(20) +-100, Hosoda's Ichimoku
+9 / 26 / 52 displaced 26 with the conversion over the base line and the lagging span, Wilder's ADX(14) >= 20; his fitted
+RSI / NATR / BB-width bands dropped); `trendline` targets from the map (Edwards & Magee), not the line's first anchor.
+Kept as consistent with their sources: supply / demand (Seiden), auction (Market Profile POC), SMT (ICT), fib 0.5
+(Fibonacci retracement), Bomberman (Appel's MACD signal cross with a trend filter; the QML is a retail SMC condition),
+OI accumulation (derivatives, not chart TA).
