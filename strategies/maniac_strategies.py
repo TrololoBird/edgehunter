@@ -58,6 +58,7 @@ class SupplyDemandStrategy(_System):
     targets are ours (the opposite liquidity on the map)."""
     name = 'supply_demand'
     setups = {'SD DEMAND': 1, 'SD SUPPLY': -1}
+    min_rr = 3.0                     # Seiden (Online Trading Academy): a trade needs >= 3:1 reward / risk to the opposing zone
     ttl_key = 'sd_ttl'
     uses_minutes = True
 
@@ -93,6 +94,7 @@ class AuctionStrategy(_System):
     """auction_theory_in_code: a POC retest reacted on 1h; entry at that close, stop beyond the test's extreme + 0.35
     ATR, target the nearest strong untested POC (skipped below 1.5 R), else 2.5 R."""
     name = 'market_profile'        # eng-35: Dalton's POC retest, with the 80% rule (classic_strategies.py)
+    min_rr = 1.0                     # Market Profile: the target is the next value reference, no ratio rule
     setups = {'AUCTION LONG': 1, 'AUCTION SHORT': -1}
     ttl_key = 'auction_ttl'
 
@@ -164,6 +166,7 @@ class BollingerStrategy(_System):
     the first target the opposite band (then the map)."""
     name = 'bollinger'
     setups = {'BB W-BOTTOM': 1, 'BB M-TOP': -1}
+    min_rr = 1.0                     # Bollinger: the target is the opposite band, no ratio rule - only paying > risk
     ttl_key = 'bollinger_ttl'
 
     def plan(self, x: PlanInput) -> Optional[Dict]:

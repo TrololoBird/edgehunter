@@ -11,6 +11,7 @@ from strategies.maniac_strategies import _System, _confirm_plan
 class ValueAreaStrategy(_System):
     """Dalton's 80% rule: target the value area's far edge, stop beyond the edge price re-entered through."""
     name = 'market_profile'        # eng-35: Dalton's 80% rule, with the POC retest (maniac_strategies.AuctionStrategy)
+    min_rr = 1.0                     # Dalton: the far edge of the value area is the target, no ratio rule
     setups = {'VA80 LONG': 1, 'VA80 SHORT': -1}
     ttl_key = 'classic_ttl'
 
@@ -28,6 +29,7 @@ class OrbStrategy(_System):
     """Crabel's opening range breakout: stop at the range's other side, the target from the map."""
     name = 'orb'
     setups = {'ORB UP': 1, 'ORB DOWN': -1}
+    min_rr = 1.0                     # Crabel: no target / ratio rule (exits by time or the opposite side)
     ttl_key = 'classic_ttl'
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
@@ -44,6 +46,7 @@ class ConnorsStrategy(_System):
     """Connors' RSI(2): out at the SMA5 (the target), stop from the structure (he uses none)."""
     name = 'connors'
     setups = {'RSI2 LONG': 1, 'RSI2 SHORT': -1}
+    min_rr = 0.0                     # Connors: no stop, no ratio - out at the SMA5; the R is only measured
     ttl_key = 'connors_ttl'
 
     def plan(self, x: PlanInput) -> Optional[Dict]:

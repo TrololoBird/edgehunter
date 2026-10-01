@@ -96,6 +96,7 @@ const FAMILY = {
   bollinger: ['W / M Боллинджера', '15m BB(20, 2): первый минимум за полосой, ретест внутри (%b ≥ 0), закрытие выше пика между ними; стоп за ретестом; цель — противоположная полоса'],
   orb: ['пробой диапазона открытия (Крэбел)', '30 минут после 09:30 Нью-Йорка; первое закрытие 15m за диапазоном в течение 2.5 ч; стоп — другая сторона; NR4/NR7 отмечаются'],
   pump: ['памп: начало и вершина', 'начало: +15 мин ≥ max(3%, 4σ монеты) на RVOL ≥ 5, OI растёт, спот покупает, новый суточный хай → лонг по рынку, стоп под началом импульса; вершина: кульминация покупок (верхняя тень ≥ 50% свечи 15m на объёме ≥ 2×) после +10% за 4ч → шорт на сломе 5m, стоп над хаем, цели — откаты 0.382/0.5/0.618; добор 1:1 на полпути к стопу'],
+  cup_handle: ['чашка с ручкой (О\'Нил)', '1h / 4h: рост ≥ 30% до левого края, U-образная чашка 12–50% глубиной, правый край в пределах 5% от левого, ручка в верхней половине чашки ≤ 12% на падающем объёме; вход на закрытии выше пивота ручки на объёме ≥ 1.4×; стоп под ручкой; цель — глубина чашки от пивота (Булковски); R:R ≥ 3 (О\'Нил)'],
   connors: ['RSI(2) (Коннорс)', 'дневки: выше SMA200 и RSI(2) < 10 — лонг (зеркально шорт); цель — SMA5; стоп по структуре'],
 };
 const SETUP_RU = {
@@ -109,7 +110,7 @@ const SETUP_RU = {
   'SMT LOW': 'свип минимума + SMT', 'SMT HIGH': 'свип максимума + SMT', 'TRENDLINE UP': 'пробой линии вверх', 'TRENDLINE DOWN': 'пробой линии вниз',
   'THIRD EYE LONG': 'CCI + Ишимоку вверх', 'THIRD EYE SHORT': 'CCI + Ишимоку вниз', 'FIB 0.5 LONG': 'откат к 0.5 вверх', 'FIB 0.5 SHORT': 'откат к 0.5 вниз',
   'BOMBERMAN LONG': 'MACD + QML вверх', 'BOMBERMAN SHORT': 'MACD + QML вниз', 'BB W-BOTTOM': 'W-дно Боллинджера', 'BB M-TOP': 'M-вершина Боллинджера',
-  'PUMP START': 'начало пампа', 'PUMP TOP': 'вершина пампа',
+  'PUMP START': 'начало пампа', 'PUMP TOP': 'вершина пампа', 'CUP HANDLE': 'чашка с ручкой',
   'SILVER BULLET LONG': 'Silver Bullet вверх', 'SILVER BULLET SHORT': 'Silver Bullet вниз',
   'VA80 LONG': 'возврат в value area снизу', 'VA80 SHORT': 'возврат в value area сверху',
   'ORB UP': 'пробой диапазона открытия вверх', 'ORB DOWN': 'пробой диапазона открытия вниз',
@@ -124,7 +125,7 @@ const STRATEGY_OF = {
   'AUCTION LONG': 'market_profile', 'AUCTION SHORT': 'market_profile', 'VA80 LONG': 'market_profile', 'VA80 SHORT': 'market_profile',
   'TRENDLINE UP': 'trendline', 'TRENDLINE DOWN': 'trendline', 'BB W-BOTTOM': 'bollinger', 'BB M-TOP': 'bollinger',
   'ORB UP': 'orb', 'ORB DOWN': 'orb', 'RSI2 LONG': 'connors', 'RSI2 SHORT': 'connors',
-  'PUMP START': 'pump', 'PUMP TOP': 'pump',
+  'PUMP START': 'pump', 'PUMP TOP': 'pump', 'CUP HANDLE': 'cup_handle',
 };
 const familyOf = setup => STRATEGY_OF[setup] || '';
 const setupLabel = setup => {

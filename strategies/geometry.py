@@ -84,6 +84,12 @@ def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: flo
             last = price
 
 
+def _min_rr(plan: Dict) -> float:
+    """The plan's minimum R:R to TP1: its method's own (Strategy.min_rr, from the source) else the global rule."""
+    v = plan.get('min_rr')
+    return CONFIG.levels.min_rr_tp1 if v is None else v
+
+
 def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, intent: str,
                    fillers: Sequence[float] = (), fill_label: str = 'fib',
                    first: Optional[Tuple[float, str]] = None) -> Tuple[List[float], List[str]]:
@@ -331,7 +337,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
             fee = cost_of(entry, plan.get('volume_24h'))
             rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
             return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
-                    'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < CONFIG.levels.min_rr_tp1,
+                    'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < _min_rr(plan),
                     'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
     if risk <= 0 or (exit.get('min_risk_atr') and risk < exit['min_risk_atr'] * atr):
         return None
@@ -358,7 +364,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     # our minimum applies to the ported systems too (their own flag only knew the author's R:R rule: REZ FIB 0.5 was
     # entered at 0.74)
     return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
-            'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': low or rr1 < CONFIG.levels.min_rr_tp1,
+            'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': low or rr1 < _min_rr(plan),
             'tp1_src': src1, 'tp2_src': src2, 'tp3_src': src3, 'sl_src': sl_src}
 
 
@@ -400,7 +406,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
     fee = cost_of(entry, plan.get('volume_24h'))
     rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
     return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3,
-            'rr_tp1': rr1, 'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < CONFIG.levels.min_rr_tp1,
+            'rr_tp1': rr1, 'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': rr1 < _min_rr(plan),
             'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
 
 

@@ -70,6 +70,8 @@ class Strategy:
     def has_data(self, sig: Dict) -> bool:
         return all(bool(sig.get('has_spot')) for need in self.requires if need == 'spot')
     follows_live_candle = False                     # the plan depends on the live 15m candle's high / low (a leg)
+    # the method's own minimum reward / risk to TP1 (its source's rule); None = CONFIG.levels.min_rr_tp1 (eng-40)
+    min_rr: Optional[float] = None
     frozen_in_zone = False                          # a continuation's plan is frozen once price is in its zone
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
@@ -121,6 +123,10 @@ def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> D
         plan['protected'] = None
     plan['dealing_range'] = dealing_range(x.h1 or [])
     plan.update(fields)
+    from strategies import strategy_of
+    strategy = strategy_of(x.setup)
+    if strategy is not None and getattr(strategy, 'min_rr', None) is not None:
+        plan.setdefault('min_rr', strategy.min_rr)
     return plan
 
 
