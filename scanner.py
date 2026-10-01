@@ -172,6 +172,8 @@ class Scanner:
         self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
         self._sb_checked: Dict[str, int] = {}        # symbol -> the last final minute the Silver Bullet was checked on
         self._sb_fired: set = set()                  # (symbol, direction, window start) setups already fired
+        self._pump_checked: Dict[str, int] = {}      # symbol -> the last final minute the pump checks ran on
+        self._pump_fired: set = set()                # pump starts / tops already fired
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -654,6 +656,7 @@ class Scanner:
             bullet = self._silver_bullet(symbol, md, now_ms)
             if bullet:
                 setups.append(bullet)
+            setups.extend(self._pumps(symbol, md, now_ms))
             for setup in setups:
                 sig = dict(md.tier0)
                 sig.update(is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
@@ -672,6 +675,35 @@ class Scanner:
                 self._enrich(symbol, md, sig)
                 logger.info(f"Setup detected: {symbol} {setup['setup']} - {setup['setup_note']}")
                 out.append((symbol, sig))
+        return out
+
+    def _pumps(self, symbol: str, md: MarketData, now_ms: int) -> List[Dict]:
+        """The pump's start (every final minute) and top (every 15m close), cheap gates first (strategies.pump)."""
+        from strategies.pump import pump_start, pump_top
+        minute = md.minute_closed_until
+        if not minute or self._pump_checked.get(symbol) == minute:
+            return []
+        self._pump_checked[symbol] = minute
+        minutes = self._minute_candles(symbol)
+        if len(minutes) < 120:
+            return []
+        out = []
+        cfg = CONFIG.strategies
+        if minutes[-1][4] / minutes[-16][4] - 1 >= cfg.pump_start_min_pct:
+            closes = [c[4] for c in part_candles(self._frame_parts.get(symbol))[0][-97:]]
+            rets = [b / a - 1 for a, b in zip(closes, closes[1:]) if a]
+            vol = (sum(r * r for r in rets) / len(rets)) ** 0.5 if len(rets) > 20 else None
+            found = pump_start(minutes, md.tier0 or {}, vol, now_ms)
+            if found and (symbol, found['anchor_ts'] // 3_600_000) not in self._pump_fired:
+                self._pump_fired.add((symbol, found['anchor_ts'] // 3_600_000))
+                out.append(found)
+        if (minute + 60_000) % 900_000 == 0:
+            window = [c for c in minutes if c[0] >= minute - 4 * 3_600_000]
+            if window and max(c[2] for c in window) / min(c[3] for c in window) - 1 >= cfg.pump_top_min_pct:
+                found = pump_top(minutes, md.tier0 or {}, minute + 60_000)
+                if found and (symbol, 'top', found['anchor_ts']) not in self._pump_fired:
+                    self._pump_fired.add((symbol, 'top', found['anchor_ts']))
+                    out.append(found)
         return out
 
     def _silver_bullet(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:

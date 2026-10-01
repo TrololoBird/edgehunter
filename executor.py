@@ -224,6 +224,14 @@ class DemoExecutor:
                 await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', total, None,
                                       {'stopLossPrice': float(ex.price_to_precision(symbol, s.levels['sl'] * scale)),
                                        'reduceOnly': True})
+                if not (getattr(s, 'plan', None) or {}).get('trail_days'):
+                    # an averaging add (pump strategies): the three take-profits again, for the whole position
+                    third = float(ex.amount_to_precision(symbol, total / 3))
+                    for k, amount in zip((1, 2, 3), (third, third, float(ex.amount_to_precision(symbol, total - 2 * third)))):
+                        if amount > 0:
+                            await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
+                                                  {'takeProfitPrice': float(ex.price_to_precision(symbol, s.levels[f'tp{k}'] * scale)),
+                                                   'reduceOnly': True})
                 with sqlite3.connect(self.db_path) as c:
                     c.execute("UPDATE demo_trades SET qty = ?, entry_fill = ?, sl = ? WHERE id = ?",
                               (total, trade['entry_fill'], s.levels['sl'] * scale, trade['id']))

@@ -247,3 +247,9 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   (the price inside a 4h / daily / weekly zone: ICT / Seiden's nesting). Card rows journal `card_r` (the lifecycle's own
   exit, units) - `stats.card_results_table`; `research_turtle.py` replays the Turtles on daily archive candles.
   Lighter data for the laptop: universe 70 (`max_pairs`), 25 order books, Hyperliquid trades for 70 coins.
+- eng-39: `pump` strategy (`strategies/pump.py`, the owner's): PUMP START long (+15m >= max(3%, 4 x the coin's 15m
+  volatility), RVOL >= 5, OI rising, spot buying, a fresh 24h high; market entry, stop below the ignition, targets map
+  / measured moves) and PUMP TOP short (a buying climax 15m candle - upper wick >= half, volume >= 2x - after >= 10% in
+  4h, the 5m shift down, stop above the high, targets the 0.382 / 0.5 / 0.618 retracements); averaging 1:1 (`add_half`:
+  one more unit at half the way to the stop, the stop kept, R summed over the units; the demo adds and re-places the
+  stop and take-profits). Loop-side `Scanner._pumps`.

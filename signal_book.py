@@ -704,6 +704,9 @@ class SignalBook:
             s.veto_log.append(reason)
             return vetoed
         levels['risk0'] = abs(levels['entry'] - levels['sl'])
+        if (s.plan or {}).get('add_half'):
+            # the owner's averaging: one more unit of the same size at half the way to the stop (SignalBook._manage_trade)
+            s.units = [[levels['entry'], entered_at]]
         if (s.plan or {}).get('trail_days'):
             # the Turtles' portfolio limit: at most turtle_max_direction_units units in one direction across all coins
             held = sum(len(o.units) for o in self.signals.values()
@@ -729,6 +732,11 @@ class SignalBook:
             return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
         if s.best_target:
             s.status = f"TP{s.best_target}"
+        if (s.plan or {}).get('add_half') and len(s.units) == 1:
+            add_at = lv['entry'] - d * 0.5 * (lv.get('risk0') or abs(lv['entry'] - lv['sl']))
+            if d * (price - add_at) <= 0:
+                s.units.append([add_at, now])
+                self.events.append((s, 'ADD'))
         n = (s.plan or {}).get('turtle_n')
         if n and s.units and len(s.units) < CONFIG.strategies.turtle_max_units and \
                 d * (price - s.units[-1][0]) >= CONFIG.strategies.turtle_add_n * n:

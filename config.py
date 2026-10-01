@@ -530,7 +530,8 @@ class PoolsConfig:
                     ('orb', 'all', '', 0.0, 'volatility'), ('trendline', 'all', '', 0.0, 'volatility'),
                     ('market_profile', 'all', '', 0.0, 'volume'), ('connors', 'all', '', 0.0, 'volume'),
                     ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
-                    ('sweep', 'all', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'))
+                    ('sweep', 'all', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
+                    ('pump', 'all', '', 0.0, 'volatility'))
 
 
 @dataclass(frozen=True)
@@ -548,7 +549,7 @@ class StrategiesConfig:
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
-                      'trendline', 'bollinger', 'orb', 'connors')
+                      'trendline', 'bollinger', 'orb', 'connors', 'pump')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
@@ -641,7 +642,14 @@ class StrategiesConfig:
     sd_ttl: tuple = (7 * 86400, 86400, 3 * 86400)   # 4h zones (Seiden: 4h or higher) live a week
     # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
     classic_ttl: tuple = (3600, 3600, 12 * 3600)
-    silver_bullet_ttl: tuple = (3600, 3600, 4 * 3600)   # the window's hour to come back to the FVG, 4h trade
+    silver_bullet_ttl: tuple = (3600, 3600, 4 * 3600)
+    # pumps (strategies/pump.py): the start = +15m >= max(min %, z x the coin's 15m volatility) on RVOL, OI and spot
+    # buying at a fresh 24h high; the top = a buying climax after >= pump_top_min_pct within 4h
+    pump_start_min_pct: float = 0.03
+    pump_start_z: float = 4.0
+    pump_start_rvol: float = 5.0
+    pump_top_min_pct: float = 0.10
+    pump_ttl: tuple = (3600, 3600, 12 * 3600)   # the window's hour to come back to the FVG, 4h trade
     connors_ttl: tuple = (3600, 3600, 7 * 86400)   # daily RSI(2): out at the SMA5 within days
     # The Turtles' units (strategies/turtle.py): +1 unit every turtle_add_n x N in favour, at most turtle_max_units per
     # coin and turtle_max_direction_units in one direction overall (their "12 units long / short" limit); a unit is
@@ -865,7 +873,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-38"
+    logic_version: str = "eng-39"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
