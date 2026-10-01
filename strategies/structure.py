@@ -201,7 +201,7 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
         try:
             found = fn(*args)
         except Exception as e:                   # one system's slip must not cost the others (logged, not hidden)
-            log.warning(f"{name} of {symbol} failed: {type(e).__name__} {e}")
+            log.warning(f"{name} of {symbol} failed: {type(e).__name__} {e}", exc_info=True)
             return
         # numpy scalars -> Python numbers: the dashboard's orjson (default=str) turned them into strings
         clean = lambda e: {k: (v.item() if hasattr(v, 'item') and not isinstance(v, (list, dict)) else v)
@@ -223,7 +223,7 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
             try:
                 signals = auction_signals(symbol, h1, m15)
             except Exception as e:
-                log.warning(f"auction of {symbol} failed: {type(e).__name__} {e}")
+                log.warning(f"auction of {symbol} failed: {type(e).__name__} {e}", exc_info=True)
                 signals = []
             for s in signals:
                 s = {k: (v.item() if hasattr(v, 'item') else v) for k, v in s.items()}
@@ -340,8 +340,9 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
             profile = candles_4d or candles_1h[-96:]
             raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile)
             if with_context:
-                correlate = pick_correlate(symbol, m15, corr)
                 m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
+                # after m15 exists (eng-16 read it one line early: every coin's context failed, no worker events)
+                correlate = pick_correlate(symbol, m15 or candles, corr)
                 h1l = h1_long.tolist() if hasattr(h1_long, 'tolist') else list(h1_long)
                 context = build_context(candles, candles_1h, atr, merge(raw, atr, symbol=symbol), now_ms, symbol=symbol,
                                         m15_long=m15, h1_long=h1l, corr=correlate)
@@ -350,7 +351,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
         except Exception as e:
             # a coin without a map has no levels / pools / events: say so instead of dropping it silently (the worker
             # process has no logging config: WARNING goes to its stderr, the bot's console)
-            logging.getLogger(__name__).warning(f"Level map of {symbol} failed: {type(e).__name__} {e}")
+            logging.getLogger(__name__).warning(f"Level map of {symbol} failed: {type(e).__name__} {e}", exc_info=True)
             continue
         out[symbol] = (raw, context)
     return out

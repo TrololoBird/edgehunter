@@ -33,6 +33,13 @@ def exit_with_parent(parent_pid: int) -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     if hasattr(signal, 'SIGBREAK'):
         signal.signal(signal.SIGBREAK, signal.SIG_IGN)
+    # The worker's own warnings (a detector that failed on one coin, with its traceback) went to the console only:
+    # they go to worker.log next to scanner.log (rotated like it)
+    import logging
+    from logging.handlers import RotatingFileHandler
+    handler = RotatingFileHandler('worker.log', maxBytes=5 * 1024 * 1024, backupCount=2, encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)-8s | %(process)d %(name)s | %(message)s', '%H:%M:%S'))
+    logging.basicConfig(level=logging.WARNING, handlers=[handler], force=True)
 
     def watch():
         if sys.platform == 'win32':
