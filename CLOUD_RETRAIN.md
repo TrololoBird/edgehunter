@@ -31,4 +31,5 @@
    теневым, пока AUC вне выборки и Edge верхнего дециля не лучше базовой частоты.
 5. Итог: `research/validation_eng43.md` — таблица по каждой стратегии (сделок, R развитие / отложенная, интервал,
    плацебо, вердикт по правилу), что не удалось проверить на архиве и почему, найденные баги. Закоммить отчёты,
-   `models/pretrained.pkl` (если прошёл ml_eval) и `models/overshoot_pre.json`, запушь в ветку `retrain-eng43`.
+   `models/pretrained.pkl` (если прошёл ml_eval; `*.pkl` в .gitignore — `git add -f`) и `models/overshoot_pre.json`,
+   запушь в ветку `retrain-eng43`.
