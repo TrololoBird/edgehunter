@@ -436,7 +436,9 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     while len(prices) < 3:
         prices.append(prices[-1] + direction * gap)
         labels.append('ATR step')
-    return finish_levels(plan, entry, stop, prices[:3], labels[:3], direction, sl_src, low=low)
+    # the R:R decision is finish_levels' alone (the blended R:R / expectancy against the method's min_rr); the exit
+    # spec's own per-target minimum vetoed W-bottoms whose blended R:R passed (live QNT: TP1 0.71, blended 1.37)
+    return finish_levels(plan, entry, stop, prices[:3], labels[:3], direction, sl_src)
 
 
 def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:

@@ -96,7 +96,7 @@ class AuctionStrategy(_System):
     """auction_theory_in_code: a POC retest reacted on 1h; entry at that close, stop beyond the test's extreme + 0.35
     ATR, target the nearest strong untested POC (skipped below 1.5 R), else 2.5 R."""
     name = 'market_profile'        # eng-35: Dalton's POC retest, with the 80% rule (classic_strategies.py)
-    min_rr = 1.0                     # Market Profile: the target is the next value reference, no ratio rule
+    min_rr = 1.5                     # the auction system's own rule: the next POC must pay >= 1.5 R
     setups = {'AUCTION LONG': 1, 'AUCTION SHORT': -1}
     ttl_key = 'auction_ttl'
 
