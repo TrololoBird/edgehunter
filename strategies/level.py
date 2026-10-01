@@ -17,7 +17,7 @@ from config import CONFIG
 from strategies.base import PlanInput, Strategy, base_plan
 from strategies.geometry import select_targets
 from strategies.structure import Pool
-from zones import RawLevel, merge, stop_beyond
+from zones import merge, stop_beyond
 
 MINUTE_MS = 60_000
 QUARTER_MS = 900_000
@@ -77,17 +77,17 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
         # filter weak pokes - the 0.1 ATR minimum only without the pierce model
         floor = 0.0 if measured is not None else lo_depth
         if back and floor < depth <= limit and (best is None or (pool_rank(label), -depth) > (pool_rank(best[3]), -best[0])):
-            best = (depth, price, side, label)
+            best = (depth, price, side, label, formed)
     if best is None:
         return None
-    depth, price, side, label = best
+    depth, price, side, label, formed = best
     direction = -side
     extreme = c[2] if side > 0 else c[3]
     return {'setup': 'SWEEP LOW' if direction > 0 else 'SWEEP HIGH', 'direction': direction,
             'setup_note': f"15m swept {label} {price:.6g} by {depth / atr:.2f} ATR on {c[5] / avg_volume:.1f}x volume, "
                           f"closed back {'above' if direction > 0 else 'below'}",
             'anchor_level': price, 'anchor_label': label, 'anchor_extreme': extreme, 'anchor_ts': int(c[0]),
-            'anchor_close': c[4], 'event_ts': int(c[0]) + QUARTER_MS}
+            'anchor_close': c[4], 'pool_formed_ms': int(formed), 'event_ts': int(c[0]) + QUARTER_MS}
 
 
 class SweepStrategy(Strategy):
@@ -102,7 +102,8 @@ class SweepStrategy(Strategy):
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
         # ICT: a sweep is traded in the direction of the higher-timeframe bias (the daily one); with no daily bias the
         # coin's 1h trend decides, as before
-        bias = sig.get('daily_bias')
+        # ICT's top-down order: the weekly bias first, the daily one when the week has none
+        bias = sig.get('weekly_bias') or sig.get('daily_bias')
         if bias:
             return 'against_bias' if bias == -direction else None
         return 'against_trend' if sig.get('coin_trend') == -direction else None
@@ -169,29 +170,3 @@ def absorption_at(minutes: Sequence[Sequence[float]], c: Sequence[float], levels
                           f"(vol {c[5] / avg_minute:.1f}x, range {(c[2] - c[3]) / atr:.2f} ATR)",
             'anchor_level': price, 'anchor_label': label, 'anchor_extreme': extreme, 'anchor_ts': int(c[0]),
             'anchor_close': c[4], 'event_ts': int(c[0]) + MINUTE_MS}
-
-
-class AbsorptionStrategy(Strategy):
-    name = 'absorption'
-    anchor_type = 'level'
-    setups = {'ABSORB BID': 1, 'ABSORB ASK': -1}
-    ttl_key = 'absorption_ttl'
-
-    def gate_key(self, x: PlanInput) -> Optional[tuple]:
-        return (x.sig.get('anchor_ts'), x.sig.get('anchor_level')) if x.sig.get('anchor_level') is not None else None
-
-    def plan(self, x: PlanInput) -> Optional[Dict]:
-        sig, d, atr = x.sig, x.direction, x.atr
-        if sig.get('anchor_level') is None or not atr:
-            return None
-        level, extreme = sig['anchor_level'], sig['anchor_extreme']
-        zones = merge(list(x.raw_levels or []) + [RawLevel(level, 'hvn', sig.get('anchor_label', 'level'))], atr, symbol=x.symbol)
-        base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
-        invalid = base - d * CONFIG.levels.stop_buffer_atr * atr
-        reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
-        targets, sources = select_targets(zones, reached, d, atr, 'mean')
-        zone = sorted((extreme, level + d * CONFIG.strategies.absorption_zone_atr * atr))
-        return base_plan(x, self.name, _level_anchor(sig, '15m'), '15m', entry='pullback', zone_lo=zone[0],
-                         zone_hi=zone[1], zone_src=f"absorbed at {sig.get('anchor_label', 'the level')}", invalid=invalid,
-                         fix_invalid=True, missable=True, stop_ref=extreme, intent='mean', targets=targets,
-                         target_src=sources, zones=zones, reached=reached, key=(sig['anchor_ts'], level))

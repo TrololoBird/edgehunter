@@ -217,12 +217,8 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
     if cut % HOUR_MS == 0 and len(h1) >= 40:
         run('supply/demand', maniac.sd_zone_events, h1, HOUR_MS, '1h')
     run('trendline', maniac.trendline_event, m15)
-    run('SMT', maniac.smt_event, m15, corr)
     run('Bollinger W / M', maniac.bollinger_wm_event, m15)
     if cut % HOUR_MS == 0 and len(h1) >= 30:
-        run('Third Eye', maniac.thirdeye_event, h1)
-        run('fib 0.5', maniac.fib05_event, h1)
-        run('bomberman', maniac.bomberman_event, h1)
         if symbol:
             try:
                 signals = auction_signals(symbol, h1, m15)
@@ -244,6 +240,24 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
     return events
 
 
+def smt_divergence(corr: Optional[Sequence[Sequence[float]]], formed_ms: Optional[int], sweep_ts: int,
+                   direction: int) -> Optional[bool]:
+    """
+    ICT's SMT divergence at a sweep: the coin took its pool (a new low since the pool formed, for SWEEP LOW) while the
+    correlated market's candle of the sweep did NOT go below the correlate's own low of that window. None without a
+    correlate or a window.
+    """
+    if not corr or not formed_ms:
+        return None
+    window = [c for c in corr if formed_ms <= c[0] < sweep_ts]
+    at = [c for c in corr if c[0] == sweep_ts]
+    if len(window) < 4 or not at:
+        return None
+    if direction > 0:
+        return at[0][3] > min(c[3] for c in window)
+    return at[0][2] < max(c[2] for c in window)
+
+
 def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]], atr: float,
                   zones: List[Zone], now_ms: float, symbol: Optional[str] = None,
                   m15_long: Sequence[Sequence[float]] = (), h1_long: Sequence[Sequence[float]] = (),
@@ -263,6 +277,11 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
         pools = pools_before(candles_15m, candles_1h, atr, last_open)
         sweep = sweep_at_close(candles_15m, pools, atr, ctx.trend, symbol)
         if sweep:
+            # ICT's SMT divergence is a confirmation of the sweep (eng-35; was the separate 'smt' system): the
+            # correlate (BTC / ETH / SOL, corr >= 0.7) did NOT take its own extreme of the same window
+            corr15 = merge_candles(corr, [], cut, QUARTER_MS) if corr else None
+            sweep['smt_div'] = smt_divergence(corr15, sweep.get('pool_formed_ms'), int(candles_15m[-1][0]),
+                                              sweep['direction'])
             ctx.events.append(sweep)
         m15 = merge_candles(m15_long, candles_15m, cut, QUARTER_MS)
         h1 = hours_from(candles_15m, list(h1_long) or list(candles_1h), cut)
@@ -342,6 +361,8 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
         symbol, part, h1, card_1h, oi_1h, liq_events, now_ms, candles_4d, with_context = job[:9]
         m15_long, h1_long = (job[9], job[10]) if len(job) > 10 else ((), ())
         d1 = job[11] if len(job) > 11 else []
+        h4 = job[12] if len(job) > 12 else []
+        w1 = job[13] if len(job) > 13 else []
         try:
             candles, atr = part_candles(part)
             if not candles or not atr:
@@ -349,7 +370,8 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
             # Estimated liquidations need the 1h OI history (card coins); swings / day / week / sessions use 8 days
             candles_1h = h1 if len(h1) >= len(card_1h) else card_1h
             profile = candles_4d or candles_1h[-96:]
-            raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile, candles_1d=d1)
+            raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile, candles_1d=d1,
+                            candles_4h=h4, candles_1w=w1)
             if with_context:
                 m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
                 # after m15 exists (eng-16 read it one line early: every coin's context failed, no worker events)

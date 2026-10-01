@@ -215,3 +215,17 @@ OI accumulation (derivatives, not chart TA).
   (`against_bias`; with no bias the 1h trend as before), journaled. Supply / demand zones on 1h with the 15m touch
   (Seiden: zones on the higher timeframe). The coin panel's heatmap is backed by the recorder's depth files (4 days,
   10-minute steps, `recorder.heat_history`): it showed only the ~4h held in memory.
+
+### Ten methodologies (eng-35, the owner's decision 2026-10-01)
+One methodology = one strategy name (`strategies.SETUPS` -> name; `strategy_of` -> the playbook's object, several
+playbooks may share a name): `continuation` (BULL F / BEAR D + IMPULSE UP / DOWN: one ICT-OTE pullback trade, two
+impulse detectors), `wyckoff` (the climax's secondary test FLUSH / SQUEEZE REVERSAL + SPRING / UTAD), `sweep` (ICT;
+SMT divergence `smt` and the kill zone `killzone` are its confirmations, `structure.smt_divergence`), `breakout`
+(Turtles), `supply_demand` (Seiden), `market_profile` (AUCTION + VA80), `trendline`, `bollinger`, `orb`, `connors`.
+Deleted: the invented systems (Third Eye, Bomberman, OI accumulation, the 15m phase reversal BULL A / B / E, BEAR C -
+the phases are still scored and journaled as structured rows, no cards), `fib05` (a duplicate of the continuation),
+the standalone `smt` and `absorption` setups (now confirmations). Higher timeframes: own 4h candles (200, every 4h,
+`MarketData.h4`) and the weekly ones (`MarketData.w1`) go to the maps worker - FVG / OB / breaker zones on 4h, daily
+and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-down bias: `weekly_bias` first, else
+`daily_bias`, vetoes sweeps against it (`against_bias`). `research_maniac.py` still calls the deleted
+`oi_accumulation` (archive tool, not the bot).

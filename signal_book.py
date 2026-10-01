@@ -60,7 +60,7 @@ FINISHED_LEG_MEMORY_SEC = 24 * 3600
 # Structure timeframes by rank: an opposite setup closes a card only from the same or a higher timeframe
 TF_RANK = {'1m': 0, '5m': 1, '15m': 2, '1h': 3, '4h': 4}
 # A strategy's structure timeframe when a card has no plan (restored after a restart)
-DEFAULT_TF = {'exhaustion': '5m'}
+DEFAULT_TF: dict = {}          # (a playbook's own `default_tf` overrides the 15m default)
 
 # confirm_of(symbol, strategy, direction, since_ms, until_ms, extreme_ms) -> {confirmation: True / False / None | str}
 ConfirmCheck = Callable[[str, str, int, int, int, Optional[int]], Dict]
@@ -347,7 +347,7 @@ class SignalBook:
         frame = frames.get(symbol)
         if frame is None or frame.height < 20:
             return None
-        if strategy.anchor_type == 'leg' and strategy.name != 'exhaustion' and not (self.htf_of and self.htf_of(symbol)):
+        if strategy.anchor_type == 'leg' and not getattr(strategy, 'own_leg', False) and not (self.htf_of and self.htf_of(symbol)):
             return None
         plan_key = self.plan_key_of(symbol) if self.plan_key_of else None
         cached = self._gate_cache.get((symbol, group_key))
@@ -395,7 +395,7 @@ class SignalBook:
         if s.plan:
             return s.plan.get('tf', '15m')
         strategy = self.strategy(s)
-        return DEFAULT_TF.get(strategy.name if strategy else '', '15m')
+        return getattr(strategy, 'default_tf', None) or '15m'
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -484,7 +484,7 @@ class SignalBook:
                 return None
             if s.pending_since is None:
                 s.pending_since = now
-            if strategy.anchor_type == 'leg' and strategy.name != 'exhaustion' and self.map_ready_of \
+            if strategy.anchor_type == 'leg' and not getattr(strategy, 'own_leg', False) and self.map_ready_of \
                     and not self.map_ready_of(s.symbol) and now - s.pending_since < cfg.plan_wait_sec:
                 s.status = 'BIAS'
                 return None
@@ -604,6 +604,12 @@ class SignalBook:
             reason = 'no_spring_test'
         confirms = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, trigger['time'], trigger.get('extreme_time')) \
             if confirm_of else {}
+        if s.mode == 'sweep' and confirms is not None:
+            # ICT's own confirmations of a sweep (eng-35): SMT divergence against the correlate, the entry in a kill zone
+            if s.sig.get('smt_div') is not None:
+                confirms['smt'] = bool(s.sig['smt_div'])
+            if CONFIG.strategies.smt_session:
+                confirms['killzone'] = in_session(trigger['time'], tuple(CONFIG.strategies.smt_session))
         if reason is None:
             reason = confirm.missing(s.mode, confirms)
         if reason is None and s.plan.get('session') and not in_session(trigger['time'], tuple(s.plan['session'])):

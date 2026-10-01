@@ -65,7 +65,7 @@ def _event(setup: str, d: int, lo: float, hi: float, extreme: float, rng, last, 
 
 
 class WyckoffRangeStrategy(Strategy):
-    name = 'wyckoff_range'
+    name = 'wyckoff'               # eng-35: one Wyckoff strategy (phase C here, the climax's test in cascade.py)
     anchor_type = 'range'
     setups = {'SPRING': 1, 'UTAD': -1}
 

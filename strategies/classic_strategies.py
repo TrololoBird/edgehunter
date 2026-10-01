@@ -10,7 +10,7 @@ from strategies.maniac_strategies import _System, _confirm_plan
 
 class ValueAreaStrategy(_System):
     """Dalton's 80% rule: target the value area's far edge, stop beyond the edge price re-entered through."""
-    name = 'value_area'
+    name = 'market_profile'        # eng-35: Dalton's 80% rule, with the POC retest (maniac_strategies.AuctionStrategy)
     setups = {'VA80 LONG': 1, 'VA80 SHORT': -1}
     ttl_key = 'classic_ttl'
 

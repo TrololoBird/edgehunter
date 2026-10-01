@@ -34,23 +34,29 @@ from typing import Dict, Optional, Tuple
 from strategies.base import PlanInput, Strategy
 from strategies.breakout import BreakoutStrategy
 from strategies.cascade import ExhaustionStrategy
-from strategies.leg import MomentumStrategy, TrendStrategy, WyckoffStrategy
-from strategies.level import AbsorptionStrategy, SweepStrategy
+from strategies.leg import MomentumStrategy, TrendStrategy
+from strategies.level import SweepStrategy
 from strategies.maniac_strategies import MANIAC_STRATEGIES
 from strategies.wyckoff_range import WyckoffRangeStrategy
 from strategies.classic_strategies import CLASSIC_STRATEGIES
 
-STRATEGIES: Dict[str, Strategy] = {s.name: s for s in (
-    TrendStrategy(), MomentumStrategy(), WyckoffStrategy(), SweepStrategy(), AbsorptionStrategy(),
-    ExhaustionStrategy(), BreakoutStrategy(), WyckoffRangeStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES)}
+# eng-35: one methodology = one strategy name; a methodology with several playbooks (Wyckoff's climax test and
+# spring, Market Profile's 80% rule and POC retest, the continuation's two impulse detectors) keeps one class per
+# playbook under ONE name - the journal, pools, stats and the live verdict judge the methodology
+_ALL: Tuple[Strategy, ...] = (
+    TrendStrategy(), MomentumStrategy(), SweepStrategy(), ExhaustionStrategy(), WyckoffRangeStrategy(),
+    BreakoutStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES)
+STRATEGIES: Dict[str, Strategy] = {}
+for _s in _ALL:
+    STRATEGIES.setdefault(_s.name, _s)
 
-# Setup name -> (strategy name, direction)
-SETUPS: Dict[str, Tuple[str, int]] = {setup: (s.name, d) for s in STRATEGIES.values() for setup, d in s.setups.items()}
+# Setup name -> (strategy name, direction); setup name -> the playbook's object
+SETUPS: Dict[str, Tuple[str, int]] = {setup: (s.name, d) for s in _ALL for setup, d in s.setups.items()}
+_OBJ: Dict[str, Strategy] = {setup: s for s in _ALL for setup in s.setups}
 
 
 def strategy_of(group_key: str) -> Optional[Strategy]:
-    entry = SETUPS.get(group_key)
-    return STRATEGIES[entry[0]] if entry else None
+    return _OBJ.get(group_key)
 
 
 __all__ = ["PlanInput", "Strategy", "STRATEGIES", "SETUPS", "strategy_of"]

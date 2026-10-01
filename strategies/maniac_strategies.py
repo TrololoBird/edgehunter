@@ -88,7 +88,7 @@ class SupplyDemandStrategy(_System):
 class AuctionStrategy(_System):
     """auction_theory_in_code: a POC retest reacted on 1h; entry at that close, stop beyond the test's extreme + 0.35
     ATR, target the nearest strong untested POC (skipped below 1.5 R), else 2.5 R."""
-    name = 'auction'
+    name = 'market_profile'        # eng-35: Dalton's POC retest, with the 80% rule (classic_strategies.py)
     setups = {'AUCTION LONG': 1, 'AUCTION SHORT': -1}
     ttl_key = 'auction_ttl'
 
@@ -104,40 +104,6 @@ class AuctionStrategy(_System):
 
 
 # ------------------------------------------------------------------------------------------------ SMT
-
-class SmtStrategy(_System):
-    """lllll: the 2-candle sweep with SMT / QM on 15m; entry on a 5m inversion FVG within 8 main candles (NY 02-10
-    session), stop beyond the sweep's extreme + 0.1 ATR, target the opposite pool (>= 2 R) else 2.5 R; a 15m close
-    beyond the swept level cancels it."""
-    name = 'smt'
-    setups = {'SMT LOW': 1, 'SMT HIGH': -1}
-    ttl_key = 'smt_ttl'
-    uses_minutes = True
-
-    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
-        """ICT: the SMT reversal is taken in the direction of the daily bias, not against it."""
-        bias = sig.get('daily_bias')
-        return 'against_bias' if bias and bias == -direction else None
-
-    def plan(self, x: PlanInput) -> Optional[Dict]:
-        cfg = CONFIG.strategies
-        sig, atr = x.sig, x.atr
-        if sig.get('anchor_level') is None or not atr:
-            return None
-        level, extreme, opposite = sig['anchor_level'], sig['anchor_extreme'], sig['opposite_pool']
-        zone = sorted((extreme, opposite))
-        exit = {'stop': ['ref', cfg.smt_sl_buffer_atr], 'stop_src': 'beyond the sweep', 'atr': sig.get('atr_main') or atr,
-                'tp': ['level', opposite, cfg.smt_min_rr, cfg.smt_fallback_rr], 'tp_src': 'opposite external pool',
-                'fallback_when_close': True}
-        plan = base_plan(x, self.name, _anchor(sig, '15m'), '15m', entry='pullback', trigger='ifvg',
-                         trigger_from_ms=sig['anchor_ts'], zone_lo=zone[0], zone_hi=zone[1],
-                         zone_src=f"after the sweep of {sig.get('anchor_label', 'the pool')} (5m iFVG)",
-                         invalid=level, fix_invalid=True, invalid_close_min=15, missable=False, stop_ref=extreme,
-                         session=tuple(cfg.smt_session) if cfg.smt_session else None, exit=exit,
-                         zones=merge(list(x.raw_levels or []), atr, symbol=x.symbol), targets=[], target_src=[],
-                         key=(sig['anchor_ts'], level))
-        return _finish(x, plan, sig['anchor_close'], extreme)
-
 
 # ------------------------------------------------------------------------------------------------ trendline
 
@@ -188,47 +154,6 @@ class TrendlineStrategy(_System):
 
 # ------------------------------------------------------------------------------------------------ indicator systems
 
-class ThirdEyeStrategy(_System):
-    """thirdeye_strategy_algo: CCI + Ichimoku + EMA200 + filters on 1h; entry at the close, SL 1%, TP 5% (his live
-    breakeven at +2% is journaled as r_be)."""
-    name = 'thirdeye'
-    setups = {'THIRD EYE LONG': 1, 'THIRD EYE SHORT': -1}
-    ttl_key = 'thirdeye_ttl'
-
-    def plan(self, x: PlanInput) -> Optional[Dict]:
-        cfg = CONFIG.strategies
-        # 'atr' = the 1h ATR: a 1h system's stop floor is measured on its own timeframe
-        exit = {'stop': ['pct', cfg.te_sl_pct], 'tp': ['pct', cfg.te_tp_pct], 'atr': x.sig.get('atr_1h') or x.atr}
-        return _confirm_plan(x, self.name, '1h', exit, 'CCI cross with Ichimoku / EMA200 filters')
-
-
-class Fib05Strategy(_System):
-    """fibonachi_trading_system: a pierce of the 1h impulse's 0.5 closed back; entry at the close, stop at the impulse's
-    start; his trailing stop starts at the impulse's end (TP1 here), then trails half the impulse."""
-    name = 'fib05'
-    setups = {'FIB 0.5 LONG': 1, 'FIB 0.5 SHORT': -1}
-    ttl_key = 'fib05_ttl'
-
-    def plan(self, x: PlanInput) -> Optional[Dict]:
-        sig = x.sig
-        if sig.get('impulse_start') is None:
-            return None
-        exit = {'stop': ['price', sig['impulse_start']], 'stop_src': "the impulse's start",
-                'tp': ['level', sig['impulse_end'], 0.0, None], 'tp_src': "impulse end (his trailing starts)"}
-        return _confirm_plan(x, self.name, '1h', exit, 'pierce of the 0.5 closed back')
-
-
-class BombermanStrategy(_System):
-    """bomberman_bot: MACD cross + EMA100 + QML on 1h; entry at the close, stop 1.5 ATR(14), target 2 R."""
-    name = 'bomberman'
-    setups = {'BOMBERMAN LONG': 1, 'BOMBERMAN SHORT': -1}
-    ttl_key = 'bomberman_ttl'
-
-    def plan(self, x: PlanInput) -> Optional[Dict]:
-        exit = {'stop': ['atr', 1.5], 'tp': ['rr', 2.0], 'atr': x.sig.get('atr_1h') or x.atr}
-        return _confirm_plan(x, self.name, '1h', exit, 'MACD cross after a QML')
-
-
 class BollingerStrategy(_System):
     """Bollinger's W-bottom / M-top (method III): entry at the close beyond the middle peak, the stop beyond the retest,
     the first target the opposite band (then the map)."""
@@ -245,19 +170,5 @@ class BollingerStrategy(_System):
         return _confirm_plan(x, self.name, '15m', exit, 'Bollinger W / M confirmed', stop_ref=sig['bb_stop'])
 
 
-class OiAccumulationStrategy(_System):
-    """oi_trading_robot v7.4 (long only): OI building without price; market entry, SL 2%, TP 4% / 6% (his defaults)."""
-    name = 'oi_accum'
-    setups = {'OI ACCUMULATION': 1}
-    ttl_key = 'oi_accum_ttl'
-
-    def plan(self, x: PlanInput) -> Optional[Dict]:
-        cfg = CONFIG.strategies
-        exit = {'stop': ['pct', cfg.oi_sl_pct], 'tp': ['pct', cfg.oi_tp_pcts[0]], 'tp2': ['pct', cfg.oi_tp_pcts[-1]],
-                'atr': x.sig.get('atr_1h') or x.atr}
-        return _confirm_plan(x, self.name, '15m', exit, 'OI +5%/1h without price')
-
-
-MANIAC_STRATEGIES: List[Strategy] = [SupplyDemandStrategy(), AuctionStrategy(), SmtStrategy(), TrendlineStrategy(),
-                                     ThirdEyeStrategy(), Fib05Strategy(), BombermanStrategy(), BollingerStrategy(),
-                                     OiAccumulationStrategy()]
+MANIAC_STRATEGIES: List[Strategy] = [SupplyDemandStrategy(), AuctionStrategy(), TrendlineStrategy(),
+                                     BollingerStrategy()]

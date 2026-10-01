@@ -643,9 +643,6 @@ class Scanner:
                 continue
             bands = self.fetcher.depth.liquidity_bands(symbol)
             setups = self.detector.scan(symbol, self._minute_candles(symbol), md.tier0, now_ms, bands)
-            oi_setup = self._oi_accumulation(symbol, md, now_ms)
-            if oi_setup:
-                setups.append(oi_setup)
             connors = self._connors_daily(symbol, md, now_ms)
             if connors:
                 setups.append(connors)
@@ -720,46 +717,6 @@ class Scanner:
         from strategies.classic import connors_event
         return connors_event(md.d1)
 
-    def _oi_accumulation(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
-        """
-        crypto_maniac's OI robot (v7.4), checked once per final minute: OI value +5% over the hour without the price
-        (strategies.maniac.oi_accumulation); one signal per coin per oi_cooldown_sec (his 3h cooldown).
-        """
-        from strategies.maniac import oi_accumulation
-        cfg = CONFIG.strategies
-        minute = md.minute_closed_until
-        if not minute or self._oi_checked.get(symbol) == minute:
-            return None
-        self._oi_checked[symbol] = minute
-        if now_ms - self._oi_fired.get(symbol, 0) < cfg.oi_cooldown_sec * 1000:
-            return None
-        minutes = self._minute_candles(symbol)
-        price = md.last_price
-        hour_ago = [c for c in minutes if c[0] <= minute - 59 * 60_000]
-        day_ago = [c for c in md.h1_long if c[0] <= now_ms - 25 * 3_600_000] if len(md.h1_long) else []
-        if not price or not hour_ago or not day_ago:
-            return None
-        # the 15m candles only once the OI conditions held (converting every coin's frame each minute stalled the
-        # loop 4s live, 2026-10-01)
-        found = oi_accumulation(list(md.oi_5m), price, hour_ago[-1][4], day_ago[-1][4],
-                                lambda: part_candles(self._frame_parts.get(symbol))[0])
-        if found is None:
-            return None
-        if cfg.oi_structure_filter and found.get('structure_broken'):
-            return None
-        # WHO built the OI: rising OI with a flat price is new longs only if the aggressive side of that hour bought.
-        # Live 2026-09-30: ARK fired long while shorts were building and fell 32% in 4h; all four OI longs hit their stop
-        hour = [c for c in minutes if c[0] > minute - 60 * 60_000]
-        taker_delta = sum(2 * c[6] - c[5] for c in hour if len(c) > 6)
-        if taker_delta <= 0:
-            return None
-        self._oi_fired[symbol] = now_ms
-        return {'setup': 'OI ACCUMULATION', 'direction': 1,
-                'setup_note': f"OI +{found['oi_growth_1h']:.1f}% / 1h with price {found['price_growth_1h']:+.1f}% "
-                              f"(24h: OI {found['oi_growth_24h']:+.1f}% vs price {found['price_growth_24h']:+.1f}%)",
-                'anchor_level': price, 'anchor_extreme': found['swing_low'], 'anchor_label': 'OI accumulation',
-                'anchor_ts': int(minute), 'anchor_close': price, 'event_ts': int(minute) + 60_000}
-
     def _sweep_wick(self, symbol: str, md: MarketData, setup: Dict, sig: Dict):
         """
         What happened on the sweep candle (journal features; stats decide whether they matter): liquidations of the
@@ -808,7 +765,7 @@ class Scanner:
         long_15m = np.asarray(md.m15_long, dtype=np.float64) if with_context and len(md.m15_long) else ()
         long_1h = np.asarray(md.h1_long, dtype=np.float64) if with_context and len(md.h1_long) else ()
         return (symbol, part.select(PART_COLUMNS), list(md.h1), list(md.htf_klines), list(md.htf_oi), liq, now_ms,
-                candles_4d, with_context, long_15m, long_1h, list(md.d1)[-60:])
+                candles_4d, with_context, long_15m, long_1h, list(md.d1)[-60:], list(md.h4), list(md.w1))
 
     def _correlates(self) -> Dict[str, np.ndarray]:
         """The SMT correlates' 15m histories (BTC for every coin, ETH for BTC): the long REST history + the frame."""
@@ -917,6 +874,10 @@ class Scanner:
         if len(md.d1) >= 2:
             prev, last = md.d1[-2], md.d1[-1]
             sig['daily_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
+        # the weekly one, the top of ICT's top-down order (week -> day -> entry)
+        if len(md.w1) >= 2:
+            prev, last = md.w1[-2], md.w1[-1]
+            sig['weekly_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
         sig['trend_w'] = trend_w_of(md.w1_ref, self._price_of(symbol))
         sig['volume_24h'] = md.quote_volume_24h or None

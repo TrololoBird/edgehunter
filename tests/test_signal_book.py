@@ -39,7 +39,7 @@ def _book_in_zone(rally_frame, confirm):
     cf = lambda s: candles[s]
     created, _ = book.update([('X', MARKUP)], Frames(rally_frame), pf, cf, T_ZONE - 100, confirm_of=confirm)
     s = created[0]
-    assert s.mode == 'trend' and s.status == 'WATCH' and s.plan
+    assert s.mode == 'continuation' and s.status == 'WATCH' and s.plan
     price['X'] = 109.6
     book.update([], Frames(rally_frame), pf, cf, T_ZONE, confirm_of=confirm)
     assert s.status == 'ZONE' and s.zone_since_ms == CUR15 and [e for _, e in book.events] == ['ZONE']
@@ -112,35 +112,6 @@ def test_invalid_dedupe_bias(rally_frame):
     # No qualifying leg: not a card, shown as a vetoed setup
     assert created == [] and not b4.signals and [v[2] for v in b4.vetoed] == ['no_leg']
 
-
-def test_reversal_confirmation_invalid_missed():
-    drop = [120 - 1.0 * i for i in range(1, 21)]
-    ind_r = compute_indicators(frame((CHOP[:70] + drop + [100.5] * 9)[-N:]))
-    rp = STRATEGIES['wyckoff'].plan(PlanInput(symbol='R', direction=+1, setup='BULL A', sig={}, df=ind_r, minutes=[],
-                                              raw_levels=[], h1=[], context=None, reached=None))
-    assert rp is not None
-    acc = dict(is_structured=True, alert_type='LONG', long_score=4, short_score=0, phase_a_score=4, active_phases=['A'])
-    # Near the leg's end at the confirmation: entered at once, stop >= 1 ATR
-    b5 = SignalBook()
-    _, entries = b5.update([('R', acc)], Frames(ind_r), lambda x: rp['impulse']['end'] + 0.1, lambda x: [], T_ZONE)
-    assert entries and entries[0].status == 'ENTRY' and entries[0].levels['zone_src'] == 'setup confirmation'
-    assert entries[0].levels['entry'] - entries[0].levels['sl'] >= rp['impulse']['atr_15m'] - 1e-9
-    # Too close to TP1 at the confirmation: the entry is vetoed (low R:R), the card waits
-    b6 = SignalBook()
-    p6 = {'R': rp['targets'][0] - 0.05}
-    s6 = b6.update([('R', acc)], Frames(ind_r), lambda x: p6.get(x), lambda x: [], T_ZONE)[0][0]
-    assert s6.status == 'WATCH' and s6.veto_log == ['low_rr']
-    # ... price then really goes to TP1 without an entry: MISSED
-    p6['R'] = rp['targets'][0] + 0.2
-    b6.update([], Frames(ind_r), lambda x: p6.get(x), lambda x: [], T_ZONE + 10)
-    assert s6.status == 'MISSED'
-    # Beyond the leg's end and its stop pool before an entry: INVALID, not re-measured
-    b7 = SignalBook()
-    p7 = {'R': rp['targets'][0] - 0.05}
-    s7 = b7.update([('R', acc)], Frames(ind_r), lambda x: p7.get(x), lambda x: [], T_ZONE)[0][0]
-    p7['R'] = s7.invalid_price - 0.01
-    b7.update([], Frames(ind_r), lambda x: p7.get(x), lambda x: [], T_ZONE + 10)
-    assert s7.status == 'INVALID'
 
 
 def test_state_roundtrip(rally_frame):

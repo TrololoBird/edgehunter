@@ -468,7 +468,8 @@ class ZonesConfig:
                       # to a daily one)
                       ('fvg_15m', 0.5), ('fvg_1h', 1.0), ('fvg_4h', 1.5), ('fvg_1d', 2.5),
                       ('ob_15m', 1.0), ('ob_1h', 1.5), ('ob_4h', 2.0), ('ob_1d', 3.0),
-                      ('breaker_15m', 1.0), ('breaker_1h', 1.5), ('breaker_4h', 2.0), ('breaker_1d', 3.0))
+                      ('breaker_15m', 1.0), ('breaker_1h', 1.5), ('breaker_4h', 2.0), ('breaker_1d', 3.0),
+                      ('fvg_1w', 3.5), ('ob_1w', 4.0), ('breaker_1w', 4.0), ('open', 1.0))
     # Round-number levels / pools within this many ATR of price (zones.round_levels)
     round_span_atr: float = 3.0
     # Targets: a zone must be at least this strong to be an obstacle (TP1/TP2); TP3 prefers pools / liquidations
@@ -521,15 +522,10 @@ class PoolsConfig:
     # (+ the order the rest is picked in: 'volume' / 'volatility' / 'alts', see pools.Pools.rebuild). The pinned coins
     # (CONFIG.exchange.pinned_bases) are in every pool on top of `size`. A hypothesis per method, not a measurement:
     # the journal's per-coin exclusion still applies to the rest.
-    rules: tuple = (('trend', 'all', '', 0.0, 'volatility'), ('momentum', 'all', '', 0.0, 'volatility'),
-                    ('breakout', 'all', '', 0.0, 'volatility'), ('orb', 'all', '', 0.0, 'volatility'),
-                    ('oi_accum', 'all', '', 0.0, 'volatility'), ('trendline', 'all', '', 0.0, 'volatility'),
-                    ('thirdeye', 'all', '', 0.0, 'volatility'), ('bomberman', 'all', '', 0.0, 'volatility'),
-                    ('value_area', 'all', '', 0.0, 'volume'), ('auction', 'all', '', 0.0, 'volume'),
-                    ('connors', 'all', '', 0.0, 'volume'), ('absorption', 'all', '', 0.0, 'volume'),
-                    ('exhaustion', 'all', '', 0.0, 'volume'), ('bollinger', 'all', '', 0.0, 'volume'),
-                    ('smt', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
-                    ('wyckoff_range', 'all', '', 0.0, 'volume'), ('fib05', 'all', '', 0.0, 'volume'),
+    rules: tuple = (('continuation', 'all', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
+                    ('orb', 'all', '', 0.0, 'volatility'), ('trendline', 'all', '', 0.0, 'volatility'),
+                    ('market_profile', 'all', '', 0.0, 'volume'), ('connors', 'all', '', 0.0, 'volume'),
+                    ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
                     ('sweep', 'all', '', 0.0, 'alts'), ('supply_demand', 'all', '', 0.0, 'alts'))
 
 
@@ -547,9 +543,8 @@ class StrategiesConfig:
     # strategy produced no card, so no entry, no confirmations and no replay were ever measured live. Setups that lost
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
-    enabled: tuple = ('trend', 'momentum', 'wyckoff', 'wyckoff_range', 'sweep', 'absorption', 'exhaustion', 'breakout',
-                      'supply_demand', 'auction', 'smt', 'trendline', 'thirdeye', 'fib05', 'bomberman', 'bollinger',
-                      'oi_accum', 'value_area', 'orb', 'connors')
+    enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
+                      'trendline', 'bollinger', 'orb', 'connors')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
@@ -865,7 +860,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-34"
+    logic_version: str = "eng-35"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

@@ -10,7 +10,6 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
 from strategies.cascade import CascadeTracker
-from strategies.level import absorption_at
 from strategies.structure import Context
 
 
@@ -79,15 +78,9 @@ class LiveDetector:
         out = self._pending.pop(symbol, [])
         if minutes:
             last = int(minutes[-1][0])
-            previous = self._last_minute.get(symbol)
+
             self._last_minute[symbol] = last
-            if previous is not None and last > previous:
-                levels = self.levels_of(ctx, bands)
-                avg_minute = (metrics or {}).get('avg_minute_usd') or 0.0
-                for c in [c for c in minutes if c[0] > previous]:
-                    found = absorption_at(minutes, c, levels, ctx.atr, avg_minute)
-                    if found:
-                        out.append(found)
+            # (absorption at a level is an entry confirmation since eng-35 - fetcher.orderflow_confirm - not a setup)
             found = self.cascades.check(symbol, minutes, metrics or {}, ctx.atr, now_ms)
             if found:
                 out.append(found)

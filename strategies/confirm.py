@@ -32,8 +32,8 @@ from config import CONFIG
 
 NAMES = ('flow', 'spot', 'oi', 'orderflow', 'vsa')
 NA = 'n/a'
-OI_EXPECT = {'trend': 1, 'momentum': 1, 'breakout': 1, 'sweep': -1, 'exhaustion': -1}
-REVERSALS = ('wyckoff', 'sweep', 'absorption', 'exhaustion')
+OI_EXPECT = {'continuation': 1, 'breakout': 1, 'sweep': -1, 'wyckoff': -1}
+REVERSALS = ('wyckoff', 'sweep')
 MINUTE_MS = 60_000
 HOUR_MS = 3_600_000
 

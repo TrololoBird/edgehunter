@@ -25,23 +25,11 @@ def _x(df, direction, setup, sig=None):
 def test_impulse_plan_continuation_and_reversal(rally_frame):
     imp = find_impulse(rally_frame, +1)
     assert imp and imp['end'] > 119 and imp['start'] < 101 and imp['candles'] >= 4
-    plan = STRATEGIES['trend'].plan(_x(rally_frame, +1, 'BULL F'))
+    plan = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'BULL F'))
     assert plan['zone_lo'] < plan['zone_hi'] and plan['targets'][0] >= imp['end'] - 1e-9
     assert plan['invalid'] == fib_price(imp, CONFIG.levels.continuation_invalid) and plan['reset'] == imp['end'] and not plan['missable']
     assert 0.382 <= retracement_of(imp, 109.5) <= 0.786
-    rplan = STRATEGIES['wyckoff'].plan(_x(rally_frame, -1, 'BEAR C'))
-    # Targets start beyond the lowest price reached since the leg's end; the invalidation sits beyond the end
-    assert rplan['targets'][0] > rplan['targets'][1] > rplan['targets'][2] and rplan['targets'][0] < rplan['reached']
-    assert rplan['invalid'] > imp['end'] and rplan['fix_invalid'] and rplan['entry'] == 'confirm'
 
-
-def test_spring_targets_the_range_high():
-    from conftest import CHOP, N, frame
-    from indicators import compute_indicators
-    drop = [120 - 1.0 * i for i in range(1, 21)]
-    ind = compute_indicators(frame((CHOP[:70] + drop + [100.5] * 9)[-N:]))
-    plan = STRATEGIES['wyckoff'].plan(_x(ind, +1, 'BULL B', {'prior_range_high': 112.0}))
-    assert plan['intent'] == 'range' and 112.0 in plan['targets']
 
 
 def test_resample_to_5m_only_closed_buckets():
@@ -64,22 +52,17 @@ def test_ltf_trigger_bull_bear_and_flow():
 
 
 def test_entry_levels_reversal_stop_beyond_leg_end(rally_frame):
-    plan = STRATEGIES['trend'].plan(_x(rally_frame, +1, 'BULL F'))
+    plan = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'BULL F'))
     trig = ltf_trigger(bull_ltf(), +1, CUR15, FIVE)
     lv = entry_levels(plan, trig['entry'], trig['extreme'], +1)
     assert lv['sl'] < 109.2 and lv['tp1'] > trig['entry'] and lv['rr_tp1'] > 0 and 'low_rr' in lv
-    # Reversal short after the rally: a trigger whose LTF extreme is BELOW the leg end must still stop above the leg end
-    rplan = STRATEGIES['wyckoff'].plan(_x(rally_frame, -1, 'BEAR C'))
-    leg_end = rplan['impulse']['end']
-    lv2 = entry_levels(rplan, leg_end - 3, leg_end - 1, -1)
-    assert lv2 and lv2['sl'] > leg_end
 
 
 def test_low_rr_flag(rally_frame):
     # the synthetic rally has no swing between its origin and the pullback: no protected swing (strategies/ict.py)
-    plan = dict(STRATEGIES['trend'].plan(_x(rally_frame, +1, 'BULL F')), protected=None)
+    plan = dict(STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'BULL F')), protected=None)
     atr = plan['atr']
-    far = STRATEGIES['trend'].plan(_x(rally_frame, +1, 'BULL F'))['targets'][0]
+    far = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'BULL F'))['targets'][0]
     tight = entry_levels(dict(plan, retarget=False, targets=[far, far + atr, far + 2 * atr], target_src=['a', 'b', 'c']),
                          far - 0.1, far - 5, +1)
     assert tight['low_rr'] is True

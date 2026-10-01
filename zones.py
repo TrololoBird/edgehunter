@@ -41,7 +41,8 @@ POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
 # sessions, a range's edges, round numbers) or resting size that stayed (book liquidity bands): a stop belongs beyond
 # such a zone. VWAP, volume profile, Fibonacci and estimated liquidations have no 'broken here' edge.
 STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round', 'book',
-                   'ob_15m', 'ob_1h', 'ob_4h', 'ob_1d', 'breaker_15m', 'breaker_1h', 'breaker_4h', 'breaker_1d')
+                   'ob_15m', 'ob_1h', 'ob_4h', 'ob_1d', 'ob_1w',
+                   'breaker_15m', 'breaker_1h', 'breaker_4h', 'breaker_1d', 'breaker_1w')
 
 
 @dataclass
@@ -446,7 +447,9 @@ def bars_of(candles_1h: Sequence[Sequence[float]], hours: int) -> List[List[floa
 def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]],
               oi_1h: Sequence[Tuple[int, float]], liq_events: Iterable, atr: float, now_ms: float,
               candles_4d: Optional[Sequence[Sequence[float]]] = None,
-              candles_1d: Optional[Sequence[Sequence[float]]] = None) -> List[RawLevel]:
+              candles_1d: Optional[Sequence[Sequence[float]]] = None,
+              candles_4h: Optional[Sequence[Sequence[float]]] = None,
+              candles_1w: Optional[Sequence[Sequence[float]]] = None) -> List[RawLevel]:
     """
     Card-independent levels of one coin (cached by the scanner; rebuilt on a new candle / new 1h history).
     `candles_4d`: 4 days of 5m candles for the 4-day volume profile (1h candles are too coarse for it).
@@ -466,9 +469,24 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     # ICT / SMC zones of every timeframe the bot holds: 15m (last day), 1h (8 days), 4h (from the 1h candles) and the
     # daily (60 days): open FVGs, unmitigated order blocks, breakers - weighted by their timeframe
     levels += imbalances(list(candles_15m)[-96:], '15m') + imbalances(list(candles_1h)[-192:], '1h')
-    levels += imbalances(bars_of(candles_1h, 4), '4h')
+    # 4h from its own candles (200 = ~33 days; the 1h map's 8 days gave ~50) - else built from the 1h candles
+    levels += imbalances(list(candles_4h)[-120:] if candles_4h else bars_of(candles_1h, 4), '4h')
     if candles_1d:
         levels += imbalances(list(candles_1d)[-60:], '1d')
+    if candles_1w:
+        levels += imbalances(list(candles_1w)[-52:], '1w')
+    # ICT's opening prices: the day's and the week's open (the true day / week open: price above it = the premium of
+    # that period)
+    if candles_1d:
+        day_open = int(now_ms) // DAY_MS * DAY_MS
+        today = [c for c in candles_15m if c[0] >= day_open]
+        if today:
+            levels.append(RawLevel(today[0][1], 'open', 'day open'))
+    if candles_1w and candles_15m:
+        week_start = int(candles_1w[-1][0]) + 7 * DAY_MS
+        week = [c for c in candles_15m if c[0] >= week_start]
+        if week:
+            levels.append(RawLevel(week[0][1], 'open', 'week open'))
     if candles_15m:
         last = candles_15m[-1][4]
         levels += [RawLevel(p, 'round', f"round {p:g}", +1 if p > last else -1)

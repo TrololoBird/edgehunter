@@ -528,74 +528,6 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
 
 # ------------------------------------------------------------------------------------------------ 1h systems
 
-def thirdeye_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
-    """
-    Third Eye (crypto_maniac's idea: CCI momentum with the Ichimoku trend) on the CLASSIC parameters (eng-30): Lambert's
-    CCI(20) of the typical price crossing +100 up (long) / -100 down (short); Hosoda's Ichimoku 9 / 26 / 52, displaced
-    26: the close above (below) the cloud, the conversion line above (below) the base line, the lagging span above
-    (below) the close 26 candles back; the close above (below) EMA200; Wilder's ADX(14) >= 20 (a trend to follow).
-    His 10 / 26 / 24 cloud, CCI +-98 and the RSI / NATR / BB-width bands were fitted ranges, not a method: dropped.
-    After a long only a short may come until price revisits the cloud (and vice versa: his allow flags).
-    """
-    cfg = CONFIG.strategies
-    n = len(c1h)
-    if n < 260:
-        return None
-    h, l, c = _arr(c1h, 2), _arr(c1h, 3), _arr(c1h, 4)
-    hlc3 = (h + l + c) / 3
-    conv = (rolling_max(h, 9) + rolling_min(l, 9)) / 2
-    base = (rolling_max(h, 26) + rolling_min(l, 26)) / 2
-    lead1, lead2 = (conv + base) / 2, (rolling_max(h, 52) + rolling_min(l, 52)) / 2
-    shift = 26
-    span_a = np.concatenate([np.full(shift, np.nan), lead1[:-shift]])
-    span_b = np.concatenate([np.full(shift, np.nan), lead2[:-shift]])
-    top, bot = np.fmax(span_a, span_b), np.fmin(span_a, span_b)
-    has = ~np.isnan(top) & ~np.isnan(bot)
-    ma = ema(c, 200)
-    cci_ma = rolling_mean(hlc3, cfg.te_cci_length)
-    # his deviation: the rolling mean of |hlc3 - its own MA| (pandas (hlc3 - ma).abs().rolling(n).mean())
-    dev = rolling_mean(np.nan_to_num(np.abs(hlc3 - cci_ma), nan=0.0), cfg.te_cci_length)
-    dev[:2 * cfg.te_cci_length - 2] = np.nan
-    cci = (hlc3 - cci_ma) / (0.015 * dev + 1e-10)
-    tr = true_range(h, l, c)
-    up, down = np.diff(h, prepend=h[0]), -np.diff(l, prepend=l[0])
-    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
-    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
-    trs = wilder(tr, 14)
-    pdi, mdi = 100 * wilder(plus_dm, 14) / (trs + 1e-10), 100 * wilder(minus_dm, 14) / (trs + 1e-10)
-    adx = wilder(100 * np.abs(pdi - mdi) / (pdi + mdi + 1e-10), 14)
-
-    def long_at(i):
-        return (cci[i - 1] < 100 and cci[i] > 100 and has[i] and c[i] > top[i] and conv[i] > base[i]
-                and c[i] > c[i - 26] and c[i] > ma[i] and adx[i] >= 20)
-
-    def short_at(i):
-        return (cci[i - 1] > -100 and cci[i] < -100 and has[i] and c[i] < bot[i] and conv[i] < base[i]
-                and c[i] < c[i - 26] and c[i] < ma[i] and adx[i] >= 20)
-
-    # his allow flags: a side is re-armed when price revisits the cloud (flat assumed: cards manage the trade)
-    allow_long = allow_short = True
-    d = 0
-    for i in range(210, n):
-        if has[i] and ((bot[i] <= c[i] <= top[i]) or (bot[i] <= l[i] <= top[i])):
-            allow_long = True
-        if has[i] and ((bot[i] <= c[i] <= top[i]) or (bot[i] <= h[i] <= top[i])):
-            allow_short = True
-        d = 0
-        if allow_long and long_at(i):
-            d, allow_long, allow_short = 1, False, True
-        elif allow_short and short_at(i):
-            d, allow_short, allow_long = -1, False, True
-    if not d:
-        return None
-    return {'setup': 'THIRD EYE LONG' if d > 0 else 'THIRD EYE SHORT', 'direction': d,
-            'setup_note': f"1h CCI({cfg.te_cci_length}) crossed {'+' if d > 0 else '-'}100 {'above' if d > 0 else 'below'} "
-                          f"the Ichimoku cloud (9/26/52) and EMA200 (ADX {adx[-1]:.0f})",
-            'anchor_level': float(top[-1] if d > 0 else bot[-1]), 'anchor_extreme': float(l[-1] if d > 0 else h[-1]),
-            'anchor_label': 'Ichimoku cloud', 'anchor_ts': int(c1h[-1][0]), 'anchor_close': float(c[-1]),
-            'event_ts': int(c1h[-1][0]) + HOUR_MS}
-
-
 def fib05_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
     """
     fibonachi_trading_system (1h): MarketStructureTracker (3-bar fractals; HL / HH extend a bull impulse, a lower low
@@ -676,55 +608,6 @@ def fib05_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
             'event_ts': int(last_c[0]) + HOUR_MS}
 
 
-def bomberman_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
-    """
-    bomberman_bot (1h): MACD(12, 26, 9) crosses its signal line up (down) with the close above (below) EMA100, a
-    bullish QML (three 3-bar lows: the middle one lowest, the last higher, within 20 bars) - bearish mirrored - and a
-    BB(20, 2) width >= 1% (no squeeze). Stop 1.5 ATR(14), target 2 R.
-    """
-    n = len(c1h)
-    if n < 130:
-        return None
-    h, l, c = _arr(c1h, 2), _arr(c1h, 3), _arr(c1h, 4)
-    e = ema(c, 100)
-    macd = ema(c, 12) - ema(c, 26)
-    sig = ema(macd, 9)
-    width = 100 * (4 * rolling_std(c, 20)) / rolling_mean(c, 20)
-    if not width[-1] >= 1.0:
-        return None
-
-    def qml(values, less: bool) -> Optional[float]:
-        # scipy argrelextrema(order=3): strictly below (above) the 3 bars on each side
-        core = values[3:n - 3]
-        mask = np.ones(len(core), dtype=bool)
-        for k in (1, 2, 3):
-            for other in (values[3 - k:n - 3 - k], values[3 + k:n - 3 + k]):
-                mask &= (core < other) if less else (core > other)
-        idx = list(np.flatnonzero(mask) + 3)
-        if len(idx) < 3:
-            return None
-        i1, i2, i3 = idx[-3:]
-        v1, v2, v3 = values[i1], values[i2], values[i3]
-        ok = (v2 < v1 and v3 > v2) if less else (v2 > v1 and v3 < v2)
-        return float(v2) if ok and (n - 1 - i3) < 20 else None
-
-    d, q = 0, None
-    if macd[-1] > sig[-1] and macd[-2] <= sig[-2] and c[-1] > e[-1]:
-        q = qml(l, True)
-        d = 1 if q is not None else 0
-    elif macd[-1] < sig[-1] and macd[-2] >= sig[-2] and c[-1] < e[-1]:
-        q = qml(h, False)
-        d = -1 if q is not None else 0
-    if not d:
-        return None
-    atr = float(rolling_mean(true_range(h, l, c), 14)[-1])
-    return {'setup': 'BOMBERMAN LONG' if d > 0 else 'BOMBERMAN SHORT', 'direction': d,
-            'setup_note': f"1h MACD crossed {'up' if d > 0 else 'down'} {'above' if d > 0 else 'below'} EMA100 "
-                          f"after a {'bullish' if d > 0 else 'bearish'} QML {q:.6g}",
-            'anchor_level': q, 'anchor_extreme': q, 'anchor_label': 'QML', 'atr_1h': atr,
-            'anchor_ts': int(c1h[-1][0]), 'anchor_close': float(c[-1]), 'event_ts': int(c1h[-1][0]) + HOUR_MS}
-
-
 # ------------------------------------------------------------------------------------------------ inversion FVG (5m)
 
 def ifvg_trigger(ltf: Sequence[Sequence[float]], direction: int, pierce_ms: int, scan_from_ms: int,
@@ -786,32 +669,3 @@ def pinbar_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int
 
 # ------------------------------------------------------------------------------------------------ OI accumulation
 
-def oi_accumulation(oi_5m: Sequence[Tuple[float, float]], price_now: float, price_1h: float, price_24h: float,
-                    c15: Sequence[Sequence[float]]) -> Optional[Dict]:
-    """
-    oi_trading_robot v7.4 (long only): OI value up >= 5% over the last hour while price rose at most half of that,
-    OI's 24h growth above price's 24h growth; `structure_broken` = his optional 15m filter (a lower swing low closed
-    below). OI value = OI (coins) x price, as his sumOpenInterestValue.
-    `oi_5m`: [(ts_ms, oi_coins)] every 5 minutes, the newest last.
-    """
-    cfg = CONFIG.strategies
-    if len(oi_5m) < 289 or not price_now or not price_1h or not price_24h:
-        return None
-    # OI in COINS: his OI value (coins x price) rose with the price alone, so "OI +5% while price rose <= half of
-    # it" was half met by a 2.5% rally without a single new position (the eng-4 finding for our own OI readings)
-    oi_now, oi_1h, oi_24h = oi_5m[-1][1], oi_5m[-13][1], oi_5m[-289][1]
-    if not oi_1h or not oi_24h:
-        return None
-    g1, g24 = (oi_now / oi_1h - 1) * 100, (oi_now / oi_24h - 1) * 100
-    p1, p24 = (price_now / price_1h - 1) * 100, (price_now / price_24h - 1) * 100
-    if not (g1 >= cfg.oi_1h_threshold and p1 <= g1 * cfg.oi_price_ratio and g24 > p24):
-        return None
-    recent = (c15() if callable(c15) else c15)[-50:]      # c15 may be built lazily (only past the OI conditions)
-    if not recent:
-        return None
-    lows = [(i, recent[i][3]) for i in range(1, len(recent) - 1)
-            if recent[i][3] < recent[i - 1][3] and recent[i][3] < recent[i + 1][3]]
-    # his check_bullish_structure (a filter the user switches on): a lower swing low and a close below it
-    broken = len(lows) >= 2 and lows[-1][1] < lows[-2][1] and recent[-1][4] < lows[-1][1]
-    return {'oi_growth_1h': g1, 'oi_growth_24h': g24, 'price_growth_1h': p1, 'price_growth_24h': p24,
-            'swing_low': lows[-1][1] if lows else min(x[3] for x in recent), 'structure_broken': broken}

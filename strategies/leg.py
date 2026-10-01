@@ -14,10 +14,10 @@ from typing import Dict, List, Optional
 import polars as pl
 
 from config import CONFIG
-from levels import _leg_levels, fib_price, find_impulse, reached_after, retracement_of
+from levels import _leg_levels, fib_price, find_impulse, retracement_of
 from strategies.base import TRIGGER_MINUTES, PlanInput, Strategy, base_plan
-from strategies.geometry import cap_for_rr, select_targets
-from zones import RawLevel, is_structural, merge, stop_beyond, support_in
+from strategies.geometry import select_targets
+from zones import is_structural, merge, support_in
 
 
 def _leg_anchor(impulse: Dict) -> Dict:
@@ -137,74 +137,12 @@ class LegContinuation(Strategy):
 
 
 class TrendStrategy(LegContinuation):
-    name = 'trend'
+    """The impulse detected by Bollinger's method I (D / F out of a squeeze)."""
+    name = 'continuation'
     setups = {'BULL F': 1, 'BEAR D': -1}
 
 
 class MomentumStrategy(LegContinuation):
-    """The Tier-0 impulse (5m move + OI + flow) is the event; the trade is the pullback of the leg it belongs to."""
-    name = 'momentum'
+    """The impulse detected by Tier-0 (5m move + OI + flow); the same pullback trade (eng-35: one strategy)."""
+    name = 'continuation'
     setups = {'IMPULSE UP': 1, 'IMPULSE DOWN': -1}
-
-
-class WyckoffStrategy(Strategy):
-    name = 'wyckoff'
-    anchor_type = 'leg'
-    follows_live_candle = True
-    setups = {'BULL A': 1, 'BULL B': 1, 'BULL E': 1, 'BEAR C': -1}
-
-    def gate_key(self, x: PlanInput) -> Optional[tuple]:
-        impulse = find_impulse(x.df, -x.direction, x.h1)
-        return (impulse['end_ts'], impulse['end']) if impulse else None
-
-    @staticmethod
-    def _range_far(x: PlanInput) -> Optional[float]:
-        """A spring's / an accumulation's objective: the far side of the range it formed in (longs only)."""
-        if x.direction < 0 or x.df is None:
-            return None
-        if x.setup == 'BULL B':
-            # the range the spring swept, from the FUTURES frame (the scored row's prior_range_high is in spot units
-            # for coins with a spot pair: 1000x off for 1000PEPE-type contracts, so the target was silently dropped)
-            spring_ts = x.sig.get('candle_ts')
-            if spring_ts is not None and 'timestamp' in x.df.columns:
-                before = x.df.filter(pl.col('timestamp') < spring_ts)['high'].tail(CONFIG.metrics.spring_lookback)
-                if before.len() >= CONFIG.metrics.spring_lookback // 2:
-                    return float(before.max()) or None
-            return None if x.sig.get('has_spot') else (x.sig.get('prior_range_high') or None)
-        if x.setup == 'BULL A':
-            window = CONFIG.metrics.price_flat_window
-            return max(x.df['high'].tail(window + 1).head(window).to_list() or [0.0]) or None
-        return None
-
-    def plan(self, x: PlanInput) -> Optional[Dict]:
-        cfg = CONFIG.levels
-        d = x.direction
-        impulse = find_impulse(x.df, -d, x.h1)
-        atr = x.atr
-        if impulse is None or not atr:
-            return None
-        far = self._range_far(x)
-        extra: List[RawLevel] = [RawLevel(far, 'range', 'range high', +1)] if far else []
-        zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None) + extra, atr, symbol=x.symbol)
-        end = impulse['end']
-        base, _ = stop_beyond(zones, end, end, d, impulse['atr'], symbol=x.symbol)
-        stop_est = base - d * cfg.stop_buffer_atr * impulse['atr']
-        reached = x.reached if x.reached is not None else reached_after(_rows(x.df), impulse['end_ts'], end, d)
-        retraces = [fib_price(impulse, r) for r in cfg.reversal_targets]
-        intent = 'range' if x.setup in ('BULL A', 'BULL B') else 'mean'
-        first = (far, 'range high') if far and d * (far - reached) > 0 else None
-        targets, sources = select_targets(zones, reached, d, impulse['atr'], intent, retraces, 'fib', first=first)
-        zone_max = cfg.accumulation_zone_max if x.setup == 'BULL A' else cfg.reversal_zone_max
-        hi_ratio = zone_max
-        zone_src = f"leg end (0-{hi_ratio:g})"
-        capped = retracement_of(impulse, cap_for_rr(targets[0], stop_est, d, atr, x.recent_atr))
-        if capped < hi_ratio:
-            hi_ratio = max(0.0, capped)
-            zone_src = f"leg end (0-{hi_ratio:.2f}, R:R >= {cfg.min_rr_tp1:g} to TP1)"
-        zone = sorted((end, fib_price(impulse, hi_ratio)))
-        tf = impulse['tf']
-        return base_plan(x, self.name, _leg_anchor(impulse), tf, trigger_minutes=TRIGGER_MINUTES.get(tf, 5),
-                         leg_atr=impulse['atr'], entry='confirm', zone_lo=zone[0], zone_hi=zone[1], zone_src=zone_src,
-                         invalid=stop_est, fix_invalid=True, missable=True, stop_ref=end, intent=intent,
-                         fillers=tuple(retraces), fill_label='fib', targets=targets, target_src=sources, zones=zones,
-                         reached=reached, key=(impulse['end_ts'], end), impulse=impulse)

@@ -129,6 +129,10 @@ class MarketData:
     # system: SMA200 + RSI(2) of DAILY closes), reloaded once per UTC day by _daily_candles_loop
     d1: list = field(default_factory=list)
     d1_day: int = 0
+    # 200 closed 4h candles (~33 days, ICT's main point-of-interest timeframe) and the 60 closed weekly candles
+    h4: list = field(default_factory=list)
+    h4_slot: int = 0
+    w1: list = field(default_factory=list)
 
 
     def alt_spot_trade(self, ts_ms: int, price: float, usd: float, side: int):
@@ -1216,6 +1220,37 @@ class DataFetcher:
             now = time.time()
             await asyncio.sleep(max(60.0, 3600 - now % 3600 + 60))
 
+    async def _h4_candles_loop(self):
+        """200 closed 4h candles of every universe coin (limit 200, weight 2) after each 4h close and for joining coins."""
+        while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
+            await asyncio.sleep(10)
+        while self._running:
+            now = time.time()
+            slot = int(now // 14_400)
+            symbols = [s for s, md in self.markets.items() if md.h4_slot < slot]
+            sem = asyncio.Semaphore(4)
+
+            async def one(symbol: str):
+                binance_symbol = self._ccxt_to_binance_symbol(symbol)
+                md = self.markets.get(symbol)
+                if not binance_symbol or md is None:
+                    return
+                async with sem:
+                    try:
+                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                                     {'symbol': binance_symbol, 'interval': '4h', 'limit': 200},
+                                                     priority=2, weight=2)
+                    except Exception as e:
+                        logger.debug(f"4h candles failed for {symbol}: {e}")
+                        return
+                md.h4 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
+                         for k in self._closed_only(rows or [])]
+                md.h4_slot = slot
+
+            if symbols and now - slot * 14_400 >= 60:
+                await asyncio.gather(*(one(s) for s in symbols))
+            await asyncio.sleep(300)
+
     async def _daily_candles_loop(self):
         """
         210 daily candles of every universe coin (limit 210, weight 2) once per UTC day, a minute after the daily close,
@@ -1279,7 +1314,9 @@ class DataFetcher:
                     except Exception as e:
                         logger.debug(f"weekly candles failed for {symbol}: {e}")
                         return
-                md.w1_ref = weekly_ref([float(k[4]) for k in self._closed_only(rows or [])])
+                closed = self._closed_only(rows or [])
+                md.w1_ref = weekly_ref([float(k[4]) for k in closed])
+                md.w1 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])] for k in closed]
                 md.w1_loaded = time.time()
 
             if symbols and now >= week_start + 60:
@@ -1472,6 +1509,7 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._seasonal_loop()))
         self._tasks.append(asyncio.create_task(self._weekly_candles_loop()))
         self._tasks.append(asyncio.create_task(self._daily_candles_loop()))
+        self._tasks.append(asyncio.create_task(self._h4_candles_loop()))
 
     async def _start_binance_streams(self, symbols: List[str]):
         ids = {'spot': [], 'futures': []}
