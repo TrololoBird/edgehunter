@@ -40,7 +40,7 @@ POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
 # Price-action levels whose edge the market drew with wicks (swings, equal highs / lows, previous day / week and
 # sessions, a range's edges, round numbers) or resting size that stayed (book liquidity bands): a stop belongs beyond
 # such a zone. VWAP, volume profile, Fibonacci and estimated liquidations have no 'broken here' edge.
-STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round', 'book')
+STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round', 'book', 'ob')
 
 
 @dataclass
@@ -347,6 +347,68 @@ def _usd(v: float) -> str:
     return f"${v / 1e6:.1f}M" if v >= 1e6 else f"${v / 1e3:.0f}k"
 
 
+# ---------------------------------------------------------------------------------------------------- ICT / SMC
+
+def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> List[RawLevel]:
+    """
+    ICT's fair value gaps and order blocks still open on `candles` ([ts, o, h, l, c, ...]):
+    - FVG (kind 'fvg'): three candles where the first's high < the third's low (bullish; mirrored bearish): the gap
+      between them is the zone; the part price has not traded back through since is kept, a fully filled gap dropped;
+    - order block (kind 'ob'): the last opposite candle before a displacement that broke structure - a down-close
+      candle whose next three candles close above the highest high of the ten before it while leaving a bullish FVG
+      (bearish mirrored); the zone runs from its body (open) to its wick (low); mitigated (traded back into) = dropped.
+    The `keep` nearest of each kind and side to the last close.
+    """
+    n = len(candles)
+    if n < 15:
+        return []
+    o = [c[1] for c in candles]
+    h = [c[2] for c in candles]
+    l = [c[3] for c in candles]
+    cl = [c[4] for c in candles]
+    out: List[Tuple[float, RawLevel]] = []
+    last = cl[-1]
+    for i in range(2, n):
+        # a gap under a tenth of its displacement candle is noise, not an imbalance (the usual "significant FVG" cut)
+        min_gap = 0.1 * (h[i - 1] - l[i - 1])
+        if h[i - 2] < l[i] and l[i] - h[i - 2] >= min_gap:
+            lo, hi = h[i - 2], l[i]
+            low_after = min(l[i + 1:], default=hi)
+            if low_after > lo:
+                hi = min(hi, low_after)
+                out.append((abs(last - hi), RawLevel(hi, 'fvg', f"FVG {tf} bull", -1, ts=int(candles[i - 1][0]),
+                                                     body=lo)))
+        elif l[i - 2] > h[i] and l[i - 2] - h[i] >= min_gap:
+            lo, hi = h[i], l[i - 2]
+            high_after = max(h[i + 1:], default=lo)
+            if high_after < hi:
+                lo = max(lo, high_after)
+                out.append((abs(last - lo), RawLevel(lo, 'fvg', f"FVG {tf} bear", +1, ts=int(candles[i - 1][0]),
+                                                     body=hi)))
+    for j in range(10, n - 3):
+        nxt = range(j + 1, j + 4)
+        if cl[j] < o[j]:
+            broke = any(cl[k] > max(h[j - 10:j]) for k in nxt)
+            gap = any(h[k - 2] < l[k] for k in range(j + 2, j + 4))
+            mitigated = min(l[j + 4:], default=h[j]) <= o[j]
+            if broke and gap and not mitigated:
+                out.append((abs(last - o[j]), RawLevel(l[j], 'ob', f"OB {tf} bull", -1, ts=int(candles[j][0]),
+                                                       body=o[j])))
+        elif cl[j] > o[j]:
+            broke = any(cl[k] < min(l[j - 10:j]) for k in nxt)
+            gap = any(l[k - 2] > h[k] for k in range(j + 2, j + 4))
+            mitigated = max(h[j + 4:], default=l[j]) >= o[j]
+            if broke and gap and not mitigated:
+                out.append((abs(last - o[j]), RawLevel(h[j], 'ob', f"OB {tf} bear", +1, ts=int(candles[j][0]),
+                                                       body=o[j])))
+    picked: List[RawLevel] = []
+    for kind in ('fvg', 'ob'):
+        for side in (1, -1):
+            group = sorted((x for x in out if x[1].kind == kind and x[1].side == side), key=lambda x: x[0])
+            picked += [lv for _, lv in group[:keep]]
+    return picked
+
+
 # ---------------------------------------------------------------------------------------------------- map
 
 def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]],
@@ -368,6 +430,8 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     levels += estimated_liquidations(candles_1h, oi_1h, atr)
     levels += observed_liquidations(liq_events, atr, now_ms)
     levels += vwap(candles_15m, today, 'VWAP day')
+    # ICT / SMC zones: open fair value gaps and unmitigated order blocks of the 15m (last day) and 1h (8 days) candles
+    levels += imbalances(list(candles_15m)[-96:], '15m') + imbalances(list(candles_1h)[-192:], '1h')
     if candles_15m:
         last = candles_15m[-1][4]
         levels += [RawLevel(p, 'round', f"round {p:g}", +1 if p > last else -1)

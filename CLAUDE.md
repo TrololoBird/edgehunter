@@ -154,7 +154,8 @@ The market regime changes, so nothing is fitted once on the past: models start f
 - Confirmations add `vsa` (`strategies/vsa.py`, Tom Williams: no supply / stopping volume / reverse upthrust for longs,
   no demand / buying climax / upthrust for shorts, on 5m bars since the extreme) and the order-flow kind
   `finished_auction` (`flow.Footprint.finished_auction`: no taker sells at the footprint's low / buys at its high).
-- Volume profile adds LVN levels (`lvn`, weight 0.5: valleys <= `lvn_ratio` x the nodes on both sides).
+- Volume profile adds LVN levels (`lvn`, weight 0.5: valleys <= `lvn_ratio` x the nodes on both sides). The map adds ICT zones (`zones.imbalances`): open fair value gaps (`fvg`, gap >= 0.1 of the displacement candle, the unfilled part) and unmitigated order blocks (`ob`, structural: the last opposite candle before a break with an FVG) of 15m (1 day) and 1h (8 days).
+- Targets: empty TP slots take the nearest map zone of ANY strength before an ATR step (`geometry.map_fill`); the ported systems take TP2 / TP3 from the map too (were always TP1 + 1 / 2 ATR: TP2 / TP3 were ATR steps on 18 / 21 of 35 entries).
 - New classic strategies (`strategies/classic.py`, cards `classic_strategies.py`, entry at the signal's close):
   `value_area` VA80 LONG / SHORT (Dalton's 80% rule on the UTC day's value area, 30m periods), `orb` ORB UP / DOWN
   (Crabel's 30m range after the US equity open, first 15m close beyond it within 2.5h, stop at the range's other side,

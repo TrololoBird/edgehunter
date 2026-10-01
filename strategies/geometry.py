@@ -65,6 +65,25 @@ def _near(zone: Zone, direction: int) -> float:
     return zone.lo if direction > 0 else zone.hi
 
 
+def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: float, direction: int,
+             gap: float) -> None:
+    """
+    Fill the empty target slots (up to 3) with the nearest map zones beyond the last target, ANY strength (a single
+    swing, a session high, an FVG, an order block): a level on the chart before an ATR step (the steps sat in empty
+    space while levels stood right there, 2026-10-01: TP2 / TP3 were ATR steps on 18 / 21 of 35 entries).
+    """
+    last = prices[-1] if prices else ref
+    for z in sorted((z for z in zones if direction * (_near(z, direction) - last) >= gap),
+                    key=lambda z: direction * (_near(z, direction) - last)):
+        if len(prices) >= 3:
+            return
+        price = _near(z, direction)
+        if direction * (price - last) >= gap:
+            prices.append(price)
+            labels.append(z.label)
+            last = price
+
+
 def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, intent: str,
                    fillers: Sequence[float] = (), fill_label: str = 'fib',
                    first: Optional[Tuple[float, str]] = None) -> Tuple[List[float], List[str]]:
@@ -119,6 +138,8 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
             prices.append(f)
             labels.append(fill_label)
             last = f
+    map_fill(zones, prices, labels, ref, direction, gap)
+    last = prices[-1] if prices else ref
     while prices and len(prices) < 3:
         last = last + direction * gap
         prices.append(last)
@@ -303,20 +324,27 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     if tp1 is None:
         return None
     gap = CONFIG.zones.min_target_atr * atr
-    tp2, src2 = tp1 + direction * gap, 'ATR step'
+    # TP2 / TP3: the system's own second target where it has one (the OI robot's 4% / 6%), else the next levels on
+    # the map beyond TP1 (any strength); ATR steps only where the map is empty (was: always TP1 + 1 ATR, + 2 ATR)
+    prices, labels = [tp1], [src1]
     if exit.get('tp2'):
-        # the system's own second target (the OI robot's 4% / 6% take-profits)
         tp2, src2, _ = exit_target({**exit, 'tp': exit['tp2']}, plan, entry, risk, direction)
-        if tp2 is None or direction * (tp2 - tp1) <= 0:
-            tp2, src2 = tp1 + direction * gap, 'ATR step'
-    tp3 = tp2 + direction * gap
+        if tp2 is not None and direction * (tp2 - tp1) > 0:
+            prices.append(tp2)
+            labels.append(src2)
+    map_fill(zones, prices, labels, entry, direction, gap)
+    while len(prices) < 3:
+        prices.append(prices[-1] + direction * gap)
+        labels.append('ATR step')
+    tp2, tp3 = prices[1], prices[2]
+    src2, src3 = labels[1], labels[2]
     fee = cost_of(entry, plan.get('volume_24h'))
     rr1 = (abs(tp1 - entry) - fee) / (risk + fee)
     # our minimum applies to the ported systems too (their own flag only knew the author's R:R rule: REZ FIB 0.5 was
     # entered at 0.74)
     return {'entry': entry, 'sl': stop, 'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'rr_tp1': rr1,
             'rr_tp2': (abs(tp2 - entry) - fee) / (risk + fee), 'low_rr': low or rr1 < CONFIG.levels.min_rr_tp1,
-            'tp1_src': src1, 'tp2_src': src2, 'tp3_src': 'ATR step', 'sl_src': sl_src}
+            'tp1_src': src1, 'tp2_src': src2, 'tp3_src': src3, 'sl_src': sl_src}
 
 
 def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
@@ -347,6 +375,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
             if direction * (f - (targets[-1] if targets else entry)) >= gap:
                 targets.append(f)
                 sources.append(plan.get('fill_label', 'fib'))
+        map_fill(plan.get('zones') or [], targets, sources, entry, direction, gap)
         while targets and len(targets) < 3:
             targets.append(targets[-1] + direction * gap)
             sources.append('ATR step')
