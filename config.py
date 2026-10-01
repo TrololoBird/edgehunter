@@ -514,7 +514,10 @@ class PoolsConfig:
     with vetoed='not_in_pool'.
     """
     enabled: bool = True
-    size: int = 20
+    # every universe coin (70) minus the ones a strategy's journal proved losing: the per-method top-20 (eng-29) was a
+    # guess, and it vetoed the setups of the coins that moved (live 2026-10-01: MEGA's M-top, JASMY's breakout and
+    # sweep 'not_in_pool'); on the archive only the EXCLUSION of the worst coins helped, picking the 'best' did not
+    size: int = 999
     refresh_sec: int = 3600
     lookback_days: int = 90
     min_entries: int = 8
@@ -527,7 +530,7 @@ class PoolsConfig:
                     ('orb', 'all', '', 0.0, 'volatility'), ('trendline', 'all', '', 0.0, 'volatility'),
                     ('market_profile', 'all', '', 0.0, 'volume'), ('connors', 'all', '', 0.0, 'volume'),
                     ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
-                    ('sweep', 'all', '', 0.0, 'alts'), ('supply_demand', 'all', '', 0.0, 'alts'))
+                    ('sweep', 'all', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'))
 
 
 @dataclass(frozen=True)
@@ -862,7 +865,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-37"
+    logic_version: str = "eng-38"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
