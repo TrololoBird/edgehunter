@@ -21,3 +21,8 @@ models/sectors.json
 data/
 demo_trades.db
 worker.log*
+# research run outputs / backups
+research_*.err
+research_*.out
+research_*.parquet
+scanner_state*.bak.json

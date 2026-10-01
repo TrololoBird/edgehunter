@@ -64,17 +64,28 @@ class _FrameLookup:
     def __init__(self, parts: Dict[str, pl.DataFrame], markets: Dict[str, MarketData]):
         self.parts = parts
         self.markets = markets
+        self._memo: Dict[str, Optional[pl.DataFrame]] = {}
 
     def get(self, symbol: str) -> Optional[pl.DataFrame]:
+        # one lookup serves one scan: a coin's frame is built once however many cards / gates ask for it
+        if symbol in self._memo:
+            return self._memo[symbol]
         part = self.parts.get(symbol)
         if part is None or part.is_empty():
+            self._memo[symbol] = None
             return None
         md = self.markets.get(symbol)
         live = md.live_candle('futures') if md else None
         if live and live['timestamp'] > part['timestamp'][-1]:
-            row = {c: live.get(c) for c in ('timestamp', 'open', 'high', 'low', 'close')}
-            row.update(symbol=symbol, atr=part['atr'][-1])
-            part = pl.concat([part, pl.DataFrame([row])], how='diagonal_relaxed')
+            # a null row of the frame's own schema + the live OHLC, stacked: pl.concat(how='diagonal_relaxed') of the
+            # ~100-column frame for every card at each minute stalled the loop 1-4s (watchdog, 2026-10-01)
+            values = {c: live.get(c) for c in ('timestamp', 'open', 'high', 'low', 'close')}
+            values.update(symbol=symbol, atr=part['atr'][-1])
+            schema = part.schema
+            row = part.clear(1).with_columns([pl.lit(v, dtype=schema[c]).alias(c) for c, v in values.items()
+                                              if c in schema])
+            part = part.vstack(row)
+        self._memo[symbol] = part
         return part
 
 

@@ -183,6 +183,12 @@ class DemoExecutor:
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
         trade = self.open.get(card_id)
         if trade is None:
+            # the exchange closed it first (stop / last target, reconciled as EXCHANGE): the card's own result still
+            # belongs next to it - the demo exists to compare the two
+            if s.final_r is not None:
+                with sqlite3.connect(self.db_path) as c:
+                    c.execute("UPDATE demo_trades SET journal_r = ? WHERE card_id = ? AND journal_r IS NULL",
+                              (s.final_r, card_id))
             return
         async with self._lock:
             try:

@@ -20,6 +20,7 @@ sample cannot tell the setup from noise yet.
 import argparse
 import bisect
 import json
+import os
 import random
 import sqlite3
 import statistics
@@ -576,6 +577,66 @@ def sources_table(console: Console, rows: List):
     console.print(table)
 
 
+def vetoes_table(console: Console, rows: List):
+    """
+    Every filter judged by what it rejected: entries grouped by veto reason (passed = taken) with their replay - a
+    filter earns its place only if the trades it vetoes do WORSE than the ones it lets through (R:R 2, the
+    confirmation minimum, off-session, macro events ...). Per strategy too, where a strategy has both.
+    """
+    entries = [r for r in rows if r['kind'] == 'entry' and _col(r, 'outcome') not in (None, 'SKIPPED', 'OPEN')]
+    if not entries:
+        return
+    table = Table(title="Filters: replay of the entries each veto rejected vs the passed ones (net R @TP1)",
+                  header_style="bold magenta", border_style="blue")
+    for name in ("Veto", "Entries", "TP1+", "SL first", "Avg R", "90%"):
+        table.add_column(name, justify="left" if name == "Veto" else "right", no_wrap=True)
+    groups: Dict[str, List] = {}
+    for r in entries:
+        groups.setdefault(_col(r, 'vetoed') or 'passed', []).append(r)
+    for key, members in sorted(groups.items(), key=lambda kv: (kv[0] != 'passed', -len(kv[1]))):
+        values = [v for r in members if (v := net_r(r, 'r_tp1')) is not None]
+        hit = sum(1 for r in members if r['outcome'] in ('TP1', 'TP2', 'TP3')) / len(members)
+        sl = sum(1 for r in members if r['outcome'] == 'SL') / len(members)
+        avg = Text(f"{statistics.fmean(values):+.2f}R", style="green" if statistics.fmean(values) > 0 else "red") \
+            if values else Text("—", style="dim")
+        ci = ci_text(values, scale=1, suffix="R", clusters=[cluster_of(r) for r in members
+                                                              if net_r(r, 'r_tp1') is not None]) \
+            if len(values) >= MIN_SAMPLE else Text("—", style="dim")
+        table.add_row(key, Text(str(len(members)), style="dim" if len(members) < MIN_SAMPLE else "white"),
+                      rate(hit), Text(f"{sl * 100:.0f}%"), avg, ci)
+    console.print(table)
+
+
+def demo_table(console: Console, db: str = 'demo_trades.db'):
+    """The BingX demo fills next to the journal's replay of the same cards: do the two agree?"""
+    if not os.path.exists(db):
+        return
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        rows = conn.execute("SELECT strategy, close_reason, r, journal_r FROM demo_trades").fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return
+    table = Table(title="BingX demo vs the journal (closed trades; ERROR / NO_MARKET / EARLY_CLOSE counted apart)",
+                  header_style="bold magenta", border_style="blue")
+    for name in ("Strategy", "Trades", "Demo R", "Journal R", "Both", "Diff", "Not traded"):
+        table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
+    groups: Dict[str, List] = {}
+    for r in rows:
+        groups.setdefault(r[0] or '?', []).append(r)
+    for strategy, members in sorted(groups.items()):
+        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE') and r[2] is not None]
+        demo = [r[2] for r in done]
+        jr = [r[3] for r in done if r[3] is not None]
+        both = [(r[2], r[3]) for r in done if r[3] is not None]
+        fmt = lambda v: Text(f"{statistics.fmean(v):+.2f}R") if v else Text("—", style="dim")  # noqa: E731
+        diff = Text(f"{statistics.fmean(a - b for a, b in both):+.2f}R") if both else Text("—", style="dim")
+        table.add_row(strategy, str(len(done)), fmt(demo), fmt(jr), str(len(both)), diff,
+                      str(len(members) - len(done)))
+    console.print(table)
+
+
 def cards_table(console: Console, rows: List):
     """Finished cards by status: why they ended and what price did afterwards in the card's direction."""
     cards = [r for r in rows if r['kind'] == 'card']
@@ -708,7 +769,9 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
 
     levels_table(console, {k: v for k, v in groups.items() if k.startswith('ENTRY')})
     sources_table(console, rows)
+    vetoes_table(console, rows)
     cards_table(console, rows)
+    demo_table(console)
     features_table(console, rows, baseline)
 
     if last:

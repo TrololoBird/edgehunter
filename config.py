@@ -455,8 +455,10 @@ class ZonesConfig:
     # Levels closer than this many ATR merge into one zone
     merge_atr: float = 0.3
     # Source weights; a zone's strength is the sum of its sources
+    # liq_est 0.5 (was 1.5): the estimated liquidation model is unproven (forward test 2026-10-01: x1.37 the
+    # liquidations of jittered placebo levels over 14h, within noise) - it may label a zone, not make one strong
     weights: tuple = (('swing_1h', 1.5), ('swing_15m', 1.0), ('equal', 2.0), ('pdhl', 2.0), ('poc', 1.5),
-                      ('va', 1.0), ('hvn', 1.0), ('liq_est', 1.5), ('liq_hit', 1.0), ('wall', 1.0),
+                      ('va', 1.0), ('hvn', 1.0), ('liq_est', 0.5), ('liq_hit', 1.0), ('wall', 1.0),
                       ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0),
                       ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 0.5),
                       ('fvg', 1.0), ('ob', 1.5))
