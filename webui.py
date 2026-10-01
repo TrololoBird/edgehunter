@@ -28,6 +28,7 @@ import webbrowser
 from typing import Dict, List, Optional
 
 import orjson
+import aiohttp
 from aiohttp import WSMsgType, web
 
 from config import CONFIG
@@ -451,6 +452,8 @@ class WebUI:
             async for msg in ws:
                 if msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                     break
+        except (ConnectionResetError, aiohttp.ClientConnectionResetError):
+            pass                                  # the tab closed / reloaded while the state was sent: not an error
         finally:
             self.clients.discard(ws)
         return ws

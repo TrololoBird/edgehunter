@@ -326,7 +326,11 @@ class DemoExecutor:
                                 pass
                             await self._finalize(trade, 'EXCHANGE', None)
                     except Exception as e:
-                        logger.warning(f"Demo reconcile {trade['symbol']}: {e!r}", exc_info=True)
+                        # network / signature hiccups of the VST API retry next minute: one line; anything else with
+                        # its traceback
+                        import ccxt
+                        transient = isinstance(e, (ccxt.NetworkError, ccxt.ExchangeNotAvailable)) or '109400' in str(e)
+                        logger.warning(f"Demo reconcile {trade['symbol']}: {e!r}", exc_info=not transient)
 
     def _insert(self, row: Dict) -> int:
         cols = [k for k in row if k != 'id']
