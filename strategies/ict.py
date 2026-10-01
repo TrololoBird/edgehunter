@@ -91,11 +91,15 @@ def fvg_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, i
         for k in range(i + 1, len(ltf)):
             if (c[k] < gap_lo) if direction > 0 else (c[k] > gap_hi):
                 break                                      # closed through the gap: dead
-            touched = l[k] <= gap_hi if direction > 0 else h[k] >= gap_lo
+            # ICT's consequent encroachment: the limit rests at the gap's 50% (eng-36; was the first touch of its edge,
+            # entered at that candle's close)
+            ce = (gap_lo + gap_hi) / 2
+            touched = l[k] <= ce if direction > 0 else h[k] >= ce
             if touched:
                 seg = ltf[start:k + 1]
                 ext = min(seg, key=lambda x: x[3]) if direction > 0 else max(seg, key=lambda x: x[2])
-                return {'entry': c[k], 'extreme': ext[3] if direction > 0 else ext[2],
+                fill = min(o[k], ce) if direction > 0 else max(o[k], ce)
+                return {'entry': fill, 'extreme': ext[3] if direction > 0 else ext[2],
                         'time': int(ltf[k][0]) + interval_ms, 'extreme_time': int(ext[0])}
     return None
 

@@ -428,6 +428,43 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
     return picked
 
 
+def balanced_ranges(candles: Sequence[Sequence[float]], tf: str, keep: int = 2) -> List[RawLevel]:
+    """
+    ICT's balanced price range: a bearish FVG and a later bullish one (or the reverse) within 20 candles whose ranges
+    overlap - price was delivered both ways through the same area, the overlap is a strong reaction zone. Kept while
+    no later close went through it; the side by the later gap (a bullish one: support). Kind 'bpr_<tf>'.
+    """
+    n = len(candles)
+    if n < 10:
+        return []
+    h = [c[2] for c in candles]
+    l = [c[3] for c in candles]
+    cl = [c[4] for c in candles]
+    gaps = []
+    for i in range(2, n):
+        if h[i - 2] < l[i]:
+            gaps.append((i, 1, h[i - 2], l[i]))
+        elif l[i - 2] > h[i]:
+            gaps.append((i, -1, h[i], l[i - 2]))
+    out: List[Tuple[float, RawLevel]] = []
+    last = cl[-1]
+    for a in gaps:
+        for b in gaps:
+            if not (0 < b[0] - a[0] <= 20) or a[1] == b[1]:
+                continue
+            lo, hi = max(a[2], b[2]), min(a[3], b[3])
+            if lo >= hi:
+                continue
+            side = b[1]
+            if any((x < lo) if side > 0 else (x > hi) for x in cl[b[0] + 1:]):
+                continue
+            edge = hi if side > 0 else lo
+            out.append((abs(last - edge), RawLevel(edge, f'bpr_{tf}', f"BPR {tf}", -side,
+                                                   ts=int(candles[b[0] - 1][0]), body=lo if side > 0 else hi)))
+    out.sort(key=lambda x: x[0])
+    return [lv for _, lv in out[:keep]]
+
+
 def bars_of(candles_1h: Sequence[Sequence[float]], hours: int) -> List[List[float]]:
     """1h candles -> complete `hours` candles aligned to UTC multiples."""
     size = hours * HOUR_MS
@@ -471,6 +508,9 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     levels += imbalances(list(candles_15m)[-96:], '15m') + imbalances(list(candles_1h)[-192:], '1h')
     # 4h from its own candles (200 = ~33 days; the 1h map's 8 days gave ~50) - else built from the 1h candles
     levels += imbalances(list(candles_4h)[-120:] if candles_4h else bars_of(candles_1h, 4), '4h')
+    levels += balanced_ranges(list(candles_1h)[-192:], '1h')
+    if candles_4h:
+        levels += balanced_ranges(list(candles_4h)[-120:], '4h')
     if candles_1d:
         levels += imbalances(list(candles_1d)[-60:], '1d')
     if candles_1w:

@@ -229,3 +229,10 @@ the standalone `smt` and `absorption` setups (now confirmations). Higher timefra
 and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-down bias: `weekly_bias` first, else
 `daily_bias`, vetoes sweeps against it (`against_bias`). `research_maniac.py` still calls the deleted
 `oi_accumulation` (archive tool, not the bot).
+- eng-36: ICT additions - the sweep's FVG entry rests at the gap's consequent encroachment (CE, 50%; `ict.fvg_trigger`);
+  balanced price ranges (`zones.balanced_ranges`, `bpr_1h` 1.5 / `bpr_4h` 2.5: overlapping bearish + bullish FVGs within
+  20 candles, kept until closed through); the Silver Bullet (`strategies/silver_bullet.py`, setups SILVER BULLET LONG /
+  SHORT of the `sweep` strategy: 03-04, 10-11, 14-15 New York, the raid of the previous hour's high / low, a 5m FVG
+  with displacement, a limit at its CE, stop beyond the raid, target the hour's opposite side; loop-side
+  `Scanner._silver_bullet`). Cards carry their `logic_version`; at a start every card of an older logic is closed
+  (entered: CLOSED at market, journaled; waiting: EXPIRED) - an eng-7 card kept trading beside eng-35 ones.

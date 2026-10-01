@@ -108,7 +108,7 @@ const SETUP_RU = {
   'SMT LOW': 'свип минимума + SMT', 'SMT HIGH': 'свип максимума + SMT', 'TRENDLINE UP': 'пробой линии вверх', 'TRENDLINE DOWN': 'пробой линии вниз',
   'THIRD EYE LONG': 'CCI + Ишимоку вверх', 'THIRD EYE SHORT': 'CCI + Ишимоку вниз', 'FIB 0.5 LONG': 'откат к 0.5 вверх', 'FIB 0.5 SHORT': 'откат к 0.5 вниз',
   'BOMBERMAN LONG': 'MACD + QML вверх', 'BOMBERMAN SHORT': 'MACD + QML вниз', 'BB W-BOTTOM': 'W-дно Боллинджера', 'BB M-TOP': 'M-вершина Боллинджера',
-  'OI ACCUMULATION': 'набор OI без цены',
+  'SILVER BULLET LONG': 'Silver Bullet вверх', 'SILVER BULLET SHORT': 'Silver Bullet вниз',
   'VA80 LONG': 'возврат в value area снизу', 'VA80 SHORT': 'возврат в value area сверху',
   'ORB UP': 'пробой диапазона открытия вверх', 'ORB DOWN': 'пробой диапазона открытия вниз',
   'RSI2 LONG': 'RSI(2) перепродан в тренде', 'RSI2 SHORT': 'RSI(2) перекуплен в тренде',
@@ -116,7 +116,8 @@ const SETUP_RU = {
 const STRATEGY_OF = {
   'BULL F': 'continuation', 'BEAR D': 'continuation', 'IMPULSE UP': 'continuation', 'IMPULSE DOWN': 'continuation',
   'SPRING': 'wyckoff', 'UTAD': 'wyckoff', 'FLUSH REVERSAL': 'wyckoff', 'SQUEEZE REVERSAL': 'wyckoff',
-  'SWEEP LOW': 'sweep', 'SWEEP HIGH': 'sweep', 'BREAKOUT UP': 'breakout', 'BREAKOUT DOWN': 'breakout',
+  'SWEEP LOW': 'sweep', 'SWEEP HIGH': 'sweep', 'SILVER BULLET LONG': 'sweep', 'SILVER BULLET SHORT': 'sweep',
+  'BREAKOUT UP': 'breakout', 'BREAKOUT DOWN': 'breakout',
   'SD DEMAND': 'supply_demand', 'SD SUPPLY': 'supply_demand',
   'AUCTION LONG': 'market_profile', 'AUCTION SHORT': 'market_profile', 'VA80 LONG': 'market_profile', 'VA80 SHORT': 'market_profile',
   'TRENDLINE UP': 'trendline', 'TRENDLINE DOWN': 'trendline', 'BB W-BOTTOM': 'bollinger', 'BB M-TOP': 'bollinger',

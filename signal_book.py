@@ -129,6 +129,8 @@ class TrackedSignal:
     pending_since: Optional[float] = None
     # Turtle pyramiding: [entry price, time] of every unit (the first = the entry), at most turtle_max_units
     units: list = field(default_factory=list)
+    # the signal logic the card was opened by: a card of an older one is closed at the next start (eng-36)
+    logic_version: str = ''
 
     @property
     def finished(self) -> bool:
@@ -220,6 +222,12 @@ class SignalBook:
         self.vetoed = []
         self.events = []
         self.finished_now = []
+        # cards of an older signal logic (restored from the state): an entered one closes at market, a waiting one
+        # expires - their stops / targets / filters are not the current rules (live 2026-10-01: an eng-7 auction card
+        # with 0 confirmations and ATR-step targets still traded beside eng-35 cards)
+        for old in [o for o in self.signals.values() if not o.finished and o.logic_version != CONFIG.journal.logic_version]:
+            reason = f"closed at start: opened by the older signal logic {old.logic_version or '<eng-35'}"
+            self._finish(old, 'CLOSED' if old.entered_at else 'EXPIRED', now, reason)
 
         candidates = []
         directional: List[Tuple[int, Dict]] = []
@@ -279,6 +287,7 @@ class SignalBook:
             tracked = TrackedSignal(
                 symbol=symbol, group_key=group_key, direction=direction, mode=strategy.name,
                 created=now, price_at_signal=price, sig=sig, last_seen=now, last_price=price,
+                logic_version=CONFIG.journal.logic_version,
             )
             self.signals[(symbol, group_key)] = tracked
             created.append(tracked)

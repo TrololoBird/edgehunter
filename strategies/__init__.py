@@ -39,12 +39,14 @@ from strategies.level import SweepStrategy
 from strategies.maniac_strategies import MANIAC_STRATEGIES
 from strategies.wyckoff_range import WyckoffRangeStrategy
 from strategies.classic_strategies import CLASSIC_STRATEGIES
+from strategies.silver_bullet import SilverBulletStrategy
 
 # eng-35: one methodology = one strategy name; a methodology with several playbooks (Wyckoff's climax test and
 # spring, Market Profile's 80% rule and POC retest, the continuation's two impulse detectors) keeps one class per
 # playbook under ONE name - the journal, pools, stats and the live verdict judge the methodology
 _ALL: Tuple[Strategy, ...] = (
-    TrendStrategy(), MomentumStrategy(), SweepStrategy(), ExhaustionStrategy(), WyckoffRangeStrategy(),
+    TrendStrategy(), MomentumStrategy(), SweepStrategy(), SilverBulletStrategy(), ExhaustionStrategy(),
+    WyckoffRangeStrategy(),
     BreakoutStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES)
 STRATEGIES: Dict[str, Strategy] = {}
 for _s in _ALL:

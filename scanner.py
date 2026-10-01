@@ -170,6 +170,8 @@ class Scanner:
         self._connors_checked: Dict[str, int] = {}   # symbol -> the daily close Connors' RSI(2) was checked at
         self._turtle_checked: Dict[str, int] = {}    # symbol -> the last final minute the Turtle channel was checked on
         self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
+        self._sb_checked: Dict[str, int] = {}        # symbol -> the last final minute the Silver Bullet was checked on
+        self._sb_fired: set = set()                  # (symbol, direction, window start) setups already fired
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -649,6 +651,9 @@ class Scanner:
             turtle = self._turtle_breakout(symbol, md, now_ms)
             if turtle:
                 setups.append(turtle)
+            bullet = self._silver_bullet(symbol, md, now_ms)
+            if bullet:
+                setups.append(bullet)
             for setup in setups:
                 sig = dict(md.tier0)
                 sig.update(is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
@@ -668,6 +673,28 @@ class Scanner:
                 logger.info(f"Setup detected: {symbol} {setup['setup']} - {setup['setup_note']}")
                 out.append((symbol, sig))
         return out
+
+    def _silver_bullet(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
+        """ICT's Silver Bullet (strategies.silver_bullet), only inside its New York windows, once per window and
+        direction per coin, on each new final 5m bar."""
+        from strategies.silver_bullet import FIVE_MS, silver_bullet, window_of
+        start = window_of(now_ms)
+        minute = md.minute_closed_until
+        if start is None or not minute or (minute + 60_000) % FIVE_MS:
+            return None
+        if self._sb_checked.get(symbol) == minute:
+            return None
+        self._sb_checked[symbol] = minute
+        bars = resample([c for c in self._minute_candles(symbol) if c[0] >= start - 3_600_000], 5,
+                        minute + 60_000)
+        found = silver_bullet(bars, now_ms)
+        if found is None:
+            return None
+        key = (symbol, found['direction'], start)
+        if key in self._sb_fired:
+            return None
+        self._sb_fired.add(key)
+        return found
 
     def _turtle_breakout(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
         """The Turtles' channel breakout on the touch (strategies.turtle), checked on each new final minute, once per

@@ -469,7 +469,8 @@ class ZonesConfig:
                       ('fvg_15m', 0.5), ('fvg_1h', 1.0), ('fvg_4h', 1.5), ('fvg_1d', 2.5),
                       ('ob_15m', 1.0), ('ob_1h', 1.5), ('ob_4h', 2.0), ('ob_1d', 3.0),
                       ('breaker_15m', 1.0), ('breaker_1h', 1.5), ('breaker_4h', 2.0), ('breaker_1d', 3.0),
-                      ('fvg_1w', 3.5), ('ob_1w', 4.0), ('breaker_1w', 4.0), ('open', 1.0))
+                      ('fvg_1w', 3.5), ('ob_1w', 4.0), ('breaker_1w', 4.0), ('open', 1.0),
+                      ('bpr_1h', 1.5), ('bpr_4h', 2.5))
     # Round-number levels / pools within this many ATR of price (zones.round_levels)
     round_span_atr: float = 3.0
     # Targets: a zone must be at least this strong to be an obstacle (TP1/TP2); TP3 prefers pools / liquidations
@@ -637,6 +638,7 @@ class StrategiesConfig:
     sd_ttl: tuple = (72 * 3600, 8 * 3600, 24 * 3600)   # 1h zones (Seiden: the higher timeframe) live longer
     # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
     classic_ttl: tuple = (3600, 3600, 12 * 3600)
+    silver_bullet_ttl: tuple = (3600, 3600, 4 * 3600)   # the window's hour to come back to the FVG, 4h trade
     connors_ttl: tuple = (3600, 3600, 7 * 86400)   # daily RSI(2): out at the SMA5 within days
     # The Turtles' units (strategies/turtle.py): +1 unit every turtle_add_n x N in favour, at most turtle_max_units per
     # coin and turtle_max_direction_units in one direction overall (their "12 units long / short" limit); a unit is
@@ -860,7 +862,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-35"
+    logic_version: str = "eng-36"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
