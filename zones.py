@@ -409,11 +409,14 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
             gap = overshoot(symbol, measured_kind([l.kind]) or 'swing_15m', l.price, 'p50') or 0.0
         else:
             gap = tol
+        # measured from the zone's FIRST level, not its growing edge: chaining A-B-C merged levels far apart into one
+        # zone covering half the chart (live eng-27: ETH's PWL + EQL + PDL + estimates 3%+ wide)
         if group and lo - group_hi > gap:
             close_group()
             group, group_hi = [], float('-inf')
+        if not group:
+            group_hi = hi
         group.append(l)
-        group_hi = max(group_hi, hi)
     close_group()
     return zones
 
