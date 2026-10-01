@@ -188,3 +188,12 @@ RSI / NATR / BB-width bands dropped); `trendline` targets from the map (Edwards 
 Kept as consistent with their sources: supply / demand (Seiden), auction (Market Profile POC), SMT (ICT), fib 0.5
 (Fibonacci retracement), Bomberman (Appel's MACD signal cross with a trend filter; the QML is a retail SMC condition),
 OI accumulation (derivatives, not chart TA).
+- eng-31 (our own strategies against their sources): phases D / F need the break out of a squeeze
+  (`squeezed_recently`: Bollinger's method I - a tag of a wide band is no signal); `exhaustion` enters on Wyckoff's
+  secondary test (the pullback's minute volume <= `spring_test_volume_ratio` x the climax's, else `no_spring_test`) - the
+  climax itself is not bought, as BULL E; BULL A (buying a squeeze before it breaks: against Bollinger, no Wyckoff
+  phase) is journaled without a card (`disabled_setups`). Checked and kept: momentum / trend pullbacks (ICT OTE),
+  SPRING / UTAD (Pruden / Weis), sweep (ICT), absorption (order flow), VA80 (Dalton), ORB (Crabel), RSI(2) (Connors).
+  Open, the owner's decision: `breakout` is the Turtles' 20-day channel but not their trade (they enter on the touch,
+  stop 2N = 2 x the 20-day ATR, exit on the 10-day opposite breakout; ours enters on an accepted 1h close with a
+  structure stop and map targets).

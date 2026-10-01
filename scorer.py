@@ -278,7 +278,7 @@ class PhaseScorer:
     def _score_phase_d_dump(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         Phase D: breakdown continuation (bearish) - price down + OI up = new shorts with conviction.
-        - Close below the lower Bollinger band
+        - Close below the lower Bollinger band out of a squeeze (Bollinger's method I)
         - Taker sells dominate the candle (delta_ratio < dump_delta_ratio)
         - OI up at least dump_oi_min over the short window (new shorts opening, not just longs closing)
         - Funding not already crowded short (squeeze risk)
@@ -287,6 +287,7 @@ class PhaseScorer:
         """
         dump = (
             (pl.col('close') < pl.col('bb_lower')) &
+            pl.col('squeezed_recently') &        # Bollinger's method I: the break out of a squeeze
             (pl.col('delta_ratio') < self.cfg.dump_delta_ratio) &
             self._oi_building() &
             (pl.col('predicted_funding') > self.cfg.funding_extreme_negative)
@@ -339,7 +340,8 @@ class PhaseScorer:
         """
         Phase F: markup breakout continuation (bullish), the mirror of phase D - price up + OI up = new longs with
         conviction.
-        - Close above the upper Bollinger band
+        - Close above the upper Bollinger band out of a squeeze (Bollinger's method I: the band break counts only after
+          the bands narrowed to their lookback minimum; a tag of a wide band is not a signal)
         - Taker buys dominate the candle (delta_ratio > markup_delta_ratio)
         - OI up at least dump_oi_min over the short window (new longs opening, not just shorts covering)
         - Funding not already at the long extreme (a crowded top)
@@ -348,6 +350,7 @@ class PhaseScorer:
         """
         markup = (
             (pl.col('close') > pl.col('bb_upper')) &
+            pl.col('squeezed_recently') &        # Bollinger's method I: the break out of a squeeze
             (pl.col('delta_ratio') > self.cfg.markup_delta_ratio) &
             self._oi_building() &
             (pl.col('predicted_funding') < self.cfg.funding_extreme_positive)

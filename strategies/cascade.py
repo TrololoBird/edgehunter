@@ -2,6 +2,10 @@
 Liquidation exhaustion (FLUSH REVERSAL / SQUEEZE REVERSAL). A cascade of forced liquidations overshoots mechanically
 and price snaps back once the forced flow stops; the entry needs the extreme move AND a sign the flush is over.
 
+Wyckoff (Pruden, Weis): a liquidation cascade is a selling / buying climax; the climax itself is not bought - the
+trade comes on the SECONDARY TEST, a return toward the climax's extreme on lower volume (eng-30: the entry trigger
+needs the pullback's average minute <= spring_test_volume_ratio x the climax's, like a spring's test).
+
 Anchor: a real leg - the cascade, from the extreme of the exhaustion_pre_minutes before it to its extreme. The extreme
 keeps following price until the entry (nobody knows where a running cascade ends), so there is no fixed invalidation;
 the card waits near the extreme for a 5m structure shift against the cascade. Targets: the mean (VWAP anchored at the
@@ -92,6 +96,8 @@ class CascadeTracker:
                 'setup_note': f"{side} liquidated {event['usd'] / 1e3:,.0f}k in 5m, move {abs(end / start - 1) * 100:.1f}% "
                               f"({abs(start - end) / atr:.1f} ATR); waiting for the exhaustion",
                 'leg_start': start, 'leg_end': end, 'leg_start_ts': int(start_c[0]), 'leg_end_ts': int(end_c[0]),
+                # the climax's average futures minute: Wyckoff's secondary test must trade on less
+                'fut_candle_minute_usd': sum(c[5] for c in during) / len(during),
                 'event_ts': int(event['ts'])}
 
 

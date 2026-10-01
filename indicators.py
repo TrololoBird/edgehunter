@@ -132,10 +132,16 @@ def compute_indicators_batch(frames: Dict[str, pl.DataFrame], funding: Dict[str,
     df = df.with_columns(_over(dx.ewm_mean(alpha=1 / 14, adjust=False)).alias('adx'))
     # Squeeze: width within a small tolerance of its lookback minimum (exact float equality with a rolling
     # minimum fails on rounding noise even for a perfectly flat range)
-    return df.with_columns(
+    df = df.with_columns(
         (pl.col('bb_width') <= _over(pl.col('bb_width').rolling_min(
             window_size=cfg.bbw_squeeze_lookback, min_samples=cfg.bbw_squeeze_lookback // 2
         )) * cfg.bbw_squeeze_tolerance).alias('is_squeezed'),
+    )
+    # Bollinger's method I (squeeze breakout): a band break is a signal only when the bands were squeezed shortly
+    # before it - the squeeze within the last squeeze_recent candles (phases D / F read it)
+    return df.with_columns(
+        _over(pl.col('is_squeezed').cast(pl.Int8).rolling_max(window_size=cfg.squeeze_recent, min_samples=1))
+        .cast(pl.Boolean).alias('squeezed_recently'),
     )
 
 

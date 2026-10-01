@@ -68,6 +68,7 @@ class MetricsConfig:
     rvol_micro_burst_threshold: float = 1.5
     rvol_anomaly_threshold: float = 4.0
     bbw_squeeze_lookback: int = 50
+    squeeze_recent: int = 12          # Bollinger method I: the squeeze within the last 12 15m candles (3h)
     # Squeeze = Bollinger width at most this multiple of its bbw_squeeze_lookback minimum
     bbw_squeeze_tolerance: float = 1.05
     oi_change_window: int = 12
@@ -545,7 +546,9 @@ class StrategiesConfig:
                       'oi_accum', 'value_area', 'orb', 'connors')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
-    disabled_setups: tuple = ('BULL E',)
+    # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
+    # is unknown, a head fake comes first) and it is no Wyckoff phase - journaled, no card (eng-30, classic rule)
+    disabled_setups: tuple = ('BULL E', 'BULL A')
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
@@ -849,7 +852,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-30"
+    logic_version: str = "eng-31"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
