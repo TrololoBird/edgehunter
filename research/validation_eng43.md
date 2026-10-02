@@ -1,4 +1,4 @@
-# eng-43 archive validation (INTERIM, 2026-10-02 22:40 UTC)
+# eng-43 archive validation (INTERIM, 2026-10-02 23:10 UTC)
 
 Pre-registered rule (research/validation_eng43_prereg.md, CLOUD_RETRAIN.md): a strategy WORKS only if its mean net R is
 > 0 in development AND holdout, the holdout 90% cluster-bootstrap interval is > 0, and system - placebo in the holdout
@@ -50,7 +50,9 @@ Notes
 | C sticky HMM regimes (49k market candles, 18 months) | runs 7.2 vs 5.8 candles (GMM); neither separates the 4h Edge beyond +-0.03%; HMM uses 10 names vs 7 | keep GMM (no gain worth a logic change) |
 | P(edge) retrain (18 months) + ml_eval | CPCV: AUC 0.539 (LightGBM) / 0.534 (logistic), top-20% Edge +0.047% over all rows, PBO 0.28, deflated Sharpe 0.76 (154 trials) | real but tiny ranking signal, far below the ~0.20% cost: stays SHADOW |
 | Null-world ML audit (labels shuffled) | AUC 0.500-0.503, log-loss skill <= 0, DSR 0.09 | the ML pipeline does not invent signal (passes) |
-| Null-world audit (6 coins) | found the placebo time-of-day bias; 30-coin run queued | pending |
+| Null-world audit, 30 coins x 6 months (hours shuffled within weeks) | every card / classic setup: system - placebo intervals cross 0 (sweeps +0.23 / +0.09 n.s.); only RSI2 "beats" its placebo (+2.4 / +4.1%), the known unfair duration-matched placebo | the replay pipelines do not invent an edge (passes); RSI2's placebo comparison is invalid by design |
+| Exit rules on the eng-43 samples (research/exits_eng43.md) | no strategy x exit rule chosen on development stays > 0 on the holdout (ALL be05_tp1 -0.28% market / -0.15% limit) | exits cannot make the entries pay |
+| Meta-labeling on the eng-43 samples (research/meta_eng43.md) | the selected trades: -0.057R [-0.071..-0.045]; wyckoff predicted > 0 +0.167R on 44 trades (noise by the rule) | NOT PASSED - not shipped |
 
 ## Live signal-logic bug found (NOT fixed here: the brief forbids signal-logic changes in this session)
 `TrendlineStrategy.plan` (strategies/maniac_strategies.py:161) asks for `'tp': ['map', 1.0]`, but `_confirm_plan` builds the
