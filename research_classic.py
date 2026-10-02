@@ -226,6 +226,15 @@ def report(df: pl.DataFrame, start: date, end: date, split: date) -> str:
     return '\n'.join(lines) + '\n'
 
 
+def _inside_repo(path: str) -> str:
+    """The output path resolved, refused unless it lies inside this repository (no writes elsewhere)."""
+    root = os.path.dirname(os.path.abspath(__file__))
+    full = os.path.realpath(os.path.join(root, path))
+    if os.path.commonpath([root, full]) != root:
+        raise SystemExit(f"output path {path!r} is outside the repository")
+    return full
+
+
 def main():
     cfg = CONFIG.pretrain
     ap = argparse.ArgumentParser()
@@ -238,6 +247,7 @@ def main():
     ap.add_argument('--out', default=os.path.join('research', 'classic_eng43.md'))
     ap.add_argument('--rows', default='research_classic.parquet')
     args = ap.parse_args()
+    args.out, args.rows = _inside_repo(args.out), _inside_repo(args.rows)   # fail before hours of replay
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
     from history import Archive
     from pretrain import select_coins
@@ -261,9 +271,9 @@ def main():
                 logger.info(f"classic: {n}/{len(jobs)} coins in {time.time() - t0:.0f}s ({len(rows)} trades)")
     df = pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
     if df.height:
-        df.write_parquet(args.rows)
+        df.write_parquet(_inside_repo(args.rows))
     text = report(df, start, end, split)
-    with open(args.out, 'w', encoding='utf-8') as fh:
+    with open(_inside_repo(args.out), 'w', encoding='utf-8') as fh:
         fh.write(text)
     print(text)
 
