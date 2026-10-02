@@ -1,0 +1,72 @@
+rows 1416143, coins 422, 50.2% positive, effective n (sum of uniqueness) 1485
+
+1. online logistic regression as it ran (prediction before learning each row)
+   base rate (running)    log-loss 0.6933 (skill +0.000%)  Brier skill +0.000%  AUC 0.500
+   river LR (online)      log-loss 0.7238 (skill -4.395%)  Brier skill -3.068%  AUC 0.568
+   fold 1: train 268506 rows, test 295209 rows, LightGBM 479 trees
+   fold 2: train 563574 rows, test 274936 rows, LightGBM 1587 trees
+   fold 3: train 838514 rows, test 228923 rows, LightGBM 770 trees
+   fold 4: train 1067622 rows, test 224640 rows, LightGBM 1165 trees
+   fold 5: train 1292175 rows, test 123115 rows, LightGBM 1999 trees
+
+2. purged walk-forward (out of sample)
+   base rate              log-loss 0.6931 (skill +0.000%)  Brier skill +0.000%  AUC 0.500
+   logistic (L2)          log-loss 0.6916 (skill +0.224%)  Brier skill +0.311%  AUC 0.530
+   LightGBM (shallow)     log-loss 0.6910 (skill +0.314%)  Brier skill +0.434%  AUC 0.534
+
+   calibration of LightGBM (shallow) (predicted -> observed, by decile)
+     0.333-0.462: predicted 0.441  observed 0.444  n 114683
+     0.462-0.476: predicted 0.469  observed 0.472  n 114682
+     0.476-0.486: predicted 0.481  observed 0.486  n 114682
+     0.486-0.494: predicted 0.490  observed 0.495  n 114682
+     0.494-0.501: predicted 0.497  observed 0.501  n 114683
+     0.501-0.508: predicted 0.504  observed 0.507  n 114683
+     0.508-0.515: predicted 0.512  observed 0.514  n 114682
+     0.515-0.524: predicted 0.519  observed 0.521  n 114682
+     0.524-0.538: predicted 0.530  observed 0.535  n 114682
+     0.538-0.661: predicted 0.557  observed 0.558  n 114683
+
+3. Edge 4h (return in the signal's direction minus the mean of all coins), out of sample
+   all rows          +0.004%  (n 1146823)
+   top 50% by P(edge) +0.031%  (n 573412)
+   top 20% by P(edge) +0.054%  (n 229365)
+   top 10% by P(edge) +0.081%  (n 114683)
+
+   by setup (all rows vs top 20%):
+   BEAR D                 +0.007% -> -0.055%  (n 7582)
+   BREAKOUT DOWN          -0.025% -> +0.000%  (n 109588)
+   BREAKOUT UP            -0.023% -> +0.009%  (n 85615)
+   BULL A                 +0.010% -> +0.025%  (n 76502)
+   BULL E                 +0.490% -> +0.262%  (n 633)
+   BULL F                 +0.031% -> +0.094%  (n 11471)
+   BULL a (partial)       +0.010% -> +0.035%  (n 400089)
+   BULL e (partial)       -0.530% -> -0.097%  (n 441)
+   IMPULSE DOWN           -0.423% -> -0.637%  (n 4711)
+   IMPULSE UP             -0.202% -> +0.171%  (n 12438)
+   SWEEP HIGH             +0.031% -> +0.158%  (n 209130)
+   SWEEP LOW              +0.010% -> +0.043%  (n 228623)
+
+4. CPCV (6 groups, 2 test; 5 paths, 400000 newest rows)
+   split (0, 1): train 260738, test 133333
+   split (0, 2): train 254497, test 133333
+   split (0, 3): train 255466, test 133332
+   split (0, 4): train 256521, test 133333
+   split (0, 5): train 261202, test 133333
+   split (1, 2): train 259717, test 133334
+   split (1, 3): train 254295, test 133333
+   split (1, 4): train 255350, test 133334
+   split (1, 5): train 260031, test 133334
+   split (2, 3): train 260516, test 133333
+   split (2, 4): train 254616, test 133334
+   split (2, 5): train 259297, test 133334
+   split (3, 4): train 261724, test 133333
+   split (3, 5): train 260266, test 133333
+   split (4, 5): train 266216, test 133334
+   variant                  AUC median [min..max]   log-loss skill median   top-20% Edge - all (median)
+   logistic C=0.01          0.533 [0.529..0.536]   +0.222%   +0.026%
+   logistic C=0.05          0.534 [0.530..0.538]   +0.268%   +0.034%
+   logistic C=0.5           0.534 [0.530..0.538]   +0.272%   +0.035%
+   LightGBM leaves=7        0.539 [0.535..0.541]   +0.350%   +0.042%
+   LightGBM leaves=15       0.539 [0.535..0.542]   +0.348%   +0.047%
+   PBO over 5 variants + 'all rows' (26 weeks): 0.28  (> 0.5: the in-sample winner is worse than the median out of sample)
+   best variant LightGBM leaves=15: weekly top-20% Edge +0.056% vs all rows +0.010%; deflated Sharpe 0.76 with 154 trials counted

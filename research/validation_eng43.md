@@ -1,4 +1,4 @@
-# eng-43 archive validation (INTERIM, 2026-10-02 19:40 UTC)
+# eng-43 archive validation (INTERIM, 2026-10-02 22:40 UTC)
 
 Pre-registered rule (research/validation_eng43_prereg.md, CLOUD_RETRAIN.md): a strategy WORKS only if its mean net R is
 > 0 in development AND holdout, the holdout 90% cluster-bootstrap interval is > 0, and system - placebo in the holdout
@@ -27,7 +27,11 @@ ml_eval. Sources: research/cards_eng43.md, classic_eng43.md, turtle.md, vol_b1.m
 | connors: RSI2 LONG / SHORT (net %, no stop) | 494 / 233, 3197 / 1139 | +1.39% / +0.06% | -0.90% / -0.95% | (see note) | does not work (holdout mean < 0) |
 | pump: PUMP START (without the live OI / spot conditions) | 14244 / 4636 | -0.068 | -0.079 [-0.113..-0.046] | -0.040 [-0.074..-0.005] | does not work (worse than placebo) |
 | pump: PUMP TOP (5m shift entry) | 4430 / 1538 | -0.141 | -0.182 [-0.228..-0.139] | -0.076 [-0.141..-0.014] | does not work (worse than placebo) |
-| supply_demand, auction, trendline, bollinger, cup_handle | running | | | | pending |
+| market_profile: AUCTION LONG / SHORT | 681 / 156, 325 / 165 | -0.04 / -0.04 | -0.04 / -0.03 | +0.18 / +0.31 (crosses 0) | does not work |
+| bollinger: BB M-TOP / W-BOTTOM | 48255 / 15306, 43762 / 12021 | -0.05 / -0.11 | -0.056 [-0.08..-0.03] / -0.111 [-0.15..-0.08] | +0.03 / -0.03 | does not work (significantly negative, q <= 0.004) |
+| cup_handle: CUP HANDLE | 605 / 177 | -0.208 | +0.022 [-0.16..+0.22] | -0.518 [-0.74..-0.29] | does not work (far below placebo) |
+| supply_demand: SD DEMAND / SUPPLY | 60 / 30, 12 / 2 | -0.14 / -1.31 | -0.08 / — | +0.17 (crosses 0) | does not work / too few |
+| trendline: TRENDLINE UP / DOWN | 0 / 0 (687 + 159 cards) | — | — | — | NOT MEASURED: no card ever entered (neither expired nor invalid) - a replay bug to check |
 
 Notes
 - Entries are few for the continuation and Wyckoff setups because the archive replay applies the live gates (displacement,
@@ -41,10 +45,11 @@ Notes
 
 | Item | Result | Decision |
 |---|---|---|
-| B1 volatility forecast (425 coins) | holdout QLIKE: LightGBM -7.3% (1h) / -0.4% (4h) vs HAR-RV; HAR-RV +15..20% better than ATR14 | HAR-RV (pre-registered rule); prior period queued |
+| B1 volatility forecast (425 coins; lags floored after review) | holdout QLIKE: LightGBM -5.2% (1h) / -0.2% (4h) vs HAR-RV; HAR-RV 14-23% better than ATR14 / max(ATR14, ATR 1h) | HAR-RV (pre-registered rule, unchanged in all three evaluations); prior period queued |
 | G cross-sectional ranking (422 coins) | LightGBM gross +0.16% / 4h holdout, net -0.34%, DSR 0 | does not work - closed |
-| C sticky HMM regimes | runs 10.8 vs 7.2 candles (GMM) on eng-7 history | Edge split pending pretrain |
-| P(edge) retrain + ml_eval (CPCV, PBO, DSR) | queued | pending |
+| C sticky HMM regimes (49k market candles, 18 months) | runs 7.2 vs 5.8 candles (GMM); neither separates the 4h Edge beyond +-0.03%; HMM uses 10 names vs 7 | keep GMM (no gain worth a logic change) |
+| P(edge) retrain (18 months) + ml_eval | CPCV: AUC 0.539 (LightGBM) / 0.534 (logistic), top-20% Edge +0.047% over all rows, PBO 0.28, deflated Sharpe 0.76 (154 trials) | real but tiny ranking signal, far below the ~0.20% cost: stays SHADOW |
+| Null-world ML audit (labels shuffled) | AUC 0.500-0.503, log-loss skill <= 0, DSR 0.09 | the ML pipeline does not invent signal (passes) |
 | Null-world audit (6 coins) | found the placebo time-of-day bias; 30-coin run queued | pending |
 
 ## Bugs found and fixed during the validation (all in research code, none in the signal logic)
