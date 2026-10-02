@@ -5,7 +5,8 @@ was restarted once mid-run (2026-10-02) and 125 coins of research_cards were los
 """
 import hashlib
 import os
-import pickle
+import json
+import math
 from typing import Any, Optional
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +34,21 @@ def run_dir(script: str, *key_parts) -> str:
 
 
 def _path(d: str, coin: str) -> str:
-    return os.path.join(d, coin.replace('/', '_').replace(':', '_') + '.pkl')
+    # the file name is a hash: a coin name comes from the archive's listing (external data), never part of a path
+    return os.path.join(d, hashlib.sha1(coin.encode()).hexdigest()[:16] + '.json')
+
+
+def _clean(x):
+    """JSON-safe copy (NaN / inf -> None, numpy scalars -> Python)."""
+    if isinstance(x, dict):
+        return {str(k): _clean(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_clean(v) for v in x]
+    if hasattr(x, 'item') and not isinstance(x, (str, bytes)):
+        x = x.item()
+    if isinstance(x, float) and not math.isfinite(x):
+        return None
+    return x
 
 
 def load(d: str, coin: str) -> Optional[Any]:
@@ -41,14 +56,14 @@ def load(d: str, coin: str) -> Optional[Any]:
     if not os.path.exists(p):
         return None
     try:
-        with open(p, 'rb') as fh:
-            return pickle.load(fh)          # our own file, written by save() below
-    except (OSError, EOFError, pickle.UnpicklingError):
+        with open(p, encoding='utf-8') as fh:
+            return json.load(fh)               # data only: no code is ever deserialized from the cache
+    except (OSError, ValueError):
         return None
 
 
 def save(d: str, coin: str, result: Any):
     p = _path(d, coin)
-    with open(p + '.tmp', 'wb') as fh:
-        pickle.dump(result, fh)
+    with open(p + '.tmp', 'w', encoding='utf-8') as fh:
+        json.dump(_clean(result), fh)
     os.replace(p + '.tmp', p)
