@@ -36,6 +36,9 @@ from config import CONFIG
 logger = logging.getLogger('research_classic')
 MINUTE_MS, QUARTER_MS, HOUR_MS, DAY_MS = 60_000, 900_000, 3_600_000, 86_400_000
 COST = CONFIG.journal.fee_round_trip + 2 * 0.0005
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+REPORT_PATH = os.path.join(_ROOT, 'research', 'classic_eng43.md')   # fixed outputs: no path comes from the command line
+ROWS_PATH = os.path.join(_ROOT, 'research_classic.parquet')
 
 
 def _sim(m: np.ndarray, i0: int, d: int, stop: Optional[float], target: Optional[float], end_ms: float):
@@ -226,15 +229,6 @@ def report(df: pl.DataFrame, start: date, end: date, split: date) -> str:
     return '\n'.join(lines) + '\n'
 
 
-def _inside_repo(path: str) -> str:
-    """The output path resolved, refused unless it lies inside this repository (no writes elsewhere)."""
-    root = os.path.dirname(os.path.abspath(__file__))
-    full = os.path.realpath(os.path.join(root, path))
-    if os.path.commonpath([root, full]) != root:
-        raise SystemExit(f"output path {path!r} is outside the repository")
-    return full
-
-
 def main():
     cfg = CONFIG.pretrain
     ap = argparse.ArgumentParser()
@@ -244,10 +238,7 @@ def main():
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--min-volume', type=float, default=cfg.min_volume_usd)
-    ap.add_argument('--out', default=os.path.join('research', 'classic_eng43.md'))
-    ap.add_argument('--rows', default='research_classic.parquet')
     args = ap.parse_args()
-    args.out, args.rows = _inside_repo(args.out), _inside_repo(args.rows)   # fail before hours of replay
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
     from history import Archive
     from pretrain import select_coins
@@ -271,9 +262,9 @@ def main():
                 logger.info(f"classic: {n}/{len(jobs)} coins in {time.time() - t0:.0f}s ({len(rows)} trades)")
     df = pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
     if df.height:
-        df.write_parquet(_inside_repo(args.rows))
+        df.write_parquet(ROWS_PATH)
     text = report(df, start, end, split)
-    with open(_inside_repo(args.out), 'w', encoding='utf-8') as fh:
+    with open(REPORT_PATH, 'w', encoding='utf-8') as fh:
         fh.write(text)
     print(text)
 
