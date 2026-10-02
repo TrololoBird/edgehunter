@@ -171,9 +171,9 @@ def pbo(perf: np.ndarray, n_splits: int = 16) -> Tuple[float, np.ndarray]:
     """
     perf = np.asarray(perf, dtype=float)
     t, m = perf.shape
-    if m < 2 or t < n_splits:
-        return float('nan'), np.empty(0)
     n_splits -= n_splits % 2
+    if m < 2 or n_splits < 2 or t < n_splits:
+        return float('nan'), np.empty(0)
     chunks = np.array_split(np.arange(t), n_splits)
     logits = []
     for ins in itertools.combinations(range(n_splits), n_splits // 2):

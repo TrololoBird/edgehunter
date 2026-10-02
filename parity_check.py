@@ -28,7 +28,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--days', type=int, default=5)
     ap.add_argument('--coins', type=int, default=20)
-    ap.add_argument('--tolerance-sec', type=int, default=120)
+    ap.add_argument('--tolerance-sec', type=int, default=900)   # live setups fire up to a candle after the close
     args = ap.parse_args()
     from config import CONFIG
     from history import Archive
@@ -71,7 +71,8 @@ def main():
     live = live.filter(pl.col('symbol').is_in(top)).with_columns(pl.col('ts_ms').cast(pl.Int64)).sort('ts_ms')
     joined = live.join_asof(arch, on='ts_ms', by=['symbol', 'group_key'], tolerance=args.tolerance_sec * 1000,
                             strategy='nearest', suffix='_arch')
-    matched = joined.filter(pl.col('ts_ms').is_not_null())
+    matched = joined.filter(pl.any_horizontal([pl.col(f'{c}_arch').is_not_null() for c in feat_cols
+                                               if f'{c}_arch' in joined.columns]))
     lines = [f"# Train / serve parity ({start} .. {end}, {len(top)} coins)", '',
              f"{live.height} live rows, {arch.height} archive rows; a row matches on symbol + group_key within "
              f"{args.tolerance_sec}s.", '',

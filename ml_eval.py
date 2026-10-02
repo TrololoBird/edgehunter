@@ -271,7 +271,7 @@ def cpcv_report(df: pl.DataFrame, X: np.ndarray, y: np.ndarray, w: np.ndarray, n
         if m.sum() >= 20:
             perf[i, -1] = np.average(edge[m], weights=w[m])          # 'all rows': the no-model variant
     perf = perf[~np.isnan(perf).any(axis=1)]
-    p_bo, _ = validation.pbo(perf, n_splits=min(16, len(perf) - len(perf) % 2))
+    p_bo = validation.pbo(perf, n_splits=min(16, len(perf) - len(perf) % 2))[0] if len(perf) >= 4 else float('nan')
     best = int(np.argmax(perf[:, :-1].mean(axis=0))) if len(perf) else 0
     n_trials = validation.n_trials() + len(names)
     sr_var = float(np.var(perf.mean(axis=0) / np.maximum(perf.std(axis=0, ddof=1), 1e-12))) if len(perf) > 2 else None

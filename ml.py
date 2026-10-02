@@ -291,9 +291,22 @@ class StickyHMM:
             self.start_ /= self.start_.sum()
         return self
 
+    def stationary(self) -> np.ndarray:
+        w, v = np.linalg.eig(self.trans_.T)
+        p = np.real(v[:, int(np.argmin(np.abs(w - 1)))])
+        p = np.abs(p)
+        return p / p.sum()
+
     def filtered(self, Z: np.ndarray) -> np.ndarray:
-        """P(state_t | x_1..x_t) for every t (causal)."""
-        alpha, _, _ = self._forward(self._loglik(Z))
+        """
+        P(state_t | x_1..x_t) for every t (causal). The window starts from the chain's stationary distribution: the
+        fitted start_ is the posterior of the TRAINING sequence's first candle, arbitrary for a window cut elsewhere.
+        """
+        fitted, self.start_ = self.start_, self.stationary()
+        try:
+            alpha, _, _ = self._forward(self._loglik(Z))
+        finally:
+            self.start_ = fitted
         return alpha
 
     def predict(self, Z: np.ndarray) -> np.ndarray:
@@ -301,11 +314,12 @@ class StickyHMM:
 
 
 def stable_names(new_means: np.ndarray, old_means: Optional[np.ndarray], old_names: Dict[int, str],
-                 name_of) -> Dict[int, str]:
+                 name_of, max_dist2: float = 2.25) -> Dict[int, str]:
     """
     Regime names that survive a refit (ML_PLAN.md C2): the new states are matched to the previous model's states by
-    their standardized centers (Hungarian assignment) and inherit their names; unmatched states are named from their
-    centers. Duplicate names get a numeric suffix (two states never share one name).
+    their standardized centers (Hungarian assignment) and inherit their names VERBATIM (suffix included) when the
+    center moved less than sqrt(max_dist2) standardized units; other states are named from their centers. A name
+    already taken gets the next free numeric suffix (two states never share one name).
     """
     names: Dict[int, str] = {}
     if old_means is not None and len(old_names) and old_means.shape[1] == new_means.shape[1]:
@@ -313,16 +327,19 @@ def stable_names(new_means: np.ndarray, old_means: Optional[np.ndarray], old_nam
         cost = ((new_means[:, None, :] - old_means[None, :, :]) ** 2).sum(axis=2)
         rows, cols = linear_sum_assignment(cost)
         for r, c in zip(rows, cols):
-            if int(c) in old_names:
+            if int(c) in old_names and cost[r, c] <= max_dist2:
                 names[int(r)] = old_names[int(c)]
+    taken = set(names.values())
     for i in range(len(new_means)):
-        if i not in names:
-            names[i] = name_of(new_means[i])
-    seen: Dict[str, int] = {}
-    for i in sorted(names):
-        base = names[i].split('#')[0]
-        seen[base] = seen.get(base, 0) + 1
-        names[i] = base if seen[base] == 1 else f"{base}#{seen[base]}"
+        if i in names:
+            continue
+        base, k, name = name_of(new_means[i]), 1, None
+        name = base
+        while name in taken:
+            k += 1
+            name = f"{base}#{k}"
+        names[i] = name
+        taken.add(name)
     return names
 
 

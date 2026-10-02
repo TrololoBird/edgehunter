@@ -744,13 +744,12 @@ class SignalJournal:
             self.conn.row_factory = sqlite3.Row
             try:
                 rows = self.conn.execute(
-                    "SELECT * FROM signals WHERE kind NOT IN ('entry', 'card') AND direction != 0 AND ts_ms >= ?",
-                    (since,)).fetchall()
+                    "SELECT * FROM signals WHERE kind NOT IN ('entry', 'card') AND direction != 0 AND ts_ms >= ? "
+                    "ORDER BY ts_ms DESC LIMIT 3000", (since,)).fetchall()      # bounded: the features loop holds the GIL
             finally:
                 self.conn.row_factory = None
         drift = model_cards.drift_of(card, [SuccessModel.features(r) for r in rows])
-        model_cards.DRIFT.clear()
-        model_cards.DRIFT.update(drift)
+        model_cards.set_drift(drift)
         worst = model_cards.worst_drift()
         if worst and worst[1] > 0.25:
             logger.info(f"Drift: P(edge) feature {worst[0]} PSI {worst[1]:.2f} vs its training rows (> 0.25: a "

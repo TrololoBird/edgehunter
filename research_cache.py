@@ -14,9 +14,19 @@ CACHE_ROOT = os.path.join(_ROOT, 'research_cache')
 
 def run_dir(script: str, *key_parts) -> str:
     """A directory per run configuration (script + window + options + logic version + pierce model)."""
+    import glob
     from config import CONFIG
+    # the code that produces the rows: a research-script or strategy edit without a logic_version bump must not reuse
+    # stale per-coin results
+    src = hashlib.sha1()
+    for f in sorted(glob.glob(os.path.join(_ROOT, 'strategies', '*.py')) +
+                    [os.path.join(_ROOT, n) for n in (f"research_{script}.py", 'research_cards.py', 'levels.py',
+                                                      'zones.py', 'pierce.py', 'indicators.py', 'scorer.py')]):
+        if os.path.exists(f):
+            with open(f, 'rb') as fh:
+                src.update(fh.read())
     tag = '|'.join(map(str, key_parts + (CONFIG.journal.logic_version, os.environ.get('PIERCE_MODEL', ''),
-                                         os.environ.get('RESEARCH_ENTRY', ''))))
+                                         os.environ.get('RESEARCH_ENTRY', ''), src.hexdigest())))
     d = os.path.join(CACHE_ROOT, f"{script}_{hashlib.sha1(tag.encode()).hexdigest()[:10]}")
     os.makedirs(d, exist_ok=True)
     return d

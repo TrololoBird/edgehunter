@@ -3,7 +3,8 @@ D1 of ML_PLAN.md: is the IsolationForest worth its worker process? On the live j
 
     .venv\\Scripts\\python research_anomaly.py [--days 30]
 
-Rule anomalies carry the forest's shadow `ml_score` (higher = more unusual). If the forest adds information, the
+Rule anomalies carry the forest's shadow `ml_score` = IsolationForest.score_samples (LOWER = more unusual; the
+script negates it so that a higher `s` is more unusual). If the forest adds information, the
 anomalies it scores highest should be followed by larger moves than the rest of the SAME rule label: the absolute 1h
 and 4h return, each divided by the label's median (labels differ in size). Reported per label and pooled: the
 Spearman correlation of ml_score with the normalized move, and the top-quintile vs the rest with a block bootstrap
@@ -61,12 +62,13 @@ def main():
     for (label,), g in df.group_by(['group_key']):
         if g.height < 50:
             continue
-        s = g['ml_score'].to_numpy()
+        s = -g['ml_score'].to_numpy()            # score_samples: lower = more unusual -> negate
+        has1 = g['ret_1h'].is_not_null().to_numpy()
         m1 = np.abs(g['ret_1h'].fill_null(0).to_numpy())
         m4 = np.abs(g['ret_4h'].to_numpy())
         m1n, m4n = m1 / (np.median(m1) or 1), m4 / (np.median(m4) or 1)
         top = s >= np.quantile(s, 0.8)
-        lines.append(f"| {label} | {g.height} | {spearman(s, m1n):+.3f} | {spearman(s, m4n):+.3f} | "
+        lines.append(f"| {label} | {g.height} | {spearman(s[has1], m1n[has1]):+.3f} | {spearman(s, m4n):+.3f} | "
                      f"{m4n[top].mean() / m4n[~top].mean():.2f} |")
         blocks = g['ts_ms'].to_numpy() // (4 * 3_600_000)
         pooled_t.append(m4n[top])

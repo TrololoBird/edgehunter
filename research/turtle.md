@@ -8,9 +8,9 @@
 - holdout: 1977 trades, mean -0.200R, median -1.01R, win 24%, avg units 2.84, total -394.9R, 90% month-block interval [-0.658..+0.185]R
   - System 1: 1860 trades, mean -0.197R, median -1.01R, win 25%, avg units 2.84, total -366.9R, 90% month-block interval [-0.648..+0.205]R
   - System 2: 117 trades, mean -0.239R, median -1.72R, win 16%, avg units 2.74, total -28.0R, 90% month-block interval [-1.045..+0.697]R
-- placebo development: 4067 trades, mean -0.159R, median -0.79R, win 17%, avg units 2.54, total -645.0R, 90% month-block interval [-0.322..+0.025]R
-  - System 1: 4067 trades, mean -0.159R, median -0.79R, win 17%, avg units 2.54, total -645.0R, 90% month-block interval [-0.322..+0.025]R
-  - System 2: no trades
-- placebo holdout: 1272 trades, mean -0.019R, median -0.60R, win 21%, avg units 2.48, total -24.5R, 90% month-block interval [-0.255..+0.212]R
-  - System 1: 1272 trades, mean -0.019R, median -0.60R, win 21%, avg units 2.48, total -24.5R, 90% month-block interval [-0.255..+0.212]R
-  - System 2: no trades
+- placebo development: 4368 trades, mean -0.245R, median -0.85R, win 17%, avg units 2.56, total -1071.2R, 90% month-block interval [-0.423..-0.052]R
+  - System 1: 4189 trades, mean -0.248R, median -0.83R, win 17%, avg units 2.55, total -1039.3R, 90% month-block interval [-0.425..-0.063]R
+  - System 2: 179 trades, mean -0.179R, median -1.02R, win 20%, avg units 2.72, total -32.0R, 90% month-block interval [-0.819..+0.591]R
+- placebo holdout: 1365 trades, mean -0.064R, median -0.60R, win 20%, avg units 2.48, total -86.7R, 90% month-block interval [-0.299..+0.169]R
+  - System 1: 1301 trades, mean -0.065R, median -0.59R, win 20%, avg units 2.47, total -84.6R, 90% month-block interval [-0.311..+0.188]R
+  - System 2: 64 trades, mean -0.032R, median -0.98R, win 25%, avg units 2.73, total -2.1R, 90% month-block interval [-0.675..+0.636]R

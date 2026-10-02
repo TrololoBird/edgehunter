@@ -22,8 +22,8 @@ MIN_N_FRAC = 0.002      # N below 0.2% of the price = a flat, untraded stretch (
 def trades(d1, cost=COST, eligible=None, placebo=None):
     """Replays the systems over daily candles [ts, o, h, l, c, ...] -> [(entry day ts, system, direction, R, units)].
     eligible: epoch days on which the coin passed the universe's volume floor (entries only then; None = every day);
-    placebo: {epoch day: direction} - enter at that day's open instead of on a breakout (same N, stop, pyramid, exit
-    as System 1)."""
+    placebo: {epoch day: (direction, system)} - enter at that day's open instead of on a breakout (same N, stop,
+    pyramid, and the real trade's exit channel)."""
     ns = n_series(d1)
     out, pos, last_s1_win = [], None, None
     for i in range(56, len(d1)):
@@ -61,8 +61,8 @@ def trades(d1, cost=COST, eligible=None, placebo=None):
             continue
         if placebo is not None:
             if day in placebo:
-                d = placebo[day]
-                pos = {'d': d, 'n': n, 'units': [o], 'stop': o - d * 2 * n, 'sys': 1, 'ts': ts}
+                d, sys_ = placebo[day]          # the real trade's direction AND system (its 10- / 20-day exit)
+                pos = {'d': d, 'n': n, 'units': [o], 'stop': o - d * 2 * n, 'sys': sys_, 'ts': ts}
             continue
         hi20, lo20 = max(x[2] for x in d1[i - 20:i]), min(x[3] for x in d1[i - 20:i])
         hi55, lo55 = max(x[2] for x in d1[i - 55:i]), min(x[3] for x in d1[i - 55:i])
@@ -84,7 +84,7 @@ def trades(d1, cost=COST, eligible=None, placebo=None):
 
 
 def boot_mean(rows, n=2000, seed=7):
-    """90% interval of the mean R, resampling calendar months (trades of one month ride one market)."""
+    """90% interval of the mean R, resampling 30-day blocks since the epoch (trades of one block ride one market)."""
     import numpy as np
     blocks = {}
     for r in rows:
@@ -123,8 +123,8 @@ def main():
     coins = select_coins(archive, start, end, CONFIG.exchange.min_24h_quote_volume_usd)[:args.coins]
     from datetime import datetime, timezone
     hold_ms = int(datetime(hold.year, hold.month, hold.day, tzinfo=timezone.utc).timestamp() * 1000)
+    import zlib
     import numpy as np
-    rnd = np.random.default_rng(11)
     dev, test, pdev, ptest = [], [], [], []
     for key, fut, _spot, days in coins:
         arr = archive.klines_ohlc('futures', fut, '1d', start, end)
@@ -134,9 +134,13 @@ def main():
         for t in real:
             (test if t[0] >= hold_ms else dev).append(t)
         # placebo: as many entries, same directions, on random eligible days of the same coin
-        pool = sorted(eligible)
+        # days a trade can start on (56 days of history), drawn WITHOUT replacement, one per real trade, per-coin seed
+        first = int(d1[56][0] // 86_400_000) if len(d1) > 56 else None
+        pool = [d for d in sorted(eligible) if first is not None and d >= first]
         if pool and real:
-            plac = {pool[int(rnd.integers(len(pool)))]: t[2] for t in real}
+            rnd = np.random.default_rng(zlib.crc32(fut.encode()))
+            days_drawn = rnd.choice(pool, size=min(len(real), len(pool)), replace=False)
+            plac = {int(day): (t[2], t[1]) for day, t in zip(days_drawn, real)}
             for t in trades(d1, eligible=eligible, placebo=plac):
                 (ptest if t[0] >= hold_ms else pdev).append(t)
         print(f"{key}: {len([t for t in dev + test])} trades so far", flush=True)

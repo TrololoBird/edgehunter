@@ -117,8 +117,14 @@ def drift_of(card: Dict, rows: List[Dict]) -> Dict[str, float]:
     return out
 
 
+def set_drift(values: Dict[str, float]):
+    """Replace the drift table in one assignment (the Health line reads it from the loop thread)."""
+    global DRIFT
+    DRIFT = dict(values)
+
+
 def worst_drift() -> Optional[tuple]:
-    if not DRIFT:
+    items = list(DRIFT.items())              # a snapshot: refresh_drift runs in a worker thread
+    if not items:
         return None
-    k = max(DRIFT, key=DRIFT.get)
-    return k, DRIFT[k]
+    return max(items, key=lambda kv: kv[1])
