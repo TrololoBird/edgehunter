@@ -22,3 +22,11 @@ date,script,name,variants,params,window,n,metric,dev,valid,holdout,source,commit
 2026-10-02,research_regimes.py,sticky HMM kappa=50,1,,2026-03-31..2026-09-27,0,mean run (15m candles),9.7,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
 2026-10-02,research_regimes.py,sticky HMM kappa=500,1,,2026-03-31..2026-09-27,0,mean run (15m candles),10.8,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
 2026-10-02,research_regimes.py,sticky HMM kappa=3000,1,,2026-03-31..2026-09-27,0,mean run (15m candles),13,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
+2026-10-02,research_vol.py,ATR14 rv1,1,,2025-04-03..2026-09-30,3518380,QLIKE,182764,,0.450731,research/vol_b1.md,acbf273
+2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv1",1,,2025-04-03..2026-09-30,3518380,QLIKE,165675,,0.42561,research/vol_b1.md,acbf273
+2026-10-02,research_vol.py,HAR-RV rv1,1,,2025-04-03..2026-09-30,3518380,QLIKE,863660,,0.316504,research/vol_b1.md,acbf273
+2026-10-02,research_vol.py,LightGBM rv1,1,,2025-04-03..2026-09-30,3518380,QLIKE,923763,,0.306158,research/vol_b1.md,acbf273
+2026-10-02,research_vol.py,ATR14 rv4,1,,2025-04-03..2026-09-30,3518380,QLIKE,184025,,0.46152,research/vol_b1.md,acbf273
+2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv4",1,,2025-04-03..2026-09-30,3518380,QLIKE,148819,,0.445384,research/vol_b1.md,acbf273
+2026-10-02,research_vol.py,HAR-RV rv4,1,,2025-04-03..2026-09-30,3518380,QLIKE,1.26251e+06,,0.307173,research/vol_b1.md,acbf273
+2026-10-02,research_vol.py,LightGBM rv4,1,,2025-04-03..2026-09-30,3518380,QLIKE,3.5452e+06,,0.273213,research/vol_b1.md,acbf273
