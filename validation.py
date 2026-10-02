@@ -206,7 +206,7 @@ def record_trial(script: str, name: str, params: str = '', window: str = '', n: 
     """Appends one tried variant (or a grid of `variants`) to research/trials.csv: the n_trials of the DSR."""
     new = not os.path.exists(TRIALS_PATH)
     os.makedirs(os.path.dirname(TRIALS_PATH), exist_ok=True)
-    fmt = lambda v: '' if v is None or (isinstance(v, float) and math.isnan(v)) else f"{v:.6g}"  # noqa: E731
+    fmt = lambda v: '' if v is None or math.isnan(v) else f"{v:.6g}"  # noqa: E731
     with open(TRIALS_PATH, 'a', newline='', encoding='utf-8') as fh:
         w = csv.writer(fh)
         if new:
