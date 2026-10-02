@@ -14,7 +14,7 @@ method's OWN rule, simplified (the live card adds map targets and the measured p
 - PUMP TOP: the climax candle, entry on the first 5m close below the previous 5m low within 1h (the 5m shift), stop
   above the pump high, target the 0.5 retracement, 12h max.
 Costs: the round-trip fee + 5 bps slippage each way. Placebo: the same trade (direction, stop / target distance in %,
-holding limit) at a random minute of the same coin within +-7 days. Only days the coin passed the volume floor.
+holding limit) at the same time of day on a random other day within +-7 days. Only days the coin passed the volume floor.
 
     python research_classic.py --months 18 --end 2026-09-30 --holdout 6 --workers 4
 """
@@ -93,7 +93,8 @@ def replay_coin(job: tuple) -> List[Dict]:
                'r': r if unit == 'R' else ret * 100, 'pl_r': None}
         # placebo: same distances in %, same holding time, random minute within +-7 days
         for _ in range(10):
-            t = t_entry + rng.uniform(-7, 7) * DAY_MS
+            # same time of day, another day within +-7: a session-bound entry is compared with its own hour
+            t = t_entry + int(rng.choice([d for d in range(-7, 8) if d])) * DAY_MS
             j0 = int(np.searchsorted(ts, t))
             if 0 < j0 < len(fut) - 1 and int(ts[j0] // DAY_MS) in days_ok:
                 pe = fut[j0, 1]

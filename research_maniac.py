@@ -82,15 +82,9 @@ def replay_coin(job: tuple):
     oi_hour_ts = np.asarray([t for t, _ in oi_hour]) if len(oi_hour) else np.empty(0)
     oi5 = [(int(t), float(v)) for t, v in zip(oi_ts, oi_v) if v]
     ENGINES.pop(key, None)
-    rng = random.Random(hash(key) & 0xffffffff)
 
-    def placebo(entered_ms):
-        for _ in range(10):
-            t = entered_ms + rng.uniform(-7, 7) * 86_400_000
-            t = t // MINUTE_MS * MINUTE_MS
-            if m_ts[0] + 3 * 86_400_000 < t < m_ts[-1] - 3 * 86_400_000:
-                return t
-        return None
+    from research_cards import make_placebo
+    placebo = make_placebo(m_ts, key)            # same time of day, another day within +-7 (session-matched)
 
     out: List[Dict] = []
     busy: Dict[str, float] = {}

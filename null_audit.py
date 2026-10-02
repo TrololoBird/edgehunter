@@ -8,6 +8,7 @@ broken (look-ahead, leakage, a cost or label bug), whatever it reports on the re
   aligned with each other and the volatility of the week is kept, but structure longer than an hour (trends, levels,
   sweeps of yesterday's high) is random. research_cards / research_classic are replayed in-process on a few coins.
   Expected: gross R ~ 0, net R ~ minus the cost, nothing beats its placebo.
+  Daily files (Connors' RSI(2)) get their days permuted inside 28-day blocks the same way.
 - `ml`: ml_eval's walk-forward + CPCV on the pretraining rows with the labels shuffled within each week. Expected:
   AUC ~ 0.5, log-loss skill <= 0, PBO ~ 0.5, the top 20% not better than all rows.
 
@@ -60,13 +61,39 @@ def shuffle_hours(arr: np.ndarray, seed: int = 20261002) -> np.ndarray:
     return out                                   # timestamps stay in order: the shuffled minutes take them
 
 
+def shuffle_days(arr: np.ndarray, seed: int = 20261002) -> np.ndarray:
+    """Daily klines [ts, o, h, l, c, qv] with the days permuted inside 28-day blocks, prices re-chained."""
+    if len(arr) < 2:
+        return arr
+    block = (arr[:, 0] // (28 * 86_400_000)).astype(np.int64)
+    prev_c = np.r_[arr[0, 1], arr[:-1, 4]]
+    gap, rel = arr[:, 1] / prev_c, arr[:, 2:5] / arr[:, 1:2]
+    idx = np.concatenate([np.flatnonzero(block == b)[np.random.default_rng(seed + int(b)).permutation(
+        int((block == b).sum()))] for b in np.unique(block)])
+    out = arr.copy()
+    price = arr[0, 1]
+    for i, j in enumerate(idx):
+        price = price * (gap[j] if i else 1.0)
+        out[i, 1] = price
+        out[i, 2:5] = price * rel[j]
+        price = out[i, 4]
+    out[:, 5:] = arr[idx, 5:]
+    return out
+
+
 def patch_archive():
     import history
     real = history.Archive.klines_1m
+    real_ohlc = history.Archive.klines_ohlc
 
     def klines_1m(self, market, symbol, start, end):
         return shuffle_hours(real(self, market, symbol, start, end))
+
+    def klines_ohlc(self, market, symbol, interval, start, end):
+        arr = real_ohlc(self, market, symbol, interval, start, end)
+        return shuffle_days(arr) if interval == '1d' else arr    # RSI(2) / Turtles read daily files directly
     history.Archive.klines_1m = klines_1m
+    history.Archive.klines_ohlc = klines_ohlc
 
 
 def run_archive(args) -> str:
