@@ -85,6 +85,15 @@ class _FrameLookup:
         return part
 
 
+def _rr_text(lv: Dict) -> str:
+    """R:R for a log line: to TP1 and blended, or 'none' (the Turtles have no target: rr_tp1 None crashed the entry's
+    output and its demo order, live AAVE 2026-10-02 04:33)."""
+    if lv.get('rr_tp1') is None:
+        return 'none (trailing exit)'
+    blend = lv.get('rr_blend')
+    return f"{lv['rr_tp1']:.1f}" + (f" (blended {blend:.1f})" if blend is not None else '')
+
+
 class Scanner:
     """
     Orchestration:
@@ -1503,7 +1512,7 @@ class Scanner:
             if event == 'ENTRY' and s.levels:
                 lv = s.levels
                 text = (f"entry {lv['entry']:.6g} | SL {lv['sl']:.6g} | TP {lv['tp1']:.6g} / {lv['tp2']:.6g} / "
-                        f"{lv['tp3']:.6g} | R:R {lv['rr_tp1']:.1f}{' (LOW RR)' if lv.get('low_rr') else ''}")
+                        f"{lv['tp3']:.6g} | R:R {_rr_text(lv)}{' (LOW RR)' if lv.get('low_rr') else ''}")
                 confirms = [f"{'+' if confirm.positive(v) else '-'}{k}" for k, v in (s.confirms or {}).items()
                             if v is not None and v != confirm.NA]
                 if confirms:
@@ -1528,4 +1537,4 @@ class Scanner:
             lv = t.levels
             logger.info(f"ENTRY {t.symbol} {t.group_key} entry {lv['entry']:.6g} SL {lv['sl']:.6g} ({lv.get('sl_src')}) "
                         f"TP1 {lv['tp1']:.6g} ({lv.get('tp1_src')}) TP2 {lv['tp2']:.6g} TP3 {lv['tp3']:.6g} "
-                        f"R:R {lv['rr_tp1']:.1f} | confirms {t.confirms}")
+                        f"R:R {_rr_text(lv)} | confirms {t.confirms}")

@@ -292,3 +292,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   waiting ones expire at a start; card rows carry the card's own `logic_version`) - closing every trade at each
   version bump left the demo with almost no finished trades. `deploy/` holds the VPS setup (systemd unit, install
   script, README in Russian): Railway / Render do not fit (US servers - Binance answers 451; ephemeral disk; ~0.5 GB).
+- eng-44: the entry log / notification crashed on a target-less (Turtle) entry (`rr_tp1` None formatted as a number:
+  the scan stopped before the demo order - AAVE 04:33); the cost guard is risk >= 3x the execution cost (5x vetoed
+  ordinary 2% stops); the `vsa` confirmation reads only the extreme's 5m bar and the three after it (positive on 13 of
+  16 entries before).

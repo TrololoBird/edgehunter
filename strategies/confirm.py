@@ -144,5 +144,8 @@ def evaluate(strategy: str, direction: int, minutes: Sequence[Sequence[float]],
     from strategies import vsa
     bars = resample([c for c in minutes if c[0] >= until_ms - 3 * HOUR_MS and c[0] < until_ms], 5)
     anchor = extreme_ms if extreme_ms is not None else since_ms
-    out['vsa'] = vsa.confirm(bars, anchor // (5 * MINUTE_MS) * (5 * MINUTE_MS), direction)
+    # the VSA sign must be the extreme's own reading (its 5m bar and the three after it): anywhere since the setup it
+    # was positive on 13 of 16 entries (no supply is a common bar) and made the confirmation minimum meaningless
+    first = anchor // (5 * MINUTE_MS) * (5 * MINUTE_MS)
+    out['vsa'] = vsa.confirm([b for b in bars if b[0] < first + 4 * 5 * MINUTE_MS], first, direction)
     return out

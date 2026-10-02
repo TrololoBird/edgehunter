@@ -109,7 +109,8 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
       entry at all (price discovery - the owner's rule);
     - the R:R that decides is the BLENDED one of the actual exit (a third at each target; a missing level slot exits
       at the last level);
-    - risk must be >= 5x the execution cost (else the costs, not the trade, decide);
+    - risk must be >= 3x the execution cost (the costs are inside R:R already; this only keeps them below a third of
+      the risk - 5x vetoed ordinary 2% stops on thinner coins: TIA, CRV, INJ, 2026-10-02);
     - with a journal-measured p(TP1 before the stop) for the strategy (>= 30 replays) the entry must have a positive
       expectancy p x R:R1 - (1 - p); else the method's minimum R:R (Strategy.min_rr, else the global one).
     """
@@ -149,8 +150,8 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     if last_real is None and not any(real):
         reason = 'no level target'
     blended = sum(b for b in blend if b is not None) / 3 if any(b is not None for b in blend) else None
-    if risk < 5 * fee:
-        reason = reason or 'costs >= 1/5 of the risk'
+    if risk < 3 * fee:
+        reason = reason or 'costs >= 1/3 of the risk'
     hit = HIT_RATE.get(plan.get('strategy'))
     if reason is None:
         if hit and real[0]:
