@@ -137,7 +137,7 @@ def probabilistic_sharpe(returns: Sequence[float], benchmark_sr: float = 0.0) ->
     r = np.asarray(returns, dtype=float)
     r = r[~np.isnan(r)]
     n = len(r)
-    if n < 3 or r.std(ddof=1) == 0:
+    if n < 3 or not r.std(ddof=1) > 1e-15:
         return float('nan')
     sr = r.mean() / r.std(ddof=1)
     z = (r - r.mean()) / r.std(ddof=0)
