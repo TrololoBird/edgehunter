@@ -80,6 +80,7 @@ class DemoExecutor:
         Returns (BingX symbol, scale) or (None, reason).
         """
         ex = await self._exchange()
+        self._quote = None
         base, rest = symbol.split('/', 1)
         bare = base[4:] if base.startswith('1000') else base
         candidates = [(symbol, 1.0), (f"{bare}/{rest}", 1e-3 if bare != base else 1.0),
@@ -89,8 +90,10 @@ class DemoExecutor:
             if name in seen or name not in ex.markets:
                 continue
             seen.add(name)
-            last = (await ex.fetch_ticker(name)).get('last')
+            ticker = await ex.fetch_ticker(name)
+            last = ticker.get('last')
             if last and abs(last / (price * scale) - 1) <= 0.02:
+                self._quote = ticker
                 return name, scale
         reason = f"BingX price {last} vs {price:.6g}" if seen else 'not listed on BingX'
         return None, reason
@@ -132,7 +135,8 @@ class DemoExecutor:
     async def _open(self, card_id: str, s) -> None:
         cfg = CONFIG.executor
         d = s.direction
-        symbol, scale = await self._market_of(s.symbol, s.levels['entry'])
+        binance_now = float(s.last_price or s.levels['entry'])
+        symbol, scale = await self._market_of(s.symbol, binance_now)
         if symbol is None:
             # recorded, so the demo / journal comparison knows which entries could not be traded (live GRAM)
             logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {scale}")
@@ -140,9 +144,42 @@ class DemoExecutor:
                           'direction': d, 'opened_ms': int(time.time() * 1000), 'error': str(scale)[:300],
                           'closed_ms': int(time.time() * 1000), 'close_reason': 'NO_MARKET'})
             return
-        # prices in BingX's units (a 1000x contract quotes 1000x the price); risk in USD is the same
-        lv = {k: (v * scale if isinstance(v, (int, float)) and k in ('entry', 'sl', 'tp1', 'tp2', 'tp3') else v)
+        # The trade is on BingX, the plan was drawn on Binance: every level is carried over by the CURRENT ratio of the
+        # two prices (the contract scale x the basis between the venues) - a stop / take-profit at Binance's number
+        # sits off by the basis on BingX, and a zone Binance touched may not be touched there (eng-45)
+        quote = getattr(self, '_quote', None) or {}
+        bx_last = float(quote.get('last') or binance_now * scale)
+        ratio = bx_last / binance_now
+        basis = ratio / scale - 1
+        lv = {k: (v * ratio if isinstance(v, (int, float)) and k in ('entry', 'sl', 'tp1', 'tp2', 'tp3') else v)
               for k, v in s.levels.items()}
+        # the fill is BingX's own ask (a long) / bid (a short): the trade is judged at that price, not at the plan's
+        fill_est = float((quote.get('ask') if d > 0 else quote.get('bid')) or bx_last)
+        reject = None
+        if d * (fill_est - lv['sl']) <= 0:
+            reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"
+        elif d * (lv['tp1'] - fill_est) <= 0 and s.levels.get('rr_tp1') is not None:
+            reject = f"BingX {fill_est:.6g} already beyond TP1 {lv['tp1']:.6g}"
+        elif s.levels.get('rr_tp1') is not None:
+            from strategies.geometry import cost_of
+            fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'))
+            risk = abs(fill_est - lv['sl'])
+            rrs = [(d * (lv[f'tp{k}'] - fill_est) - fee) / (risk + fee) for k in (1, 2, 3)]
+            blend = sum(rrs) / 3
+            need = (s.plan or {}).get('min_rr')
+            need = CONFIG.levels.min_rr_tp1 if need is None else need
+            plan_blend = s.levels.get('rr_blend')
+            # the plan passed its R:R on Binance; on BingX it must still pass it (a worse price by the basis / the
+            # spread / the move since the trigger)
+            if plan_blend is not None and blend < need:
+                reject = f"blended R:R {blend:.2f} at BingX {fill_est:.6g} < {need:g} (Binance plan {plan_blend:.2f})"
+        if reject:
+            logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {reject} (basis {basis:+.3%})")
+            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                          'direction': d, 'opened_ms': int(time.time() * 1000), 'error': f"{reject}; basis {basis:+.3%}",
+                          'closed_ms': int(time.time() * 1000), 'close_reason': 'PRICE_GAP'})
+            return
+        scale = ratio                      # every later conversion (pyramid / averaging stops) uses the same ratio
         ex = await self._exchange()
         balance = min(await self._balance(), cfg.account_usd)
         stop_dist = abs(lv['entry'] - lv['sl'])
@@ -196,6 +233,7 @@ class DemoExecutor:
                  'sl': lv['sl'], 'tp1': lv['tp1'], 'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * stop_dist}
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, scale          # in memory only (the pyramid's unit, BingX's price scale)
+        self._set_basis(trade['id'], basis)
         self.open[card_id] = trade
         logger.info(f"Demo ENTRY {symbol} {s.group_key} {'long' if d > 0 else 'short'} {qty} @ {fill:.6g}, "
                     f"SL {lv['sl']:.6g}, risk ${trade['risk_usd']:.2f}")
@@ -342,6 +380,15 @@ class DemoExecutor:
                         import ccxt
                         transient = isinstance(e, (ccxt.NetworkError, ccxt.ExchangeNotAvailable)) or '109400' in str(e)
                         logger.warning(f"Demo reconcile {trade['symbol']}: {e!r}", exc_info=not transient)
+
+    def _set_basis(self, trade_id: int, basis: float) -> None:
+        """BingX vs Binance at the entry (journaled: the venue gap the demo trades through)."""
+        with sqlite3.connect(self.db_path) as c:
+            try:
+                c.execute("ALTER TABLE demo_trades ADD COLUMN basis REAL")
+            except sqlite3.OperationalError:
+                pass
+            c.execute("UPDATE demo_trades SET basis = ? WHERE id = ?", (basis, trade_id))
 
     def _insert(self, row: Dict) -> int:
         cols = [k for k in row if k != 'id']

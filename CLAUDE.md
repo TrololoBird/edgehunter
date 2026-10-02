@@ -296,3 +296,8 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   the scan stopped before the demo order - AAVE 04:33); the cost guard is risk >= 3x the execution cost (5x vetoed
   ordinary 2% stops); the `vsa` confirmation reads only the extreme's 5m bar and the three after it (positive on 13 of
   16 entries before).
+- eng-45 (execution on BingX, the owner's main venue): the demo carries every level of the Binance plan to BingX by
+  the CURRENT price ratio (the contract scale x the basis between the venues), judges the entry at BingX's own ask
+  (long) / bid (short) - skipped `PRICE_GAP` when that price is beyond the stop, beyond TP1, or the blended R:R there
+  falls below the method's minimum - and journals the basis (`demo_trades.basis`). Measured 2026-10-02 on VST: basis
+  -0.14% .. +0.09%, but the demo's spread reached 3.3% (1000PEPE) / ~0.4% (ALICE, MEGA).
