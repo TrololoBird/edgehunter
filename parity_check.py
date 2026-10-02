@@ -41,7 +41,8 @@ def main():
     hi = int(datetime(end.year, end.month, end.day, tzinfo=timezone.utc).timestamp() * 1000) + 86_400_000
     con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     cols = [r[1] for r in con.execute('PRAGMA table_info(signals)')]
-    feat_cols = [c for c in FEATURE_KEYS if c in cols]
+    # identifiers are the journal's own column names, validated: no SQL is built from anything else
+    feat_cols = [c for c in FEATURE_KEYS if c in cols and c.isidentifier()]
     live = pl.read_database(
         f"SELECT ts_ms, symbol, group_key, {', '.join(feat_cols)} FROM signals "
         f"WHERE ts_ms >= ? AND ts_ms < ? AND kind IN ('setup', 'structured')", con,

@@ -19,7 +19,7 @@ def run_dir(script: str, *key_parts) -> str:
     from config import CONFIG
     # the code that produces the rows: a research-script or strategy edit without a logic_version bump must not reuse
     # stale per-coin results
-    src = hashlib.sha1()
+    src = hashlib.blake2b(digest_size=16)
     for f in sorted(glob.glob(os.path.join(_ROOT, 'strategies', '*.py')) +
                     [os.path.join(_ROOT, n) for n in (f"research_{script}.py", 'research_cards.py', 'levels.py',
                                                       'zones.py', 'pierce.py', 'indicators.py', 'scorer.py')]):
@@ -28,14 +28,14 @@ def run_dir(script: str, *key_parts) -> str:
                 src.update(fh.read())
     tag = '|'.join(map(str, key_parts + (CONFIG.journal.logic_version, os.environ.get('PIERCE_MODEL', ''),
                                          os.environ.get('RESEARCH_ENTRY', ''), src.hexdigest())))
-    d = os.path.join(CACHE_ROOT, f"{script}_{hashlib.sha1(tag.encode()).hexdigest()[:10]}")
+    d = os.path.join(CACHE_ROOT, f"{script}_{hashlib.blake2b(digest_size=16, data=tag.encode()).hexdigest()[:10]}")
     os.makedirs(d, exist_ok=True)
     return d
 
 
 def _path(d: str, coin: str) -> str:
     # the file name is a hash: a coin name comes from the archive's listing (external data), never part of a path
-    return os.path.join(d, hashlib.sha1(coin.encode()).hexdigest()[:16] + '.json')
+    return os.path.join(d, hashlib.blake2b(digest_size=16, data=coin.encode()).hexdigest()[:16] + '.json')
 
 
 def _clean(x):
