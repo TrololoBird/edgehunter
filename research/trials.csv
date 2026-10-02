@@ -22,11 +22,17 @@ date,script,name,variants,params,window,n,metric,dev,valid,holdout,source,commit
 2026-10-02,research_regimes.py,sticky HMM kappa=50,1,,2026-03-31..2026-09-27,0,mean run (15m candles),9.7,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
 2026-10-02,research_regimes.py,sticky HMM kappa=500,1,,2026-03-31..2026-09-27,0,mean run (15m candles),10.8,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
 2026-10-02,research_regimes.py,sticky HMM kappa=3000,1,,2026-03-31..2026-09-27,0,mean run (15m candles),13,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
-2026-10-02,research_vol.py,ATR14 rv1,1,,2025-04-03..2026-09-30,3518380,QLIKE,182764,,0.450731,research/vol_b1.md,acbf273
-2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv1",1,,2025-04-03..2026-09-30,3518380,QLIKE,165675,,0.42561,research/vol_b1.md,acbf273
-2026-10-02,research_vol.py,HAR-RV rv1,1,,2025-04-03..2026-09-30,3518380,QLIKE,863660,,0.316504,research/vol_b1.md,acbf273
-2026-10-02,research_vol.py,LightGBM rv1,1,,2025-04-03..2026-09-30,3518380,QLIKE,923763,,0.306158,research/vol_b1.md,acbf273
-2026-10-02,research_vol.py,ATR14 rv4,1,,2025-04-03..2026-09-30,3518380,QLIKE,184025,,0.46152,research/vol_b1.md,acbf273
-2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv4",1,,2025-04-03..2026-09-30,3518380,QLIKE,148819,,0.445384,research/vol_b1.md,acbf273
-2026-10-02,research_vol.py,HAR-RV rv4,1,,2025-04-03..2026-09-30,3518380,QLIKE,1.26251e+06,,0.307173,research/vol_b1.md,acbf273
-2026-10-02,research_vol.py,LightGBM rv4,1,,2025-04-03..2026-09-30,3518380,QLIKE,3.5452e+06,,0.273213,research/vol_b1.md,acbf273
+2026-10-02,research_vol.py,ATR14 rv1,1,,2025-04-03..2026-09-30,3484816,QLIKE,13609,,0.351102,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv1",1,,2025-04-03..2026-09-30,3484816,QLIKE,11279.9,,0.335865,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,HAR-RV rv1,1,,2025-04-03..2026-09-30,3484816,QLIKE,265620,,0.296299,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,LightGBM rv1,1,,2025-04-03..2026-09-30,3484816,QLIKE,177.074,,0.27469,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,ATR14 rv4,1,,2025-04-03..2026-09-30,3490274,QLIKE,5931.94,,0.323893,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv4",1,,2025-04-03..2026-09-30,3490274,QLIKE,4245.7,,0.326814,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,HAR-RV rv4,1,,2025-04-03..2026-09-30,3490274,QLIKE,200368,,0.269318,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,LightGBM rv4,1,,2025-04-03..2026-09-30,3490274,QLIKE,1066.97,,0.268348,research/vol_b1.md,eb2c305
+2026-10-02,research_xsec.py,s_gbm long-short dev,1,,2025-04-03..2026-09-30,2135,net ret / 4h,-0.00136106,,,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_gbm long-short HOLDOUT,1,,2025-04-03..2026-09-30,917,net ret / 4h,,,-0.00342328,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_mom long-short dev,1,,2025-04-03..2026-09-30,2135,net ret / 4h,-0.0039953,,,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_mom long-short HOLDOUT,1,,2025-04-03..2026-09-30,917,net ret / 4h,,,-0.00377085,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_rev long-short dev,1,,2025-04-03..2026-09-30,2135,net ret / 4h,-0.00278224,,,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_rev long-short HOLDOUT,1,,2025-04-03..2026-09-30,917,net ret / 4h,,,-0.0033345,research/xsec_g.md,eb2c305

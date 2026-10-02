@@ -6,23 +6,23 @@
 
 | Forecast | QLIKE dev | QLIKE HOLDOUT | MSE log HOLDOUT | vs HAR QLIKE HOLDOUT | DM p |
 |---|---:|---:|---:|---:|---:|
-| ATR14 | 182764.4869 | 0.4507 | 0.575 | +42.4% | 3.98e-26 |
-| max(ATR14, ATR 1h) | 165675.4460 | 0.4256 | 0.574 | +34.5% | 1.12e-20 |
-| HAR-RV | 863659.9284 | 0.3165 | 0.427 | +0.0% | — |
-| LightGBM | 923762.7695 | 0.3062 | 0.382 | -3.3% | 0.0482 |
+| ATR14 | 13608.9929 | 0.3511 | 0.493 | +18.5% | 1.33e-28 |
+| max(ATR14, ATR 1h) | 11279.9437 | 0.3359 | 0.482 | +13.4% | 3.91e-14 |
+| HAR-RV | 265619.8433 | 0.2963 | 0.387 | +0.0% | — |
+| LightGBM | 177.0744 | 0.2747 | 0.363 | -7.3% | 1.04e-07 |
 
-LightGBM top features (splits): hcos 1090, btc_lrv_7d 1029, btc_lrv_1h 1007, btc_lrv_24h 952, btc_lrv_4h 946, hsin 928, mkt_lrv_1h 901, lrv_1h 758
+LightGBM top features (splits): hcos 1027, hsin 816, btc_lrv_7d 794, btc_lrv_24h 793, btc_lrv_1h 765, btc_lrv_4h 755, mkt_lrv_1h 747, lrv_24h 529
 
 ## Horizon 4h
 
 | Forecast | QLIKE dev | QLIKE HOLDOUT | MSE log HOLDOUT | vs HAR QLIKE HOLDOUT | DM p |
 |---|---:|---:|---:|---:|---:|
-| ATR14 | 184024.6089 | 0.4615 | 0.654 | +50.2% | 8.37e-42 |
-| max(ATR14, ATR 1h) | 148818.8233 | 0.4454 | 0.688 | +45.0% | 3.43e-46 |
-| HAR-RV | 1262505.7525 | 0.3072 | 0.455 | +0.0% | — |
-| LightGBM | 3545202.3573 | 0.2732 | 0.372 | -11.1% | 2.79e-05 |
+| ATR14 | 5931.9400 | 0.3239 | 0.479 | +20.3% | 1.25e-27 |
+| max(ATR14, ATR 1h) | 4245.6990 | 0.3268 | 0.499 | +21.3% | 8.09e-27 |
+| HAR-RV | 200368.1009 | 0.2693 | 0.364 | +0.0% | — |
+| LightGBM | 1066.9652 | 0.2683 | 0.364 | -0.4% | 0.905 |
 
-LightGBM top features (splits): btc_lrv_7d 1235, btc_lrv_24h 875, hcos 753, hsin 723, btc_lrv_4h 666, lrv_1h 568, lrv_7d 465, mkt_lrv_1h 446
+LightGBM top features (splits): btc_lrv_7d 1245, btc_lrv_24h 963, hcos 745, hsin 723, btc_lrv_4h 697, lrv_7d 506, mkt_lrv_1h 436, lrv_24h 428
 
 ## Decision (pre-registered rule)
 
