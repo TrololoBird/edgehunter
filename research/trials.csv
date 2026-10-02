@@ -19,3 +19,6 @@ date,script,name,variants,params,window,n,metric,dev,valid,holdout,source,commit
 2026-09-30,research_maniac.py,maniac systems,8,,6m,,R,,,,research/maniac (pre eng-43),
 2026-10-01,research_turtle.py,Turtles 60 coins,2,S1/S2,2023-10..2026-09,2366,R,0.507,,-0.147,research/turtle_60.md,
 2026-10-02,research_turtle.py,Turtles all coins,2,S1/S2,2023-10..2026-09,8627,R,-0.24,,-0.20,research/turtle.md,
+2026-10-02,research_regimes.py,sticky HMM kappa=50,1,,2026-03-31..2026-09-27,0,mean run (15m candles),9.7,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
+2026-10-02,research_regimes.py,sticky HMM kappa=500,1,,2026-03-31..2026-09-27,0,mean run (15m candles),10.8,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
+2026-10-02,research_regimes.py,sticky HMM kappa=3000,1,,2026-03-31..2026-09-27,0,mean run (15m candles),13,,,research/regimes_c3.md (eng-7 pkl),da5d1b5

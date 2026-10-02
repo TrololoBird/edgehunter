@@ -232,6 +232,100 @@ class AnomalyModel:
 
 # ====================================================================== 2. regimes
 
+class StickyHMM:
+    """
+    Gaussian hidden Markov model with diagonal covariances and a sticky transition prior (ML_PLAN.md C1): a regime
+    persists, so the self-transition gets `kappa` pseudo-counts per state on every M-step (Fox et al.'s sticky HMM,
+    MAP version). Labels come from the FORWARD (filtered) probabilities only - P(state_t | x_1..x_t) - never from
+    smoothing or Viterbi, which would use the future. Initialised from a GaussianMixture.
+    """
+
+    def __init__(self, k: int, kappa: float, iters: int = 30, seed: int = 0):
+        self.k, self.kappa, self.iters, self.seed = k, kappa, iters, seed
+        self.means_ = self.vars_ = self.trans_ = self.start_ = None
+
+    def _loglik(self, Z: np.ndarray) -> np.ndarray:
+        v = self.vars_[None, :, :]
+        return -0.5 * (np.log(2 * np.pi * v) + (Z[:, None, :] - self.means_[None, :, :]) ** 2 / v).sum(axis=2)
+
+    def _forward(self, ll: np.ndarray):
+        n = len(ll)
+        alpha = np.empty((n, self.k))
+        scale = np.empty(n)
+        e = np.exp(ll - ll.max(axis=1, keepdims=True))
+        a = self.start_ * e[0]
+        scale[0] = a.sum()
+        alpha[0] = a / scale[0]
+        for t in range(1, n):
+            a = (alpha[t - 1] @ self.trans_) * e[t]
+            scale[t] = a.sum() or 1e-300
+            alpha[t] = a / scale[t]
+        return alpha, scale, e
+
+    def fit(self, Z: np.ndarray) -> 'StickyHMM':
+        from sklearn.mixture import GaussianMixture
+        gm = GaussianMixture(n_components=self.k, covariance_type='diag', random_state=self.seed,
+                             reg_covar=1e-3).fit(Z)
+        self.means_, self.vars_ = gm.means_.copy(), gm.covariances_.copy() + 1e-3
+        self.start_ = np.full(self.k, 1.0 / self.k)
+        self.trans_ = np.full((self.k, self.k), 0.05 / max(1, self.k - 1))
+        np.fill_diagonal(self.trans_, 0.95)
+        n = len(Z)
+        for _ in range(self.iters):
+            ll = self._loglik(Z)
+            alpha, scale, e = self._forward(ll)
+            beta = np.empty((n, self.k))
+            beta[-1] = 1.0
+            for t in range(n - 2, -1, -1):
+                beta[t] = (self.trans_ @ (e[t + 1] * beta[t + 1])) / scale[t + 1]
+            gamma = alpha * beta
+            gamma /= gamma.sum(axis=1, keepdims=True)
+            # expected transitions: sum_t alpha_t (x) A (x) e_{t+1} beta_{t+1} / c_{t+1} (each term sums to 1)
+            xi = self.trans_ * (alpha[:-1].T @ (e[1:] * beta[1:] / scale[1:, None]))
+            xi += np.eye(self.k) * self.kappa                          # the sticky prior
+            self.trans_ = xi / xi.sum(axis=1, keepdims=True)
+            w = gamma.sum(axis=0) + 1e-9
+            self.means_ = (gamma.T @ Z) / w[:, None]
+            self.vars_ = (gamma.T @ Z ** 2) / w[:, None] - self.means_ ** 2 + 1e-3
+            self.start_ = gamma[0] + 1e-6
+            self.start_ /= self.start_.sum()
+        return self
+
+    def filtered(self, Z: np.ndarray) -> np.ndarray:
+        """P(state_t | x_1..x_t) for every t (causal)."""
+        alpha, _, _ = self._forward(self._loglik(Z))
+        return alpha
+
+    def predict(self, Z: np.ndarray) -> np.ndarray:
+        return self.filtered(Z).argmax(axis=1)
+
+
+def stable_names(new_means: np.ndarray, old_means: Optional[np.ndarray], old_names: Dict[int, str],
+                 name_of) -> Dict[int, str]:
+    """
+    Regime names that survive a refit (ML_PLAN.md C2): the new states are matched to the previous model's states by
+    their standardized centers (Hungarian assignment) and inherit their names; unmatched states are named from their
+    centers. Duplicate names get a numeric suffix (two states never share one name).
+    """
+    names: Dict[int, str] = {}
+    if old_means is not None and len(old_names) and old_means.shape[1] == new_means.shape[1]:
+        from scipy.optimize import linear_sum_assignment
+        cost = ((new_means[:, None, :] - old_means[None, :, :]) ** 2).sum(axis=2)
+        rows, cols = linear_sum_assignment(cost)
+        for r, c in zip(rows, cols):
+            if int(c) in old_names:
+                names[int(r)] = old_names[int(c)]
+    for i in range(len(new_means)):
+        if i not in names:
+            names[i] = name_of(new_means[i])
+    seen: Dict[str, int] = {}
+    for i in sorted(names):
+        base = names[i].split('#')[0]
+        seen[base] = seen.get(base, 0) + 1
+        names[i] = base if seen[base] == 1 else f"{base}#{seen[base]}"
+    return names
+
+
 class RegimeModel:
     FEATURES = ('btc_ret_1h', 'btc_vol', 'breadth_1h', 'funding', 'oi_change_1h', 'rvol')
 
@@ -282,13 +376,27 @@ class RegimeModel:
     def _label_newest(self) -> Optional[str]:
         """The current model's regime of the newest candle (between the daily refits)."""
         ts = max(self.history)
+        if isinstance(self.model, StickyHMM):
+            # the filtered state needs the sequence: the last day of candles (the filter forgets older ones)
+            stamps = sorted(self.history)[-96:]
+            z = self.scaler.transform(np.asarray([self.history[t] for t in stamps]))
+            self.current, self.current_ts = self.names[int(self.model.predict(z)[-1])], ts
+            return self.current
         z = self.scaler.transform(np.asarray([self.history[ts]]))
         self.current, self.current_ts = self.names[int(self.model.predict(z)[0])], ts
         return self.current
 
-    def refit(self) -> Optional[str]:
-        """Fit the mixture on the whole history (pretrained months + live candles) and label its newest candle."""
+    @staticmethod
+    def _new_model(k: int):
+        """CONFIG.ml.regime_model: 'gmm' (GaussianMixture, each candle on its own) or 'hmm' (StickyHMM)."""
+        cfg = CONFIG.ml
+        if cfg.regime_model == 'hmm':
+            return StickyHMM(k, cfg.regime_sticky_kappa)
         from sklearn.mixture import GaussianMixture
+        return GaussianMixture(n_components=k, covariance_type='full', random_state=0, reg_covar=1e-3)
+
+    def refit(self) -> Optional[str]:
+        """Fit the model on the whole history (pretrained months + live candles) and label its newest candle."""
         from sklearn.preprocessing import StandardScaler
         cfg = CONFIG.ml
         stamps = sorted(self.history)
@@ -296,9 +404,16 @@ class RegimeModel:
         scaler = StandardScaler().fit(X)
         Z = scaler.transform(X)
         k = min(cfg.regime_clusters, max(2, len(X) // 25))
-        model = GaussianMixture(n_components=k, covariance_type='full', random_state=0, reg_covar=1e-3).fit(Z)
-        names = {i: self._name(c) for i, c in enumerate(model.means_)}
-        label = int(model.predict(Z[-1:])[0])
+        # the HMM's EM walks the sequence in Python: fit on the recent candles only (it runs in a thread next to
+        # the event loop, and pure-Python loops take the GIL from it)
+        fit_z = Z[-cfg.regime_hmm_fit_candles:] if cfg.regime_model == 'hmm' else Z
+        model = self._new_model(k).fit(fit_z)
+        old = self.model.means_ if self.model is not None and self.scaler is not None else None
+        if old is not None:
+            # the previous centers in the NEW scaler's units (the scaler moves with the history)
+            old = scaler.transform(self.scaler.inverse_transform(old))
+        names = stable_names(model.means_, old, self.names, self._name)
+        label = int(model.predict(Z[-96:])[-1]) if cfg.regime_model == 'hmm' else int(model.predict(Z[-1:])[0])
         self.model, self.scaler, self.names = model, scaler, names
         self.current, self.current_ts = names[label], stamps[-1]
         self.fitted_at = time.time()
@@ -309,11 +424,11 @@ class RegimeModel:
         Regime of every history candle as known at its time: each step is labelled by a mixture fitted only on the
         candles before it (pretraining must not label the past with a model that has seen the future).
         """
-        from sklearn.mixture import GaussianMixture
         from sklearn.preprocessing import StandardScaler
         cfg = CONFIG.ml
         stamps = sorted(self.history)
         out: Dict[int, str] = {}
+        prev_means, prev_scaler, prev_names = None, None, {}
         if len(stamps) < cfg.regime_min_history:
             return out
         X = np.asarray([self.history[t] for t in stamps])
@@ -325,10 +440,17 @@ class RegimeModel:
             if len(past) >= cfg.regime_min_history:
                 scaler = StandardScaler().fit(past)
                 k = min(cfg.regime_clusters, max(2, len(past) // 25))
-                model = GaussianMixture(n_components=k, covariance_type='full', random_state=0,
-                                        reg_covar=1e-3).fit(scaler.transform(past))
-                names = {n: self._name(c) for n, c in enumerate(model.means_)}
-                for t, k2 in zip(stamps[i:j], model.predict(scaler.transform(X[i:j]))):
+                zp = scaler.transform(past)
+                model = self._new_model(k).fit(zp[-cfg.regime_hmm_fit_candles:] if cfg.regime_model == 'hmm' else zp)
+                old = scaler.transform(prev_scaler.inverse_transform(prev_means)) if prev_means is not None else None
+                names = stable_names(model.means_, old, prev_names, self._name)
+                prev_means, prev_scaler, prev_names = model.means_, scaler, names
+                if isinstance(model, StickyHMM):
+                    # filter through the past into the step: the state at t uses x_1..x_t only
+                    lab = model.predict(scaler.transform(X[max(0, i - 96):j]))[-(j - i):]
+                else:
+                    lab = model.predict(scaler.transform(X[i:j]))
+                for t, k2 in zip(stamps[i:j], lab):
                     out[t] = names[int(k2)]
             i = j
         return out
@@ -339,7 +461,7 @@ class RegimeModel:
             return {}
         stamps = sorted(self.history)
         labels = self.model.predict(self.scaler.transform(np.asarray([self.history[t] for t in stamps])))
-        return {t: self.names[int(k)] for t, k in zip(stamps, labels)}
+        return {t: self.names[int(k)] for t, k in zip(stamps, labels)}     # HMM: filtered (causal) states
 
     @staticmethod
     def _name(center: np.ndarray) -> str:
