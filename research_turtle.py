@@ -85,14 +85,14 @@ def trades(d1, cost=COST, eligible=None, placebo=None):
 
 def boot_mean(rows, n=2000, seed=7):
     """90% interval of the mean R, resampling calendar months (trades of one month ride one market)."""
-    import random
+    import numpy as np
     blocks = {}
     for r in rows:
         blocks.setdefault(int(r[0] // (30 * 86_400_000)), []).append(r[3])
     keys = list(blocks)
-    rnd, means = random.Random(seed), []
+    rnd, means = np.random.default_rng(seed), []
     for _ in range(n):
-        pick = [x for k in (rnd.choice(keys) for _ in keys) for x in blocks[k]]
+        pick = [x for k in rnd.choice(len(keys), len(keys)) for x in blocks[keys[k]]]
         means.append(statistics.fmean(pick))
     means.sort()
     return means[int(0.05 * n)], means[int(0.95 * n)]
@@ -123,8 +123,8 @@ def main():
     coins = select_coins(archive, start, end, CONFIG.exchange.min_24h_quote_volume_usd)[:args.coins]
     from datetime import datetime, timezone
     hold_ms = int(datetime(hold.year, hold.month, hold.day, tzinfo=timezone.utc).timestamp() * 1000)
-    import random
-    rnd = random.Random(11)
+    import numpy as np
+    rnd = np.random.default_rng(11)
     dev, test, pdev, ptest = [], [], [], []
     for key, fut, _spot, days in coins:
         arr = archive.klines_ohlc('futures', fut, '1d', start, end)
@@ -136,7 +136,7 @@ def main():
         # placebo: as many entries, same directions, on random eligible days of the same coin
         pool = sorted(eligible)
         if pool and real:
-            plac = {rnd.choice(pool): t[2] for t in real}
+            plac = {pool[int(rnd.integers(len(pool)))]: t[2] for t in real}
             for t in trades(d1, eligible=eligible, placebo=plac):
                 (ptest if t[0] >= hold_ms else pdev).append(t)
         print(f"{key}: {len([t for t in dev + test])} trades so far", flush=True)

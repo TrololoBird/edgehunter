@@ -21,7 +21,8 @@ holding limit) at a random minute of the same coin within +-7 days. Only days th
 import argparse
 import logging
 import os
-import random
+import math
+import zlib
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
@@ -72,7 +73,7 @@ def replay_coin(job: tuple) -> List[Dict]:
     if len(fut) < 1440 * 20:
         return []
     ts = fut[:, 0]
-    rng = random.Random(hash(key) & 0xffffffff)
+    rng = np.random.default_rng(zlib.crc32(key.encode()))   # reproducible across runs (hash() is salted)
     out: List[Dict] = []
 
     def trade(setup, d, t_entry, stop, target, end_ms, unit='R'):
@@ -200,7 +201,7 @@ def replay_coin(job: tuple) -> List[Dict]:
 def report(df: pl.DataFrame, start: date, end: date, split: date) -> str:
     from research_cards import H4_MS, _block_ci
     split_ms = int(datetime(split.year, split.month, split.day, tzinfo=timezone.utc).timestamp() * 1000)
-    f = lambda v: '—' if v is None or v != v else f"{v:+.3f}"  # noqa: E731
+    f = lambda v: '—' if v is None or math.isnan(v) else f"{v:+.3f}"  # noqa: E731
     lines = ['# Classic / pump strategies on the archive (own exits, placebo, holdout)', '',
              f"Window {start} .. {end}, holdout from {split}; {df['symbol'].n_unique() if df.height else 0} coins. "
              f"R net of {COST:.2%} per round trip (RSI2: net return in %). [90%] = block bootstrap over 4h x direction.",
@@ -218,7 +219,7 @@ def report(df: pl.DataFrame, start: date, end: date, split: date) -> str:
                     pb = (pe['ts_ms'].to_numpy() // H4_MS) * 2 + (pe['direction'].to_numpy() > 0)
                     dm, dlo, dhi, _, _ = _block_ci((pe['r'] - pe['pl_r']).to_numpy().astype(float), pb)
             win = float((e['r'] > 0).mean()) if e.height else float('nan')
-            lines.append(f"| {setup} | {part} | {e.height} | {'—' if win != win else f'{win:.0%}'} | "
+            lines.append(f"| {setup} | {part} | {e.height} | {'—' if math.isnan(win) else f'{win:.0%}'} | "
                          f"{f(mean)} [{f(lo)}..{f(hi)}] | {f(e['pl_r'].mean() if e.height else None)} | "
                          f"{f(dm)} [{f(dlo)}..{f(dhi)}] |")
     lines += ['', 'WORKS only if mean > 0 in both parts, the holdout interval > 0 and system − placebo > 0 in the holdout.']
