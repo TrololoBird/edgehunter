@@ -159,6 +159,7 @@ def replay_coin(job: tuple) -> List[Dict]:
     ret15 = np.zeros(len(fut))
     ret15[15:] = closes[15:] / closes[:-15] - 1
     r15q = np.array([c[4] / c[1] - 1 for c in c15])
+    c15_open = np.asarray([c[0] for c in c15])
     cand = np.nonzero(ret15 >= CONFIG.strategies.pump_start_min_pct)[0]
     next_ok = 0
     for i in cand:
@@ -167,7 +168,7 @@ def replay_coin(job: tuple) -> List[Dict]:
         win = minutes[i - 1455:i + 1].tolist()
         avg_min = float(np.mean(fut[i - 1455:i - 15, 6])) or 0.0
         m = {'rvol_1m': fut[i, 6] / avg_min if avg_min else 0, 'oi_change_5m': 1.0, 'spot_cvd_5m': 1.0}
-        qi = int((ts[i] - c15[0][0]) // QUARTER_MS)
+        qi = int(np.searchsorted(c15_open, ts[i], side='right')) - 1   # list position (_bucket drops empty buckets)
         vol = float(np.std(r15q[max(0, qi - 384):qi])) if qi > 50 else None
         ev = pump_start(win, m, vol, int(ts[i]) + MINUTE_MS)
         if not ev:

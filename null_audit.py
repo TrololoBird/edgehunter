@@ -8,7 +8,8 @@ broken (look-ahead, leakage, a cost or label bug), whatever it reports on the re
   aligned with each other and the volatility of the week is kept, but structure longer than an hour (trends, levels,
   sweeps of yesterday's high) is random. research_cards / research_classic are replayed in-process on a few coins.
   Expected: gross R ~ 0, net R ~ minus the cost, nothing beats its placebo.
-  Daily files (Connors' RSI(2)) get their days permuted inside 28-day blocks the same way.
+  Daily candles (Connors' RSI(2)) are aggregated from the shuffled minutes inside the window (signal and traded
+  prices from one world), days permuted in 28-day blocks before it (the SMA200 warm-up).
 - `ml`: ml_eval's walk-forward + CPCV on the pretraining rows with the labels shuffled within each week. Expected:
   AUC ~ 0.5, log-loss skill <= 0, PBO ~ 0.5, the top 20% not better than all rows.
 
@@ -29,36 +30,48 @@ REPORT_PATH = os.path.join(_ROOT, 'research', 'null_audit.md')
 
 
 def shuffle_hours(arr: np.ndarray, seed: int = 20261002) -> np.ndarray:
-    """1m klines [ts, o, h, l, c, v, qv, tbq] with whole hours permuted inside each week, prices re-chained."""
+    """
+    1m klines [ts, o, h, l, c, v, qv, tbq] with whole hours permuted inside each week, prices re-chained. The
+    permutation is over the week's 168 canonical hour SLOTS, seeded by the week number, so every symbol and market
+    gets the same mapping even when it lacks some hours (a listing week, a data gap); each minute keeps its offset
+    within its hour (subagent review 2026-10-02: a per-symbol permutation of the hours present de-aligned coins).
+    """
     if len(arr) < 2:
         return arr
     ts = arr[:, 0]
-    hour = (ts // HOUR_MS).astype(np.int64)
     week = (ts // WEEK_MS).astype(np.int64)
+    slot = ((ts % WEEK_MS) // HOUR_MS).astype(np.int64)             # 0..167 within the week
     prev_c = np.r_[arr[0, 1], arr[:-1, 4]]
     gap = arr[:, 1] / prev_c                     # open vs the previous close
     rel = arr[:, 2:5] / arr[:, 1:2]              # high / low / close vs the minute's own open
-    order = []
+    new_ts = np.empty(len(arr))
     for w in np.unique(week):
-        hours = np.unique(hour[week == w])
-        # one permutation per week number: identical for every symbol and market (coins stay aligned)
-        perm = np.random.default_rng(seed + int(w)).permutation(len(hours))
-        for h in hours[perm]:
-            order.append(np.flatnonzero(hour == h))
-    idx = np.concatenate(order)
-    out = arr.copy()
+        m = week == w
+        perm = np.random.default_rng(seed + int(w)).permutation(168)   # source slot -> destination slot
+        new_ts[m] = w * WEEK_MS + perm[slot[m]] * HOUR_MS + ts[m] % HOUR_MS
+    idx = np.argsort(new_ts, kind='stable')
+    out = np.empty_like(arr)
+    out[:, 0] = new_ts[idx]
     g, r = gap[idx], rel[idx]
-    g[0] = 1.0
     opens = np.empty(len(idx))
     price = arr[0, 1]
     for i in range(len(idx)):                    # re-chain: open_i = close_{i-1} x gap_i
-        price = price * g[i]
+        price = price * (g[i] if i else 1.0)
         opens[i] = price
         price = price * r[i, 2]
     out[:, 1] = opens
     out[:, 2:5] = opens[:, None] * r
     out[:, 5:] = arr[idx, 5:]                    # volume and taker flow travel with their minute
-    return out                                   # timestamps stay in order: the shuffled minutes take them
+    return out
+
+
+def daily_from_minutes(m: np.ndarray) -> np.ndarray:
+    """Daily [ts, o, h, l, c, qv] aggregated from 1m klines (the null world's daily candles = its own minutes)."""
+    day = (m[:, 0] // 86_400_000).astype(np.int64)
+    idx = np.flatnonzero(np.r_[True, day[1:] != day[:-1]])
+    last = np.r_[idx[1:] - 1, len(m) - 1]
+    return np.column_stack([day[idx] * 86_400_000.0, m[idx, 1], np.maximum.reduceat(m[:, 2], idx),
+                            np.minimum.reduceat(m[:, 3], idx), m[last, 4], np.add.reduceat(m[:, 6], idx)])
 
 
 def shuffle_days(arr: np.ndarray, seed: int = 20261002) -> np.ndarray:
@@ -91,7 +104,18 @@ def patch_archive():
 
     def klines_ohlc(self, market, symbol, interval, start, end):
         arr = real_ohlc(self, market, symbol, interval, start, end)
-        return shuffle_days(arr) if interval == '1d' else arr    # RSI(2) / Turtles read daily files directly
+        if interval != '1d':
+            return arr
+        # daily candles of the null world: inside the 1m window they are aggregated from the SHUFFLED minutes (the
+        # signal and the traded prices are one world); before it (the SMA200 warm-up) the days are permuted
+        minutes = klines_1m(self, market, symbol, start, end)
+        if not len(minutes):
+            return shuffle_days(arr)
+        d = daily_from_minutes(minutes)
+        before = shuffle_days(arr[arr[:, 0] < d[0, 0]]) if len(arr) else arr
+        if len(before):
+            d[:, 1:5] *= before[-1, 4] / d[0, 1]       # continue the warm-up's last close
+        return np.vstack([before, d]) if len(before) else d
     history.Archive.klines_1m = klines_1m
     history.Archive.klines_ohlc = klines_ohlc
 

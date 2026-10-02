@@ -146,6 +146,11 @@ def evaluate(df: pl.DataFrame) -> str:
         'ts', *[pl.col(c).alias(f"btc_{c}") for c in HAR])
     mkt = df.group_by('ts').agg(pl.col('lrv_1h').median().alias('mkt_lrv_1h'))
     df = df.join(btc, on='ts', how='left').join(mkt, on='ts', how='left').sort('ts')
+    # an hour without a price change has log RV = log(1e-12) = -27.6: OLS extrapolated it to forecasts of 1e-12
+    # (subagent review: 99.9999% of the dev QLIKE sum from ~100 such rows). Lags are floored at log(1e-9)
+    floor = math.log(1e-9)
+    df = df.with_columns([pl.col(c).clip(lower_bound=floor) for c in df.columns
+                          if c.startswith(('lrv_', 'btc_lrv_', 'mkt_lrv_')) or c in ('atr14', 'atr_max')])
     feats = HAR + ['atr14', 'atr_max', 'ar_1h', 'ar_4h', 'ar_24h', 'lvol', 'd_hi', 'd_lo', 'hsin', 'hcos', 'weekend',
                    'btc_lrv_1h', 'btc_lrv_4h', 'btc_lrv_24h', 'btc_lrv_7d', 'mkt_lrv_1h']
     ts = df['ts'].to_numpy()
@@ -182,8 +187,8 @@ def evaluate(df: pl.DataFrame) -> str:
         preds['LightGBM'] = model.predict(X)
         rv = np.exp(y)
         lines += [f"## Horizon {'1h' if target == 'rv1' else '4h'}", '',
-                  '| Forecast | QLIKE dev | QLIKE HOLDOUT | MSE log HOLDOUT | vs HAR QLIKE HOLDOUT | DM p |',
-                  '|---|---:|---:|---:|---:|---:|']
+                  '| Forecast | QLIKE dev (in-sample) | median QLIKE dev | QLIKE HOLDOUT | MSE log HOLDOUT | vs HAR QLIKE HOLDOUT | DM p |',
+                  '|---|---:|---:|---:|---:|---:|---:|']
         losses = {}
         for name, p in preds.items():
             s2 = np.nanvar((y - p)[dev & ok])
@@ -198,7 +203,7 @@ def evaluate(df: pl.DataFrame) -> str:
             d = pl.DataFrame({'h': hour_ix[hold & ok], 'd': (L - losses['HAR-RV'])[hold & ok]}).group_by('h').agg(
                 pl.col('d').mean()).sort('h')['d'].to_numpy()
             p = _dm(d) if name != 'HAR-RV' else float('nan')
-            lines.append(f"| {name} | {qd:.4f} | {qh:.4f} | {mse:.3f} | {qh / har_h - 1:+.1%} | "
+            lines.append(f"| {name} | {qd:.4f} | {np.nanmedian(L[dev & ok]):.4f} | {qh:.4f} | {mse:.3f} | {qh / har_h - 1:+.1%} | "
                          f"{'—' if math.isnan(p) else f'{p:.3g}'} |")
             verdict[(target, name)] = (qh, p)
             validation.record_trial('research_vol.py', f"{name} {target}", window=f"{START}..{END}", n=int(ok.sum()),
