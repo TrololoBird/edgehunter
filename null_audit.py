@@ -114,7 +114,18 @@ def run_archive(args) -> str:
         classic += research_classic.replay_coin((k, f, s, start.isoformat(), end.isoformat(), days))
     lines = [f"# Null-world audit ({len(coins)} coins, {start} .. {end}, hours shuffled within each week)", '',
              'Expected on a world without structure: gross R ~ 0, net R ~ -cost, no setup above its placebo.', '',
-             '## research_cards (card replay)', '', '| Setup | entries | mean R TP1 | placebo |', '|---|---:|---:|---:|']
+             '## research_cards (card replay)', '', '| Setup | entries | mean R TP1 | placebo | system - placebo [90%] |',
+             '|---|---:|---:|---:|---|']
+    from validation import block_stats
+
+    def diff_ci(g, r_col, p_col):
+        g = g.filter(pl.col(r_col).is_not_null() & pl.col(p_col).is_not_null())
+        if g.height < 10:
+            return '—'
+        d = (g[r_col] - g[p_col]).to_numpy().astype(float)
+        mean, lo, hi, _, _ = block_stats(d, g['ts_ms'].to_numpy() // (4 * HOUR_MS))
+        return f"{mean:+.3f} [{lo:+.3f}..{hi:+.3f}]"
+
     if cards:
         df = pl.DataFrame(cards, infer_schema_length=None)
         e = df.filter((pl.col('status') == 'ENTRY') & pl.col('r_tp1').is_not_null())
@@ -122,13 +133,16 @@ def run_archive(args) -> str:
             g = e.filter(pl.col('setup') == setup)
             pl_mean = g['pl_r_tp1'].mean() if 'pl_r_tp1' in g.columns else None
             lines.append(f"| {setup} | {g.height} | {g['r_tp1'].mean():+.3f} | "
-                         f"{'—' if pl_mean is None else f'{pl_mean:+.3f}'} |")
-    lines += ['', '## research_classic', '', '| Setup | trades | mean | placebo |', '|---|---:|---:|---:|']
+                         f"{'—' if pl_mean is None else f'{pl_mean:+.3f}'} | "
+                         f"{diff_ci(g, 'r_tp1', 'pl_r_tp1') if 'pl_r_tp1' in g.columns else '—'} |")
+    lines += ['', '## research_classic', '', '| Setup | trades | mean | placebo | system - placebo [90%] |',
+              '|---|---:|---:|---:|---|']
     if classic:
         df = pl.DataFrame(classic, infer_schema_length=None)
         for setup in sorted(df['setup'].unique().to_list()):
             g = df.filter(pl.col('setup') == setup)
-            lines.append(f"| {setup} | {g.height} | {g['r'].mean():+.3f} | {g['pl_r'].mean():+.3f} |")
+            lines.append(f"| {setup} | {g.height} | {g['r'].mean():+.3f} | {g['pl_r'].mean():+.3f} | "
+                         f"{diff_ci(g, 'r', 'pl_r')} |")
     return '\n'.join(lines) + '\n'
 
 
