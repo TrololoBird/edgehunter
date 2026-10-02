@@ -7,6 +7,7 @@ while [ ! -f logs/queue3.done ]; do sleep 300; done
 W=3
 .venv/bin/python research_vol.py --workers $W --window 2023-10-01,2024-10-01,2025-03-31 > logs/q4_vol.log 2>&1
 .venv/bin/python research_xsec.py --workers $W --window 2023-10-01,2024-10-01,2025-03-31 > logs/q4_xsec.log 2>&1
+cp research/classic_eng43.md research/classic_eng43_main.md 2>/dev/null
 .venv/bin/python research_classic.py --months 18 --end 2025-03-31 --holdout 6 --workers $W > logs/q4_classic.log 2>&1
 cp research/classic_eng43.md research/classic_eng43_2023.md 2>/dev/null
 .venv/bin/python research_cards.py --months 18 --end 2025-03-31 --holdout 6 --what all --workers 4 \
