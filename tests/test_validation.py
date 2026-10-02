@@ -14,7 +14,7 @@ def test_norm_ppf_known_values():
 def test_expected_max_sharpe_matches_bailey():
     # Bailey & Lopez de Prado (2014): 10 trials of unit-variance Sharpe ratios -> E[max] ~ 1.575
     assert abs(v.expected_max_sharpe(10, 1.0) - 1.575) < 0.01
-    assert v.expected_max_sharpe(1, 1.0) == 0.0
+    assert math.isclose(v.expected_max_sharpe(1, 1.0), 0.0)
     assert v.expected_max_sharpe(1000, 1.0) > v.expected_max_sharpe(100, 1.0)
 
 
@@ -33,7 +33,7 @@ def test_bh_known():
     assert math.isnan(q[3])
     # m = 4: 0.01 -> 0.04; 0.03 -> min(0.06, 0.0533); 0.04 -> 0.04 x 4 / 3
     assert abs(q[0] - 0.04) < 1e-12 and abs(q[2] - 0.04 * 4 / 3) < 1e-12 and abs(q[1] - 0.04 * 4 / 3) < 1e-12
-    assert q[4] == 0.5
+    assert math.isclose(q[4], 0.5)
 
 
 def test_cpcv_purges_overlapping_labels():

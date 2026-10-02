@@ -11,5 +11,5 @@ while pgrep -f "python research_cards.py" >/dev/null; do sleep 60; done
 .venv/bin/python pretrain.py --months 18 --workers 4 --rate 40000000 > logs/pretrain.log 2>&1
 .venv/bin/python ml_eval.py > research/ml_eval_eng43.txt 2>&1
 .venv/bin/python null_audit.py ml > logs/null_ml.log 2>&1
-.venv/bin/python research_regimes.py > logs/regimes.log 2>&1
+.venv/bin/python research_regimes.py --source current > logs/regimes.log 2>&1
 echo done > logs/queue.done

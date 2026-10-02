@@ -182,7 +182,8 @@ def pbo(perf: np.ndarray, n_splits: int = 16) -> Tuple[float, np.ndarray]:
         is_perf = np.nanmean(perf[is_idx], axis=0)
         oos_perf = np.nanmean(perf[oos_idx], axis=0)
         best = int(np.nanargmax(is_perf))
-        rank = (np.sum(oos_perf < oos_perf[best]) + 0.5 * (np.sum(oos_perf == oos_perf[best]) - 1)) / (m - 1)
+        ties = np.sum(np.isclose(oos_perf, oos_perf[best], rtol=0.0, atol=1e-15)) - 1
+        rank = (np.sum(oos_perf < oos_perf[best]) + 0.5 * ties) / (m - 1)
         w = min(max(rank, 1e-6), 1 - 1e-6)
         logits.append(math.log(w / (1 - w)))
     logits = np.asarray(logits)

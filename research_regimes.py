@@ -5,7 +5,7 @@ walk-forward (weekly refits on the past only, RegimeModel.labels_walk_forward). 
 length (candles), switches per day, the distinct names used, how often a name's center moved after a refit, and -
 when pretrain_rows exist - the 4h Edge of directional rows by regime (a context is only useful if it separates).
 
-    python research_regimes.py [--pkl pretrained.pkl]
+    python research_regimes.py [--source current|eng7]   (pretrained.pkl / models/pretrained.eng-7.pkl)
 """
 import argparse
 import os
@@ -17,6 +17,8 @@ import numpy as np
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 REPORT_PATH = os.path.join(_ROOT, 'research', 'regimes_c3.md')
+SOURCES = {'current': os.path.join(_ROOT, 'pretrained.pkl'),
+           'eng7': os.path.join(_ROOT, 'models', 'pretrained.eng-7.pkl')}
 
 
 def runs(labels):
@@ -33,8 +35,10 @@ def runs(labels):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--pkl', default=os.path.join(_ROOT, 'pretrained.pkl'))
+    # a fixed choice of our own files: a pickle is never loaded from a path given on the command line
+    ap.add_argument('--source', choices=tuple(SOURCES), default='current')
     args = ap.parse_args()
+    args.pkl = SOURCES[args.source]
     import config
     import ml
     with open(args.pkl, 'rb') as fh:
