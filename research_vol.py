@@ -159,8 +159,11 @@ def evaluate(df: pl.DataFrame) -> str:
     import validation
     verdict = {}
     for target in ('rv1', 'rv4'):
-        y = np.log(df[target].to_numpy().astype(float) + 1e-12)
-        ok = np.isfinite(y)
+        raw = df[target].to_numpy().astype(float)
+        y = np.log(raw + 1e-12)
+        # hours without a single price change (untraded minutes, a halted coin) have RV 0: QLIKE explodes on them
+        # (the first full run: dev QLIKE ~1e5-1e6); they are no forecasting problem and are excluded
+        ok = np.isfinite(y) & (raw > 1e-10)
         preds = {}
 
         def ols(cols):
