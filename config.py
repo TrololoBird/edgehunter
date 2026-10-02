@@ -334,6 +334,11 @@ class MLConfig:
     regime_history: int = 20_000
     regime_min_history: int = 60
     regime_refit_sec: int = 86_400
+    # 'gmm' (GaussianMixture, each candle alone) or 'hmm' (ml.StickyHMM: filtered states with a sticky transition
+    # prior, ML_PLAN.md C1). gmm until research_regimes.py shows the HMM is steadier without a worse split
+    regime_model: str = 'gmm'
+    regime_sticky_kappa: float = 500.0    # self-transition pseudo-counts per state per EM step (50 / 500 / 3000 tried: runs 9.7 / 10.8 / 13.0 candles vs GMM 7.2)
+    regime_hmm_fit_candles: int = 6000    # ~62 days of 15m candles: the HMM's EM is a Python loop over the sequence
     # Mute a setup in the current regime once its journal Edge there has >= regime_veto_min_n results and the
     # upper end of its 90% interval is below 0 (journaled with vetoed='regime')
     regime_veto: bool = True

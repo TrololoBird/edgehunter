@@ -1,0 +1,38 @@
+date,script,name,variants,params,window,n,metric,dev,valid,holdout,source,commit
+2026-09-28,research_cards.py,SWEEP/BREAKOUT card classes,4,sweep low/high breakout up/down,6m 360 coins,,R,,,,skill research-findings; research/cards_6m.md,
+2026-09-28,research_cards.py,phase setups,7,BEAR C/D BULL A/B/E/F IMPULSE UP/DOWN,6m,,R,,,,research/phases_6m.md; cards_holdout.md,
+2026-09-28,research_cards.py,MTF geometry fix replay,9,all classes 12m,12m 401 coins,,R,,,,research/cards_fixed_12m.md,
+2026-09-28,research_exits.py,exit rules,12,"breakeven/trailing/time/fixed targets/wider stops; best holdout -0.07% a trade (60-min exit, limit entry)",12m,332000,R,,,,research/exits_12m.md,
+2026-09-28,research_meta.py,meta-labeling,4,LightGBM/logistic x TP1/netR targets,12m,,R,,,-0.10,research/meta_12m.md,
+2026-09-28,research_cards.py,maker entry,1,RESEARCH_ENTRY=maker,12m,,R,,,-0.205,research/maker_12m.md,
+2026-09-28,research_trend_daily.py,daily TSMOM/XSMOM/EMA,3,,36m,,ret,,,,research/trend_daily.md,
+2026-09-28,research_htf.py,HTF strategies x phase x direction,18,triple screen/turtle/bollinger x 3 phases x 2 dirs,2023-10..2026-08,,R,,,,research/htf_phases.md,
+2026-09-28,research_ensemble.py,ensemble Donchian + phase gate,2,,2021-2026,,ret,,,,research/ensemble_trend.md,
+2026-09-28,research_adaptive.py,per-coin/per-vol stop-target tuning,2,,12m,,R,-0.049,,,research/adaptive_params.md,
+2026-09-28,research_positioning.py,positioning deciles,7,funding level/z ls global/top z OI price,2025-10..2026-08,,ret,,,,research/positioning.md,
+2026-09-28,research_funding.py,funding short holdout,1,<= -0.0317%,2024-01..2025-09,,ret,,,-1.10,research/funding_holdout.md,
+2026-09-28,research_eqh.py,EQH/EQL rejections,24,trend x touches x stop x target,2023-10..2026-08,,hit,,,,research/eqh.md,
+2026-09-28,research_channels.py,regression channels,8,4h/1d x long/short x targets,,,R,,,,research/channels.md,
+2026-09-28,research_level_triggers.py,scenario-card triggers,4,,2024-01..2026-08,772000,hit,,,,research/level_triggers.md,
+2026-09-28,train_scenarios.py,scenario probability models,2,LightGBM +-macro,2023-10..2026-08,396000,brier,,,,research/scenario_model.md,
+2026-09-28,research_pumps.py,pump/dump rules,4,fade pump/buy pullback/short dump bounce/fade dump,2021-04..2026-08,,R,,,,research/pumps.md; pumps_holdout.md,
+2026-09-30,research_maniac.py,maniac systems,8,,6m,,R,,,,research/maniac (pre eng-43),
+2026-10-01,research_turtle.py,Turtles 60 coins,2,S1/S2,2023-10..2026-09,2366,R,0.507,,-0.147,research/turtle_60.md,
+2026-10-02,research_turtle.py,Turtles all coins,2,S1/S2,2023-10..2026-09,8627,R,-0.24,,-0.20,research/turtle.md,
+2026-10-02,research_regimes.py,sticky HMM kappa=50,1,,2026-03-31..2026-09-27,0,mean run (15m candles),9.7,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
+2026-10-02,research_regimes.py,sticky HMM kappa=500,1,,2026-03-31..2026-09-27,0,mean run (15m candles),10.8,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
+2026-10-02,research_regimes.py,sticky HMM kappa=3000,1,,2026-03-31..2026-09-27,0,mean run (15m candles),13,,,research/regimes_c3.md (eng-7 pkl),da5d1b5
+2026-10-02,research_vol.py,ATR14 rv1,1,,2025-04-03..2026-09-30,3484816,QLIKE,13609,,0.351102,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv1",1,,2025-04-03..2026-09-30,3484816,QLIKE,11279.9,,0.335865,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,HAR-RV rv1,1,,2025-04-03..2026-09-30,3484816,QLIKE,265620,,0.296299,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,LightGBM rv1,1,,2025-04-03..2026-09-30,3484816,QLIKE,177.074,,0.27469,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,ATR14 rv4,1,,2025-04-03..2026-09-30,3490274,QLIKE,5931.94,,0.323893,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv4",1,,2025-04-03..2026-09-30,3490274,QLIKE,4245.7,,0.326814,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,HAR-RV rv4,1,,2025-04-03..2026-09-30,3490274,QLIKE,200368,,0.269318,research/vol_b1.md,eb2c305
+2026-10-02,research_vol.py,LightGBM rv4,1,,2025-04-03..2026-09-30,3490274,QLIKE,1066.97,,0.268348,research/vol_b1.md,eb2c305
+2026-10-02,research_xsec.py,s_gbm long-short dev,1,,2025-04-03..2026-09-30,2135,net ret / 4h,-0.00136106,,,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_gbm long-short HOLDOUT,1,,2025-04-03..2026-09-30,917,net ret / 4h,,,-0.00342328,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_mom long-short dev,1,,2025-04-03..2026-09-30,2135,net ret / 4h,-0.0039953,,,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_mom long-short HOLDOUT,1,,2025-04-03..2026-09-30,917,net ret / 4h,,,-0.00377085,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_rev long-short dev,1,,2025-04-03..2026-09-30,2135,net ret / 4h,-0.00278224,,,research/xsec_g.md,eb2c305
+2026-10-02,research_xsec.py,s_rev long-short HOLDOUT,1,,2025-04-03..2026-09-30,917,net ret / 4h,,,-0.0033345,research/xsec_g.md,eb2c305

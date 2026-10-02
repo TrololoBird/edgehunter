@@ -18,7 +18,7 @@ import argparse
 import glob
 import os
 import random
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import polars as pl
@@ -28,38 +28,9 @@ from config import CONFIG
 H4 = 4 * 3_600_000
 HOUR = 3_600_000
 DAY = 86_400_000
-BOOT = 2000
 
 
-def block_stats(values: np.ndarray, blocks: np.ndarray, seed: int = 7) -> Tuple[float, float, float, float, int]:
-    """(mean, lo, hi, two-sided p, number of blocks): 90% interval and p of the mean from a block bootstrap."""
-    order = np.argsort(blocks, kind='stable')
-    v, b = values[order], blocks[order]
-    starts = np.flatnonzero(np.r_[True, b[1:] != b[:-1]])
-    sums = np.add.reduceat(v, starts)
-    counts = np.diff(np.r_[starts, len(v)])
-    k = len(sums)
-    if k < 5:
-        return float(values.mean()) if len(values) else float('nan'), float('nan'), float('nan'), float('nan'), k
-    rng = np.random.default_rng(seed)
-    idx = rng.integers(0, k, size=(BOOT, k))
-    means = sums[idx].sum(axis=1) / counts[idx].sum(axis=1)
-    lo, hi = np.quantile(means, [0.05, 0.95])
-    below = float((means <= 0).mean())
-    p = min(1.0, 2 * min(below, 1 - below) + 1 / BOOT)
-    return float(values.mean()), float(lo), float(hi), p, k
-
-
-def bh(pvalues: List[float]) -> List[float]:
-    """Benjamini-Hochberg q-values (NaN stays NaN)."""
-    idx = sorted((p, i) for i, p in enumerate(pvalues) if p == p)
-    q = [float('nan')] * len(pvalues)
-    running, m = 1.0, len(idx)
-    for rank in range(m, 0, -1):
-        p, i = idx[rank - 1]
-        running = min(running, p * m / rank)
-        q[i] = running
-    return q
+from validation import BOOT, bh, block_stats  # noqa: E402,F401  (moved to validation.py, re-exported)
 
 
 def coin_betas(series_glob: str) -> Dict[Tuple[str, int], float]:

@@ -16,10 +16,14 @@ from config import CONFIG
 from strategies.turtle import n_series
 
 COST = CONFIG.journal.fee_round_trip + 2 * 0.0005
+MIN_N_FRAC = 0.002      # N below 0.2% of the price = a flat, untraded stretch (all-coin run: +-1e9 R outliers)
 
 
-def trades(d1, cost=COST):
-    """Replays the systems over daily candles [ts, o, h, l, c, ...] -> [(entry day ts, system, direction, R, units)]."""
+def trades(d1, cost=COST, eligible=None, placebo=None):
+    """Replays the systems over daily candles [ts, o, h, l, c, ...] -> [(entry day ts, system, direction, R, units)].
+    eligible: epoch days on which the coin passed the universe's volume floor (entries only then; None = every day);
+    placebo: {epoch day: direction} - enter at that day's open instead of on a breakout (same N, stop, pyramid, exit
+    as System 1)."""
     ns = n_series(d1)
     out, pos, last_s1_win = [], None, None
     for i in range(56, len(d1)):
@@ -52,7 +56,13 @@ def trades(d1, cost=COST):
             pos['stop'] = stop
             continue
         n = ns[i - 1]
-        if not n:
+        day = int(ts // 86_400_000)
+        if not n or n < MIN_N_FRAC * d1[i - 1][4] or (eligible is not None and day not in eligible):
+            continue
+        if placebo is not None:
+            if day in placebo:
+                d = placebo[day]
+                pos = {'d': d, 'n': n, 'units': [o], 'stop': o - d * 2 * n, 'sys': 1, 'ts': ts}
             continue
         hi20, lo20 = max(x[2] for x in d1[i - 20:i]), min(x[3] for x in d1[i - 20:i])
         hi55, lo55 = max(x[2] for x in d1[i - 55:i]), min(x[3] for x in d1[i - 55:i])
@@ -73,13 +83,29 @@ def trades(d1, cost=COST):
     return out
 
 
+def boot_mean(rows, n=2000, seed=7):
+    """90% interval of the mean R, resampling calendar months (trades of one month ride one market)."""
+    import numpy as np
+    blocks = {}
+    for r in rows:
+        blocks.setdefault(int(r[0] // (30 * 86_400_000)), []).append(r[3])
+    keys = list(blocks)
+    rnd, means = np.random.default_rng(seed), []
+    for _ in range(n):
+        pick = [x for k in rnd.choice(len(keys), len(keys)) for x in blocks[keys[k]]]
+        means.append(statistics.fmean(pick))
+    means.sort()
+    return means[int(0.05 * n)], means[int(0.95 * n)]
+
+
 def summary(rows):
     if not rows:
         return 'no trades'
     rs = [r[3] for r in rows]
+    lo, hi = boot_mean(rows)
     return (f"{len(rs)} trades, mean {statistics.fmean(rs):+.3f}R, median {statistics.median(rs):+.2f}R, "
             f"win {sum(r > 0 for r in rs) / len(rs):.0%}, avg units {statistics.fmean(r[4] for r in rows):.2f}, "
-            f"total {sum(rs):+.1f}R")
+            f"total {sum(rs):+.1f}R, 90% month-block interval [{lo:+.3f}..{hi:+.3f}]R")
 
 
 def main():
@@ -97,16 +123,27 @@ def main():
     coins = select_coins(archive, start, end, CONFIG.exchange.min_24h_quote_volume_usd)[:args.coins]
     from datetime import datetime, timezone
     hold_ms = int(datetime(hold.year, hold.month, hold.day, tzinfo=timezone.utc).timestamp() * 1000)
-    dev, test = [], []
-    for key, fut, _spot, _days in coins:
+    import numpy as np
+    rnd = np.random.default_rng(11)
+    dev, test, pdev, ptest = [], [], [], []
+    for key, fut, _spot, days in coins:
         arr = archive.klines_ohlc('futures', fut, '1d', start, end)
         d1 = [list(map(float, row)) for row in arr]
-        for t in trades(d1):
+        eligible = set(days)
+        real = trades(d1, eligible=eligible)
+        for t in real:
             (test if t[0] >= hold_ms else dev).append(t)
+        # placebo: as many entries, same directions, on random eligible days of the same coin
+        pool = sorted(eligible)
+        if pool and real:
+            plac = {pool[int(rnd.integers(len(pool)))]: t[2] for t in real}
+            for t in trades(d1, eligible=eligible, placebo=plac):
+                (ptest if t[0] >= hold_ms else pdev).append(t)
         print(f"{key}: {len([t for t in dev + test])} trades so far", flush=True)
     lines = ['# Turtles on the daily archive', '',
-             f"{args.coins} coins, {args.start} .. {args.end}, holdout from {args.holdout}; cost {COST:.2%} per unit", '']
-    for name, rows in (('development', dev), ('holdout', test)):
+             f"{len(coins)} coins (entries only on days a coin passed the volume floor, N >= {MIN_N_FRAC:.1%} of price), {args.start} .. {args.end}, holdout from {args.holdout}; cost {COST:.2%} per unit", '']
+    for name, rows in (('development', dev), ('holdout', test), ('placebo development', pdev),
+                       ('placebo holdout', ptest)):
         lines.append(f"- {name}: {summary(rows)}")
         for sys in (1, 2):
             lines.append(f"  - System {sys}: {summary([r for r in rows if r[1] == sys])}")

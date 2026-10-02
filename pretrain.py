@@ -697,6 +697,21 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
     with open(CONFIG.pretrain.path + '.tmp', 'wb') as fh:
         pickle.dump(state, fh)
     os.replace(CONFIG.pretrain.path + '.tmp', CONFIG.pretrain.path)
+    try:
+        # the model card (ML_PLAN.md H1): window, logic version, the features' reference distributions for drift
+        import model_cards
+        sample = pl.concat([pl.read_parquet(f) for f in sorted(glob.glob(os.path.join(out_dir, '*.parquet')))[-6:]],
+                           how='diagonal_relaxed')
+        feats = [c for c in sample.columns if c not in ('ts_ms', 'symbol', 'kind', 'group_key', 'direction', 'ret_4h',
+                                                         'baseline_4h', 'baseline_mean_4h', 'label', 'p_before')
+                 and sample[c].dtype in (pl.Float64, pl.Float32, pl.Int64, pl.Int32)]
+        refs = {c: r for c in feats if (r := model_cards.reference(sample[c].cast(pl.Float64).to_list()))}
+        model_cards.write_card('p_edge', CONFIG.pretrain.path, f"{start}..{end}",
+                               metrics={'rows': learned, 'drift_resets': success.drifts,
+                                        'online_accuracy': success.accuracy},
+                               features=refs, notes='river logistic P(edge); judge with ml_eval.py (CPCV, PBO, DSR)')
+    except Exception as e:
+        logger.warning(f"pretrain: model card not written ({type(e).__name__} {e})")
     logger.info(f"pretrain: P(edge) learned {learned} rows ({success.drifts} drift resets, accuracy "
                 f"{(success.accuracy or 0):.1%}); saved {CONFIG.pretrain.path} in {time.time() - started:.0f}s")
     for g, (n, e) in sorted(summary.items(), key=lambda kv: -kv[1][0]):

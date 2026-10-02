@@ -74,6 +74,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', default=CONFIG.pretrain.dataset_path)
     parser.add_argument('--folds', type=int, default=5)
+    parser.add_argument('--cpcv-groups', type=int, default=6, help='4. CPCV: time groups (0 = skip)')
+    parser.add_argument('--cpcv-test', type=int, default=2, help='4. CPCV: test groups per split')
+    parser.add_argument('--cpcv-max-rows', type=int, default=400_000, help='4. CPCV: newest rows used (memory / time)')
     args = parser.parse_args()
     import os
     path = os.path.join(args.path, '*.parquet') if os.path.isdir(args.path) else args.path
@@ -179,6 +182,106 @@ def main():
             top = m & (s >= np.quantile(s[m], 0.8))
             print(f"   {g:22} {np.average(edge[m], weights=ww[m]) * 100:+.3f}% -> "
                   f"{np.average(edge[top], weights=ww[top]) * 100:+.3f}%  (n {m.sum()})")
+
+    if args.cpcv_groups:
+        cpcv_report(df, X, y, w, args.cpcv_groups, args.cpcv_test, args.cpcv_max_rows)
+
+
+def _variants():
+    """The model variants judged together (each counts as a trial for the deflated Sharpe / PBO)."""
+    from sklearn.linear_model import LogisticRegression
+    import lightgbm as lgb
+    out = {}
+    for c in (0.01, 0.05, 0.5):
+        out[f'logistic C={c}'] = ('lr', lambda c=c: LogisticRegression(C=c, max_iter=2000))
+    for leaves, mcs in ((7, 200), (15, 500)):
+        out[f'LightGBM leaves={leaves}'] = ('gbm', lambda leaves=leaves, mcs=mcs: lgb.LGBMClassifier(
+            n_estimators=300, learning_rate=0.03, num_leaves=leaves, min_child_samples=mcs, subsample=0.8,
+            subsample_freq=1, colsample_bytree=0.7, reg_lambda=5.0, verbose=-1))
+    return out
+
+
+def cpcv_report(df: pl.DataFrame, X: np.ndarray, y: np.ndarray, w: np.ndarray, n_groups: int, k_test: int,
+                max_rows: int):
+    """
+    4. Combinatorial purged CV (validation.cpcv_splits): the distribution of out-of-sample AUC / log-loss skill /
+    top-20% Edge over all C(N, k) splits instead of one walk-forward number; then the probability of backtest
+    overfitting over the model variants (weekly Edge of each variant's top 20%) and the deflated Sharpe of the best
+    variant with every trial ever made (research/trials.csv) counted.
+    """
+    import validation
+    if len(df) > max_rows:
+        df, X, y, w = df[-max_rows:], X[-max_rows:], y[-max_rows:], w[-max_rows:]
+    ts = df['ts_ms'].to_numpy().astype(float)
+    base_col = 'baseline_mean_4h' if 'baseline_mean_4h' in df.columns else 'baseline_4h'
+    edge = df['direction'].to_numpy() * (df['ret_4h'].to_numpy() - df[base_col].to_numpy())
+    variants = _variants()
+    oos = {name: np.zeros(len(df)) for name in variants}
+    hits = np.zeros(len(df))
+    per_split = {name: [] for name in variants}
+    print(f"\n4. CPCV ({n_groups} groups, {k_test} test; {validation.cpcv_paths(n_groups, k_test)} paths, "
+          f"{len(df)} newest rows)")
+    for train, test, groups in validation.cpcv_splits(ts, ts + H4, n_groups, k_test, embargo=0.01):
+        if len(train) < 500 or len(test) < 100:
+            continue
+        mu = np.nan_to_num(np.nanmean(X[train], axis=0))
+        sd = np.nanstd(X[train], axis=0)
+        sd[~(sd > 0)] = 1.0
+        base = np.average(y[train], weights=w[train])
+        base_ll = _logloss(y[test], np.full(len(test), base), w[test])
+        hits[test] += 1
+        for name, (kind, make) in variants.items():
+            m = make()
+            if kind == 'lr':
+                m.fit(np.nan_to_num((X[train] - mu) / sd), y[train], sample_weight=w[train])
+                p = m.predict_proba(np.nan_to_num((X[test] - mu) / sd))[:, 1]
+            else:
+                m.fit(X[train], y[train], sample_weight=w[train])
+                p = m.predict_proba(X[test])[:, 1]
+            oos[name][test] += p
+            top = p >= np.quantile(p, 0.8)
+            per_split[name].append((_auc(y[test], p), 1 - _logloss(y[test], p, w[test]) / base_ll,
+                                    np.average(edge[test][top], weights=w[test][top]) -
+                                    np.average(edge[test], weights=w[test])))
+        print(f"   split {groups}: train {len(train)}, test {len(test)}")
+    print("   variant                  AUC median [min..max]   log-loss skill median   top-20% Edge - all (median)")
+    for name, rows in per_split.items():
+        if not rows:
+            continue
+        a = np.array(rows)
+        print(f"   {name:24} {np.median(a[:, 0]):.3f} [{a[:, 0].min():.3f}..{a[:, 0].max():.3f}]   "
+              f"{np.median(a[:, 1]):+.3%}   {np.median(a[:, 2]) * 100:+.3f}%")
+    # PBO: weekly Edge of each variant's top 20% (average of its out-of-sample predictions over the splits)
+    seen = hits > 0
+    week = (ts // (7 * 86_400_000)).astype(int)
+    weeks = np.unique(week[seen])
+    names = [n for n in variants if per_split[n]]
+    perf = np.full((len(weeks), len(names) + 1), np.nan)
+    for j, name in enumerate(names):
+        score = np.where(seen, oos[name] / np.maximum(hits, 1), np.nan)
+        for i, wk in enumerate(weeks):
+            m = seen & (week == wk)
+            if m.sum() < 20:
+                continue
+            s = score[m]
+            top = s >= np.quantile(s, 0.8)
+            perf[i, j] = np.average(edge[m][top], weights=w[m][top])
+    for i, wk in enumerate(weeks):
+        m = seen & (week == wk)
+        if m.sum() >= 20:
+            perf[i, -1] = np.average(edge[m], weights=w[m])          # 'all rows': the no-model variant
+    perf = perf[~np.isnan(perf).any(axis=1)]
+    p_bo, _ = validation.pbo(perf, n_splits=min(16, len(perf) - len(perf) % 2))
+    best = int(np.argmax(perf[:, :-1].mean(axis=0))) if len(perf) else 0
+    n_trials = validation.n_trials() + len(names)
+    sr_var = float(np.var(perf.mean(axis=0) / np.maximum(perf.std(axis=0, ddof=1), 1e-12))) if len(perf) > 2 else None
+    dsr = validation.deflated_sharpe(perf[:, best], n_trials, sr_var) if len(perf) > 2 else float('nan')
+    print(f"   PBO over {len(names)} variants + 'all rows' ({len(perf)} weeks): {p_bo:.2f}  "
+          f"(> 0.5: the in-sample winner is worse than the median out of sample)")
+    if len(perf):
+        print(f"   best variant {names[best]}: weekly top-20% Edge {perf[:, best].mean() * 100:+.3f}% vs all rows "
+              f"{perf[:, -1].mean() * 100:+.3f}%; deflated Sharpe {dsr:.2f} with {n_trials} trials counted")
+
 
 
 if __name__ == '__main__':

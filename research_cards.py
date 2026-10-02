@@ -63,13 +63,17 @@ def _oi_change(oi_ts: np.ndarray, oi_v: np.ndarray, since: float, until: float) 
 
 
 def make_placebo(m_ts: np.ndarray, key: str):
-    """A random entry time of the same coin within +-7 days (away from the window's edges): the placebo trade."""
-    import random
-    rng = random.Random(sum(map(ord, key)))
+    """
+    The placebo trade's entry: the SAME time of day on a random other day within +-7 days (away from the window's
+    edges). A uniform random time compared session-bound setups (ORB, Silver Bullet, kill zones) with hours of other
+    volatility - the null-world audit (null_audit.py) showed ORB beating such a placebo on data without structure.
+    """
+    rng = np.random.default_rng(sum(map(ord, key)))
+    shifts = [d for d in range(-7, 8) if d]
 
     def pick(entered_ms: float):
         for _ in range(10):
-            t = (entered_ms + rng.uniform(-7, 7) * 86_400_000) // MINUTE_MS * MINUTE_MS
+            t = (entered_ms + shifts[int(rng.integers(len(shifts)))] * 86_400_000) // MINUTE_MS * MINUTE_MS
             if m_ts[0] + 3 * 86_400_000 < t < m_ts[-1] - 3 * 86_400_000:
                 return t
         return None
