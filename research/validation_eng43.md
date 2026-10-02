@@ -31,7 +31,7 @@ ml_eval. Sources: research/cards_eng43.md, classic_eng43.md, turtle.md, vol_b1.m
 | bollinger: BB M-TOP / W-BOTTOM | 48255 / 15306, 43762 / 12021 | -0.05 / -0.11 | -0.056 [-0.08..-0.03] / -0.111 [-0.15..-0.08] | +0.03 / -0.03 | does not work (significantly negative, q <= 0.004) |
 | cup_handle: CUP HANDLE | 605 / 177 | -0.208 | +0.022 [-0.16..+0.22] | -0.518 [-0.74..-0.29] | does not work (far below placebo) |
 | supply_demand: SD DEMAND / SUPPLY | 60 / 30, 12 / 2 | -0.14 / -1.31 | -0.08 / — | +0.17 (crosses 0) | does not work / too few |
-| trendline: TRENDLINE UP / DOWN | 0 / 0 (687 + 159 cards) | — | — | — | NOT MEASURED: no card ever entered (neither expired nor invalid) - a replay bug to check |
+| trendline: TRENDLINE UP / DOWN | 0 / 0 (687 + 159 cards, all NO_PLAN) | — | — | — | NOT MEASURED - a LIVE signal-logic bug (below) |
 
 Notes
 - Entries are few for the continuation and Wyckoff setups because the archive replay applies the live gates (displacement,
@@ -51,6 +51,17 @@ Notes
 | P(edge) retrain (18 months) + ml_eval | CPCV: AUC 0.539 (LightGBM) / 0.534 (logistic), top-20% Edge +0.047% over all rows, PBO 0.28, deflated Sharpe 0.76 (154 trials) | real but tiny ranking signal, far below the ~0.20% cost: stays SHADOW |
 | Null-world ML audit (labels shuffled) | AUC 0.500-0.503, log-loss skill <= 0, DSR 0.09 | the ML pipeline does not invent signal (passes) |
 | Null-world audit (6 coins) | found the placebo time-of-day bias; 30-coin run queued | pending |
+
+## Live signal-logic bug found (NOT fixed here: the brief forbids signal-logic changes in this session)
+`TrendlineStrategy.plan` (strategies/maniac_strategies.py:161) asks for `'tp': ['map', 1.0]`, but `_confirm_plan` builds the
+plan with `targets=[]`; `geometry.exit_target` reads the map targets from `plan['targets']`, finds none and returns None,
+`system_levels` returns None and the plan is dropped (verified: `exit_target({'tp': ['map', 1.0]}, {'targets': [],
+'target_src': []}, 100.0, 1.0, 1)` -> `(None, '', True)`; all 846 replayed trendline cards are NO_PLAN). Introduced by
+eng-30 (58ad9f7). The live bot shares the code (signal_book -> strategy.plan): no trendline card can have been made since
+eng-30. ORB (strategies/classic_strategies.py:40) uses the same `['map', 1.0]` through `_confirm_plan` and is probably dead
+live too (research_classic replays ORB with its own exits, so the ORB verdict above is unaffected). Minimal fix: fill
+`targets` / `target_src` in `_confirm_plan` with `select_targets(...)` as supply / demand does, then re-run the trendline
+replay.
 
 ## Bugs found and fixed during the validation (all in research code, none in the signal logic)
 research_turtle (illiquid days, N ~ 0: +-1e9 R), placebo time of day (all replay scripts), research_anomaly score sign,
