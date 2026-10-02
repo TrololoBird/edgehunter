@@ -30,12 +30,12 @@ def _ms(d: date) -> int:
 
 
 def coin_rows(job) -> Optional[pl.DataFrame]:
-    key, fut_id, days_ok = job
+    key, fut_id, days_ok, start, end = job        # the window travels with the job (worker processes re-import)
     from history import Archive
     from pretrain import _bucket
     days_ok = set(days_ok)
     arch = Archive(rate_bytes=4e7)
-    m = arch.klines_1m('futures', fut_id, START, END)
+    m = arch.klines_1m('futures', fut_id, start, end)
     if len(m) < 1440 * 30:
         return None
     h = _bucket(m, H_MS)                          # [ts, o, h, l, c, v, qv, tbq] hourly
@@ -50,7 +50,7 @@ def coin_rows(job) -> Optional[pl.DataFrame]:
     HI, LO, QV = np.full(n, np.nan), np.full(n, np.nan), np.zeros(n)
     HI[pos], LO[pos], QV[pos] = hi, lo, qv
     r1 = np.r_[np.nan, np.diff(np.log(C))]
-    fund = arch.funding(fut_id, START, END)
+    fund = arch.funding(fut_id, start, end)
     out = {k: [] for k in ['ts', 'fwd_4h', 'vol24', *FEATS]}
     for i in range(168, n - 4):
         t = t0 + (i + 1) * H_MS                    # the close of hour i = the rebalance time
@@ -155,8 +155,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--limit', type=int, default=0)
+    ap.add_argument('--window', default='', help='START,SPLIT,END (ISO dates): another period, e.g. the one before '
+                    'the main window as an independent check; outputs get the suffix _<START year>')
     ap.add_argument('--from-rows', action='store_true')
     args = ap.parse_args()
+    global START, SPLIT, END, REPORT_PATH, ROWS_PATH
+    if args.window:
+        START, SPLIT, END = (date.fromisoformat(x) for x in args.window.split(','))
+        REPORT_PATH = REPORT_PATH.replace('.md', f'_{START.year}.md')
+        ROWS_PATH = ROWS_PATH.replace('.parquet', f'_{START.year}.parquet')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
     if args.from_rows:
         df = pl.read_parquet(ROWS_PATH)
@@ -168,7 +175,7 @@ def main():
             coins = coins[:args.limit]
         parts, t0 = [], time.time()
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
-            futs = {pool.submit(coin_rows, (k, f, d)): k for k, f, _s, d in coins}
+            futs = {pool.submit(coin_rows, (k, f, d, START, END)): k for k, f, _s, d in coins}
             for i, fut in enumerate(as_completed(futs), 1):
                 try:
                     r = fut.result()

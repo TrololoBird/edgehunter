@@ -38,10 +38,10 @@ def _ms(d: date) -> int:
 
 
 def coin_rows(job) -> Optional[pl.DataFrame]:
-    key, fut_id, days_ok = job
+    key, fut_id, days_ok, start, end = job        # the window travels with the job (worker processes re-import)
     from history import Archive
     days_ok = set(days_ok)
-    m = Archive(rate_bytes=4e7).klines_1m('futures', fut_id, START, END)
+    m = Archive(rate_bytes=4e7).klines_1m('futures', fut_id, start, end)
     if len(m) < 1440 * 30:
         return None
     ts = m[:, 0].astype(np.int64)
@@ -222,8 +222,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--limit', type=int, default=0)
+    ap.add_argument('--window', default='', help='START,SPLIT,END (ISO dates): another period, e.g. the one before '
+                    'the main window as an independent check; outputs get the suffix _<START year>')
     ap.add_argument('--from-rows', action='store_true', help='skip the archive pass: evaluate the saved rows')
     args = ap.parse_args()
+    global START, SPLIT, END, REPORT_PATH, ROWS_PATH
+    if args.window:
+        START, SPLIT, END = (date.fromisoformat(x) for x in args.window.split(','))
+        REPORT_PATH = REPORT_PATH.replace('.md', f'_{START.year}.md')
+        ROWS_PATH = ROWS_PATH.replace('.parquet', f'_{START.year}.parquet')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
     if args.from_rows:
         df = pl.read_parquet(ROWS_PATH)
@@ -235,7 +242,7 @@ def main():
             coins = coins[:args.limit]
         parts, t0 = [], time.time()
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
-            futs = {pool.submit(coin_rows, (k, f, d)): k for k, f, _s, d in coins}
+            futs = {pool.submit(coin_rows, (k, f, d, START, END)): k for k, f, _s, d in coins}
             for i, fut in enumerate(as_completed(futs), 1):
                 try:
                     r = fut.result()
