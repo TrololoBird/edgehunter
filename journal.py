@@ -729,6 +729,34 @@ class SignalJournal:
         REGIME_MUTED.update(muted)
         return len(stats)
 
+    def refresh_drift(self, days: float = 3.0) -> int:
+        """
+        Feature drift of P(edge) (ML_PLAN.md H2): PSI of the last `days` of directional rows' model features against
+        the reference distributions in models/cards/p_edge.json (written by pretrain.py) -> model_cards.DRIFT.
+        """
+        import model_cards
+        from ml import SuccessModel
+        card = model_cards.load_card('p_edge')
+        if not card or not card.get('features'):
+            return 0
+        since = int((time.time() - days * 86400) * 1000)
+        with self._lock:
+            self.conn.row_factory = sqlite3.Row
+            try:
+                rows = self.conn.execute(
+                    "SELECT * FROM signals WHERE kind NOT IN ('entry', 'card') AND direction != 0 AND ts_ms >= ?",
+                    (since,)).fetchall()
+            finally:
+                self.conn.row_factory = None
+        drift = model_cards.drift_of(card, [SuccessModel.features(r) for r in rows])
+        model_cards.DRIFT.clear()
+        model_cards.DRIFT.update(drift)
+        worst = model_cards.worst_drift()
+        if worst and worst[1] > 0.25:
+            logger.info(f"Drift: P(edge) feature {worst[0]} PSI {worst[1]:.2f} vs its training rows (> 0.25: a "
+                        f"population the model was not trained on)")
+        return len(drift)
+
     def refresh_hit_rates(self) -> int:
         """
         p(TP1 before the stop) per strategy from the replayed entries of the last 30 days (passed and vetoed: the
@@ -840,6 +868,7 @@ class SignalJournal:
                     await asyncio.to_thread(self.refresh_regime_stats)
                     await asyncio.to_thread(self.refresh_confirm_stats)
                     await asyncio.to_thread(self.refresh_anomaly_effects)
+                    await asyncio.to_thread(self.refresh_drift)
             except asyncio.CancelledError:
                 raise
             except Exception as e:

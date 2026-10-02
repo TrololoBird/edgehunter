@@ -230,6 +230,7 @@ class Scanner:
             self._background_thread(self.journal.refresh_confirm_stats)
             self._background_thread(self.journal.refresh_hit_rates)
             self._background_thread(self.journal.refresh_anomaly_effects)
+            self._background_thread(self.journal.refresh_drift)
         self._tasks = [asyncio.create_task(c) for c in loops]
 
     async def _seed_okx_later(self):
@@ -1303,9 +1304,12 @@ class Scanner:
                 process = f", cpu {proc.cpu_percent(None):.0f}%, mem {proc.memory_info().rss / 2**20:.0f}MB"
             ctxs = [c for c in self.detector.context.values() if c is not None]
             pairs = sum(1 for c in ctxs if getattr(c, 'smt_pair', None))
+            import model_cards
+            worst = model_cards.worst_drift()
+            drift = f", drift {worst[0]} {worst[1]:.2f}" if worst else ""
             logger.info(f"Health: tier0 {self.last_tier0_sec:.2f}s, scan {self.last_scan_sec:.2f}s "
                         f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
-                        f"smt pairs {pairs}/{len(ctxs)}, streams " + ", ".join(rates))
+                        f"smt pairs {pairs}/{len(ctxs)}{drift}, streams " + ", ".join(rates))
 
     def _save_state(self):
         path = CONFIG.journal.state_path
