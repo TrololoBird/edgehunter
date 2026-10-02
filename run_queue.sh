@@ -2,8 +2,7 @@
 # eng-43 validation + ML plan runs, one after another (the cloud container has 4 cores)
 cd "$(dirname "$0")"
 export PIERCE_MODEL=models/overshoot_pre.json
-while pgrep -f "^\.venv/bin/python research_vol\.py" >/dev/null; do sleep 60; done
-.venv/bin/python research_xsec.py --workers 3 > logs/xsec.log 2>&1
+# research_vol and research_xsec finished before the worker restart of 2026-10-02 04:3x (research/vol_b1.md, xsec_g.md)
 .venv/bin/python research_classic.py --months 18 --end 2026-09-30 --holdout 6 --workers 3 > logs/classic.log 2>&1
 while pgrep -f "^\.venv/bin/python research_cards\.py" >/dev/null; do sleep 60; done
 .venv/bin/python research_maniac.py --months 18 --end 2026-09-30 --holdout 6 --limit 0 --workers 4 \

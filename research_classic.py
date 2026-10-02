@@ -252,11 +252,24 @@ def main():
     jobs = [(k, f, s, start.isoformat(), end.isoformat(), days) for k, f, s, days in coins]
     rows: List[Dict] = []
     t0 = time.time()
+    import research_cache
+    cache = research_cache.run_dir('classic', start, end, args.min_volume)
+    todo = []
+    for j in jobs:
+        done = research_cache.load(cache, j[0])
+        if done is None:
+            todo.append(j)
+        else:
+            rows += done
+    logger.info(f"classic: {len(jobs) - len(todo)} coins from the cache, {len(todo)} to replay")
+    jobs = todo
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         futs = {pool.submit(replay_coin, j): j[0] for j in jobs}
         for n, fut in enumerate(as_completed(futs), 1):
             try:
-                rows += fut.result()
+                coin_rows = fut.result()
+                rows += coin_rows
+                research_cache.save(cache, futs[fut], coin_rows)
             except Exception as e:
                 logger.warning(f"classic: {futs[fut]} failed ({type(e).__name__} {e})")
             if n % 10 == 0 or n == len(jobs):

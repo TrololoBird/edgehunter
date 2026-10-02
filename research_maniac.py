@@ -21,7 +21,6 @@ Run: .venv\\Scripts\\python research_maniac.py [--months 6] [--holdout 2] [--wor
 import argparse
 import logging
 import os
-import random
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
@@ -221,11 +220,24 @@ def main():
     jobs = [(k, f, s, start.isoformat(), end.isoformat(), days) for k, f, s, days in coins]
     rows: List[Dict] = []
     started = time.time()
+    import research_cache
+    cache = research_cache.run_dir('maniac', start, end, args.min_volume)
+    todo = []
+    for job in jobs:
+        done = research_cache.load(cache, job[0])
+        if done is None:
+            todo.append(job)
+        else:
+            rows += done
+    logger.info(f"maniac: {len(jobs) - len(todo)} coins from the cache, {len(todo)} to replay")
+    jobs = todo
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(replay_coin, job): job[0] for job in jobs}
         for n, fut in enumerate(as_completed(futures), 1):
             try:
-                rows += fut.result()
+                coin_rows = fut.result()
+                rows += coin_rows
+                research_cache.save(cache, futures[fut], coin_rows)
             except Exception as e:
                 logger.warning(f"maniac: {futures[fut]} failed ({type(e).__name__} {e})")
             logger.info(f"maniac: {n}/{len(jobs)} coins in {time.time() - started:.0f}s ({len(rows)} cards)")

@@ -897,17 +897,29 @@ def main():
     rows: List[Dict] = []
     samples: List[Dict] = []
     started = time.time()
+    import research_cache
+    cache = research_cache.run_dir('cards', start, end, args.what, args.entry, args.min_volume)
+    todo = []
+    for job in jobs:                      # coins finished by an earlier (interrupted) run of the same configuration
+        done = research_cache.load(cache, job[0])
+        if done is None:
+            todo.append(job)
+        else:
+            rows += done[0]
+            samples += done[1]
+    logger.info(f"cards: {len(jobs) - len(todo)} coins from the cache, {len(todo)} to replay")
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(replay_coin, job): job[0] for job in jobs}
+        futures = {pool.submit(replay_coin, job): job[0] for job in todo}
         for n, fut in enumerate(as_completed(futures), 1):
             try:
                 coin_rows, coin_samples = fut.result()
                 rows += coin_rows
                 samples += coin_samples
+                research_cache.save(cache, futures[fut], (coin_rows, coin_samples))
             except Exception as e:
                 logger.warning(f"cards: {futures[fut]} failed ({type(e).__name__} {e})")
-            if n % 25 == 0 or n == len(jobs):
-                logger.info(f"cards: {n}/{len(jobs)} coins in {time.time() - started:.0f}s ({len(rows)} cards)")
+            if n % 25 == 0 or n == len(todo):
+                logger.info(f"cards: {n}/{len(todo)} coins in {time.time() - started:.0f}s ({len(rows)} cards)")
     df = pl.DataFrame(rows, infer_schema_length=None)
     df.write_parquet(args.rows)
     if samples:
