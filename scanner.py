@@ -114,8 +114,9 @@ class Scanner:
         from executor import DemoExecutor
         self.demo = DemoExecutor()
         self.demo.card_is_open = lambda card_id: any(
-            f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}" == card_id and not s.finished
-            for s in self.book.signals.values())
+            card_id in (f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}", f"{s.symbol}|{s.group_key}|c{int(s.created)}")
+            and not s.finished for s in self.book.signals.values())
+        self._limits_synced = 0.0
         from extdata import ExternalData
         self.ext = ExternalData(self.fetcher)
         self.book = SignalBook()
@@ -642,6 +643,12 @@ class Scanner:
             for tracked in entries:
                 if not tracked.vetoed and warmed_up:
                     self._background_task(self.demo.on_entry(tracked))
+            if warmed_up and time.time() - self._limits_synced >= 30:
+                # resting BingX limits for the waiting touch cards (Seiden's line, the Silver Bullet's CE)
+                self._limits_synced = time.time()
+                waiting = [s for s in self.book.signals.values() if not s.finished and not s.entered_at
+                           and s.status in ('WATCH', 'ZONE') and self.demo.is_limit_plan(s)]
+                self._background_task(self.demo.sync_limits(waiting))
             for tracked, event in self.book.events:
                 if event == 'ADD':
                     self._background_task(self.demo.on_add(tracked))

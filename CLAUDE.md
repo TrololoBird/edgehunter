@@ -301,3 +301,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   (long) / bid (short) - skipped `PRICE_GAP` when that price is beyond the stop, beyond TP1, or the blended R:R there
   falls below the method's minimum - and journals the basis (`demo_trades.basis`). Measured 2026-10-02 on VST: basis
   -0.14% .. +0.09%, but the demo's spread reached 3.3% (1000PEPE) / ~0.4% (ALICE, MEGA).
+- eng-46: resting BingX limit entries for the touch plans (Seiden's proximal line, the Silver Bullet's CE: plans with
+  `trigger='touch'`): every waiting card gets a limit on BingX at its line carried over by the current price ratio,
+  sized from the plan's stop (`DemoExecutor.sync_limits`, every 30s from the scan); a filled limit becomes a trade with
+  its stop and take-profits (`check_limits`, each minute); the card's Binance touch never enters at market - if BingX
+  did not fill within `executor.limit_wait_min` (15) the limit is cancelled and recorded `NOT_FILLED`; a card ending
+  without an entry cancels it. One trade or resting limit per coin (BingX nets a coin into one position). Resting limits
+  persist in `demo_pending.json`. Limit entries take no confirmation check (the methods enter at the line - Seiden),
+  the R:R is checked at the line when the limit is placed.

@@ -26,3 +26,4 @@ research_*.err
 research_*.out
 research_*.parquet
 scanner_state*.bak.json
+demo_pending.json

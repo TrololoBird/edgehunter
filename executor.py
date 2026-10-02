@@ -15,7 +15,9 @@ The API key is the owner's (config.local.toml, `[executor] api_key / api_secret`
     python executor.py --test BTC/USDT:USDT    open and close the minimum size (checks order handling)
 """
 import asyncio
+import json
 import logging
+import os
 import sqlite3
 import time
 from typing import Dict, Optional
@@ -45,6 +47,15 @@ class DemoExecutor:
         # expired while the bot was down is never restored, so its finish never comes (3 demo positions stayed
         # open for 15h, 2026-10-01): the reconcile loop closes such orphans
         self.card_is_open = lambda card_id: True
+        # resting limit entries of touch plans (Seiden's proximal line, the Silver Bullet's CE): waiting-card key ->
+        # {order_id, symbol, levels in BingX prices, ...} (eng-46)
+        self.pending: Dict[str, Dict] = {}
+        self.pending_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'demo_pending.json')
+        try:
+            with open(self.pending_path, encoding='utf-8') as f:
+                self.pending = json.load(f)     # resting limits survive a restart (else they stay on BingX unseen)
+        except (OSError, ValueError):
+            pass
         self._markets_ready = False
         with sqlite3.connect(db_path) as c:
             c.execute(SCHEMA)
@@ -111,6 +122,20 @@ class DemoExecutor:
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}"
         if card_id in self.open:
             return
+        if self.is_limit_plan(s):
+            key = self.wait_key(s)
+            p = self.pending.get(key)
+            if key in self.open:                     # BingX filled the limit before Binance's touch: one trade
+                trade = self.open.pop(key)
+                trade['card_id'] = card_id
+                self.open[card_id] = trade
+                with sqlite3.connect(self.db_path) as c:
+                    c.execute("UPDATE demo_trades SET card_id = ? WHERE id = ?", (card_id, trade['id']))
+                return
+            if p is not None and not p.get('skip'):
+                p.update(entered=True, entered_ms=int(time.time() * 1000), card_id=card_id)
+                self._save_pending()
+                return                               # the limit stands; check_limits fills or cancels it
         busy = next((t for t in self.open.values() if t['symbol'].split('/')[0].replace('1000', '') ==
                      s.symbol.split('/')[0].replace('1000', '')), None)
         if busy is not None:
@@ -238,6 +263,159 @@ class DemoExecutor:
         logger.info(f"Demo ENTRY {symbol} {s.group_key} {'long' if d > 0 else 'short'} {qty} @ {fill:.6g}, "
                     f"SL {lv['sl']:.6g}, risk ${trade['risk_usd']:.2f}")
 
+    # ------------------------------------------------------------------ resting limit entries (eng-46)
+
+    @staticmethod
+    def wait_key(s) -> str:
+        return f"{s.symbol}|{s.group_key}|c{int(s.created)}"
+
+    @staticmethod
+    def is_limit_plan(s) -> bool:
+        """Plans whose source enters with a resting limit at a price known in advance (trigger 'touch')."""
+        return bool(s.plan) and s.plan.get('trigger') == 'touch'
+
+    async def sync_limits(self, cards) -> None:
+        """
+        Every waiting touch card gets a limit order on BingX at its entry line (carried over by the current price
+        ratio); a card that ended without an entry gets it cancelled. A zone Binance touched but BingX did not is then
+        simply not filled - the trade is the venue's, not Binance's.
+        """
+        if not self.enabled:
+            return
+        alive = set()
+        async with self._lock:
+            for s in cards:
+                key = self.wait_key(s)
+                alive.add(key)
+                if key in self.pending:
+                    continue
+                try:
+                    await self._place_limit(key, s)
+                except Exception as e:
+                    logger.warning(f"Demo limit {s.symbol} {s.group_key}: {e!r}")
+                    self.pending[key] = {'skip': True, 'reason': repr(e)[:200]}
+            for key in [k for k, p in self.pending.items() if k not in alive and not p.get('entered')]:
+                await self._cancel_limit(key, 'the card ended without an entry')
+
+    def _save_pending(self) -> None:
+        try:
+            with open(self.pending_path, 'w', encoding='utf-8') as f:
+                json.dump(self.pending, f)
+        except OSError as e:
+            logger.debug(f"Demo pending state: {e}")
+
+    async def _place_limit(self, key: str, s) -> None:
+        from strategies.geometry import entry_levels
+        d, plan = s.direction, s.plan
+        coin = s.symbol.split('/')[0].replace('1000', '')
+        if any(t['symbol'].split('/')[0].replace('1000', '') == coin for t in self.open.values()) or                 any(p.get('symbol', '').split('/')[0].replace('1000', '') == coin for p in self.pending.values()
+                    if not p.get('skip')):
+            # BingX nets a coin's orders into one position: one trade or resting limit per coin
+            self.pending[key] = {'skip': True, 'reason': 'the coin is held / has a resting limit'}
+            return
+        line = plan['zone_hi'] if d > 0 else plan['zone_lo']
+        levels = entry_levels(plan, line, None, d)
+        if not levels or levels.get('low_rr'):
+            self.pending[key] = {'skip': True, 'reason': 'no plan / low R:R at the line'}
+            return
+        binance_now = float(s.last_price or line)
+        symbol, scale = await self._market_of(s.symbol, binance_now)
+        if symbol is None:
+            self.pending[key] = {'skip': True, 'reason': str(scale)}
+            return
+        quote = getattr(self, '_quote', None) or {}
+        ratio = float(quote.get('last') or binance_now * scale) / binance_now
+        lv = {k: levels[k] * ratio for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')}
+        ex = await self._exchange()
+        cfg = CONFIG.executor
+        balance = min(await self._balance(), cfg.account_usd)
+        stop_dist = abs(lv['entry'] - lv['sl'])
+        if balance <= 0 or stop_dist <= 0:
+            self.pending[key] = {'skip': True, 'reason': 'no balance / stop'}
+            return
+        risk_usd = balance * cfg.risk_pct / 100 / float(levels.get('risk_units') or 1.0)
+        qty = min(risk_usd / stop_dist, balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
+        qty = float(ex.amount_to_precision(symbol, qty))
+        min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
+        if qty <= 0 or qty < min_qty:
+            self.pending[key] = {'skip': True, 'reason': f'size {qty} below the minimum'}
+            return
+        try:
+            await ex.set_leverage(cfg.max_leverage, symbol)
+        except Exception as e:
+            logger.debug(f"Demo leverage {symbol}: {e}")
+        price = float(ex.price_to_precision(symbol, lv['entry']))
+        order = await ex.create_order(symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
+        self.pending[key] = {'order_id': order['id'], 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio,
+                             'basis': ratio / scale - 1, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
+                             'placed_ms': int(time.time() * 1000), 'risk_usd': qty * stop_dist}
+        self._save_pending()
+        logger.info(f"Demo LIMIT {symbol} {s.group_key} {'buy' if d > 0 else 'sell'} {qty} @ {price:.6g} "
+                    f"(Binance line {line:.6g}, basis {ratio / scale - 1:+.3%}), SL {lv['sl']:.6g}")
+
+    async def _cancel_limit(self, key: str, why: str, record: bool = False) -> None:
+        p = self.pending.pop(key, None)
+        if not p or p.get('skip'):
+            return
+        ex = await self._exchange()
+        try:
+            await ex.cancel_order(p['order_id'], p['symbol'])
+        except Exception as e:
+            logger.debug(f"Demo cancel limit {p['symbol']}: {e}")
+        self._save_pending()
+        logger.info(f"Demo: limit {p['symbol']} {p['setup']} cancelled: {why}")
+        if record:
+            self._insert({'card_id': p.get('card_id') or key, 'symbol': p['symbol'], 'setup': p['setup'],
+                          'strategy': p['strategy'], 'direction': p['direction'], 'opened_ms': p['placed_ms'],
+                          'entry_plan': p['lv']['entry'], 'error': why, 'closed_ms': int(time.time() * 1000),
+                          'close_reason': 'NOT_FILLED'})
+
+    async def check_limits(self) -> None:
+        """A filled limit becomes a trade (stop + take-profits placed); one the card entered on Binance but BingX did
+        not fill within limit_wait_min is cancelled and recorded NOT_FILLED."""
+        ex = await self._exchange()
+        now = time.time() * 1000
+        for key, p in list(self.pending.items()):
+            if p.get('skip'):
+                continue
+            try:
+                o = await ex.fetch_order(p['order_id'], p['symbol'])
+            except Exception as e:
+                logger.debug(f"Demo limit status {p['symbol']}: {e}")
+                continue
+            filled = float(o.get('filled') or 0)
+            if o.get('status') == 'closed' or (filled and filled >= 0.999 * p['qty']):
+                await self._limit_filled(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']),
+                                         filled or p['qty'])
+            elif p.get('entered') and now - p['entered_ms'] > CONFIG.executor.limit_wait_min * 60_000:
+                await self._cancel_limit(key, f"Binance touched the line, BingX did not fill within "
+                                              f"{CONFIG.executor.limit_wait_min} min", record=True)
+
+    async def _limit_filled(self, key: str, p: Dict, fill: float, qty: float) -> None:
+        ex = await self._exchange()
+        symbol, d, lv = p['symbol'], p['direction'], p['lv']
+        exit_side = 'sell' if d > 0 else 'buy'
+        await ex.create_order(symbol, 'market', exit_side, qty, None,
+                              {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True})
+        third = float(ex.amount_to_precision(symbol, qty / 3))
+        for k, amount in zip((1, 2, 3), (third, third, float(ex.amount_to_precision(symbol, qty - 2 * third)))):
+            if amount > 0:
+                await ex.create_order(symbol, 'market', exit_side, amount, None,
+                                      {'takeProfitPrice': float(ex.price_to_precision(symbol, lv[f'tp{k}'])),
+                                       'reduceOnly': True})
+        card_id = p.get('card_id') or key
+        trade = {'card_id': card_id, 'symbol': symbol, 'setup': p['setup'], 'strategy': p['strategy'],
+                 'direction': d, 'opened_ms': int(time.time() * 1000), 'entry_plan': lv['entry'], 'entry_fill': fill,
+                 'qty': qty, 'sl': lv['sl'], 'tp1': lv['tp1'], 'tp2': lv['tp2'], 'tp3': lv['tp3'],
+                 'risk_usd': qty * abs(fill - lv['sl'])}
+        trade['id'] = self._insert(trade)
+        trade['unit_qty'], trade['scale'] = qty, p['scale']
+        self._set_basis(trade['id'], p['basis'])
+        self.open[card_id] = trade
+        self.pending.pop(key, None)
+        self._save_pending()
+        logger.info(f"Demo LIMIT FILLED {symbol} {p['setup']} {qty} @ {fill:.6g}, SL {lv['sl']:.6g}")
+
     async def on_add(self, s) -> None:
         """A Turtle unit added on the card: the same quantity again at market, the stop of the whole position moved."""
         if not self.enabled or not s.entered_at:
@@ -282,7 +460,13 @@ class DemoExecutor:
                 logger.warning(f"Demo add-unit failed for {trade['symbol']}: {e!r}")
 
     async def on_finish(self, s) -> None:
-        if not self.enabled or not s.entered_at:
+        if not self.enabled:
+            return
+        if self.wait_key(s) in self.pending and not s.entered_at:
+            async with self._lock:
+                await self._cancel_limit(self.wait_key(s), f"the card ended {s.status} without an entry")
+            return
+        if not s.entered_at:
             return
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
         trade = self.open.get(card_id)
@@ -358,7 +542,15 @@ class DemoExecutor:
         """Finalize demo trades the exchange closed on its own (stop / last target)."""
         while running():
             await asyncio.sleep(60)
-            if not self.enabled or not self.open:
+            if not self.enabled:
+                continue
+            if self.pending:
+                async with self._lock:
+                    try:
+                        await self.check_limits()
+                    except Exception as e:
+                        logger.warning(f"Demo limits: {e!r}")
+            if not self.open:
                 continue
             async with self._lock:
                 for trade in list(self.open.values()):

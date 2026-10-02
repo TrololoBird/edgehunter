@@ -876,7 +876,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-44"
+    logic_version: str = "eng-46"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
@@ -931,6 +931,7 @@ class ExecutorConfig:
     # limits (5-10k USDT on XRP / TRX at 20x). R is what is compared, so the base only has to be tradable
     account_usd: float = 10_000.0
     max_notional_usd: float = 4_000.0
+    limit_wait_min: int = 15      # a touch plan's BingX limit kept this long after Binance's touch (eng-46)
     max_leverage: int = 20
 
 
