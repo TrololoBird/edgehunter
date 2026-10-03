@@ -27,7 +27,8 @@ def run_dir(script: str, *key_parts) -> str:
             with open(f, 'rb') as fh:
                 src.update(fh.read())
     tag = '|'.join(map(str, key_parts + (CONFIG.journal.logic_version, os.environ.get('PIERCE_MODEL', ''),
-                                         os.environ.get('RESEARCH_ENTRY', ''), src.hexdigest())))
+                                         os.environ.get('RESEARCH_ENTRY', ''), src.hexdigest()) +
+                   ((os.environ['RESEARCH_CONFIRM'],) if os.environ.get('RESEARCH_CONFIRM', 'live') != 'live' else ())))
     d = os.path.join(CACHE_ROOT, f"{script}_{hashlib.blake2b(digest_size=16, data=tag.encode()).hexdigest()[:10]}")
     os.makedirs(d, exist_ok=True)
     return d

@@ -12,6 +12,14 @@ What differs from the live bot (so the numbers are an estimate, not the live res
 - the perp-led veto of breakouts is not applied (it needs the multi-venue flows); the sweep's 'against_trend' veto is
   applied AND the vetoed events are replayed too (flag `vetoed`), so the veto itself is tested;
 - prices are 1m candle extremes (the live bot checks the last price every few seconds);
+- confirmations: flow / spot / oi / vsa / CVD divergence / htf_zone / SMT (vs the more correlated of BTC / ETH) /
+  kill zone are computed as live from the archive and recorded per entry (`conf_<name>`, `conf_n`); the footprint
+  kinds of `orderflow` (stacked imbalance, absorption, finished auction) need live trades and are never present here.
+  RESEARCH_CONFIRM=record (--confirm record) does not apply the minimum-confirmation rule, so every trigger is
+  entered and the rule itself is measured by the conf_n split (research_confirms.py);
+- the higher-timeframe context (4h / daily / weekly candles: ICT zones of those timeframes, the daily / weekly bias,
+  the 4h / daily trend) is built from the archive with the live depths (200 / 210 / 60 candles), warmed up before the
+  window from the monthly 4h / 1d files;
 - one open card per coin and direction (the live rule); the market crowd, regimes and P(edge) do not matter here.
 
 Run: .venv\\Scripts\\python research_cards.py [--months 6] [--workers 3] [--limit N] [--out research/cards_6m.md]
@@ -45,6 +53,70 @@ STREAM_COLS = [0, 1, 2, 3, 4, 6, 7]          # [t, o, h, l, c, quote, taker buy 
 ENTRY_MODE = os.environ.get('RESEARCH_ENTRY', 'market')
 MAKER_WAIT_MIN = 5
 MAKER_FEE, TAKER_FEE = 0.0002, 0.0005        # Binance USD-M VIP0
+CONF_NAMES = ('flow', 'spot', 'oi', 'orderflow', 'vsa', 'htf_zone', 'smt', 'killzone')
+DAY_MS = 86_400_000
+WEEK_MS = 7 * DAY_MS
+MONDAY_MS = 4 * DAY_MS                        # 1970-01-05, the first Monday: Binance's weeks start on Monday 00:00 UTC
+
+
+def htf_frames(archive, fut_id: str, fut: np.ndarray, start: date) -> Dict:
+    """4h / daily / weekly candles [ts, o, h, l, c, quote, taker buy] of a coin: from its 1m archive inside the window,
+    before it from the monthly 4h / 1d files (warm-up for the live depths; their taker split is unknown: half)."""
+    from pretrain import _bucket
+    out: Dict = {}
+    for name, interval, ms, warm in (('h4', '4h', H4_MS, 40), ('d1', '1d', DAY_MS, 430)):
+        own = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in _bucket(fut, ms)]
+        first = own[0][0] if own else float('inf')
+        pre = []
+        try:
+            old = archive.klines_ohlc('futures', fut_id, interval, start - timedelta(days=warm), start)
+            pre = [[r[0], r[1], r[2], r[3], r[4], r[5], r[5] / 2] for r in old if r[0] < first]
+        except Exception as e:                    # no warm-up: the context starts thin, never wrong
+            logger.debug(f"{fut_id} {interval} warm-up failed: {e}")
+        out[name] = pre + own
+    weeks: Dict[int, list] = {}
+    for c in out['d1']:
+        k = (int(c[0]) - MONDAY_MS) // WEEK_MS * WEEK_MS + MONDAY_MS
+        w = weeks.get(k)
+        if w is None:
+            weeks[k] = [float(k), c[1], c[2], c[3], c[4], c[5], c[6]]
+        else:
+            w[2], w[3], w[4], w[5], w[6] = max(w[2], c[2]), min(w[3], c[3]), c[4], w[5] + c[5], w[6] + c[6]
+    out['w1'] = [weeks[k] for k in sorted(weeks)]
+    out['_close'] = {n: np.asarray([c[0] for c in out[n]], dtype=float) + ms
+                     for n, ms in (('h4', H4_MS), ('d1', DAY_MS), ('w1', WEEK_MS))}
+    return out
+
+
+def htf_at(frames: Dict, now_ms: float):
+    """(4h, daily, weekly candles closed by now_ms at the live depths, the sig context the scanner adds:
+    trend_4h / trend_1d, daily_bias / weekly_bias - Scanner._enrich)."""
+    from strategies.structure import coin_trend
+    k = {n: int(np.searchsorted(frames['_close'][n], now_ms, side='right')) for n in ('h4', 'd1', 'w1')}
+    h4 = frames['h4'][max(0, k['h4'] - 200):k['h4']]
+    d1 = frames['d1'][max(0, k['d1'] - 210):k['d1']]
+    w1 = frames['w1'][max(0, k['w1'] - 60):k['w1']]
+    sig = {'trend_4h': coin_trend(h4) if len(h4) >= 30 else None,
+           'trend_1d': coin_trend(d1) if len(d1) >= 30 else None}
+    for name, rows in (('daily_bias', d1), ('weekly_bias', w1)):
+        if len(rows) >= 2:
+            prev, last = rows[-2], rows[-1]
+            sig[name] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
+    return h4, d1, w1, sig
+
+
+def htf_zone_at(zones, price: float) -> bool:
+    """signal_book.htf_zone_at (not imported: signal_book pulls the live stack into the workers)."""
+    import re
+    return any(z.lo <= price <= z.hi and any(re.search(r'_(4h|1d|1w)$', k) or k in ('swing_1d', 'htf') for k in z.kinds)
+               for z in zones or [])
+
+
+def _conf_value(v) -> Optional[float]:
+    from strategies.confirm import NA, positive
+    if v is None or v == NA:
+        return None
+    return 1.0 if positive(v) else 0.0
 
 
 def _net_r(r: Optional[float], entry: float, sl: float, fee: Optional[float] = None) -> Optional[float]:
@@ -106,7 +178,8 @@ def replay_events(job: tuple) -> List[Dict]:
     from strategies.base import PlanInput
     from strategies.level import sweep_at_close
     from strategies.wyckoff_range import wyckoff_events
-    from strategies.structure import Context, coin_trend, pools_before, recent_atr
+    from strategies.structure import Context, coin_trend, pick_correlate, pools_before, recent_atr, smt_divergence
+    from levels import pullback_volume_ok
     from zones import build_raw, merge
 
     days_ok = set(days_ok)
@@ -119,6 +192,11 @@ def replay_events(job: tuple) -> List[Dict]:
     btc = fut if fut_id == 'BTCUSDT' else archive.klines_1m('futures', 'BTCUSDT', start, end)
     met = archive.metrics(fut_id, start, end)
     fund = archive.funding(fut_id, start, end)
+    eth = fut if fut_id == 'ETHUSDT' else archive.klines_1m('futures', 'ETHUSDT', start, end)
+    frames = htf_frames(archive, fut_id, fut, start)
+    corr15 = {name: [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in _bucket(arr, QUARTER_MS)]
+              for name, arr in (('BTC', btc), ('ETH', eth))}
+    corr15_close = {name: np.asarray([c[0] for c in rows], dtype=float) + QUARTER_MS for name, rows in corr15.items()}
     c15 = _bucket(fut, QUARTER_MS)
     oi15 = {int((t - 1) // QUARTER_MS * QUARTER_MS): float(v) for t, v in zip(met['ts'], met['oi']) if int(t) % QUARTER_MS == 0 and v}
     fut_all = compute_indicators_batch({key: _raw_frame(c15, oi15)}, {key: (0.0, 0.0)})
@@ -169,13 +247,20 @@ def replay_events(job: tuple) -> List[Dict]:
             if now_ms < busy_until[d]:
                 continue                                  # one open card per coin and direction
             strategy = strategy_of(event['setup'])
-            sig = dict(event, coin_trend=trend, has_spot=True)
+            h4w, d1w, w1w, htf_sig = htf_at(frames, now_ms)
+            sig = dict(event, coin_trend=trend, has_spot=True, **htf_sig)
+            if strategy.name == 'sweep':
+                # ICT's SMT against the more correlated of BTC / ETH (structure.build_context)
+                corr = {n: rows[:int(np.searchsorted(corr15_close[n], cut, side='right'))] for n, rows in corr15.items()}
+                pick = pick_correlate(key, window, corr)
+                sig['smt_div'] = smt_divergence(pick, event.get('pool_formed_ms'), last_open, d) if pick else None
             vetoed = strategy.context_veto(sig, d)
             part = window[-CONFIG.timeframe.rest_lookback_candles:]
             j = int(np.searchsorted(oi_hour_ts, now_ms, side='right')) if len(oi_hour_ts) else 0
             k5 = int(np.searchsorted(c5_close, now_ms, side='right'))
             raw = build_raw(part, h1_window, oi_hour[max(0, j - 200):j], [], atr, now_ms,
-                            candles_4d=c5_list[max(0, k5 - 4 * 288):k5])
+                            candles_4d=c5_list[max(0, k5 - 4 * 288):k5], candles_1d=d1w, candles_4h=h4w,
+                            candles_1w=w1w)
             ctx = Context(atr=atr, recent_atr=recent_atr(part), cut_ms=cut, zones=merge(raw, atr), pools=[], trend=trend)
             closed = int(np.searchsorted(m_ts, now_ms - MINUTE_MS, side='right'))
             minutes_now = minutes_all[max(0, closed - 240):closed].tolist()
@@ -186,13 +271,26 @@ def replay_events(job: tuple) -> List[Dict]:
                    'r_be': None, 'rr_tp1': None, 'risk_pct': None, 'outcome': None, 'hold_min': None,
                    'vx_reason': '', 'vx_r_tp1': None, 'vx_r_tp2': None, 'vx_rr_tp1': None,
                    'pl_r_tp1': None, 'pl_r_tp2': None}
-            if plan is None or not plan.get('targets'):
+            if plan is None or plan.get('skip') or not plan.get('targets'):
+                if plan and plan.get('skip'):
+                    row['status'] = f"NO_PLAN ({plan['skip']})"
                 out.append(row)
                 continue
+            spring_minute = sig.get('fut_candle_minute_usd')
+
+            def spring_test(levels, zone_since, trigger_ms, setup=event['setup'], spring_minute=spring_minute):
+                # the live spring / UTAD test (signal_book: the pullback's minute volume vs the spring candle's)
+                if setup not in ('SPRING', 'UTAD'):
+                    return None
+                a = int(np.searchsorted(m_ts, zone_since, side='left'))
+                b2 = int(np.searchsorted(m_ts, trigger_ms, side='left'))
+                ok = pullback_volume_ok(minutes_all[a:b2].tolist(), int(zone_since), int(trigger_ms), spring_minute or 0.0)
+                return None if ok else 'no_spring_test'
+
             finished_ms = _lifecycle(plan, strategy, d, row, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
-                                     entry_levels, ltf_trigger, resample, simulate, _asof,
+                                     entry_levels, ltf_trigger, resample, simulate, _asof, extra_veto=spring_test,
                                      features=features, samples=samples, placebo=placebo,
-                                     spot_minutes=spot[:, STREAM_COLS] if len(spot) else None)
+                                     spot_minutes=spot[:, STREAM_COLS] if len(spot) else None, sig=sig)
             if not vetoed:
                 busy_until[d] = finished_ms
             out.append(row)
@@ -229,6 +327,7 @@ def replay_phases(job: tuple) -> List[Dict]:
     btc = fut if fut_id == 'BTCUSDT' else archive.klines_1m('futures', 'BTCUSDT', start, end)
     met = archive.metrics(fut_id, start, end)
     fund = archive.funding(fut_id, start, end)
+    frames = htf_frames(archive, fut_id, fut, start)
     c15 = _bucket(fut, QUARTER_MS)
     oi15 = {int((t - 1) // QUARTER_MS * QUARTER_MS): float(v) for t, v in zip(met['ts'], met['oi']) if int(t) % QUARTER_MS == 0 and v}
     fut_all = compute_indicators_batch({key: _raw_frame(c15, oi15)}, {key: (0.0, 0.0)})
@@ -277,7 +376,9 @@ def replay_phases(job: tuple) -> List[Dict]:
             return None
         j = int(np.searchsorted(oi_hour_ts, t_ms, side='right')) if len(oi_hour_ts) else 0
         k5 = int(np.searchsorted(c5_close, t_ms, side='right'))
-        raw = build_raw(part, h1w, oi_hour[max(0, j - 200):j], [], atr, t_ms, candles_4d=c5_list[max(0, k5 - 4 * 288):k5])
+        h4w, d1w, w1w, _ = htf_at(frames, t_ms)
+        raw = build_raw(part, h1w, oi_hour[max(0, j - 200):j], [], atr, t_ms, candles_4d=c5_list[max(0, k5 - 4 * 288):k5],
+                        candles_1d=d1w, candles_4h=h4w, candles_1w=w1w)
         ctx = Context(atr=atr, recent_atr=recent_atr(part), cut_ms=int(t_ms), zones=merge(raw, atr), pools=[],
                       trend=coin_trend(h1w))
         return df, h1w, raw, ctx
@@ -311,7 +412,7 @@ def replay_phases(job: tuple) -> List[Dict]:
         df, h1w, raw, ctx = x
         b = int(np.searchsorted(btc_close_ts, now_ms, side='right')) - 1
         sig.update(coin_trend=ctx.trend, has_spot=True,
-                   btc_1h=float(btc_close[b] / btc_close[b - 4] - 1) if b >= 4 else None)
+                   btc_1h=float(btc_close[b] / btc_close[b - 4] - 1) if b >= 4 else None, **htf_at(frames, now_ms)[3])
         vetoed = veto_reason(group_key, sig) or strategy.context_veto(sig, d)
         k = int(np.searchsorted(m_ts, now_ms - MINUTE_MS, side='right'))
         plan = strategy.plan(PlanInput(key, d, group_key, sig, df, minutes_all[max(0, k - 240):k].tolist(), raw, h1w,
@@ -350,7 +451,8 @@ def replay_phases(job: tuple) -> List[Dict]:
 
         finished = _lifecycle(plan, strategy, d, rec, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
                               entry_levels, ltf_trigger, resample, simulate, _asof, replan=replan, extra_veto=spring_test,
-                              features=features, samples=samples, placebo=placebo)
+                              features=features, samples=samples, placebo=placebo,
+                              spot_minutes=spot[:, STREAM_COLS], sig=sig)
         if not vetoed:
             busy_until[d] = finished
         out.append(rec)
@@ -591,7 +693,7 @@ def feature_builder(fut: np.ndarray, spot: np.ndarray, btc15: np.ndarray, fut_al
 
 def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
                entry_levels, ltf_trigger, resample, simulate, _asof, replan=None, extra_veto=None,
-               features=None, samples=None, placebo=None, spot_minutes=None) -> float:
+               features=None, samples=None, placebo=None, spot_minutes=None, sig=None) -> float:
     """
     Walk the card minute by minute from start_ms; fills `row`; returns when the card finished (ms). `replan(t_ms)`:
     the strategy's plan as of a 15m close (the live plan follows the chart until the entry; a continuation's plan is
@@ -601,8 +703,11 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
     watch_ttl, zone_ttl, trade_ttl = strategy.ttls(plan['tf'])
     fixed_invalid = plan.get('invalid') if plan.get('fix_invalid') else None
     invalid, tp1 = plan.get('invalid'), plan['targets'][0]
-    required_oi = strategy.name == 'breakout'
     interval = plan['trigger_minutes'] * MINUTE_MS
+    for name in CONF_NAMES:
+        row.setdefault(f'conf_{name}', None)
+    row.setdefault('conf_n', None)
+    last_conf: List[Dict] = [{}]
 
     def veto(levels, until_ms, extreme_ms=None) -> Optional[str]:
         # the live order: required / minimum confirmations (strategies/confirm.py), then the R:R minimum
@@ -617,7 +722,18 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
         oi = _oi_change(oi_ts, oi_v, until_ms - HOUR_MS, until_ms)
         confirms = confirm.evaluate(strategy.name, d, mins, spot, oi, until_ms - HOUR_MS, until_ms,
                                     int(extreme_ms) if extreme_ms else None, None)
+        # the confirmations signal_book adds (the entry inside a 4h+ zone; a sweep's SMT and kill zone)
+        confirms['htf_zone'] = htf_zone_at(plan.get('zones'), levels['entry'])
+        if strategy.name == 'sweep':
+            from strategies.maniac import in_session
+            if sig is not None and sig.get('smt_div') is not None:
+                confirms['smt'] = bool(sig['smt_div'])
+            if CONFIG.strategies.smt_session:
+                confirms['killzone'] = in_session(int(until_ms), tuple(CONFIG.strategies.smt_session))
+        last_conf[0] = confirms
         reason = confirm.missing(strategy.name, confirms)
+        if reason == 'no_confirmation' and os.environ.get('RESEARCH_CONFIRM', 'live') == 'record':
+            reason = None                         # measured by the conf_n split instead of applied
         if reason:
             return reason
         if CONFIG.levels.veto_low_rr and levels.get('low_rr'):
@@ -689,6 +805,10 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
         if res is None:
             row['status'] = 'NO_DATA'
             return entered_ms
+        readings = {k: v for k, v in last_conf[0].items() if not k.startswith('_')}
+        for name in CONF_NAMES:
+            row[f'conf_{name}'] = _conf_value(readings.get(name))
+        row['conf_n'] = float(sum(1 for v in readings.values() if _conf_value(v) == 1.0))
         row.update(status='ENTRY' if res['filled'] else 'SKIPPED', outcome=res['outcome'], rr_tp1=res['rr_tp1'],
                    risk_pct=res['risk_pct'], r_tp1=res['r_tp1'], r_tp2=res['r_tp2'], r_be=res['r_be'],
                    hold_min=(entered_ms - start_ms) / MINUTE_MS)
@@ -878,6 +998,9 @@ def main():
                         help='every taken and first vetoed trade with its entry features (research_meta.py)')
     parser.add_argument('--entry', choices=('market', 'maker'), default='market',
                         help='entry execution: the journal\'s market fill, or a resting limit at the trigger (maker fee)')
+    parser.add_argument('--confirm', choices=('live', 'record'), default='live',
+                        help='record: the minimum-confirmation rule is not applied, every trigger is entered with its '
+                             'confirmations recorded (the rule is measured by research_confirms.py)')
     parser.add_argument('--holdout', type=int, default=0,
                         help='> 0: the report splits the window into development and the last N months (holdout), '
                              'with the placebo comparison (research_maniac.report)')
@@ -893,12 +1016,13 @@ def main():
     if args.limit:
         coins = coins[:args.limit]
     os.environ['RESEARCH_ENTRY'] = args.entry           # the worker processes read ENTRY_MODE at import
+    os.environ['RESEARCH_CONFIRM'] = args.confirm
     jobs = [(k, f, s, start.isoformat(), end.isoformat(), days, args.what) for k, f, s, days in coins]
     rows: List[Dict] = []
     samples: List[Dict] = []
     started = time.time()
     import research_cache
-    cache = research_cache.run_dir('cards', start, end, args.what, args.entry, args.min_volume)
+    cache = research_cache.run_dir('cards', start, end, args.what, args.entry, args.min_volume, args.confirm)
     todo = []
     for job in jobs:                      # coins finished by an earlier (interrupted) run of the same configuration
         done = research_cache.load(cache, job[0])

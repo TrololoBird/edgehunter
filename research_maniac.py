@@ -30,7 +30,7 @@ import numpy as np
 import polars as pl
 
 from config import CONFIG
-from research_cards import H4_MS, HOUR_MS, MINUTE_MS, QUARTER_MS, STREAM_COLS, _block_ci, _lifecycle
+from research_cards import H4_MS, HOUR_MS, MINUTE_MS, QUARTER_MS, STREAM_COLS, _block_ci, _lifecycle, htf_at, htf_frames
 
 logger = logging.getLogger('research_maniac')
 LONG = CONFIG.strategies.long_history_candles
@@ -46,7 +46,7 @@ def replay_coin(job: tuple):
     from strategies.auction_engine import ENGINES
     from strategies.base import PlanInput
     from strategies.geometry import entry_levels
-    from strategies.structure import Context, maniac_events, recent_atr
+    from strategies.structure import Context, coin_trend, maniac_events, recent_atr
     from zones import build_raw, merge
 
     days_ok = set(days_ok)
@@ -55,6 +55,9 @@ def replay_coin(job: tuple):
     fut = archive.klines_1m('futures', fut_id, start, end)
     if len(fut) < 1440 * 20:
         return []
+    spot = archive.klines_1m('spot', spot_id, start, end) if spot_id else np.empty((0, 8))
+    spot_minutes = spot[:, STREAM_COLS] if len(spot) else None
+    frames = htf_frames(archive, fut_id, fut, start)
     btc = fut if fut_id == 'BTCUSDT' else archive.klines_1m('futures', 'BTCUSDT', start, end)
     eth_corr = fut_id == 'BTCUSDT'
     if eth_corr:
@@ -104,27 +107,32 @@ def replay_coin(job: tuple):
         h1_window = h1_list[max(0, h - 200):h]
         j = int(np.searchsorted(oi_hour_ts, now_ms, side='right')) if len(oi_hour_ts) else 0
         k5 = int(np.searchsorted(c5_close, now_ms, side='right'))
+        h4w, d1w, w1w, htf_sig = htf_at(frames, now_ms)
         raw = build_raw(window, h1_window, oi_hour[max(0, j - 200):j], [], atr, now_ms,
-                        candles_4d=c5_list[max(0, k5 - 4 * 288):k5])
+                        candles_4d=c5_list[max(0, k5 - 4 * 288):k5], candles_1d=d1w, candles_4h=h4w, candles_1w=w1w)
         ctx = Context(atr=atr, recent_atr=recent_atr(window), cut_ms=last_open + QUARTER_MS, zones=merge(raw, atr),
                       pools=[], trend=0)
         closed = int(np.searchsorted(m_ts, now_ms - MINUTE_MS, side='right'))
         minutes_now = minutes_all[max(0, closed - 240):closed].tolist()
         i = idx_by_ts.get(last_open, 0)
         df = fut_all.slice(max(0, i - 98), 99)
-        sig = dict(event, has_spot=True)
+        sig = dict(event, has_spot=True, coin_trend=coin_trend(h1_window), **htf_sig)
         plan = strategy.plan(PlanInput(key, d, event['setup'], sig, df, minutes_now, raw, h1_window, ctx, None))
         row = {'symbol': key, 'ts_ms': now_ms, 'setup': event['setup'], 'strategy': strategy.name, 'direction': d,
-               'vetoed': '', 'status': 'NO_PLAN', 'vetoed_triggers': 0, 'veto_log': '', 'r_tp1': None, 'r_tp2': None,
+               'vetoed': strategy.context_veto(sig, d) or '', 'status': 'NO_PLAN', 'vetoed_triggers': 0, 'veto_log': '', 'r_tp1': None, 'r_tp2': None,
                'r_be': None, 'rr_tp1': None, 'risk_pct': None, 'outcome': None, 'hold_min': None,
                'vx_reason': '', 'vx_r_tp1': None, 'vx_r_tp2': None, 'vx_rr_tp1': None,
                'pl_r_tp1': None, 'pl_r_tp2': None}
-        if plan is None or not plan.get('targets'):
+        if plan is None or plan.get('skip') or not plan.get('targets'):
+            if plan and plan.get('skip'):
+                row['status'] = f"NO_PLAN ({plan['skip']})"
             out.append(row)
             return
         finished = _lifecycle(plan, strategy, d, row, now_ms, m_ts, minutes_all, fut, fund, oi_ts, oi_v,
-                              entry_levels, ltf_trigger, resample, simulate, _asof, placebo=placebo)
-        busy[event['setup']] = finished
+                              entry_levels, ltf_trigger, resample, simulate, _asof, placebo=placebo,
+                              spot_minutes=spot_minutes, sig=sig)
+        if not row['vetoed']:
+            busy[event['setup']] = finished
         out.append(row)
 
     for q in range(LONG, len(c15_list)):
@@ -207,7 +215,10 @@ def main():
     parser.add_argument('--end', default=None)
     parser.add_argument('--out', default=os.path.join('research', 'maniac_6m.md'))
     parser.add_argument('--rows', default='research_maniac.parquet')
+    parser.add_argument('--confirm', choices=('live', 'record'), default='live',
+                        help='record: the minimum-confirmation rule is not applied (research_cards --confirm)')
     args = parser.parse_args()
+    os.environ['RESEARCH_CONFIRM'] = args.confirm      # the worker processes read CONFIRM_MODE at import
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
     from history import Archive
     from pretrain import select_coins
