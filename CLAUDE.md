@@ -350,3 +350,6 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   perpetual delistings (futures exchangeInfo deliveryDate), hourly; longs on such coins vetoed `event_risk`; journal
   features `event_risk`, `near52` (price / 52-week closing high; daily candles now 370), `vol_rank`, `liq_proxy`
   (OI falling with price over 5m). Not done: the pump detector vs naive baselines (only 22 PUMP START rows yet).
+- eng-54: the cost guard (risk >= 3x the execution cost) also applies to target-less plans (Turtles, Connors, ORB:
+  the `trail` branch of `geometry.system_levels` skipped it) - ETH's ORB of 2026-10-03 had a 0.10% stop on a 0.15%
+  range and lost -2.2R in the demo.
