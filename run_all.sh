@@ -16,7 +16,7 @@ P=.venv/bin/python
 M="--months 18 --end 2026-09-30 --holdout 6"
 step cards     $P research_cards.py $M --what all --workers 4 --out research/cards_eng43.md --rows research_cards_eng43.parquet --samples research_samples_eng43.parquet
 step classic   $P research_classic.py $M --workers 4
-[ -f logs/done/classic ] && cp research/classic_eng43.md research/classic_eng43_main.md
+[ -f logs/done/classic ] && [ ! -f logs/done/copy_main ] && cp research/classic_eng43.md research/classic_eng43_main.md && touch logs/done/copy_main
 step maniac    $P research_maniac.py $M --limit 0 --workers 4 --out research/maniac_eng43.md --rows research_maniac_eng43.parquet
 step vol_eval2 $P research_vol.py --from-rows
 step pretrain  $P pretrain.py --months 18 --workers 4 --rate 40000000
@@ -29,7 +29,8 @@ step exits     $P research_exits.py --samples research_samples_eng43.parquet --o
 step vol_2023  $P research_vol.py --workers 4 --window 2023-10-01,2024-10-01,2025-03-31
 step xsec_2023 $P research_xsec.py --workers 4 --window 2023-10-01,2024-10-01,2025-03-31
 step classic_2023 $P research_classic.py --months 18 --end 2025-03-31 --holdout 6 --workers 4
-[ -f logs/done/classic_2023 ] && cp research/classic_eng43.md research/classic_eng43_2023.md && cp research/classic_eng43_main.md research/classic_eng43.md
+# one-shot copies (a restart re-ran them and overwrote the 2023 report with the main one)
+[ -f logs/done/classic_2023 ] && [ ! -f logs/done/copy_2023 ] && cp research/classic_eng43.md research/classic_eng43_2023.md && cp research/classic_eng43_main.md research/classic_eng43.md && touch logs/done/copy_2023
 step cards_2023 $P research_cards.py --months 18 --end 2025-03-31 --holdout 6 --what all --workers 4 --out research/cards_eng43_2023.md --rows research_cards_eng43_2023.parquet --samples research_samples_eng43_2023.parquet
 step maniac_2023 $P research_maniac.py --months 18 --end 2025-03-31 --holdout 6 --limit 0 --workers 4 --out research/maniac_eng43_2023.md --rows research_maniac_eng43_2023.parquet
 # step maker (dropped 2026-10-03: the disk allowance; needs the main window 1m data, deleted)     env RESEARCH_ENTRY=maker $P research_cards.py $M --what all --entry maker --workers 4 --out research/cards_eng43_maker.md --rows research_cards_eng43_maker.parquet --samples research_samples_eng43_maker.parquet
