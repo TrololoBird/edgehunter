@@ -162,6 +162,8 @@ EXTRA_COLUMNS = {
     'okx_book_imb': 'REAL', 'bybit_book_imb': 'REAL',
     # iceberg.py: hidden limit orders refilled at one price over the last 5 minutes (bid - ask USD, count)
     'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'card_r': 'REAL',
+    'prem_1h': 'REAL', 'prem_z': 'REAL', 'funding_1h': 'REAL', 'oi_vol': 'REAL', 'er_1h': 'REAL', 'chop_1h': 'REAL',
+    'rs_btc_z': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
 }
 
@@ -181,6 +183,8 @@ FEATURE_KEYS = {
     'dvol_btc': 'dvol_btc', 'dvol_chg_1h': 'dvol_chg_1h', 'pc_oi_btc': 'pc_oi_btc', 'funding_spread': 'funding_spread',
     'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb',
     'iceberg_net_5m': 'iceberg_net_5m', 'iceberg_n_5m': 'iceberg_n_5m', 'daily_bias': 'daily_bias', 'weekly_bias': 'weekly_bias',
+    'prem_1h': 'prem_1h', 'prem_z': 'prem_z', 'funding_1h': 'funding_1h', 'oi_vol': 'oi_vol', 'er_1h': 'er_1h',
+    'chop_1h': 'chop_1h', 'rs_btc_z': 'rs_btc_z',
     'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d',
 }
 
@@ -259,11 +263,16 @@ def crowded(sig: Dict, direction: int) -> bool:
     oi = sig.get('oi_change_1h') if oi is None else oi
     if oi is None or oi < cfg.crowded_oi_1h:
         return False
+    # eng-52: Binance's funding is exactly 0.01% while the premium index sits in [-0.04%, +0.06%] (its own formula),
+    # so the 1h premium beyond that band is the crowding reading; the funding rule stays for the other venues
+    prem = sig.get('prem_1h')
     if direction > 0:
         premium = sig.get('cb_premium')
         return (funding is not None and funding >= cfg.crowded_funding_long) or \
+            (prem is not None and prem > cfg.crowded_premium_long) or \
             (premium is not None and premium <= -cfg.crowded_cb_discount)
-    return funding is not None and funding <= cfg.crowded_funding_short
+    return (funding is not None and funding <= cfg.crowded_funding_short) or \
+        (prem is not None and prem < -cfg.crowded_premium_short)
 
 
 def perp_flow_5m(sig: Dict) -> float:

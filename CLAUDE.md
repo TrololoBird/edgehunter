@@ -340,3 +340,9 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   take-profit orders"; their 100 / 200 / 300 R placeholders are journaled as NULL targets (`levels.simulate` treats a
   NULL target as unreachable). Still hypotheses, no source for the numbers: the time stop's 24 bars / x3, cost guard
   3x, limit wait 15 min, ORB anchored to the US equity open (crypto ORB sources use 00:00 UTC).
+- eng-52 (Compass review, `research/compass_check.md`, `research_compass.py`): journal features `prem_1h` / `prem_z`
+  (mark vs index premium, 24h history `MarketData.premium_hist`), `funding_1h` (hourly funding mode), `oi_vol`,
+  `er_1h` / `chop_1h` (Kaufman ER, Choppiness), `rs_btc_z` (24h return net of BTC x beta); `journal.crowded` also
+  reads the 1h premium beyond Binance's neutral band (+0.06% / -0.04%: the funding is exactly 0.01% on 57% of our
+  rows); demo stops trigger on the MARK price (`workingType`); Connors' pool back to all coins (crypto reversal is a
+  small-coin effect); stats.py `reversal_test_table` (Mahadzva's reversal-vs-continuation test on our setups).

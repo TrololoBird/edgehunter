@@ -280,6 +280,9 @@ class OrderflowConfig:
     crowded_funding_long: float = 0.0003
     crowded_funding_short: float = -0.0001
     crowded_cb_discount: float = 0.0005
+    # Binance's funding formula: F = 0.01% while the premium is within [-0.04%, +0.06%] (eng-52)
+    crowded_premium_long: float = 0.0006
+    crowded_premium_short: float = 0.0004
     crowded_oi_1h: float = 0.005
     # Footprint price bucket as a share of the 15m ATR, diagonal imbalance ratio and consecutive levels
     footprint_bucket_atr: float = 0.05
@@ -537,7 +540,7 @@ class PoolsConfig:
     rules: tuple = (('continuation', 'all', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
                     ('orb', 'all', '', 0.0, 'volume'), ('trendline', 'all', '', 0.0, 'volatility'),
                     ('market_profile', 'all', '', 0.0, 'volume'),
-                    ('connors', 'major,large', '', 0.0, 'volume'),
+                    ('connors', 'all', '', 0.0, 'volume'),
                     ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
                     ('sweep', 'all', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
                     ('pump', 'all', '', 0.0, 'volatility'), ('cup_handle', 'all', '', 0.0, 'volume'))
@@ -895,7 +898,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-51"
+    logic_version: str = "eng-52"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

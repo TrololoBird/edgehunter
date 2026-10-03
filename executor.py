@@ -253,7 +253,8 @@ class DemoExecutor:
                  'risk_usd': qty * abs(fill - lv['sl'])}
         try:
             await ex.create_order(symbol, 'market', exit_side, qty, None,
-                                  {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True})
+                                  {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True,
+                                   'workingType': 'MARK_PRICE'})
         except Exception as e:
             # never an unprotected position: recorded and closed at market
             trade['id'] = self._insert(trade)
@@ -449,7 +450,8 @@ class DemoExecutor:
         self._save_pending()
         try:
             await ex.create_order(symbol, 'market', exit_side, qty, None,
-                                  {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True})
+                                  {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True,
+                                   'workingType': 'MARK_PRICE'})
         except Exception as e:
             # found filled only after price ran through the stop (live CAP 2026-10-02): out at market, never unprotected
             logger.warning(f"Demo LIMIT FILLED {symbol}: stop not placed ({e!r}): closed at market")
@@ -510,7 +512,7 @@ class DemoExecutor:
                 scale = float(trade.get('scale') or 1.0)
                 await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', total, None,
                                       {'stopLossPrice': float(ex.price_to_precision(symbol, s.levels['sl'] * scale)),
-                                       'reduceOnly': True})
+                                       'reduceOnly': True, 'workingType': 'MARK_PRICE'})
                 if not ((getattr(s, 'plan', None) or {}).get('no_tp')):
                     # an averaging add (pump strategies): the three take-profits again, for the whole position
                     third = float(ex.amount_to_precision(symbol, total / 3))

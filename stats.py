@@ -577,6 +577,39 @@ def sources_table(console: Console, rows: List):
     console.print(table)
 
 
+REVERSAL_SETUPS = ('SWEEP LOW', 'SWEEP HIGH', 'SILVER BULLET LONG', 'SILVER BULLET SHORT', 'SPRING', 'UTAD',
+                   'FLUSH REVERSAL', 'SQUEEZE REVERSAL', 'BB W-BOTTOM', 'BB M-TOP')
+
+
+def reversal_test_table(console: Console, rows: List):
+    """
+    Mahadzva's test (SSRN 2026, G10 FX: a swept level predicted CONTINUATION in 65 of 66 folds) on our journal: every
+    reversal setup (passed or vetoed) with the move afterwards in the signal's direction. A negative mean = price
+    continued the swept move: the reversal reading is wrong and the opposite side would have paid.
+    """
+    sets = [r for r in rows if r['kind'] == 'setup' and r['group_key'] in REVERSAL_SETUPS]
+    if not sets:
+        return
+    table = Table(title="Reversal setups: reversal or continuation? (move in the signal's direction)",
+                  header_style="bold magenta", border_style="blue")
+    for name in ("Setup", "N", "1h", "4h", "4h > 0", "90% (4h)", "Reading"):
+        table.add_column(name, justify="left" if name in ("Setup", "Reading") else "right", no_wrap=True)
+    for key in REVERSAL_SETUPS:
+        members = [r for r in sets if r['group_key'] == key and r['ret_4h'] is not None]
+        if not members:
+            continue
+        r1 = [r['direction'] * r['ret_1h'] for r in members if r['ret_1h'] is not None]
+        r4 = [r['direction'] * r['ret_4h'] for r in members]
+        mean4 = statistics.fmean(r4)
+        lo_hi = bootstrap_ci(r4, clusters=[cluster_of(r) for r in members]) if len(r4) >= 5 else None
+        reading = '—' if lo_hi is None else ('continuation' if lo_hi[1] < 0 else 'reversal' if lo_hi[0] > 0 else "can't tell")
+        table.add_row(key, Text(str(len(r4)), style="dim" if len(r4) < MIN_SAMPLE else "white"),
+                      pct(statistics.fmean(r1)) if r1 else Text("—"), pct(mean4),
+                      f"{sum(x > 0 for x in r4) / len(r4):.0%}",
+                      f"[{lo_hi[0] * 100:+.2f}..{lo_hi[1] * 100:+.2f}%]" if lo_hi else "—", reading)
+    console.print(table)
+
+
 def vetoes_table(console: Console, rows: List):
     """
     Every filter judged by what it rejected: entries grouped by veto reason (passed = taken) with their replay - a
@@ -810,6 +843,7 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     levels_table(console, {k: v for k, v in groups.items() if k.startswith('ENTRY')})
     sources_table(console, rows)
     vetoes_table(console, rows)
+    reversal_test_table(console, rows)
     card_results_table(console, rows)
     cards_table(console, rows)
     demo_table(console)

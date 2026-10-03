@@ -937,6 +937,55 @@ class Scanner:
             'breadth_w': sum(t > 0 for t in trends) / len(trends) if len(trends) >= 20 else None,
         }
 
+    def _positioning_features(self, symbol: str, md: MarketData) -> Dict:
+        """
+        eng-52 journal features (Compass review; context only, no rule uses them except the premium in `crowded`):
+        the mark-vs-index premium over the last hour and its z-score against 24h (Binance's funding is stuck at 0.01%
+        inside the premium's neutral band), the 1h funding mode (Binance moves a contract to hourly funding after a
+        capped settlement), OI / 24h volume (leverage), Kaufman's efficiency ratio and the Choppiness index of the
+        last 14 hours, and the coin's 24h return net of BTC x beta in its own residual std (relative strength).
+        """
+        import math
+        out: Dict = {}
+        hist = list(md.premium_hist)
+        if len(hist) >= 20:
+            now = hist[-1][0]
+            last_h = [p for t, p in hist if now - t <= 3_600_000]
+            vals = [p for _, p in hist]
+            mean = sum(vals) / len(vals)
+            sd = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+            out['prem_1h'] = sum(last_h) / len(last_h) if last_h else None
+            out['prem_z'] = (out['prem_1h'] - mean) / sd if sd > 0 and out['prem_1h'] is not None else None
+        hours = self.fetcher.funding_interval_hours.get(symbol)
+        out['funding_1h'] = 1.0 if hours == 1 else 0.0 if hours else None
+        state = (self.fetcher.venue_derivs.get(symbol) or {}).get('binance')
+        out['oi_vol'] = state.oi_usd / md.quote_volume_24h if state is not None and state.oi_usd and \
+            md.quote_volume_24h else None
+        h1 = list(md.h1)[-15:]
+        if len(h1) == 15:
+            closes = [c[4] for c in h1]
+            path = sum(abs(b - a) for a, b in zip(closes, closes[1:]))
+            out['er_1h'] = abs(closes[-1] - closes[0]) / path if path else None
+            trs = [max(c[2] - c[3], abs(c[2] - p[4]), abs(c[3] - p[4])) for p, c in zip(h1, h1[1:])]
+            span = max(c[2] for c in h1[1:]) - min(c[3] for c in h1[1:])
+            out['chop_1h'] = 100 * math.log10(sum(trs) / span) / math.log10(14) if span > 0 and sum(trs) > 0 else None
+        btc = self.market_data.get('BTC/USDT:USDT')
+        if btc is not None and not symbol.startswith('BTC/') and len(md.h1) >= 169 and len(btc.h1) >= 169:
+            a = {int(c[0]): c[4] for c in list(md.h1)[-169:]}
+            b = {int(c[0]): c[4] for c in list(btc.h1)[-169:]}
+            ts = sorted(set(a) & set(b))
+            ra = [a[y] / a[x] - 1 for x, y in zip(ts, ts[1:])]
+            rb = [b[y] / b[x] - 1 for x, y in zip(ts, ts[1:])]
+            if len(ra) >= 100:
+                mb = sum(rb) / len(rb)
+                vb = sum((x - mb) ** 2 for x in rb)
+                beta = sum((x - mb) * (y - sum(ra) / len(ra)) for x, y in zip(rb, ra)) / vb if vb else 1.0
+                resid = [y - beta * x for x, y in zip(rb, ra)]
+                sd = (sum(e * e for e in resid) / len(resid)) ** 0.5
+                r24 = sum(resid[-24:])
+                out['rs_btc_z'] = r24 / (sd * 24 ** 0.5) if sd > 0 else None
+        return out
+
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
         """Live context that is not part of the scored row."""
         sig.update(self.market_state)
@@ -960,6 +1009,7 @@ class Scanner:
             prev, last = md.w1[-2], md.w1[-1]
             sig['weekly_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
+        sig.update(self._positioning_features(symbol, md))
         sig['trend_w'] = trend_w_of(md.w1_ref, self._price_of(symbol))
         sig['volume_24h'] = md.quote_volume_24h or None
         sig['tier2_active'] = md.trades_subscribed

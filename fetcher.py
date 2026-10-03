@@ -91,6 +91,9 @@ class MarketData:
     # Mark / index price and basis from REST premiumIndex every 30s (no whole-market stream: bandwidth)
     mark_price: float = 0.0
     index_price: float = 0.0
+    # (ts_ms, mark / index - 1) every premiumIndex pass: Binance's funding sits at 0.01% while the premium is inside
+    # [-0.04%, +0.06%] (its formula), so the premium itself carries the positioning (eng-52)
+    premium_hist: deque = field(default_factory=lambda: deque(maxlen=2880))
     # Largest whale sweep / visible depth it hit (> 1 = it ate the book), with its time
     book_eaten: float = 0.0
     book_eaten_ts: float = 0.0
@@ -635,6 +638,8 @@ class DataFetcher:
             if md is None:
                 continue
             md.mark_price, md.index_price = float(m.get('markPrice') or 0.0), float(m.get('indexPrice') or 0.0)
+            if md.mark_price and md.index_price:
+                md.premium_hist.append((now_ms, md.mark_price / md.index_price - 1))
             # lastFundingRate: the live estimate of the next funding; settlements run every 1/4/8h -> 8h-equivalent
             rate = float(m.get('lastFundingRate') or 0.0) * 8 / self.funding_interval_hours.get(key, 8)
             md.funding_rate = md.predicted_funding = rate
