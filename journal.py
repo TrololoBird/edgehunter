@@ -163,7 +163,7 @@ EXTRA_COLUMNS = {
     # iceberg.py: hidden limit orders refilled at one price over the last 5 minutes (bid - ask USD, count)
     'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'card_r': 'REAL',
     'prem_1h': 'REAL', 'prem_z': 'REAL', 'funding_1h': 'REAL', 'oi_vol': 'REAL', 'er_1h': 'REAL', 'chop_1h': 'REAL',
-    'rs_btc_z': 'REAL',
+    'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
 }
 
@@ -184,7 +184,8 @@ FEATURE_KEYS = {
     'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb',
     'iceberg_net_5m': 'iceberg_net_5m', 'iceberg_n_5m': 'iceberg_n_5m', 'daily_bias': 'daily_bias', 'weekly_bias': 'weekly_bias',
     'prem_1h': 'prem_1h', 'prem_z': 'prem_z', 'funding_1h': 'funding_1h', 'oi_vol': 'oi_vol', 'er_1h': 'er_1h',
-    'chop_1h': 'chop_1h', 'rs_btc_z': 'rs_btc_z',
+    'chop_1h': 'chop_1h', 'rs_btc_z': 'rs_btc_z', 'event_risk': 'event_risk', 'near52': 'near52',
+    'vol_rank': 'vol_rank', 'liq_proxy': 'liq_proxy',
     'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d',
 }
 

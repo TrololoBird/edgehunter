@@ -252,6 +252,9 @@ class SignalBook:
                 self._recent_setups[(symbol, direction)] = now
                 directional.append((direction, sig))
                 reason = veto_reason(group_key, sig) or strategy.context_veto(sig, direction)
+                if reason is None and direction > 0 and sig.get('event_risk'):
+                    # eng-53: no longs on a coin Binance tagged for monitoring / is delisting (documented -4..-34%)
+                    reason = 'event_risk'
                 if reason is None and not strategy.has_data(sig):
                     reason = 'no_data'
                 if reason is None and (not strategy.enabled or group_key in CONFIG.strategies.disabled_setups):

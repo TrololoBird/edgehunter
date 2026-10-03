@@ -222,7 +222,7 @@ class Scanner:
     def start(self):
         self._running = True
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
-                 self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop()]
+                 self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop(), self.event_risk_loop()]
         if self.demo.enabled:
             loops.append(self.demo.reconcile_loop(lambda: self._running))
         running = lambda: self._running
@@ -947,6 +947,9 @@ class Scanner:
         """
         import math
         out: Dict = {}
+        oi5, p5 = (md.tier0 or {}).get('oi_change_5m'), (md.tier0 or {}).get('price_change_5m')
+        out['liq_proxy'] = max(0.0, -oi5) if oi5 is not None and p5 is not None and p5 < 0 else 0.0 \
+            if oi5 is not None else None
         hist = list(md.premium_hist)
         if len(hist) >= 20:
             now = hist[-1][0]
@@ -1010,6 +1013,16 @@ class Scanner:
             sig['weekly_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
         sig.update(self._positioning_features(symbol, md))
+        # eng-53: Binance's Monitoring Tag / a scheduled delisting (longs vetoed 'event_risk'), the nearness to the
+        # 52-week high (Jia et al. 2025: predicts next week's cross-section; ours: rank IC +0.09, t 2.9, quintile
+        # spread n.s.), the coin's 24h volume rank (reversal after extremes is an illiquid-coin effect)
+        risk = getattr(self, 'event_risk', None)
+        sig['event_risk'] = risk.of(symbol) if risk is not None else None
+        closes = [c[4] for c in list(md.d1)[-365:]]
+        price = self._price_of(symbol)
+        sig['near52'] = price / max(closes) if len(closes) >= 250 and price and max(closes) > 0 else None
+        vols = sorted((m.quote_volume_24h or 0.0 for m in self.market_data.values()), reverse=True)
+        sig['vol_rank'] = float(1 + sum(1 for v in vols if v > (md.quote_volume_24h or 0.0))) if vols else None
         sig['trend_w'] = trend_w_of(md.w1_ref, self._price_of(symbol))
         sig['volume_24h'] = md.quote_volume_24h or None
         sig['tier2_active'] = md.trades_subscribed
@@ -1249,6 +1262,17 @@ class Scanner:
         }
 
     # ------------------------------------------------------------------ background loops
+
+    async def event_risk_loop(self):
+        """Binance's Monitoring Tag and scheduled perpetual delistings (event_risk.py), hourly, off the loop."""
+        from event_risk import EventRisk
+        self.event_risk = getattr(self, 'event_risk', None) or EventRisk()
+        while self._running:
+            try:
+                await asyncio.to_thread(self.event_risk.refresh)
+            except Exception as e:
+                logger.warning(f"Event risk refresh failed: {e!r}")
+            await asyncio.sleep(3600)
 
     async def pools_loop(self):
         """Per-strategy coin pools (pools.py), rebuilt every CONFIG.pools.refresh_sec off the loop."""

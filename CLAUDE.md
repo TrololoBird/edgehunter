@@ -346,3 +346,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   reads the 1h premium beyond Binance's neutral band (+0.06% / -0.04%: the funding is exactly 0.01% on 57% of our
   rows); demo stops trigger on the MARK price (`workingType`); Connors' pool back to all coins (crypto reversal is a
   small-coin effect); stats.py `reversal_test_table` (Mahadzva's reversal-vs-continuation test on our setups).
+- eng-53 (Compass "7 phases" review): `event_risk.py` - Binance's Monitoring Tag (spot product tags) and scheduled
+  perpetual delistings (futures exchangeInfo deliveryDate), hourly; longs on such coins vetoed `event_risk`; journal
+  features `event_risk`, `near52` (price / 52-week closing high; daily candles now 370), `vol_rank`, `liq_proxy`
+  (OI falling with price over 5m). Not done: the pump detector vs naive baselines (only 22 PUMP START rows yet).
