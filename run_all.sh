@@ -32,7 +32,7 @@ step classic_2023 $P research_classic.py --months 18 --end 2025-03-31 --holdout 
 [ -f logs/done/classic_2023 ] && cp research/classic_eng43.md research/classic_eng43_2023.md && cp research/classic_eng43_main.md research/classic_eng43.md
 step cards_2023 $P research_cards.py --months 18 --end 2025-03-31 --holdout 6 --what all --workers 4 --out research/cards_eng43_2023.md --rows research_cards_eng43_2023.parquet --samples research_samples_eng43_2023.parquet
 step maniac_2023 $P research_maniac.py --months 18 --end 2025-03-31 --holdout 6 --limit 0 --workers 4 --out research/maniac_eng43_2023.md --rows research_maniac_eng43_2023.parquet
-step maker     env RESEARCH_ENTRY=maker $P research_cards.py $M --what all --entry maker --workers 4 --out research/cards_eng43_maker.md --rows research_cards_eng43_maker.parquet --samples research_samples_eng43_maker.parquet
+# step maker (dropped 2026-10-03: the disk allowance; needs the main window 1m data, deleted)     env RESEARCH_ENTRY=maker $P research_cards.py $M --what all --entry maker --workers 4 --out research/cards_eng43_maker.md --rows research_cards_eng43_maker.parquet --samples research_samples_eng43_maker.parquet
 step scenarios $P train_scenarios.py --months 18 --workers 4 --out research/scenario_model_eng43.md
 step htf       $P research_htf.py --workers 4 --out research/htf_phases_rerun.md
 step lt        $P research_level_triggers.py --workers 4 --out research/level_triggers_rerun.md
