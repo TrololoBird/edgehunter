@@ -1,4 +1,4 @@
-# eng-43 archive validation (INTERIM, 2026-10-03 00:10 UTC)
+# eng-43 archive validation (2026-10-03 12:20 UTC: every queued run finished)
 
 Pre-registered rule (research/validation_eng43_prereg.md, CLOUD_RETRAIN.md): a strategy WORKS only if its mean net R is
 > 0 in development AND holdout, the holdout 90% cluster-bootstrap interval is > 0, and system - placebo in the holdout
@@ -51,7 +51,7 @@ Notes
 | Cards prior-period check (research/cards_eng43_2023.md, 359 coins) | SPRING dev -0.37R / holdout -0.54R (22 / 14 entries); SWEEP LOW holdout -0.29R [-0.40..-0.17], below placebo; SWEEP HIGH -0.08R; BULL F -0.36 / -0.15R | SPRING's main-window +0.36R does NOT repeat: period-specific (prior-period rule); nothing works in either period |
 | Maniac prior-period check (research/maniac_eng43_2023.md, 351 coins) | AUCTION LONG holdout -0.51R (q 0.03); BB W-BOTTOM -0.07R; BB M-TOP -0.02R; CUP HANDLE -0.11R; SD DEMAND +0.53R [-0.20..+1.33] on 21 entries (main window: -0.08R); trendline again all NO_PLAN | nothing passes in either period |
 | Scenario probability model, 18 months (research/scenario_model_eng43.md) | Brier skill vs the random-walk geometry -6.8% | NOT passed - the card keeps the geometric probability (models/scenario_prob.pkl NOT replaced) |
-| Re-runs of the earlier studies to 2026-09 (*_rerun.md: HTF phases, level triggers, pumps, channels, EQH, daily trend, ensemble) | HTF: no cell positive with q <= 0.10 on the dev half; the others as in research-findings | no change to the earlier conclusions |
+| Re-runs of the earlier studies to 2026-09 (*_rerun.md: HTF phases, level triggers, pumps, channels, EQH, daily trend, ensemble, positioning) | HTF: no cell positive with q <= 0.10 on the dev half; positioning: the most negative funding-level decile again underperforms in both halves (-0.42% / -0.63% per 24h vs the universe) - the same descriptive pattern whose pre-registered short holdout failed after costs (research/funding_holdout.md); the others as in research-findings | no change to the earlier conclusions |
 | Classic prior-period check (research/classic_eng43_2023.md) | no VA80 / ORB / pump holdout interval above 0; RSI2 holdout +0.4% / +1.2% with intervals across 0 (placebo comparison invalid, as above) | consistent: does not work |
 | G prior-period check (research/xsec_g_2023.md) | LightGBM gross +0.02% / 4h holdout, net -0.33%; momentum / reversal net -0.34% / -0.26% | does not work in either period - closed |
 | C sticky HMM regimes (49k market candles, 18 months) | runs 7.2 vs 5.8 candles (GMM); neither separates the 4h Edge beyond +-0.03%; HMM uses 10 names vs 7 | keep GMM (no gain worth a logic change) |
