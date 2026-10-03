@@ -44,3 +44,17 @@ date,script,name,variants,params,window,n,metric,dev,valid,holdout,source,commit
 2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv4",1,,2025-04-03..2026-09-30,3490274,QLIKE,39.8971,,0.330606,research/vol_b1.md,4bc008a
 2026-10-02,research_vol.py,HAR-RV rv4,1,,2025-04-03..2026-09-30,3490274,QLIKE,501.116,,0.268811,research/vol_b1.md,4bc008a
 2026-10-02,research_vol.py,LightGBM rv4,1,,2025-04-03..2026-09-30,3490274,QLIKE,1066.97,,0.268348,research/vol_b1.md,4bc008a
+2026-10-02,research_vol.py,ATR14 rv1,1,,2023-10-01..2025-03-31,3332003,QLIKE,0.338909,,0.268668,research/vol_b1.md,d0bff8a
+2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv1",1,,2023-10-01..2025-03-31,3332003,QLIKE,0.304363,,0.246938,research/vol_b1.md,d0bff8a
+2026-10-02,research_vol.py,HAR-RV rv1,1,,2023-10-01..2025-03-31,3332003,QLIKE,0.282416,,0.378345,research/vol_b1.md,d0bff8a
+2026-10-02,research_vol.py,LightGBM rv1,1,,2023-10-01..2025-03-31,3332003,QLIKE,0.172093,,0.200624,research/vol_b1.md,d0bff8a
+2026-10-02,research_vol.py,ATR14 rv4,1,,2023-10-01..2025-03-31,3333631,QLIKE,0.329031,,0.255158,research/vol_b1.md,d0bff8a
+2026-10-02,research_vol.py,"max(ATR14, ATR 1h) rv4",1,,2023-10-01..2025-03-31,3333631,QLIKE,0.326303,,0.256101,research/vol_b1.md,d0bff8a
+2026-10-02,research_vol.py,HAR-RV rv4,1,,2023-10-01..2025-03-31,3333631,QLIKE,0.300086,,0.229843,research/vol_b1.md,d0bff8a
+2026-10-02,research_vol.py,LightGBM rv4,1,,2023-10-01..2025-03-31,3333631,QLIKE,0.167352,,0.212438,research/vol_b1.md,d0bff8a
+2026-10-02,research_xsec.py,s_gbm long-short dev,1,,2023-10-01..2025-03-31,2153,net ret / 4h,-0.00221468,,,research/xsec_g.md,d0bff8a
+2026-10-02,research_xsec.py,s_gbm long-short HOLDOUT,1,,2023-10-01..2025-03-31,1091,net ret / 4h,,,-0.00324566,research/xsec_g.md,d0bff8a
+2026-10-02,research_xsec.py,s_mom long-short dev,1,,2023-10-01..2025-03-31,2153,net ret / 4h,-0.00278177,,,research/xsec_g.md,d0bff8a
+2026-10-02,research_xsec.py,s_mom long-short HOLDOUT,1,,2023-10-01..2025-03-31,1091,net ret / 4h,,,-0.00336365,research/xsec_g.md,d0bff8a
+2026-10-02,research_xsec.py,s_rev long-short dev,1,,2023-10-01..2025-03-31,2153,net ret / 4h,-0.00286113,,,research/xsec_g.md,d0bff8a
+2026-10-02,research_xsec.py,s_rev long-short HOLDOUT,1,,2023-10-01..2025-03-31,1091,net ret / 4h,,,-0.00254942,research/xsec_g.md,d0bff8a

@@ -1,4 +1,4 @@
-# eng-43 archive validation (INTERIM, 2026-10-02 23:10 UTC)
+# eng-43 archive validation (INTERIM, 2026-10-03 00:10 UTC)
 
 Pre-registered rule (research/validation_eng43_prereg.md, CLOUD_RETRAIN.md): a strategy WORKS only if its mean net R is
 > 0 in development AND holdout, the holdout 90% cluster-bootstrap interval is > 0, and system - placebo in the holdout
@@ -47,6 +47,8 @@ Notes
 |---|---|---|
 | B1 volatility forecast (425 coins; lags floored after review) | holdout QLIKE: LightGBM -5.2% (1h) / -0.2% (4h) vs HAR-RV; HAR-RV 14-23% better than ATR14 / max(ATR14, ATR 1h) | HAR-RV (pre-registered rule, unchanged in all three evaluations); prior period queued |
 | G cross-sectional ranking (422 coins) | LightGBM gross +0.16% / 4h holdout, net -0.34%, DSR 0 | does not work - closed |
+| B1 prior-period check 2023-10 .. 2025-03 (research/vol_b1_2023.md) | holdout QLIKE 1h: HAR 0.378 vs ATR14 0.269 (HAR worse; DM p 0.49 - a few outlier hours dominate the mean), 4h: HAR 0.230 vs ATR14 0.255 (+11%, p 0.09); MSE of log RV: HAR better than ATR14 in BOTH periods and horizons (0.31 vs 0.40, 0.32 vs 0.40); LightGBM best on every metric but never significant | by the pre-registered prior-period rule the QLIKE result is PERIOD-SPECIFIC: B1's "HAR beats ATR" is downgraded to "HAR beats ATR in log-MSE, not robustly in QLIKE"; no change to the stop unit on this evidence |
+| G prior-period check (research/xsec_g_2023.md) | LightGBM gross +0.02% / 4h holdout, net -0.33%; momentum / reversal net -0.34% / -0.26% | does not work in either period - closed |
 | C sticky HMM regimes (49k market candles, 18 months) | runs 7.2 vs 5.8 candles (GMM); neither separates the 4h Edge beyond +-0.03%; HMM uses 10 names vs 7 | keep GMM (no gain worth a logic change) |
 | P(edge) retrain (18 months) + ml_eval | CPCV: AUC 0.539 (LightGBM) / 0.534 (logistic), top-20% Edge +0.047% over all rows, PBO 0.28, deflated Sharpe 0.76 (154 trials) | real but tiny ranking signal, far below the ~0.20% cost: stays SHADOW |
 | Null-world ML audit (labels shuffled) | AUC 0.500-0.503, log-loss skill <= 0, DSR 0.09 | the ML pipeline does not invent signal (passes) |
