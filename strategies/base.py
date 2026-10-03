@@ -73,6 +73,15 @@ class Strategy:
     # the method's own minimum reward / risk to TP1 (its source's rule); None = CONFIG.levels.min_rr_tp1 (eng-40)
     min_rr: Optional[float] = None
     frozen_in_zone = False                          # a continuation's plan is frozen once price is in its zone
+    # How the trade ends by time (eng-47): 'bars' = no TP1 within CONFIG.strategies.time_stop_bars bars of the
+    # structure timeframe (the rest runs time_after_tp1 x longer once TP1 traded); 'fixed' = the method's own exit
+    # decides (Turtles' channel, Connors' SMA5, O'Neil, Seiden, the Silver Bullet's session) and ttls()[2] only caps;
+    # 'session' = out at the end of the method's session (session_end)
+    time_exit = 'bars'
+
+    def session_end(self, entered_at: float) -> Optional[float]:
+        """Epoch seconds the method's session ends for a trade entered at entered_at ('session' methods)."""
+        return None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         raise NotImplementedError

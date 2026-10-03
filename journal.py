@@ -162,7 +162,7 @@ EXTRA_COLUMNS = {
     'okx_book_imb': 'REAL', 'bybit_book_imb': 'REAL',
     # iceberg.py: hidden limit orders refilled at one price over the last 5 minutes (bid - ask USD, count)
     'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'card_r': 'REAL',
-    'units': 'REAL', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
+    'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
 }
 
 FEATURE_KEYS = {
@@ -517,7 +517,11 @@ class SignalJournal:
         lv = tracked.levels
         row = self._base_row(int(tracked.entered_at * 1000), tracked.symbol, 'entry', f"ENTRY {tracked.group_key}",
                              tracked.direction, lv['entry'], tracked.sig)
-        row.update({'entry': lv['entry'], 'sl': lv['sl'], 'tp1': lv['tp1'], 'tp2': lv['tp2'], 'tp3': lv['tp3'],
+        # systems without a profit target (Turtles, Connors, ORB) carry 100 / 200 / 300 R placeholders for the lifecycle:
+        # journaled as NULL, not as prices (live ZRO ORB DOWN: TP1 -1.757) - eng-51
+        no_tp = bool((tracked.plan or {}).get('no_tp'))
+        row.update({'entry': lv['entry'], 'sl': lv['sl'], 'tp1': None if no_tp else lv['tp1'],
+                    'tp2': None if no_tp else lv['tp2'], 'tp3': None if no_tp else lv['tp3'],
                     'rr_tp1': lv.get('rr_tp1'), 'low_rr': int(bool(lv.get('low_rr'))),
                     'rr_blend': lv.get('rr_blend'), 'rr_reason': lv.get('rr_reason'),
                     'vetoed': getattr(tracked, 'vetoed', None), 'of_confirm': getattr(tracked, 'of_confirm', None),
@@ -529,7 +533,11 @@ class SignalJournal:
                     'range_pos': lv.get('range_pos'),
                     'sl_src': lv.get('sl_src'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
-                    'anchor': _anchor_json(tracked.plan)})
+                    'anchor': _anchor_json(tracked.plan),
+                    # eng-48: why it entered (the detector's note + the plan's trigger), was empty on entry rows
+                    'reason': ' | '.join(str(x) for x in (tracked.sig.get('setup_note'),
+                                                          (tracked.plan or {}).get('trigger'),
+                                                          (tracked.plan or {}).get('entry_note')) if x) or None})
         with self._lock:
             self._insert([row])
             self.conn.commit()
@@ -565,7 +573,9 @@ class SignalJournal:
                     'vetoed': ','.join(sorted(set(tracked.veto_log))) or None,
                     # the card's own result in R: the lifecycle's exit (a trailing channel, pyramided units) - the 8h
                     # replay cannot see a Turtle or Connors trade that lives for days
-                    'card_r': tracked.final_r, 'units': float(len(getattr(tracked, 'units', None) or [])) or None})
+                    'card_r': tracked.final_r, 'units': float(len(getattr(tracked, 'units', None) or [])) or None,
+                    # the furthest target the card reached (0 = none) - the TP1 / TP2 / TP3 hit rates of stats.py
+                    'best_tp': int(tracked.best_target or 0) if tracked.entered_at else None})
         with self._lock:
             self._insert([row])
             self.conn.commit()

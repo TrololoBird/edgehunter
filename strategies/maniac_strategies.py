@@ -24,7 +24,8 @@ def _finish(x: PlanInput, plan: Dict, entry_est: float, extreme: Optional[float]
     """The card's targets as they stand at the estimated entry (the entry recomputes them at its own price)."""
     levels = system_levels(plan, entry_est, extreme, x.direction)
     if levels is None:
-        return None
+        # no target ahead / no valid stop: journaled as such, not as a missing anchor ('no_leg', eng-50)
+        return {'skip': 'no_target'}
     plan['targets'] = [levels['tp1'], levels['tp2'], levels['tp3']]
     plan['target_src'] = [levels['tp1_src'], levels['tp2_src'], levels['tp3_src']]
     return plan
@@ -62,6 +63,7 @@ class SupplyDemandStrategy(_System):
     setups = {'SD DEMAND': 1, 'SD SUPPLY': -1}
     min_rr = 3.0                     # Seiden (Online Trading Academy): a trade needs >= 3:1 reward / risk to the opposing zone
     ttl_key = 'sd_ttl'
+    time_exit = 'fixed'                # the method's own exit (eng-47)
     uses_minutes = True
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
@@ -177,7 +179,7 @@ class BollingerStrategy(_System):
         if sig.get('bb_stop') is None:
             return None
         exit = {'stop': ['ref', 0.0], 'stop_src': 'beyond the W / M retest',
-                'tp': ['level', sig['bb_target'], 1.0, None], 'tp_src': 'the W / M height from the break (measured move)', 'atr': x.atr}
+                'tp': ['level', sig['bb_target'], 1.0, None], 'tp_src': 'the opposite Bollinger band (Bollinger)', 'atr': x.atr}
         return _confirm_plan(x, self.name, '15m', exit, 'Bollinger W / M confirmed', stop_ref=sig['bb_stop'])
 
 

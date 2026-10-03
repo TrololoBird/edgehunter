@@ -448,6 +448,12 @@ class SignalBook:
             # inside it, the two coexist
             if rank < TF_RANK.get(self._tf(o), 2):
                 continue
+            if o.entered_at and mine is not None and other is not None and mine.name != other.name and \
+                    (getattr(other, 'time_exit', 'bars') != 'bars' or o.best_target):
+                # eng-48: a trade with its method's own exit (Turtles, Connors, cup, Seiden, the sessions) is not
+                # closed by another method's 15m event (ZEC's RSI(2) by a SWEEP HIGH), and a trade that already took
+                # TP1 runs on its levels (1000PEPE's W-bottom at +2.5R closed for an M-top that lost)
+                continue
             o.last_price = price
             if o.entered_at:
                 self._finish(o, 'CLOSED', now, f"opposite setup {s.group_key} confirmed: closed at market")
@@ -464,10 +470,28 @@ class SignalBook:
         label = f"SL after TP{s.best_target}" if status == 'SL' and s.best_target else status
         self.session_results[label] += 1
         if s.entered_at and s.r_now is not None:
-            s.final_r = s.r_now
-            self.session_r.append(s.r_now)
+            s.final_r = self._exit_r(s, status)
+            self.session_r.append(s.final_r)
         if status in ('SL', 'TP3'):
             self.events.append((s, status))
+
+    @staticmethod
+    def _exit_r(s: TrackedSignal, status: str) -> Optional[float]:
+        """
+        The card's realized R as it is traded: a third out at each target reached, the rest at the stop (SL) or at the
+        last price (closed / expired). r_now marked the WHOLE position at the last price - a TP3 card read +2.62R where
+        its thirds made +1.5R (VVV 2026-10-02), an SL after TP1 read -1.08R.
+        """
+        lv = s.levels or {}
+        if s.units or not all(isinstance(lv.get(k), (int, float)) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')):
+            return s.r_now
+        risk = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
+        if not risk:
+            return s.r_now
+        reached = 3 if status == 'TP3' else min(int(s.best_target or 0), 3)
+        rest = lv['sl'] if status == 'SL' else s.last_price
+        parts = [lv[f'tp{k}'] for k in range(1, reached + 1)] + [rest] * (3 - reached)
+        return sum(s.direction * (p - lv['entry']) for p in parts) / 3 / risk
 
     def _invalid_reason(self, s: TrackedSignal, price: float, invalid: float) -> str:
         anchor = (s.plan or {}).get('anchor') or {}
@@ -689,6 +713,8 @@ class SignalBook:
             from macro_calendar import blackout
             if blackout(now_ms):
                 reason = 'macro_event'
+        if reason is None and not (s.plan or {}).get('trail_days') and self.crowded(s.mode, s.direction, entered_at):
+            reason = 'crowded'
         of = confirms.get('orderflow') or None
         if reason:
             vetoed = copy.copy(s)
@@ -753,6 +779,14 @@ class SignalBook:
                 lv['sl'] = add_at - d * 2 * n
                 lv['sl_src'] = f"2N from unit {len(s.units)} (Turtles)"
                 self.events.append((s, 'ADD'))
+        if (s.plan or {}).get('connors_exit') and self.daily_of:
+            d1 = self.daily_of(s.symbol) or []
+            # the daily closes since the entry: out on the first one beyond the SMA5 of the last five closes
+            if len(d1) >= 5 and d1[-1][0] / 1000 >= s.entered_at - 86400:
+                sma5 = sum(c[4] for c in d1[-5:]) / 5
+                if d1[-1][0] / 1000 + 86400 > s.entered_at and d * (d1[-1][4] - sma5) > 0:
+                    return self._finish(s, 'CLOSED', now, f"daily close {d1[-1][4]:.6g} beyond the SMA5 {sma5:.6g} "
+                                                          f"(Connors exit)")
         days = (s.plan or {}).get('trail_days')
         if days and self.daily_of:
             from strategies.turtle import trail_level
@@ -760,10 +794,45 @@ class SignalBook:
             if level is not None and d * (price - level) <= 0:
                 return self._finish(s, 'CLOSED', now, f"exit on the {days}-day {'low' if d > 0 else 'high'} "
                                                       f"{level:.6g} (Turtles)")
+        why = self._time_exit(s, now)
+        if why:
+            self._finish(s, 'CLOSED', now, why)
+
+    TF_SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400}
+
+    def crowded(self, mode: str, direction: int, now: float) -> bool:
+        """eng-51: crowd_max open trades in this direction across all strategies (Turtles' correlated-markets limit)."""
+        n = sum(1 for o in self.signals.values() if o.entered_at and not o.finished and o.direction == direction
+                and not (o.plan or {}).get('trail_days'))
+        return n >= CONFIG.strategies.crowd_max
+
+    def _time_exit(self, s: TrackedSignal, now: float) -> Optional[str]:
+        """Why the trade ends by time now (eng-47, Strategy.time_exit), None = it runs on."""
         strategy = self.strategy(s)
-        trade_ttl = strategy.ttls(self._tf(s))[2] if strategy else CONFIG.levels.trade_ttl_sec
-        if now - s.entered_at > trade_ttl:
-            self._finish(s, 'CLOSED', now, f"trade open {_dur(trade_ttl)}: closed at market")
+        held = now - s.entered_at
+        if strategy is None:
+            ttl = CONFIG.levels.trade_ttl_sec
+            return f"trade open {_dur(ttl)}: closed at market" if held > ttl else None
+        cap = strategy.ttls(self._tf(s))[2]
+        mode = getattr(strategy, 'time_exit', 'bars')
+        if mode == 'session':
+            end = strategy.session_end(s.entered_at)
+            if end is not None and now >= end:
+                return "the method's session ended: closed at market"
+            return f"trade open {_dur(cap)}: closed at market" if held > cap else None
+        if mode == 'fixed':
+            return f"trade open {_dur(cap)}: closed at market" if held > cap else None
+        cfg = CONFIG.strategies
+        tf = self._tf(s)
+        limit = max(cfg.time_stop_bars * self.TF_SEC.get(tf, 900), cfg.time_stop_min_sec)
+        if not s.best_target:
+            if held > limit:
+                return f"time stop: no TP1 within {cfg.time_stop_bars} {tf} bars ({_dur(limit)}): closed at market"
+            return None
+        limit *= cfg.time_after_tp1
+        if held > limit:
+            return f"time stop after TP1: open {_dur(limit)}: closed at market"
+        return None
 
     # ------------------------------------------------------------------ views
 

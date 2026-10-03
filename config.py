@@ -421,6 +421,9 @@ class LevelsConfig:
     plan_wait_sec: int = 180
     zone_ttl_sec: int = 3 * 3600
     trade_ttl_sec: int = 8 * 3600
+    # eng-48: the first third must earn at least this net R:R at TP1 (methods with a minimum R:R > 0): a blend let
+    # TP1s 0.1-0.3% away pass on a TP3 13% away (BCH VA80 0.09, VIRTUAL -0.10 on 2026-10-02)
+    min_rr_tp1_floor: float = 0.0          # eng-51: off - 0.25 was fitted to one day (no source); rr_tp1 is journaled
     # Finished signals stay on screen this long
     finished_display_sec: int = 1800
 
@@ -528,9 +531,13 @@ class PoolsConfig:
     # (+ the order the rest is picked in: 'volume' / 'volatility' / 'alts', see pools.Pools.rebuild). The pinned coins
     # (CONFIG.exchange.pinned_bases) are in every pool on top of `size`. A hypothesis per method, not a measurement:
     # the journal's per-coin exclusion still applies to the rest.
+    # eng-48, by the methods' sources: Connors' mean reversion was built on liquid indices / large caps (major,
+    # large); Crabel's ORB and Dalton's profile need a session with real volume (up to mid); pumps are a small-cap
+    # event (mid, small); the Turtles diversified over everything; the rest name no asset class
     rules: tuple = (('continuation', 'all', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
-                    ('orb', 'all', '', 0.0, 'volatility'), ('trendline', 'all', '', 0.0, 'volatility'),
-                    ('market_profile', 'all', '', 0.0, 'volume'), ('connors', 'all', '', 0.0, 'volume'),
+                    ('orb', 'all', '', 0.0, 'volume'), ('trendline', 'all', '', 0.0, 'volatility'),
+                    ('market_profile', 'all', '', 0.0, 'volume'),
+                    ('connors', 'major,large', '', 0.0, 'volume'),
                     ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
                     ('sweep', 'all', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
                     ('pump', 'all', '', 0.0, 'volatility'), ('cup_handle', 'all', '', 0.0, 'volume'))
@@ -653,7 +660,19 @@ class StrategiesConfig:
     pump_top_min_pct: float = 0.10
     pump_ttl: tuple = (3600, 3600, 12 * 3600)
     cup_ttl: tuple = (3600, 3600, 5 * 86400)        # O'Neil's breakouts work over days   # the window's hour to come back to the FVG, 4h trade
-    connors_ttl: tuple = (3600, 3600, 7 * 86400)   # daily RSI(2): out at the SMA5 within days
+    connors_ttl: tuple = (3600, 3600, 10 * 86400)  # daily RSI(2): out at the SMA5, else on day 10 (Connors, eng-51)
+    # Time exits (eng-47; Strategy.time_exit): a trade that has not reached TP1 within time_stop_bars bars of its
+    # structure timeframe failed to work (Kaufman / Le Beau's time stop: 15m 6h, 1h 24h, 4h 4 days, at least
+    # time_stop_min_sec); once TP1 traded the rest may run time_after_tp1 x as long. A flat 12h clock closed working
+    # trades on the way to TP2 / TP3 (ALICE, MOVE 2026-10-02) and kept dead ones open for hours.
+    time_stop_bars: int = 24
+    # eng-51: at most crowd_max OPEN trades in one direction across all strategies (the rest journaled vetoed
+    # 'crowded'). The Turtles allowed 6 units in closely correlated markets (Faith, Original Turtle Rules); alts move
+    # with BTC as one market - 12 Silver Bullet longs on 2026-10-02 were one bet. Turtle units counted by the
+    # Turtles' own 12-unit limit, not here
+    crowd_max: int = 6
+    time_after_tp1: float = 3.0
+    time_stop_min_sec: int = 4 * 3600
     # The Turtles' units (strategies/turtle.py): +1 unit every turtle_add_n x N in favour, at most turtle_max_units per
     # coin and turtle_max_direction_units in one direction overall (their "12 units long / short" limit); a unit is
     # turtle_unit_risk of the account per N (1%: the 2N stop risks 2%)
@@ -876,7 +895,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-46"
+    logic_version: str = "eng-51"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

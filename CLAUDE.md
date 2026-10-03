@@ -309,3 +309,34 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   without an entry cancels it. One trade or resting limit per coin (BingX nets a coin into one position). Resting limits
   persist in `demo_pending.json`. Limit entries take no confirmation check (the methods enter at the line - Seiden),
   the R:R is checked at the line when the limit is placed.
+- eng-47 (time exits, the owner's request): `Strategy.time_exit` - 'bars' (default): a trade without TP1 within
+  `time_stop_bars` (24) bars of its structure timeframe is closed (15m 6h, 1h 24h, 4h 4 days, >= 4h), after TP1 the
+  rest runs `time_after_tp1` (3) x longer; 'fixed' = the method's own exit with ttls()[2] as a cap (Turtles, Connors,
+  cup, Seiden, Silver Bullet); 'session' = VA80 out at the UTC day's close (Dalton), ORB at 16:00 New York (Crabel).
+  The flat 12h clock closed ALICE / MOVE on the way to TP2 / TP3 and held dead trades. Also: `card_r` = the thirds as
+  traded (`SignalBook._exit_r`; it marked the whole position at the last price), demo risk / R from BingX's fill,
+  lost limit fills closed (`LATE_FILL`, `UNTRACKED` safety net every 5 min).
+- eng-48 (the owner's request): pools by the methods' sources (`PoolsConfig.rules`: Connors major / large, ORB and
+  market_profile up to mid, pump mid / small, the rest all; pinned coins in every pool); Connors exits on the first
+  daily close beyond the CURRENT SMA5 (`plan['connors_exit']`, TP placeholders like the Turtles, no demo TPs); an
+  opposite setup of another strategy no longer closes a 'fixed' / 'session' method trade or a trade past TP1;
+  `CONFIG.levels.min_rr_tp1_floor` 0.25 (TP1's own net R:R, methods with min_rr > 0); entry rows journal `reason`
+  (detector note + trigger).
+- eng-49: the Silver Bullet takes ICT's context as the sweep (`context_veto`: weekly / daily bias, else the 1h trend;
+  longs only from the discount half of the 48h dealing range, shorts from the premium); at most `crowd_max` (3) entries
+  of one strategy in one direction per `crowd_window_sec` (1h) - vetoed `crowded`, Turtles exempt - and the demo's
+  resting limits obey the same cap (12 Silver Bullet longs at 10:30 NY 2026-10-02 into a -3.4% BTC move).
+- eng-50: ORB is Crabel's trade - stop at the range's other side, no profit target (`tp ['trail']`, `plan['no_tp']`:
+  no demo take-profits), out at 16:00 New York (session exit); its map target had killed 38 of 49 plans on
+  2026-10-03 (a break into price discovery has no level beyond). A system plan without a target / valid stop is
+  journaled `no_target` (was mislabelled `no_leg`).
+- eng-51 (checked against sources, web 2026-10-03; LuxAlgo-type vendor pages not counted as independent): Bollinger
+  W / M target = the opposite band (Bollinger / StockCharts; eng-40's measured move was ours); cup TP1 = half the cup
+  height (Bulkowski: met ~76%, full height ~50%) and TP2 the full height; Connors out on day 10 without the SMA5 exit;
+  ICT dealing range = the last 1h swing-low -> swing-high leg (`ict.dealing_range`, the 48h window only as fallback);
+  invented thresholds off: `min_rr_tp1_floor` 0, pools of orb / market_profile / pump back to 'all' (Connors' liquid
+  large caps kept); the crowd limit = at most `crowd_max` (6) OPEN trades in one direction across strategies (the
+  Turtles' closely-correlated limit), Turtles excluded; one plan flag `no_tp` (Turtles, Connors, ORB) for "no
+  take-profit orders"; their 100 / 200 / 300 R placeholders are journaled as NULL targets (`levels.simulate` treats a
+  NULL target as unreachable). Still hypotheses, no source for the numbers: the time stop's 24 bars / x3, cost guard
+  3x, limit wait 15 min, ORB anchored to the US equity open (crypto ORB sources use 00:00 UTC).

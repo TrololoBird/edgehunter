@@ -516,10 +516,10 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
         if not broke_now or broke_before:
             continue
         stop = l[b_] if d > 0 else h[b_]
-        # W / M = Merrill's double bottom / top: the target is the pattern's height projected from the break
-        # (Edwards & Magee, Bulkowski) - the opposite band was no source rule and sat at the entry (live: R:R ~0)
-        extreme = min(l[a_], l[b_]) if d > 0 else max(h[a_], h[b_])
-        target = level + (level - extreme)
+        # eng-51: the target is the OPPOSITE BAND (Bollinger: after the bounce crosses the middle band, the other band
+        # is the objective; StockCharts / bollingerbandspro). The measured move of eng-40 was ours: it replaced the
+        # band because the band's R:R was low - such a W / M is skipped by the R:R check instead
+        target = upper[i] if d > 0 else lower[i]
         return {'setup': 'BB W-BOTTOM' if d > 0 else 'BB M-TOP', 'direction': d,
                 'setup_note': f"15m {'W-bottom' if d > 0 else 'M-top'} on BB(20, 2): first {'low' if d > 0 else 'high'} "
                               f"closed outside the band, the retest held inside (%b {pb[b_]:.2f}), close beyond the "

@@ -160,8 +160,18 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
                 reason = f"expectancy {p * rrs[0] - (1 - p):+.2f}R at the measured p {p:.0%}"
         elif blended is not None and blended < _min_rr(plan):
             reason = f"blended R:R {blended:.2f} < {_min_rr(plan):g}"
+    if reason is None and real[0] and _min_rr(plan) > 0 and rrs[0] is not None and \
+            CONFIG.levels.min_rr_tp1_floor > 0 and rrs[0] < CONFIG.levels.min_rr_tp1_floor:
+        reason = f"R:R to TP1 {rrs[0]:.2f} < {CONFIG.levels.min_rr_tp1_floor:g}"
     # the averaging add (pump: one more unit at half the way to the stop) makes the position's risk 1.5 units
     risk_units = 1.5 if plan.get('add_half') else 1.0
+    if plan.get('connors_exit') or (plan.get('exit') or {}).get('connors_exit'):
+        # Connors (eng-48): no fixed target - the trade ends on a daily close beyond the moving SMA5 (SignalBook);
+        # TP1-3 are 100 / 200 / 300 R placeholders the lifecycle never reaches, as the Turtles'
+        risk_px = abs(entry - stop)
+        label = 'none: exit on a daily close beyond the SMA5 (Connors)'
+        targets = [entry + direction * k * risk_px for k in (100, 200, 300)]
+        rrs, blended, reason, low, sources = [None, None, None], None, None, False, [label] * 3
     return {'entry': entry, 'sl': stop, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
             'rr_tp1': rrs[0], 'rr_tp2': rrs[1], 'rr_blend': blended, 'low_rr': bool(low or reason),
             'rr_reason': reason, 'risk_units': risk_units,

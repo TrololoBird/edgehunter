@@ -98,6 +98,7 @@ class BreakoutStrategy(Strategy):
     anchor_type = 'range'
     setups = {'BREAKOUT UP': 1, 'BREAKOUT DOWN': -1}
     ttl_key = 'breakout_ttl'
+    time_exit = 'fixed'                # the method's own exit (eng-47)
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), x.sig.get('turtle_system')) if x.sig.get('turtle_n') else None
@@ -113,6 +114,7 @@ class BreakoutStrategy(Strategy):
         plan = _confirm_plan(x, self.name, '4h', exit, f"Turtle System {sig['turtle_system']} breakout")
         if plan is not None:
             plan['trail_days'] = sig['trail_days']
+            plan['no_tp'] = True             # out on the channel: no take-profit orders
             plan['turtle_n'] = sig['turtle_n']
             plan['key'] = (sig['anchor_ts'], sig['turtle_system'], d)
         return plan

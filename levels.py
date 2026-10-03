@@ -306,8 +306,9 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
     (unfinished trades are marked to the last close). A fill already beyond the stop is 'SKIPPED' (not traded).
     """
     sl = levels['sl']
-    targets = [levels['tp1'], levels['tp2'], levels['tp3']]
     entry = levels['entry']
+    # a system without a profit target journals NULL targets (eng-51): unreachable here, the trade is marked to the end
+    targets = [t if t is not None else entry + direction * 1e12 for t in (levels['tp1'], levels['tp2'], levels['tp3'])]
     result = {'filled': 1, 'outcome': 'OPEN', 'r_tp1': None, 'r_tp2': None, 'r_be': None, 'entry_fill': None}
     if use_fill:
         fill = fill_price(levels, direction, candles)

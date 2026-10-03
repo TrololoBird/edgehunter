@@ -82,17 +82,31 @@ class SilverBulletStrategy(Strategy):
     setups = {'SILVER BULLET LONG': 1, 'SILVER BULLET SHORT': -1}
     min_rr = 1.0                     # ICT: the target is the opposite liquidity, no fixed ratio
     ttl_key = 'silver_bullet_ttl'
+    time_exit = 'fixed'                # the method's own exit (eng-47)
     uses_minutes = True
     default_tf = '5m'
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), x.direction) if x.sig.get('fvg_lo') is not None else None
 
+    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        # eng-49, ICT: the Silver Bullet is the liquidity strategy's playbook, traded with the higher-timeframe bias
+        # (weekly, else daily, else the coin's 1h trend) as the sweep - it took 12 longs into a falling market
+        bias = sig.get('weekly_bias') or sig.get('daily_bias')
+        if bias:
+            return 'against_bias' if bias == -direction else None
+        return 'against_trend' if sig.get('coin_trend') == -direction else None
+
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr
         if sig.get('fvg_lo') is None or not atr:
             return None
         ce, lo, hi = sig['anchor_level'], sig['fvg_lo'], sig['fvg_hi']
+        # ICT: longs from the discount half of the dealing range, shorts from the premium (APT bought at 0.91)
+        from strategies.ict import dealing_range, range_position
+        pos = range_position(dealing_range(x.h1 or []), ce, d)
+        if pos is not None and pos > 0.5:
+            return {'skip': 'premium' if d > 0 else 'discount'}
         zone = (lo, ce) if d > 0 else (ce, hi)
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity',

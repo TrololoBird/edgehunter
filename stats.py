@@ -615,16 +615,35 @@ def card_results_table(console: Console, rows: List):
         return
     table = Table(title="Entered cards by their own exit (card_r, R of one unit)", header_style="bold magenta",
                   border_style="blue")
-    for name in ("Strategy", "Cards", "Mean R", "Win", "Avg units"):
+    for name in ("Strategy", "Cards", "Mean R", "Win", "TP1", "TP2", "TP3", "SL before TP1", "Avg units"):
         table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in cards:
         groups.setdefault(_col(r, 'strategy') or '?', []).append(r)
+
+    def best_tp(r) -> int:
+        # the card's furthest target (journaled since eng-50; older rows: read from the status / exit reason)
+        b = _col(r, 'best_tp')
+        if b is not None:
+            return int(b)
+        if r['group_key'].startswith('TP3'):
+            return 3
+        import re
+        m = re.search(r'after TP(\d)', _col(r, 'reason') or '')
+        return int(m.group(1)) if m else 0
+
     for name, members in sorted(groups.items()):
         rs = [r['card_r'] for r in members]
         units = [_col(r, 'units') or 1 for r in members]
-        table.add_row(name, str(len(rs)), Text(f"{statistics.fmean(rs):+.2f}R", style="green" if statistics.fmean(rs) > 0 else "red"),
-                      f"{sum(x > 0 for x in rs) / len(rs):.0%}", f"{statistics.fmean(units):.1f}")
+        tps = [best_tp(r) for r in members]
+        n = len(rs)
+        sl0 = sum(1 for r, b in zip(members, tps) if b == 0 and r['group_key'].startswith('SL'))
+        table.add_row(name, str(n), Text(f"{statistics.fmean(rs):+.2f}R", style="green" if statistics.fmean(rs) > 0 else "red"),
+                      f"{sum(x > 0 for x in rs) / n:.0%}",
+                      f"{sum(b >= 1 for b in tps)} ({sum(b >= 1 for b in tps) / n:.0%})",
+                      f"{sum(b >= 2 for b in tps)} ({sum(b >= 2 for b in tps) / n:.0%})",
+                      f"{sum(b >= 3 for b in tps)} ({sum(b >= 3 for b in tps) / n:.0%})",
+                      f"{sl0} ({sl0 / n:.0%})", f"{statistics.fmean(units):.1f}")
     console.print(table)
 
 
@@ -647,7 +666,7 @@ def demo_table(console: Console, db: str = 'demo_trades.db'):
     for r in rows:
         groups.setdefault(r[0] or '?', []).append(r)
     for strategy, members in sorted(groups.items()):
-        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE', 'OVERLAP', 'INVALID_ENTRY', 'PRICE_GAP', 'NOT_FILLED') and r[2] is not None]
+        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE', 'OVERLAP', 'INVALID_ENTRY', 'PRICE_GAP', 'LATE_FILL', 'UNTRACKED', 'NO_STOP', 'NOT_FILLED') and r[2] is not None]
         demo = [r[2] for r in done]
         jr = [r[3] for r in done if r[3] is not None]
         both = [(r[2], r[3]) for r in done if r[3] is not None]

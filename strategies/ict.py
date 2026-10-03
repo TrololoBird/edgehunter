@@ -37,11 +37,32 @@ def protected_swing(highs: Sequence[float], lows: Sequence[float], closes: Seque
     return None
 
 
-def dealing_range(h1: Sequence[Sequence[float]]) -> Optional[Tuple[float, float]]:
-    rows = list(h1)[-RANGE_HOURS:]
+def dealing_range(h1: Sequence[Sequence[float]], k: int = 3) -> Optional[Tuple[float, float]]:
+    """
+    ICT's dealing range (eng-51): the leg between the latest significant swing low and swing high (1h pivots with k
+    candles on each side), equilibrium at its 50%. Was the 48h high / low window - a time box is not ICT's definition.
+    Falls back to the window while the 1h history holds no pivot pair.
+    """
+    rows = list(h1)
     if len(rows) < 12:
         return None
-    lo, hi = min(r[3] for r in rows), max(r[2] for r in rows)
+    highs = [i for i in range(k, len(rows) - k)
+             if rows[i][2] == max(r[2] for r in rows[i - k:i + k + 1])]
+    lows = [i for i in range(k, len(rows) - k)
+            if rows[i][3] == min(r[3] for r in rows[i - k:i + k + 1])]
+    if highs and lows:
+        hi_i, lo_i = highs[-1], lows[-1]
+        # the range is the last leg: the latest pivot and the opposite pivot that started it
+        if hi_i > lo_i:
+            lo = rows[lo_i][3]
+            hi = max(r[2] for r in rows[lo_i:])
+        else:
+            hi = rows[hi_i][2]
+            lo = min(r[3] for r in rows[hi_i:])
+        if hi > lo:
+            return lo, hi
+    window = rows[-RANGE_HOURS:]
+    lo, hi = min(r[3] for r in window), max(r[2] for r in window)
     return (lo, hi) if hi > lo else None
 
 

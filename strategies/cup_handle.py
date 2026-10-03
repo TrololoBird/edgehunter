@@ -66,14 +66,17 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int) -> O
                 break                                # volume did not dry up in the handle
             if not (c[last] > pivot >= c[last - 1]):
                 return None
-            target = pivot + (rim - bottom)
+            # eng-51, Bulkowski's measure rule: the full height is reached by only ~50% of upward breakouts, half of it
+            # by ~76% - TP1 at half the height, TP2 at the full height
+            target = pivot + 0.5 * (rim - bottom)
+            target_full = pivot + (rim - bottom)
             return {'setup': 'CUP HANDLE', 'direction': 1,
                     'setup_note': f"{tf} cup with handle: rims {h[left]:.6g} / {h[r]:.6g}, depth {depth:.0%} over "
                                   f"{cup_len} candles, handle {len(handle)} candles to {h_lo:.6g}; closed above the "
                                   f"pivot {pivot:.6g} on {v[last] / avg_vol:.1f}x volume (O'Neil)",
                     'anchor_level': pivot, 'anchor_extreme': h_lo, 'anchor_label': f'{tf} cup-with-handle pivot',
                     'anchor_ts': int(candles[left][0]), 'anchor_close': c[last], 'ch_stop': h_lo,
-                    'ch_target': target, 'ch_tf': tf, 'event_ts': int(candles[last][0]) + period_ms}
+                    'ch_target': target, 'ch_target_full': target_full, 'ch_tf': tf, 'event_ts': int(candles[last][0]) + period_ms}
     return None
 
 
@@ -82,6 +85,7 @@ class CupHandleStrategy(_System):
     name = 'cup_handle'
     setups = {'CUP HANDLE': 1}
     ttl_key = 'cup_ttl'
+    time_exit = 'fixed'                # the method's own exit (eng-47)
     min_rr = 1.0                                     # the measured target must pay more than the risk (O'Neil's 3:1 is an exit rule)
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
@@ -92,7 +96,8 @@ class CupHandleStrategy(_System):
         stop = max(sig['ch_stop'], sig['anchor_close'] * 0.92)
         src = 'below the handle' if stop == sig['ch_stop'] else "8% below the buy point (O'Neil)"
         exit = {'stop': ['price', stop], 'stop_src': src,
-                'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': 'the cup depth from the pivot (Bulkowski)',
+                'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': 'half the cup height (Bulkowski, met 76%)',
+                'tp2': ['level', sig.get('ch_target_full') or sig['ch_target'], 0.0, None],
                 'atr': x.atr}
         return _confirm_plan(x, self.name, sig.get('ch_tf', '1h'), exit, 'close above the handle pivot on volume')
 
