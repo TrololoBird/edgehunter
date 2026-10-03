@@ -292,3 +292,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   waiting ones expire at a start; card rows carry the card's own `logic_version`) - closing every trade at each
   version bump left the demo with almost no finished trades. `deploy/` holds the VPS setup (systemd unit, install
   script, README in Russian): Railway / Render do not fit (US servers - Binance answers 451; ephemeral disk; ~0.5 GB).
+- eng-44 (2026-10-03): `geometry.exit_target`'s `['map', ...]` target read `plan['targets']`, which `_confirm_plan`
+  leaves empty - every trendline (since eng-30) and ORB (since eng-29) plan returned None, so neither ever made a card
+  live or in the archive (research_maniac: 825 trendline events, 825 NO_PLAN). Now an empty plan takes the map's
+  opposite liquidity at the entry (no ATR step: no target in empty space). Found by the archive replay's NO_PLAN reasons.
