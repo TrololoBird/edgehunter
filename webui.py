@@ -516,7 +516,10 @@ class WebUI:
 
     async def _ws(self, request):
         ws = web.WebSocketResponse(heartbeat=30)
-        await ws.prepare(request)
+        try:
+            await ws.prepare(request)
+        except ConnectionError:
+            return ws                                 # the page closed while connecting (busy start-up)
         self.clients.add(ws)
         try:
             await ws.send_str(orjson.dumps(build_state(self.scanner), default=str).decode())

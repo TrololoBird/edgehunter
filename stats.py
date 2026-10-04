@@ -719,6 +719,110 @@ def expected_max_sr(trials: int, n: int) -> float:
     return math.sqrt(1 / n) * ((1 - gamma) * nd.inv_cdf(1 - 1 / trials) + gamma * nd.inv_cdf(1 - 1 / (trials * math.e)))
 
 
+def hl_haircut(sr: float, n: int, trials: int) -> Optional[float]:
+    """
+    Harvey & Liu (2015, "Backtesting", JPM): the Sharpe haircut for multiple testing - the t-stat of the per-cluster
+    Sharpe (t = SR x sqrt(n)), its two-sided p-value Bonferroni-adjusted for `trials` (p x M, their most conservative
+    rule), translated back to a Sharpe; haircut = 1 - SR_adj / SR (100% = nothing left once the trials are counted).
+    """
+    if n < 2 or sr <= 0 or trials < 1:
+        return None
+    z = statistics.NormalDist()
+    p = 2 * (1 - z.cdf(sr * math.sqrt(n)))
+    p_adj = min(1.0, p * trials)
+    if p_adj >= 1.0:
+        return 1.0
+    sr_adj = z.inv_cdf(1 - p_adj / 2) / math.sqrt(n)
+    return max(0.0, 1 - sr_adj / sr)
+
+
+def pbo_cscv(matrix: List[List[float]], blocks: int = 8) -> Optional[float]:
+    """
+    Bailey, Borwein, Lopez de Prado & Zhu (2017): the probability of backtest overfitting by combinatorially symmetric
+    cross-validation. `matrix` = T periods x N configurations (here: days x strategies, the day's summed R). The T rows
+    are cut into `blocks` contiguous parts; for every half / half split the in-sample best configuration's
+    out-of-sample relative rank w gives logit ln(w / (1 - w)); PBO = the share of splits with logit <= 0 (the IS winner
+    at or below the OOS median). ~0.5 = choosing the best strategy is a coin flip.
+    """
+    from itertools import combinations
+    t, n = len(matrix), len(matrix[0]) if matrix else 0
+    if n < 2 or t < 2 * blocks:
+        return None
+    size = t // blocks
+    parts = [matrix[i * size:(i + 1) * size] for i in range(blocks)]
+    below, total = 0, 0
+    for ins in combinations(range(blocks), blocks // 2):
+        is_rows = [r for b in ins for r in parts[b]]
+        oos_rows = [r for b in range(blocks) if b not in ins for r in parts[b]]
+        is_mean = [statistics.fmean(r[j] for r in is_rows) for j in range(n)]
+        oos_mean = [statistics.fmean(r[j] for r in oos_rows) for j in range(n)]
+        best = max(range(n), key=lambda j: is_mean[j])
+        rank = sum(1 for j in range(n) if oos_mean[j] < oos_mean[best]) + 1
+        w = rank / (n + 1)
+        below += math.log(w / (1 - w)) <= 0
+        total += 1
+    return below / total if total else None
+
+
+def robustness_table(console: Console, rows: List):
+    """
+    Is a strategy's result a few lucky trades? (the crypto-backtest-audit checks, chrisamz/crypto-skills): total card R
+    without the best trade / the best 5, without the best coin / the best 5 coins, the best trade's share of the total;
+    the mean R of the first and second half by entry time; the first card per coin only; the extra round-trip cost
+    (bps of price) that brings the total to 0 = sum R / sum(1 / risk in bps). Below the table: PBO of picking the best
+    strategy (days x strategies, CSCV).
+    """
+    cards = [r for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
+    if not cards:
+        return
+    table = Table(title="Robustness: is the result a few lucky trades? (R sums; cost = extra bps per round trip to 0)",
+                  header_style="bold magenta", border_style="blue")
+    for name in ("Strategy", "Cards", "Total R", "-best", "-top5", "-best coin", "-top5 coins", "Best share",
+                 "1st half", "2nd half", "1st/coin", "Cost to 0"):
+        table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
+    groups: Dict[str, List] = {}
+    for r in cards:
+        groups.setdefault(_col(r, 'strategy') or '?', []).append(r)
+    for name, members in sorted(groups.items()):
+        members.sort(key=lambda r: r['ts_ms'])
+        rs = [r['card_r'] for r in members]
+        total = sum(rs)
+        top = sorted(rs, reverse=True)
+        coins: Dict[str, float] = {}
+        first: Dict[str, float] = {}
+        for r in members:
+            coins[r['symbol']] = coins.get(r['symbol'], 0.0) + r['card_r']
+            first.setdefault(r['symbol'], r['card_r'])
+        ctop = sorted(coins.values(), reverse=True)
+        half = len(rs) // 2
+        h1, h2 = rs[:half], rs[half:]
+        inv = 0.0
+        for r in members:
+            entry, sl = _col(r, 'entry'), _col(r, 'sl')
+            if entry and sl and entry != sl:
+                inv += 1 / (abs(entry - sl) / entry * 1e4)
+        cost = total / inv if inv and total > 0 else None
+        share = top[0] / total if total > 0 else None
+        f = lambda v: f"{v:+.1f}"
+        table.add_row(name, str(len(rs)), f(total), f(total - top[0]), f(total - sum(top[:5])),
+                      f(total - ctop[0]), f(total - sum(ctop[:5])), f"{share:.0%}" if share is not None else "-",
+                      f"{statistics.fmean(h1):+.2f}R" if h1 else "-", f"{statistics.fmean(h2):+.2f}R" if h2 else "-",
+                      f"{statistics.fmean(first.values()):+.2f}R", f"{cost:.0f}" if cost else "-")
+    console.print(table)
+    names = sorted(groups)
+    days: Dict[int, Dict[str, float]] = {}
+    for r in cards:
+        d = days.setdefault(int(r['ts_ms'] // 86_400_000), {})
+        key = _col(r, 'strategy') or '?'
+        d[key] = d.get(key, 0.0) + r['card_r']
+    if days:
+        span = range(min(days), max(days) + 1)
+        pbo = pbo_cscv([[days.get(d, {}).get(n, 0.0) for n in names] for d in span])
+        console.print(f"PBO (CSCV, {len(span)} days x {len(names)} strategies, 8 blocks): "
+                      + (f"{pbo:.0%} - the chance that the in-sample best strategy is below the median out of sample"
+                         if pbo is not None else "not enough days (>= 16) or strategies (>= 2)"))
+
+
 def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None):
     """
     eng-55: the two-level verdict per strategy (the owner's decision after the audit, written before results):
@@ -735,7 +839,8 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
     trials = len({(_col(r, 'logic_version'), _col(r, 'strategy')) for r in pool if _col(r, 'strategy')}) or 1
     table = Table(title=f"Verdict (suspend: >=30 clusters & low < -0.05R; deprecate: >=200 & high < 0); DSR trials N={trials}",
                   header_style="bold magenta", border_style="blue")
-    for name in ("Strategy", "Cards", "Clusters", "Mean R", "90% CI", "Skew", "Kurt", "PSR", "DSR", "MinTRL", "Verdict"):
+    for name in ("Strategy", "Cards", "Clusters", "Mean R", "90% CI", "Skew", "Kurt", "PSR", "DSR", "HL haircut", "MinTRL",
+                 "Verdict"):
         table.add_column(name, justify="left" if name in ("Strategy", "Verdict") else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in cards:
@@ -754,6 +859,7 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
         p = psr(sr, k, g3, g4)
         dsr = psr(sr, k, g3, g4, expected_max_sr(trials, k))
         mt = min_trl(sr, g3, g4)
+        hl = hl_haircut(sr, k, trials)
         if ci and k >= 200 and ci[1] < 0:
             verdict = Text("DEPRECATE", style="bold red")
         elif ci and k >= 30 and ci[0] < -0.05:
@@ -765,7 +871,7 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
         table.add_row(name, str(len(rs)), str(k), f"{statistics.fmean(rs):+.2f}R",
                       f"[{ci[0]:+.2f}..{ci[1]:+.2f}]" if ci else "", f"{g3:+.1f}", f"{g4:.1f}",
                       f"{p:.0%}" if p is not None else "", f"{dsr:.0%}" if dsr is not None else "",
-                      f"{mt:.0f}" if mt else "-", verdict)
+                      f"{hl:.0%}" if hl is not None else "-", f"{mt:.0f}" if mt else "-", verdict)
     console.print(table)
 
 
@@ -982,6 +1088,7 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     reversal_test_table(console, rows)
     card_results_table(console, rows)
     verdict_table(console, rows)
+    robustness_table(console, rows)
     cards_table(console, rows)
     demo_table(console)
     demo_gap_table(console)

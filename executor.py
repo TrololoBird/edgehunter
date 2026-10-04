@@ -40,6 +40,7 @@ class DemoExecutor:
         cfg = CONFIG.executor
         self.enabled = bool(cfg.enabled and cfg.api_key and cfg.api_secret)
         self.db_path = db_path
+        self._band_warned: set = set()       # coins whose market close BingX rejected (102202): warned once
         self.ex = None
         self.open: Dict[str, Dict] = {}          # card id -> trade
         self._lock = asyncio.Lock()
@@ -585,7 +586,22 @@ class DemoExecutor:
             logger.debug(f"Demo cancel {symbol}: {e}")
         left = await self._position_qty(symbol)
         if left > 0:
-            await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
+            side = 'sell' if d > 0 else 'buy'
+            try:
+                await ex.create_order(symbol, 'market', side, left, None, {'reduceOnly': True})
+            except Exception as e:
+                if '102202' not in str(e):
+                    raise
+                # VST's thin book: the market order would fill beyond BingX's price band (102202). A reduce-only limit
+                # at the touch instead; the trade stays open, the next pass re-places it at the fresh price
+                t = await ex.fetch_ticker(symbol)
+                px = float((t.get('bid') if d > 0 else t.get('ask')) or t.get('last'))
+                await ex.create_order(symbol, 'limit', side, left, px, {'reduceOnly': True})
+                if symbol not in self._band_warned:
+                    self._band_warned.add(symbol)
+                    logger.warning(f"Demo: {symbol} market close rejected by BingX's price band: reduce-only limit "
+                                   f"{left} @ {px} (re-placed each pass until filled)")
+                return
         await self._finalize(trade, reason, journal_r)
 
     async def _finalize(self, trade: Dict, reason: str, journal_r: Optional[float]) -> None:
