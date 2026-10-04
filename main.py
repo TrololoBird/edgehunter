@@ -220,6 +220,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Crypto microstructure scanner")
     parser.add_argument("--no-web", action="store_true", help="log only, no browser dashboard")
     args = parser.parse_args()
+    # QuickEdit off BEFORE the first console write: a click into the fresh window froze the start at main()'s
+    # print (2026-10-04 06:55, the log thread blocked too) - main() disabled it only after that line
+    EARLY_QUICK_EDIT = ConsoleQuickEdit()
+    EARLY_QUICK_EDIT.disable()
     LOG_LISTENER = setup_logging()
     loop_name, loop_factory = fast_loop_factory()
     logger.info(f"Python {sys.version.split()[0]}, event loop: {loop_name or 'asyncio default'}")
