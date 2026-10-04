@@ -1304,7 +1304,7 @@ class Scanner:
         if md is None or not candles or not atr:
             return [], atr, candles
         raw = build_raw(candles, md.htf_klines, md.htf_oi, list(md.liq_events), atr, time.time() * 1000,
-                        candles_4d=md.htf_5m)
+                        candles_4d=md.htf_5m, symbol=symbol)
         return raw, atr, candles
 
     async def levels_loop(self):

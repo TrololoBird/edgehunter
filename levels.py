@@ -30,6 +30,22 @@ TRIGGER_MINUTES = {'5m': 5, '15m': 5, '1h': 15, '4h': 60}
 TTL_FACTOR = {'15m': 1, '1h': 2, '4h': 4}
 
 
+def min_leg_atr() -> float:
+    """The smallest leg (in ATR) a reversal can be traded from: its first target, the leg's first retracement level
+    (levels.reversal_targets[0], 0.382), must pay at least 1 R over the stop floor (levels.min_stop_atr):
+    leg >= min_stop_atr / 0.382. A config value > 0 overrides the formula."""
+    cfg = CONFIG.levels
+    return cfg.impulse_min_atr or cfg.min_stop_atr / cfg.reversal_targets[0]
+
+
+def min_leg_move() -> float:
+    """The smallest leg as a share of price: its 0.382 target must cover cost_guard round-trip costs (fees + the
+    slippage of the entry and the stop exit at the reference liquidity). A config value > 0 overrides the formula."""
+    cfg = CONFIG.levels
+    cost = CONFIG.journal.fee_round_trip + 2 * cfg.slippage_bps / 1e4
+    return cfg.impulse_min_move or cfg.cost_guard * cost / cfg.reversal_targets[0]
+
+
 def atr_of(candles: Sequence[Sequence[float]], period: int = 14) -> Optional[float]:
     """Average true range of [ts, o, h, l, c, ...] candles (simple mean of the last `period` true ranges)."""
     if len(candles) < period + 1:
@@ -70,7 +86,7 @@ def _extend_start(leg_direction: int, end: float, start: float, start_ts: int,
 
 def _qualifies(size: float, start: float, atr: Optional[float], candles: int) -> bool:
     cfg = CONFIG.levels
-    return bool(atr) and size >= cfg.impulse_min_atr * atr and size >= cfg.impulse_min_move * start \
+    return bool(atr) and size >= min_leg_atr() * atr and size >= min_leg_move() * start \
         and candles >= cfg.impulse_min_candles
 
 
@@ -389,6 +405,9 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
             if exits[k] is None and best_target >= k:
                 exits[k] = abs(targets[k - 1] - entry) / risk
                 exit_t[k] = float(c[0]) + MINUTE_MS
+                if k == 1:
+                    # minutes from the entry to TP1 (eng-57: the data a measured time stop needs; journal tp1_min)
+                    result['tp1_min'] = (exit_t[1] - t_open) / MINUTE_MS
     else:
         result['outcome'] = f"TP{best_target}" if best_target else 'OPEN'
 

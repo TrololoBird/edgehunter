@@ -150,7 +150,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     if last_real is None and not any(real):
         reason = 'no level target'
     blended = sum(b for b in blend if b is not None) / 3 if any(b is not None for b in blend) else None
-    if risk < 3 * fee:
+    if risk < CONFIG.levels.cost_guard * fee:
         reason = reason or 'costs >= 1/3 of the risk'
     hit = HIT_RATE.get(plan.get('strategy'))
     if reason is None:
@@ -400,7 +400,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         # eng-54: the cost guard holds here too - an ORB range of 0.15% put the stop 0.10% away, under one round trip's
         # cost (live ETH 2026-10-03: -2.2R in the demo); target-less plans skipped finish_levels and with it the guard
         fee = cost_of(entry, plan.get('volume_24h'))
-        reason = 'costs >= 1/3 of the risk' if risk < 3 * fee else None
+        reason = 'costs >= 1/3 of the risk' if risk < CONFIG.levels.cost_guard * fee else None
         return {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
                 'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
                 'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,

@@ -178,7 +178,8 @@ def _anchor_view(anchor: Optional[Dict]) -> Optional[Dict]:
     return {k: (v if isinstance(v, str) else _num(v)) for k, v in anchor.items()}
 
 
-def sizing_view(levels: Optional[Dict], direction: int, funding_8h: Optional[float]) -> Optional[Dict]:
+def sizing_view(levels: Optional[Dict], direction: int, funding_8h: Optional[float],
+                symbol: Optional[str] = None) -> Optional[Dict]:
     """
     Sizing facts of an entry for a manual trader (CONFIG.risk): the stop distance, the highest isolated leverage whose
     liquidation stays liq_stop_margin x the stop distance away, the funding the position pays (+) or receives (-) per
@@ -193,7 +194,11 @@ def sizing_view(levels: Optional[Dict], direction: int, funding_8h: Optional[flo
     if stop_frac <= 0:
         return None
     # isolated margin: liquidation about (1/L - maintenance) from the entry
-    max_lev = 1.0 / (cfg.liq_stop_margin * stop_frac + CONFIG.zones.liq_maintenance)
+    from zones import maintenance_of
+    mmr, contract_max = maintenance_of(symbol)       # the contract's own maintenance margin (Bybit risk tiers)
+    max_lev = 1.0 / (cfg.liq_stop_margin * stop_frac + mmr)
+    if contract_max:
+        max_lev = min(max_lev, contract_max)
     out = {'stop_pct': stop_frac, 'max_leverage': max(1.0, math.floor(max_lev)),
            'funding_8h': (direction * funding_8h) if funding_8h is not None else None}
     if cfg.account_usd > 0:
@@ -250,7 +255,7 @@ def card_view(s, now: float) -> Dict:
         # 100 / 200 / 300 R placeholders the lifecycle never reaches - shown as none (a short's came out negative)
         'levels': {k: (None if plan.get('no_tp') and k in ('tp1', 'tp2', 'tp3') else
                        v if isinstance(v, str) else _num(v)) for k, v in lv.items()} if lv else None,
-        'sizing': sizing_view(lv, s.direction, s.sig.get('funding_rate')) if lv else None,
+        'sizing': sizing_view(lv, s.direction, s.sig.get('funding_rate'), s.symbol) if lv else None,
         'r_now': _num(s.r_now), 'best_target': s.best_target, 'final_r': _num(s.final_r),
         'vetoed_triggers': s.vetoed_triggers, 'veto_log': list(s.veto_log), 'veto_notes': list(s.veto_notes), 'of_confirm': s.of_confirm,
         'confirms': s.confirms, 'required': list(confirm.required(s.mode)), 'crowd': s.sig.get('market_crowd'),

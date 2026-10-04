@@ -205,7 +205,8 @@ class SweepConfig:
     percentile: float = 0.995
     min_samples: int = 300
     hist_decay_per_hour: float = 0.97
-    # USD floors by 24h-volume rank: top floor_top_n_1 coins, top floor_top_n_2, the rest
+    # USD sizes by 24h-volume rank used ONLY until a coin has min_samples sweeps (eng-57; were floors under the measured
+    # p99.5 - hand-set numbers overriding the coin's own distribution): top floor_top_n_1 coins, top floor_top_n_2, rest
     floor_top_n_1: int = 2
     floor_top_usd_1: float = 500_000
     floor_top_n_2: int = 30
@@ -331,7 +332,8 @@ class MLConfig:
     anomaly_skip_first_sec: int = 360
     # Regimes: Gaussian mixture on market-wide features of closed 15m candles (history persisted, ~31 days)
     regime_enabled: bool = True
-    regime_clusters: int = 4
+    # the MOST clusters tried: the number is chosen by BIC over 2 .. this (eng-57; was a fixed 4)
+    regime_clusters: int = 6
     # ~7 months of 15m candles: the pretrained months (pretrain.py) plus the live ones
     regime_history: int = 20_000
     regime_min_history: int = 60
@@ -362,10 +364,17 @@ class LevelsConfig:
     htf_lookback_candles: int = 48          # 12h: where the leg's END is searched
     # The leg's START is searched back over 1h history up to this far (a move of hours / days is measured whole)
     leg_lookback_hours: int = 96
-    impulse_min_atr: float = 3.0
+    # eng-57: derived, not chosen - a reversal's first target is 0.382 of its leg and must pay >= 1 R over the stop
+    # floor (min_stop_atr): leg >= min_stop_atr / 0.382 = 2.62 ATR (was the rounded 3.0). levels.min_leg_atr()
+    impulse_min_atr: float = 0.0
     impulse_min_candles: int = 4            # 1h
     # ... and at least this big in price: at night ATR shrinks and a 0.5% drift can measure 7 ATR
-    impulse_min_move: float = 0.015
+    # eng-57: derived (levels.min_leg_move): the first target, 0.382 of the leg, must cover cost_guard x the round-trip
+    # cost (fees + 2 x slippage at the reference liquidity, 0.2%): 3 x 0.2% / 0.382 = 1.57% (was the rounded 1.5%)
+    impulse_min_move: float = 0.0
+    # the risk must be at least this many round-trip costs (geometry; was a literal 3 in two places). Ours, eng-44:
+    # 5x vetoed ordinary 2% stops; a source-less rule - the costs eat 1/3 of 1 R at the limit
+    cost_guard: float = 3.0
     # Continuation: look for the trigger once the pullback reaches this retracement zone of the impulse
     # The pullback band of a continuation: 0.382-0.618 of the leg (a deeper retrace is a trend failure, not an entry);
     # the zone is a real map level inside it, else the EMA20 of the leg's timeframe (Raschke's "Holy Grail"
@@ -467,7 +476,11 @@ class ZonesConfig:
     # Source weights; a zone's strength is the sum of its sources
     # liq_est 0.5 (was 1.5): the estimated liquidation model is unproven (forward test 2026-10-01: x1.37 the
     # liquidations of jittered placebo levels over 14h, within noise) - it may label a zone, not make one strong
-    weights: tuple = (('swing_1h', 1.5), ('swing_15m', 1.0), ('equal', 2.0), ('pdhl', 2.0), ('poc', 1.5),
+    # eng-57 (research/level_weights.md, 60 coins x 12 months, placebo levels 0.3-1.5% away): swings 15m / 1h, equal
+    # highs / lows, previous day high / low and round numbers all hold price LESS often than a random price nearby
+    # (odds ratio 0.79-0.86, both halves) and alike - so they weigh the same, 1.0 (were 1.0 / 1.5 / 2.0 / 2.0 / 1.0,
+    # set by hand). The other kinds' weights are still unmeasured hand-set values.
+    weights: tuple = (('swing_1h', 1.0), ('swing_15m', 1.0), ('equal', 1.0), ('pdhl', 1.0), ('poc', 1.5),
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 0.5), ('liq_hit', 1.0), ('wall', 1.0),
                       ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0),
                       ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 0.5),
@@ -625,7 +638,7 @@ class StrategiesConfig:
     # exhaustion_pre_minutes before it to the cascade's extreme (following price until the entry), >= 3 ATR (a
     # reversal's first target 0.382 of the leg must pay 1R over the >= 1 ATR stop); entry: a 5m structure shift
     exhaustion_pre_minutes: int = 30
-    exhaustion_min_leg_atr: float = 3.0
+    exhaustion_min_leg_atr: float = 0.0          # eng-57: derived, levels.min_leg_atr() (was 3.0)
     exhaustion_ttl: tuple = (60 * 60, 60 * 60, 6 * 3600)
     # Breakout with initiative (60-70% of crypto breakouts fail: confirm by the close, volume and acceptance): the range
     # of the breakout_range_candles 15m candles before the breakout candle, breakout_min_width_atr-breakout_max_width_atr

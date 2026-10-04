@@ -25,10 +25,61 @@ Everything is a hypothesis: the journal stores which sources each target and sto
 how often each kind was reached.
 """
 from dataclasses import dataclass, field
+import json
 import math
+import os
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from config import CONFIG
+
+# Data behind the liquidation estimate (written by positioning.py, read here by the maps worker process too):
+# models/leverage_mix.json - the notional-weighted leverage of the tracked Hyperliquid accounts' real positions;
+# models/maintenance.json  - each contract's lowest-tier maintenance margin and max leverage (Bybit's public risk
+# limits; Binance publishes its brackets only to signed requests). Both replace guessed constants (eng-57).
+LEVERAGE_MIX_PATH = os.path.join('models', 'leverage_mix.json')
+MAINTENANCE_PATH = os.path.join('models', 'maintenance.json')
+_FILE_CACHE: Dict[str, Tuple[float, object]] = {}
+
+
+def _json_file(path: str):
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    hit = _FILE_CACHE.get(path)
+    if hit is None or hit[0] != mtime:
+        try:
+            with open(path, encoding='utf-8') as fh:
+                _FILE_CACHE[path] = hit = (mtime, json.load(fh))
+        except (OSError, ValueError):
+            return None
+    return hit[1]
+
+
+def leverage_mix() -> List[Tuple[float, float]]:
+    """(leverage, share of notional) of real positions; the configured guess only until the first measurement."""
+    data = _json_file(LEVERAGE_MIX_PATH)
+    mix = [(float(l), float(w)) for l, w in (data or {}).get('mix', []) if float(l) >= 1 and float(w) > 0]
+    if mix:
+        return sorted(mix)
+    cfg = CONFIG.zones
+    return list(zip(map(float, cfg.liq_leverages), cfg.liq_leverage_weights))
+
+
+def maintenance_of(symbol: Optional[str]) -> Tuple[float, Optional[float]]:
+    """(maintenance margin rate, max leverage) of the contract's lowest risk tier; the configured rate without data."""
+    data = _json_file(MAINTENANCE_PATH) or {}
+    row = data.get((symbol or '').split('/')[0] + 'USDT') if symbol else None
+    if row:
+        return float(row[0]), (float(row[1]) if row[1] else None)
+    return CONFIG.zones.liq_maintenance, None
+
+
+def equal_tolerance(symbol: Optional[str], price: float, atr: float) -> float:
+    """Two swings are 'equal' when they differ by less than the typical pierce of an equal-high / low on this coin
+    (p50, pierce.py: the measured overshoot); the ATR share only without the model."""
+    from pierce import overshoot
+    return overshoot(symbol, 'equal', price, 'p50') or CONFIG.zones.equal_tolerance_atr * atr
 
 HOUR_MS = 3_600_000
 DAY_MS = 24 * HOUR_MS
@@ -107,9 +158,10 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
     return out
 
 
-def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr: float) -> List[RawLevel]:
+def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr: float,
+                symbol: Optional[str] = None) -> List[RawLevel]:
     """Equal highs / lows: >= 2 swings within the tolerance, not traded through since the latest of them."""
-    tol = CONFIG.zones.equal_tolerance_atr * atr
+    tol = equal_tolerance(symbol, candles[-1][4], atr) if candles else CONFIG.zones.equal_tolerance_atr * atr
     out: List[RawLevel] = []
     for side in (+1, -1):
         same = sorted((l for l in levels if l.side == side), key=lambda l: l.price)
@@ -280,7 +332,7 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
 
 
 def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequence[Tuple[int, float]],
-                           atr: float) -> List[RawLevel]:
+                           atr: float, symbol: Optional[str] = None) -> List[RawLevel]:
     """
     Estimated liquidation clusters from 1h OI changes (see the module docstring). `oi_1h` is OI in COINS (contracts x
     contract size): OI in USD rises with the price alone and read every rally as new positions. Clusters are kept in
@@ -291,6 +343,10 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
         return []
     # openInterestHist timestamps are period END times: OI at the close of the candle opened one hour earlier
     oi_at = {ts - HOUR_MS: v for ts, v in oi_1h}
+    # the leverage mix of real positions, without the tiers this contract does not allow; its own maintenance margin
+    mmr, max_lev = maintenance_of(symbol)
+    mix = [(lev, w) for lev, w in leverage_mix() if max_lev is None or lev <= max_lev] or leverage_mix()[:1]
+    levs, weights = [m[0] for m in mix], [m[1] for m in mix]
     step = max(atr / 2, candles_1h[-1][4] * cfg.liq_bucket)
     clusters: Dict[Tuple[int, int], float] = {}   # (bucket, side liquidated: +1 longs, -1 shorts) -> USD
     prev_oi = None
@@ -306,14 +362,14 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
             if change > 0:
                 p = (c[2] + c[3] + c[4]) / 3
                 buy_share = min(1.0, max(0.0, c[6] / c[5])) if c[5] else 0.5
-                tiers = len(cfg.liq_leverages)
+                tiers = len(levs)
                 for side, aggression in ((+1, buy_share), (-1, 1 - buy_share)):
                     # Tilt the leverage mix: an aggressive side (share > 0.5) weighs the high tiers more
                     tilt = [w * (1 + (aggression - 0.5) * (2 * i / (tiers - 1) - 1)) if tiers > 1 else w
-                            for i, w in enumerate(cfg.liq_leverage_weights)]
+                            for i, w in enumerate(weights)]
                     norm = sum(tilt) or 1.0
-                    for lev, w in zip(cfg.liq_leverages, tilt):
-                        liq = p * (1 - side * (1 / lev - cfg.liq_maintenance))
+                    for lev, w in zip(levs, tilt):
+                        liq = p * (1 - side * (1 / lev - mmr))
                         key = (int(liq / step), side)
                         clusters[key] = clusters.get(key, 0.0) + change * w / norm
             elif change < 0 and prev_oi > 0:
@@ -510,7 +566,7 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
               candles_4d: Optional[Sequence[Sequence[float]]] = None,
               candles_1d: Optional[Sequence[Sequence[float]]] = None,
               candles_4h: Optional[Sequence[Sequence[float]]] = None,
-              candles_1w: Optional[Sequence[Sequence[float]]] = None) -> List[RawLevel]:
+              candles_1w: Optional[Sequence[Sequence[float]]] = None, symbol: Optional[str] = None) -> List[RawLevel]:
     """
     Card-independent levels of one coin (cached by the scanner; rebuilt on a new candle / new 1h history).
     `candles_4d`: 4 days of 5m candles for the 4-day volume profile (1h candles are too coarse for it).
@@ -520,11 +576,11 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     s1h = swings(candles_1h, cfg.swing_width_1h, 'swing_1h', '1h')
     today = int(now_ms) // DAY_MS * DAY_MS
     levels = s15 + s1h
-    levels += equal_pools(s15 + s1h, candles_15m, atr)
+    levels += equal_pools(s15 + s1h, candles_15m, atr, symbol)
     levels += day_levels(candles_1h, now_ms)
     levels += volume_profile(candles_4d or candles_1h, atr, '4d')
     levels += volume_profile(candles_15m, atr, '24h')
-    levels += estimated_liquidations(candles_1h, oi_1h, atr)
+    levels += estimated_liquidations(candles_1h, oi_1h, atr, symbol)
     levels += observed_liquidations(liq_events, atr, now_ms)
     levels += vwap(candles_15m, today, 'VWAP day')
     # ICT / SMC zones of every timeframe the bot holds: 15m (last day), 1h (8 days), 4h (from the 1h candles) and the

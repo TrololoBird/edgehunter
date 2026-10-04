@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
-from zones import HOUR_MS, RawLevel, Zone, build_raw, day_levels, equal_pools, merge, round_levels
+from zones import HOUR_MS, RawLevel, Zone, build_raw, day_levels, equal_pools, equal_tolerance, merge, round_levels
 
 QUARTER_MS = 900_000
 Pool = Tuple[float, int, str, int]          # (price, side +1 high / -1 low, label, formed at ms)
@@ -115,7 +115,7 @@ def _swings_with_ts(candles: Sequence[Sequence[float]], width: int, bar_ms: int)
 
 
 def liquidity_pools(h1_before: Sequence[Sequence[float]], c15_hour: Sequence[Sequence[float]], atr: float,
-                    now_ms: int) -> List[Pool]:
+                    now_ms: int, symbol: Optional[str] = None) -> List[Pool]:
     """
     Resting-stop pools as of `now_ms` from closed 1h candles plus the 15m candles of the running hour: intact 1h swings
     of the last sweep_swing_hours, equal highs / lows among them, previous day / week, the day's extremes and the last
@@ -126,8 +126,8 @@ def liquidity_pools(h1_before: Sequence[Sequence[float]], c15_hour: Sequence[Seq
     pools = _swings_with_ts(recent_1h, CONFIG.zones.swing_width_1h, HOUR_MS)
     swing_levels = [RawLevel(p, 'swing_1h', lab, side) for p, side, lab, _ in pools]
     formed_of = {(p, side): f for p, side, _, f in pools}
-    for level in equal_pools(swing_levels, recent_1h, atr):
-        group = [f for (p, side), f in formed_of.items() if side == level.side and abs(p - level.price) <= CONFIG.zones.equal_tolerance_atr * atr]
+    for level in equal_pools(swing_levels, recent_1h, atr, symbol):
+        group = [f for (p, side), f in formed_of.items() if side == level.side and abs(p - level.price) <= equal_tolerance(symbol, level.price, atr)]
         pools.append((level.price, level.side, level.label, max(group) if group else now_ms))
     # The running hour as one partial 1h candle, so the day's extremes include it
     hourly = list(h1_before)
@@ -157,12 +157,12 @@ def liquidity_pools(h1_before: Sequence[Sequence[float]], c15_hour: Sequence[Seq
 
 
 def pools_before(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]], atr: float,
-                 at_ms: int) -> List[Pool]:
+                 at_ms: int, symbol: Optional[str] = None) -> List[Pool]:
     """The pools as they stood when the candle opening at `at_ms` started."""
     hour = at_ms // HOUR_MS * HOUR_MS
     h1_before = [c for c in candles_1h if c[0] + HOUR_MS <= hour]
     c15_hour = [c for c in candles_15m if hour <= c[0] < at_ms]
-    return liquidity_pools(h1_before, c15_hour, atr, at_ms)
+    return liquidity_pools(h1_before, c15_hour, atr, at_ms, symbol)
 
 
 def merge_candles(older: Sequence[Sequence[float]], newer: Sequence[Sequence[float]], cut_ms: int,
@@ -290,13 +290,13 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
     last_open = int(candles_15m[-1][0])
     closed_1h = [c for c in candles_1h if c[0] + HOUR_MS <= cut]
     ctx = Context(atr=atr, recent_atr=recent_atr(candles_15m), cut_ms=cut, zones=zones,
-                  pools=pools_before(candles_15m, candles_1h, atr, cut), trend=coin_trend(closed_1h),
+                  pools=pools_before(candles_15m, candles_1h, atr, cut, symbol), trend=coin_trend(closed_1h),
                   tail=[list(c) for c in candles_15m[-24:]])
     # Events of the candle that just closed (only while it is fresh: a rebuild after a restart or a backfill must not
     # fire an old candle again)
     if now_ms - cut <= CONFIG.strategies.close_event_max_age_sec * 1000:
         from strategies.level import sweep_at_close
-        pools = pools_before(candles_15m, candles_1h, atr, last_open)
+        pools = pools_before(candles_15m, candles_1h, atr, last_open, symbol)
         sweep = sweep_at_close(candles_15m, pools, atr, ctx.trend, symbol)
         if sweep:
             # ICT's SMT divergence is a confirmation of the sweep (eng-35; was the separate 'smt' system): the
@@ -393,7 +393,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
             candles_1h = h1 if len(h1) >= len(card_1h) else card_1h
             profile = candles_4d or candles_1h[-96:]
             raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile, candles_1d=d1,
-                            candles_4h=h4, candles_1w=w1)
+                            candles_4h=h4, candles_1w=w1, symbol=symbol)
             if with_context:
                 m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
                 # after m15 exists (eng-16 read it one line early: every coin's context failed, no worker events)

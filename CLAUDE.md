@@ -403,3 +403,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   First-commit values rechecked (docs/AUDIT_parameters.md section 9): the Bollinger squeeze is BandWidth at its
   ~6-month low = 125 bars (`bbw_squeeze_lookback`, was 50); session pools use the exchanges' local hours with daylight
   saving (`sweep_sessions` = Tokyo 09-18, London 08-17, New York 08-17 local; were fixed UTC 0-8 / 7-16 / 13-21).
+  Formulas / data instead of hand-set numbers (eng-57, docs/AUDIT_parameters.md section 10): the minimum leg is
+  derived (`levels.min_leg_atr` = min_stop_atr / 0.382, `min_leg_move` = cost_guard x round-trip cost / 0.382); the
+  liquidation estimate uses the tracked Hyperliquid accounts' real notional-weighted leverage (models/leverage_mix.json,
+  positioning) and each contract's maintenance margin / max leverage from Bybit's public risk limits
+  (models/maintenance.json, daily); equal highs / lows are within the coin's measured p50 pierce; the whale size is the
+  coin's own p99.5 sweep (USD floors only during the cold start); the regime count is chosen by BIC (2..6);
+  research_level_weights.py: swings / equal / previous-day / round levels hold price LESS often than placebo prices
+  (odds ratio 0.79-0.86) and alike -> their weights are all 1.0; entry replays journal `tp1_min` for a measured time stop.

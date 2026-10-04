@@ -14,7 +14,7 @@ cascade's start, the map's VWAP / POC / nodes), the cascade's 0.382 / 0.5 / 0.61
 from typing import Dict, Optional, Sequence
 
 from config import CONFIG
-from levels import fib_price, retracement_of
+from levels import min_leg_atr, fib_price, retracement_of
 from strategies.base import PlanInput, Strategy, base_plan
 from strategies.geometry import cap_for_rr, select_targets
 from strategies.level import reached_since
@@ -88,7 +88,7 @@ class CascadeTracker:
             pre = before + [c for c in during if c[0] < end_c[0]]
             start_c = min(pre, key=lambda c: c[3])
             start, end = start_c[3], end_c[2]
-        if abs(start - end) < cfg.exhaustion_min_leg_atr * atr:
+        if abs(start - end) < (cfg.exhaustion_min_leg_atr or min_leg_atr()) * atr:
             return None
         event['fired'] = True
         side = 'longs' if direction > 0 else 'shorts'

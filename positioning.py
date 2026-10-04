@@ -53,7 +53,8 @@ class Positioning:
     async def start(self) -> List[asyncio.Task]:
         self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), headers=HEADERS)
         self._load_accounts()
-        return [asyncio.create_task(self._hl_loop()), asyncio.create_task(self._okx_liquidations_backfill())]
+        return [asyncio.create_task(self._hl_loop()), asyncio.create_task(self._okx_liquidations_backfill()),
+                asyncio.create_task(self._maintenance_loop())]
 
     async def close(self):
         if self._session is not None:
@@ -206,6 +207,68 @@ class Positioning:
                     (1 if size > 0 else -1, float(p.get('positionValue') or 0), liq, leverage))
             await asyncio.sleep(spacing)
         self.hl_positions, self.hl_ts = positions, time.time()
+        self._write_leverage_mix(positions)
+
+    @staticmethod
+    def _write_leverage_mix(positions: Dict[str, List[Tuple[int, float, Optional[float], float]]]) -> None:
+        """
+        The leverage the tracked accounts really use, weighted by notional (eng-57): it replaces the guessed
+        10 / 25 / 50 / 100x mix of the liquidation estimate (zones.leverage_mix). Leverages are rounded to whole x;
+        bins under 1% of the notional are dropped. Large Hyperliquid accounts are a proxy for the market's leverage,
+        not Binance's own (which publishes none).
+        """
+        from zones import LEVERAGE_MIX_PATH
+        notional: Dict[float, float] = {}
+        n = 0
+        for rows in positions.values():
+            for _, usd, _, lev in rows:
+                if lev >= 1 and usd > 0:
+                    notional[float(round(lev))] = notional.get(float(round(lev)), 0.0) + usd
+                    n += 1
+        total = sum(notional.values())
+        if n < 50 or not total:
+            return
+        mix = [[lev, usd / total] for lev, usd in sorted(notional.items()) if usd / total >= 0.01]
+        norm = sum(w for _, w in mix) or 1.0
+        mix = [[lev, round(w / norm, 4)] for lev, w in mix]
+        try:
+            atomic_write(LEVERAGE_MIX_PATH, orjson.dumps({'mix': mix, 'positions': n, 'notional_usd': total,
+                                                         'ts': int(time.time())}))
+        except OSError as e:
+            logger.debug(f"leverage mix not written: {e}")
+
+    BYBIT_RISK_URL = 'https://api.bybit.com/v5/market/risk-limit?category=linear'
+
+    async def _maintenance_loop(self):
+        """
+        Each linear contract's lowest risk tier (maintenance margin, max leverage) from Bybit's public risk limits, once
+        a day -> models/maintenance.json (zones.maintenance_of). Binance's own brackets need a signed request; a flat
+        0.5% understated most altcoins (SUI 1%, small caps 1.5-2.5%).
+        """
+        from zones import MAINTENANCE_PATH
+        while True:
+            try:
+                rows, cursor = {}, ''
+                for _ in range(200):
+                    url = self.BYBIT_RISK_URL + (f'&cursor={cursor}' if cursor else '')
+                    async with self._session.get(url) as resp:
+                        result = (await resp.json(content_type=None)).get('result') or {}
+                    for r in result.get('list') or []:
+                        if r.get('isLowestRisk') == 1 and r.get('maintenanceMargin'):
+                            rows[r['symbol']] = [float(r['maintenanceMargin']), float(r.get('maxLeverage') or 0)]
+                    cursor = result.get('nextPageCursor') or ''
+                    if not cursor:
+                        break
+                    await asyncio.sleep(0.2)
+                if len(rows) > 100:
+                    atomic_write(MAINTENANCE_PATH, orjson.dumps(rows))
+                    logger.info(f"Maintenance margins: {len(rows)} contracts (Bybit risk limits)")
+                await asyncio.sleep(86_400)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.info(f"Maintenance margins unavailable ({type(e).__name__} {e}); retry in 1h")
+                await asyncio.sleep(3600)
 
     async def _hl_loop(self):
         cfg = CONFIG.positioning

@@ -394,8 +394,9 @@ class WhaleBook:
         if cached is not None:
             return cached
         cfg = CONFIG.sweeps
-        floor = self.floor_usd.get(symbol, cfg.floor_rest_usd)
-        whale = max(floor, self._percentile(symbol, cfg.percentile) or 0.0)
+        # eng-57: the coin's own p99.5 sweep IS the whale size once its distribution is known; the liquidity-tier USD
+        # floors (set by hand, no source) only stand in during the cold start (< min_samples sweeps)
+        whale = self._percentile(symbol, cfg.percentile) or self.floor_usd.get(symbol, cfg.floor_rest_usd)
         # Unknown until the coin's sweep-size distribution is known: no cluster detection before that (a fixed
         # guess made five small prints a minute look like an algo on quiet coins)
         notable = self._percentile(symbol, cfg.cluster_percentile)

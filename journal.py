@@ -165,7 +165,7 @@ EXTRA_COLUMNS = {
     'prem_1h': 'REAL', 'prem_z': 'REAL', 'funding_1h': 'REAL', 'oi_vol': 'REAL', 'er_1h': 'REAL', 'chop_1h': 'REAL',
     'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
-    'weis_ratio': 'REAL',
+    'weis_ratio': 'REAL', 'tp1_min': 'REAL',
 }
 
 FEATURE_KEYS = {
