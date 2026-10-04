@@ -400,3 +400,6 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   infrastructure leftovers); the duplicate `metrics.funding_crowded` merged into `orderflow.crowded_funding_long`;
   the Holy Grail needs ADX > 30 AND rising (`adx_prev`, Raschke). The ported robots' values were checked against their
   repos (trendline_bot, supply_demand-v4, auction_theory_in_code): all match; they ran on 15m, ours on 1h / 4h.
+  First-commit values rechecked (docs/AUDIT_parameters.md section 9): the Bollinger squeeze is BandWidth at its
+  ~6-month low = 125 bars (`bbw_squeeze_lookback`, was 50); session pools use the exchanges' local hours with daylight
+  saving (`sweep_sessions` = Tokyo 09-18, London 08-17, New York 08-17 local; were fixed UTC 0-8 / 7-16 / 13-21).

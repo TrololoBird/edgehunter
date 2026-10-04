@@ -66,7 +66,8 @@ class TimeframeConfig:
 class MetricsConfig:
     rvol_window: int = 50
     rvol_anomaly_threshold: float = 4.0
-    bbw_squeeze_lookback: int = 50
+    # Bollinger's squeeze: BandWidth at its lowest of ~6 months = 125 bars of the chart's timeframe (was 50, no source)
+    bbw_squeeze_lookback: int = 125
     squeeze_recent: int = 12          # Bollinger method I: the squeeze within the last 12 15m candles (3h)
     # Squeeze = Bollinger width at most this multiple of its bbw_squeeze_lookback minimum
     bbw_squeeze_tolerance: float = 1.05
@@ -606,7 +607,9 @@ class StrategiesConfig:
     sweep_min_depth_atr: float = 0.1
     sweep_max_depth_atr: float = 1.0
     sweep_min_rvol: float = 1.0
-    sweep_sessions: tuple = (('Asia', 0, 8), ('London', 7, 16), ('New York', 13, 21))
+    # the exchanges' local hours, daylight saving included (forex session tables; eng-57: were fixed UTC 0-8 / 7-16 / 13-21)
+    sweep_sessions: tuple = (('Asia', 'Asia/Tokyo', 9, 18), ('London', 'Europe/London', 8, 17),
+                             ('New York', 'America/New_York', 8, 17))
     sweep_ttl: tuple = (2 * 3600, 2 * 3600, 8 * 3600)
     # Absorption at a level (order flow: the level is the setup, absorption the confirmation): a closed 1m candle with
     # taker delta >= the hour's orderflow.absorption_percentile against the level, volume >= absorption_min_rvol x the

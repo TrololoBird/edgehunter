@@ -6,7 +6,7 @@ Sources (CONFIG.zones.weights):
 - swing_15m / swing_1h: fractal highs and lows (a high with `width` lower highs on each side);
 - equal: equal highs / lows (>= 2 swings within equal_tolerance_atr) that were not swept since: stop pools;
 - pdhl: previous UTC day's / week's high and low, the current day's high / low and the last completed sessions'
-  (Asia / London / New York, UTC hours in CONFIG.strategies.sweep_sessions) highs / lows: where stops rest;
+  (Asia / London / New York, the exchanges' local hours in CONFIG.strategies.sweep_sessions) highs / lows: where stops rest;
 - book: order-book liquidity that stayed (heatmap bands, depth.py);
 - poc / va / hvn: volume profile of 5m candles over ~4 days and of 15m candles over ~24h, each candle's volume spread evenly over its
   range: point of control, value-area edges (CBOT method), high-volume nodes;
@@ -154,14 +154,24 @@ def round_levels(price: float, span: float) -> List[float]:
 
 
 def session_windows(now_ms: float) -> List[Tuple[str, int, int]]:
-    """The last COMPLETED occurrence of each session before now: (name, start ms, end ms)."""
+    """
+    The last COMPLETED occurrence of each session before now: (name, start ms, end ms). Sessions are the exchanges'
+    LOCAL hours (Tokyo 09-18, London 08-17, New York 08-17: 00-09 / 08-17 or 07-16 / 13-22 or 12-21 UTC with daylight
+    saving - the forex session tables); eng-57, were fixed UTC hours that matched neither season.
+    """
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
     out = []
-    today = int(now_ms) // DAY_MS * DAY_MS
-    for name, start_h, end_h in CONFIG.strategies.sweep_sessions:
-        for day in (today, today - DAY_MS):
-            start, end = day + start_h * HOUR_MS, day + end_h * HOUR_MS
-            if end <= now_ms:
-                out.append((name, start, end))
+    now = datetime.fromtimestamp(now_ms / 1000, timezone.utc)
+    for name, tz_name, start_h, end_h in CONFIG.strategies.sweep_sessions:
+        tz = ZoneInfo(tz_name)
+        local_day = now.astimezone(tz).date()
+        for back in (0, 1, 2):
+            d = local_day - timedelta(days=back)
+            start = datetime(d.year, d.month, d.day, start_h, tzinfo=tz)
+            end = datetime(d.year, d.month, d.day, end_h, tzinfo=tz)
+            if end.timestamp() * 1000 <= now_ms:
+                out.append((name, int(start.timestamp() * 1000), int(end.timestamp() * 1000)))
                 break
     return out
 
