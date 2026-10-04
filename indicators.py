@@ -130,6 +130,8 @@ def compute_indicators_batch(frames: Dict[str, pl.DataFrame], funding: Dict[str,
     minus_di = _safe_div(100 * wilder(minus_dm), wilder(tr))
     dx = _safe_div(100 * (plus_di - minus_di).abs(), plus_di + minus_di)
     df = df.with_columns(_over(dx.ewm_mean(alpha=1 / 14, adjust=False)).alias('adx'))
+    # the previous candle's ADX: Raschke's Holy Grail needs ADX > 30 AND rising
+    df = df.with_columns(_over(pl.col('adx').shift(1)).alias('adx_prev'))
     # Squeeze: width within a small tolerance of its lookback minimum (exact float equality with a rolling
     # minimum fails on rounding noise even for a perfectly flat range)
     df = df.with_columns(

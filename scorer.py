@@ -252,13 +252,13 @@ class PhaseScorer:
         - Net taker flow over the last 20 candles clearly negative (buyers <= 47.5%): price up on selling =
           bearish CVD divergence, someone sells into strength (+2)
         - Funding above the extreme: longs pay heavily at the top (+1)
-        - OI still rising with funding crowded (> funding_crowded): leveraged longs piling in late (+1)
+        - OI still rising with funding crowded (> orderflow.crowded_funding_long): leveraged longs piling in late (+1)
         - Spot net selling over the last hour at the high: the real (unleveraged) side distributes (+1)
         """
         at_high = pl.col('is_local_high')
         divergence = at_high & (pl.col('flow_divergence') < self.cfg.distribution_flow_max)
         funding_extreme = at_high & (pl.col('predicted_funding') > self.cfg.funding_extreme_positive)
-        crowded = at_high & (pl.col('oi_change_pct') > 0) & (pl.col('predicted_funding') > self.cfg.funding_crowded)
+        crowded = at_high & (pl.col('oi_change_pct') > 0) & (pl.col('predicted_funding') > CONFIG.orderflow.crowded_funding_long)
         spot_selling = at_high & pl.col('has_spot') & (pl.col('spot_delta_1h') < 0)
 
         score = (
@@ -421,6 +421,7 @@ class PhaseScorer:
             'oi_change_3h': num('oi_change_pct'),
             'oi_change_1h': num('oi_change_short'),
             'adx': row.get('adx'),
+            'adx_prev': row.get('adx_prev'),
             'price_change_flat': num('price_change_flat'),
             'flat_range_atr': num('flat_range') / row['atr'] if row.get('atr') else 0.0,
             'oi_change_flat': num('oi_change_flat'),

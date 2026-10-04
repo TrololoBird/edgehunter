@@ -65,7 +65,6 @@ class TimeframeConfig:
 @dataclass(frozen=True)
 class MetricsConfig:
     rvol_window: int = 50
-    rvol_micro_burst_threshold: float = 1.5
     rvol_anomaly_threshold: float = 4.0
     bbw_squeeze_lookback: int = 50
     squeeze_recent: int = 12          # Bollinger method I: the squeeze within the last 12 15m candles (3h)
@@ -75,8 +74,8 @@ class MetricsConfig:
     # Short OI window (15m candles) for the price/OI matrix checks in phases D and E: 4 = 1h
     oi_short_window: int = 4
     # Funding normalized to an 8h-equivalent rate (0.001 = 0.1%); Binance's neutral rate is +0.01% per 8h.
-    # Crowded longs from +0.03% (3x neutral), extreme from +0.1%; shorts are crowded below -0.05%
-    funding_crowded: float = 0.0003
+    # Extreme funding: from +0.1% (longs) / below -0.05% (shorts). Crowded = orderflow.crowded_funding_* (one place).
+    # Ours: the neutral is Binance's +0.01%; the extremes are not symmetric around it (+0.09 / -0.06) - no source
     funding_extreme_positive: float = 0.001
     funding_extreme_negative: float = -0.0005
     # Phase D: candle taker delta / candle quote volume below this (-0.2 = taker sells >= 60% of the candle)
@@ -188,7 +187,6 @@ class Tier0Config:
     # otherwise flips the flag every 2s check)
     anomaly_hold_sec: int = 60
     # Hot-symbol eviction: only subscriptions not triggered for this long, and at least this old, can be evicted
-    tier2_evict_idle_sec: int = 120
     tier2_min_age_sec: int = 60
     # Algos fire at :00/:15/:30/:45 (quarter-hour bursts, +30% volume): an RVOL-only trigger is ignored this long
     # after each quarter-hour boundary
@@ -353,7 +351,6 @@ class MLConfig:
 class WhaleConfig:
     """Kept for compatibility (display window); sizing moved to SweepConfig."""
     min_usd: float = 25_000
-    avg_minute_share: float = 0.25
     window_sec: int = 900
 
 
@@ -384,12 +381,10 @@ class LevelsConfig:
     # Reversal: price must still be within this retracement of the reversed leg's end (accumulation: a bit wider)
     reversal_zone_max: float = 0.236
     # must stay below the first reversal target (0.382), or there is no room left for the trade
-    accumulation_zone_max: float = 0.3
     reversal_targets: tuple = (0.382, 0.5, 0.618)
     # LTF trigger on ltf_minutes candles built from the 1m stream (15m -> 5m keeps the 3-5x step between timeframes
     # and leaves a human time to act): close beyond the high/low of the last ltf_break_lookback candles up to the
     # zone extreme, with net taker flow of the last ltf_flow_candles candles after that extreme in the trade's direction
-    ltf_minutes: int = 5
     ltf_break_lookback: int = 5
     ltf_flow_candles: int = 3
     # Stop = structure + a volatility buffer (hybrid): beyond the farthest of the structural zone the entry comes from
@@ -612,7 +607,6 @@ class StrategiesConfig:
     sweep_max_depth_atr: float = 1.0
     sweep_min_rvol: float = 1.0
     sweep_sessions: tuple = (('Asia', 0, 8), ('London', 7, 16), ('New York', 13, 21))
-    sweep_zone_atr: float = 0.25
     sweep_ttl: tuple = (2 * 3600, 2 * 3600, 8 * 3600)
     # Absorption at a level (order flow: the level is the setup, absorption the confirmation): a closed 1m candle with
     # taker delta >= the hour's orderflow.absorption_percentile against the level, volume >= absorption_min_rvol x the
@@ -623,8 +617,6 @@ class StrategiesConfig:
     absorption_level_atr: float = 0.3
     absorption_min_strength: float = 2.0
     absorption_min_move_atr: float = 1.5
-    absorption_zone_atr: float = 0.25
-    absorption_ttl: tuple = (60 * 60, 60 * 60, 6 * 3600)
     # Liquidation exhaustion (cascades overshoot mechanically; revert once the forced flow stops): a cascade
     # (liquidations.cascade_*) of longs on a drop / shorts on a rally; the leg runs from the extreme of the
     # exhaustion_pre_minutes before it to the cascade's extreme (following price until the entry), >= 3 ATR (a
@@ -642,9 +634,6 @@ class StrategiesConfig:
     breakout_min_width_atr: float = 0.8
     breakout_max_width_atr: float = 3.0
     breakout_min_rvol: float = 1.5
-    breakout_measured_moves: tuple = (1.0, 1.618, 2.618)
-    breakout_min_move_atr: float = 1.5
-    breakout_zone_atr: float = 0.25
     breakout_ttl: tuple = (3600, 3600, 90 * 86400)   # Turtles: entered at once, out on the trailing channel
     # ---- crypto_maniac's systems (github.com/roman-boop; strategies/maniac.py): his parameters as he ships them.
     # Longer histories they need: 15m / 1h candles of every coin (fetcher._hourly_candles_loop, limit 499 = weight 2)
@@ -736,7 +725,6 @@ class StrategiesConfig:
     auction_local_window: int = 30
     auction_max_levels: int = 50
     auction_min_rr: float = 1.5
-    auction_fallback_rr: float = 2.5
     auction_stop_pad_atr: float = 0.35
     auction_min_risk_atr: float = 0.15
     auction_ttl: tuple = (3600, 3600, 48 * 3600)
@@ -747,14 +735,10 @@ class StrategiesConfig:
     smt_ref_window: int = 60
     smt_ifvg_min_atr: float = 0.03
     smt_ifvg_search_back: int = 40
-    smt_sl_buffer_atr: float = 0.1
-    smt_min_rr: float = 2.0
-    smt_fallback_rr: float = 2.5
     # ICT kill zones (New York time): London open 02:00-05:00 and New York open 07:00-10:00 (not one 02-10 window)
     smt_session: tuple = ('America/New_York', '02:00', '05:00', '07:00', '10:00')
     # SMT only against a pair at least this correlated (15m returns, 200 candles): the method's precondition
     smt_min_correlation: float = 0.7
-    smt_ttl: tuple = (9 * 900, 9 * 900, 8 * 3600)
     # trendline_bot (15m, sloped lines only)
     tl_lookback: int = 400
     tl_pivot: int = 3
@@ -775,37 +759,8 @@ class StrategiesConfig:
     tl_min_body_atr: float = 0.35
     tl_max_depth_atr: float = 1.2
     tl_close_pos_max: float = 0.40
-    tl_min_rr: float = 1.0
     trendline_ttl: tuple = (3600, 3600, 48 * 3600)   # 1h lines
-    # thirdeye_strategy_algo (1h): CCI length, fixed SL / TP from his realtime.py
-    te_cci_length: int = 20               # Lambert's CCI(20) (his robot: 25)
-    te_sl_pct: float = 0.01
-    te_tp_pct: float = 0.05
-    thirdeye_ttl: tuple = (3600, 3600, 72 * 3600)
-    # fibonachi_trading_system (1h)
-    fib05_ttl: tuple = (3600, 3600, 72 * 3600)
-    # bomberman_bot (1h)
-    bomberman_ttl: tuple = (3600, 3600, 48 * 3600)
-    # bollinger_bands-with-clusters v6 (15m): BB(40, 1.5), RSI(96), CSI clusters, SL 0.4%, out after 3 bars
-    csi_bb_period: int = 40
-    csi_bb_std: float = 1.5
-    csi_rsi_period: int = 96
-    csi_rsi: float = 60.0
-    csi_min_cluster: int = 3
-    csi_bull_quant: float = 0.78
-    csi_bear_quant: float = 0.22
-    csi_sl_pct: float = 0.004
-    csi_ttl: tuple = (900, 900, 3 * 900)
     bollinger_ttl: tuple = (900, 900, 12 * 3600)   # W / M: the trade lives until the opposite band, hours
-    # oi_trading_robot v7.4 (long only): OI +5% / 1h, price growth <= 0.5 x OI growth, OI 24h > price 24h; his
-    # defaults SL 2%, TP 4% / 6%, a 3h cooldown per coin, the 15m structure filter off
-    oi_1h_threshold: float = 5.0
-    oi_price_ratio: float = 0.5
-    oi_sl_pct: float = 0.02
-    oi_tp_pcts: tuple = (0.04, 0.06)
-    oi_cooldown_sec: int = 3 * 3600
-    oi_structure_filter: bool = False
-    oi_accum_ttl: tuple = (900, 900, 24 * 3600)
 
 
 @dataclass(frozen=True)
@@ -852,9 +807,6 @@ class RestConfig:
 
 @dataclass(frozen=True)
 class WSConfig:
-    max_concurrent_trades: int = 40
-    reconnect_delay: float = 5.0
-    max_reconnect_attempts: int = 10
     ping_interval: int = 20
 
 

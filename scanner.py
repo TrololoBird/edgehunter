@@ -705,7 +705,7 @@ class Scanner:
                 sig['perp_led_long'] = bool(row.get('perp_led_long'))
                 sig['perp_led_short'] = bool(row.get('perp_led_short'))
                 # the closed candle's 1h spot / perp flows (journal features, like the phase setups carry)
-                for key in ('spot_delta_1h', 'perp_delta_1h', 'adx'):
+                for key in ('spot_delta_1h', 'perp_delta_1h', 'adx', 'adx_prev'):
                     if row.get(key) is not None:
                         sig[key] = row[key]
                 if setup['setup'].startswith('SWEEP'):

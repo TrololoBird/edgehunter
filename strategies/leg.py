@@ -112,9 +112,11 @@ class LegContinuation(Strategy):
             ema = _ema_of_tf(x, impulse['tf'], 20)
             if ema is None or not fib_lo <= ema <= fib_hi:
                 return {'skip': 'no_level'}
-            # Linda Raschke's Holy Grail, where the EMA20 pullback comes from: only in a strong trend, ADX(14) > 30
-            adx = x.sig.get('adx')
-            if adx is not None and adx <= CONFIG.strategies.holy_grail_adx:
+            # Linda Raschke's Holy Grail, where the EMA20 pullback comes from: only in a strong trend, ADX(14) > 30 and
+            # rising (Street Smarts; the 'rising' part was missing until eng-57)
+            adx, adx_prev = x.sig.get('adx'), x.sig.get('adx_prev')
+            if adx is not None and (adx <= CONFIG.strategies.holy_grail_adx or
+                                    (adx_prev is not None and adx <= adx_prev)):
                 return {'skip': 'weak_trend'}
             level_lo = level_hi = ema
             half = overshoot(x.symbol, 'swing_1h' if impulse['tf'] != '15m' else 'swing_15m', ema, 'p50')                 or CONFIG.zones.zone_half_atr * impulse['atr']
