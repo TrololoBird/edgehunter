@@ -34,7 +34,7 @@ Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CO
 """
 import copy
 import logging
-from strategies.ict import fvg_setup, range_position, touch_trigger
+from strategies.ict import fvg_setup, fvg_trigger, range_position, touch_trigger
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -51,6 +51,15 @@ from strategies import confirm
 from strategies.geometry import entry_levels
 
 logger = logging.getLogger(__name__)
+
+def ict_gated(mode: str, setup: str) -> bool:
+    """
+    ICT's sweep / continuation models trade inside the London / New York kill zones only (eng-58). The Silver Bullet
+    shares the 'sweep' name but has its own windows (03-04, 10-11, 14-15 New York): eng-58 vetoed two of its three.
+    """
+    return (mode in ('sweep', 'continuation') and not str(setup or '').startswith('SILVER BULLET')
+            and bool(CONFIG.strategies.smt_session))
+
 
 FINAL_STATUSES = {'TP3', 'SL', 'CLOSED', 'INVALID', 'MISSED', 'EXPIRED'}
 # A setup that never became a card (no anchor / no room left to a target): removed, not a result
@@ -178,6 +187,8 @@ class TrackedSignal:
     # eng-58: an ICT setup armed after the sweep (MSS + FVG found): the plan fields overlaid on every re-plan (the
     # resting limit at the gap's CE)
     armed: Optional[dict] = None
+    # eng-59: the last trigger time of the replaced rule journaled beside the card ('weak_mss' / 'variant_shift')
+    shadow_ms: int = 0
 
     @property
     def finished(self) -> bool:
@@ -230,7 +241,8 @@ class SignalBook:
         # symbol -> the coin's level map / 1h candles / structure context; set by the scanner
         self.levels_of: Optional[Callable[[str], Optional[list]]] = None
         self.htf_of: Optional[Callable[[str], Optional[list]]] = None
-        self.daily_of: Optional[Callable[[str], Optional[list]]] = None     # closed daily candles (Turtle exits)
+        self.daily_of: Optional[Callable[[str], Optional[list]]] = None
+        self.btc_bias_of: Optional[Callable[[], Optional[int]]] = None      # eng-59: BTC's ICT bias (scanner)     # closed daily candles (Turtle exits)
         # the opposite Bollinger band BB(20, 2) of the closed 15m candles (Bollinger W / M exit, eng-55)
         self.band_of: Optional[Callable[[str, int], Optional[float]]] = None
         self.context_of: Optional[Callable[[str], Optional[object]]] = None
@@ -685,6 +697,13 @@ class SignalBook:
         elif s.status != 'ZONE':
             s.status = 'WATCH'
 
+        if s.status == 'ZONE' and ict_gated(s.mode, s.group_key) and s.zone_since_ms:
+            # eng-59, ICT: a setup lives within its kill zone - one that came into its zone inside a kill zone and saw
+            # it end without an entry is over (the next session builds its own setup)
+            kz = tuple(CONFIG.strategies.smt_session)
+            if in_session(int(s.zone_since_ms), kz) and not in_session(now_ms, kz):
+                self._finish(s, 'EXPIRED', now, "session_end: the kill zone ended without an entry")
+                return None
         if s.status == 'ZONE':
             entry = self._try_entry(s, price, now_ms, candles_of, confirm_of)
             if entry is not None:
@@ -708,6 +727,7 @@ class SignalBook:
         # kline arrives a moment after the minute ends, and the entry would be a mid-minute price)
         ltf = resample(minutes, trigger_minutes, minutes[-1][0] + MINUTE_MS)
         kind = s.plan.get('trigger', 'shift')
+        shadow = self._shadow_entry(s, ltf, kind, interval_ms, now_ms, price)
         if kind == 'fvg':
             # ICT 2022 (eng-58): the sweep is only the setup; once the displacement broke the swing the raid came from
             # and left a gap, a limit rests at the gap's CE (the plan becomes a touch plan: the demo places it)
@@ -719,13 +739,13 @@ class SignalBook:
                            'since': setup['time']}
                 s.plan = {**s.plan, **s.armed['plan']}
                 s.zone_since_ms = setup['time']
-            return None
+            return shadow
         elif kind == 'touch':
             trigger = touch_trigger(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
         else:
             trigger = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms)
         if not trigger:
-            return None
+            return shadow
         if now_ms - trigger['time'] > interval_ms + 2 * MINUTE_MS:
             # A break that closed long ago (the card was restored after a restart, the feed had a gap): its price is
             # history, not an entry a human could take now. Look for the next one after it.
@@ -761,7 +781,7 @@ class SignalBook:
                 confirms['killzone'] = in_session(trigger['time'], tuple(CONFIG.strategies.smt_session))
         if reason is None:
             reason = confirm.missing(s.mode, confirms)
-        if reason is None and s.mode in ('sweep', 'continuation') and CONFIG.strategies.smt_session                 and not in_session(trigger['time'], tuple(CONFIG.strategies.smt_session)):
+        if reason is None and ict_gated(s.mode, s.group_key)                 and not in_session(trigger['time'], tuple(CONFIG.strategies.smt_session)):
             reason = 'killzone'            # eng-58: ICT trades its models inside the London / New York kill zones only
         if reason is None:
             reason = self._against_day(s, trigger['time'])
@@ -853,6 +873,39 @@ class SignalBook:
         self.events.append((s, 'ENTRY'))
         return s
 
+    def _shadow_entry(self, s: TrackedSignal, ltf, kind: str, interval_ms: int, now_ms: int,
+                      price: float) -> Optional[TrackedSignal]:
+        """
+        eng-59: the rule eng-58 replaced, journaled as a vetoed entry of the same card so the journal compares both on
+        the same events (vetoes_table): 'weak_mss' = the old sweep trigger (a close beyond the high made after the
+        raid, entry at the CE touch) while the new MSS has not armed the card; 'variant_shift' = the old market entry
+        on the 5m structure shift beside the resting limit (continuation, an armed sweep). Inside the kill zone only,
+        once per trigger.
+        """
+        if not ict_gated(s.mode, s.group_key):
+            return None
+        d = s.direction
+        if kind == 'fvg':
+            trig, reason = fvg_trigger(ltf, d, s.zone_since_ms, interval_ms), 'weak_mss'
+        elif kind == 'touch' and (s.armed or s.mode == 'continuation'):
+            trig, reason = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms), 'variant_shift'
+        else:
+            return None
+        if not trig or trig['time'] <= s.shadow_ms or now_ms - trig['time'] > interval_ms + 2 * MINUTE_MS:
+            return None
+        s.shadow_ms = int(trig['time'])
+        if not in_session(trig['time'], tuple(CONFIG.strategies.smt_session)):
+            return None
+        levels = entry_levels(s.plan, trig['entry'], trig['extreme'], d)
+        if not levels or d * (price - levels['sl']) <= 0:
+            return None
+        levels['zone_src'] = s.plan.get('zone_src')
+        levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], d)
+        shadow = copy.copy(s)
+        shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, reason
+        shadow.of_confirm, shadow.confirms = None, {}
+        return shadow
+
     def _against_day(self, s: TrackedSignal, at_ms: int) -> Optional[str]:
         """
         eng-58: one direction per coin a day (ICT trades the day's bias with every model; a long and a short of two
@@ -862,7 +915,14 @@ class SignalBook:
         if (s.plan or {}).get('trail_days'):
             return None
         d = self.day_dir.get((s.symbol, int(at_ms // 86_400_000)))
-        return 'against_day' if d is not None and d != s.direction else None
+        if d is not None and d != s.direction:
+            return 'against_day'
+        # eng-59, ICT: altcoins' ICT models trade with BTC's bias (weekly, else daily) - the market's draw
+        if s.mode in ('sweep', 'continuation', 'po3') and not s.symbol.startswith('BTC/') and self.btc_bias_of:
+            btc = self.btc_bias_of()
+            if btc and btc == -s.direction:
+                return 'against_btc'
+        return None
 
     def _manage_trade(self, s: TrackedSignal, price: float, now: float, candles_of=None):
         lv, d = s.levels, s.direction

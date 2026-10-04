@@ -526,7 +526,7 @@ class PoolsConfig:
     Per-strategy coin pools (pools.py): each strategy trades only its own coins, refreshed hourly. A pool = the
     universe filtered by the strategy's rule (coin classes by 24h volume rank: major = BTC ETH SOL XRP BNB, large =
     rank <= 30, mid = rank <= 80, small = the rest; sectors to exclude; minimum 1h volatility), minus the coins where
-    the strategy's journaled entries of the last lookback_days average <= exclude_below_r over >= min_entries (walk-
+    the strategy's journaled entries of the last lookback_days are proven negative (eng-59: block bootstrap + BH) (walk-
     forward on the archive: the worst coins of the last 6 months stayed the worst the next month, -0.39R vs -0.10R;
     picking the best ones did not help), capped at `size` coins by 24h volume. Setups outside the pool are journaled
     with vetoed='not_in_pool'.
@@ -538,8 +538,9 @@ class PoolsConfig:
     size: int = 999
     refresh_sec: int = 3600
     lookback_days: int = 90
-    min_entries: int = 8
-    exclude_below_r: float = -0.3
+    # eng-59: a coin is excluded once its entries are PROVEN negative over >= min_blocks 4h blocks (block bootstrap
+    # + Benjamini-Hochberg at CONFIG.ml.rule_fdr, journal.proven_negative); was mean <= -0.3R over 8 entries
+    min_blocks: int = 8
     # (strategy, classes 'major,large,mid,small' or 'all', sectors to exclude (sectors.py names), min ATR(1h) in %)
     # (+ the order the rest is picked in: 'volume' / 'volatility' / 'alts', see pools.Pools.rebuild). The pinned coins
     # (CONFIG.exchange.pinned_bases) are in every pool on top of `size`. A hypothesis per method, not a measurement:
@@ -893,7 +894,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-58"
+    logic_version: str = "eng-59"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

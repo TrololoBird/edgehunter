@@ -424,6 +424,13 @@ def _confirm_value(row, name: str) -> Optional[str]:
     return 'yes' if value is True or isinstance(value, str) else 'no'
 
 
+# the nature of each method (its source's own logic): what price must do after the entry
+NATURE = {'continuation': 'trend', 'breakout': 'trend', 'orb': 'trend', 'trendline': 'trend', 'cup_handle': 'trend',
+          'oi_signal': 'trend', 'pump': 'trend', 'connors': 'reversion', 'market_profile': 'reversion',
+          'bollinger': 'reversion', 'supply_demand': 'reversion', 'sweep': 'reversal', 'wyckoff': 'reversal',
+          'po3': 'reversal'}
+
+
 FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
     ('strategy', _family),
     ('market 1h vs the signal', lambda r: None if _col(r, 'mkt_1h') is None or not _col(r, 'direction') else
@@ -448,6 +455,16 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
          'NY 13-21' if _col(r, 'hour_utc') < 21 else 'late 21-24')),
     ('ADX14 (15m)', lambda r: None if _col(r, 'adx') is None else
         ('trending >= 30' if _col(r, 'adx') >= 30 else 'weak < 20' if _col(r, 'adx') < 20 else '20-30')),
+    # eng-59 (the pool audit): does the method suit the coin's state? Dreiss' Choppiness of the coin's last hours
+    # (> 61.8 a range, < 38.2 a trend - his levels) against the method's nature: trend methods should do better in a
+    # trending coin, mean-reversion ones in a ranging one. Journal first, a pool / veto rule only once it is proven
+    ('method nature x coin state (Choppiness 1h)', lambda r: None if _col(r, 'chop_1h') is None
+        or NATURE.get(_col(r, 'strategy') or '') is None else
+        f"{NATURE[_col(r, 'strategy')]} method in a " +
+        ('ranging coin (> 61.8)' if _col(r, 'chop_1h') > 61.8 else 'trending coin (< 38.2)' if _col(r, 'chop_1h') < 38.2
+         else 'mixed coin')),
+    ('BTC bias vs the signal', lambda r: None if not _col(r, 'btc_bias') or not _col(r, 'direction') else
+        ('with BTC' if _col(r, 'btc_bias') * _col(r, 'direction') > 0 else 'against BTC')),
     ('weekend', lambda r: None if _col(r, 'weekend') is None else ('weekend' if _col(r, 'weekend') else 'weekday')),
     ('pullback zone', lambda r: None if not _col(r, 'zone_src') or _col(r, 'kind') != 'entry' else
         ('Fibonacci only' if 'fib only' in _col(r, 'zone_src') else 'map level')),

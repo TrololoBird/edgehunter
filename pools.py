@@ -2,6 +2,7 @@
 Per-strategy coin pools (CONFIG.pools): every strategy trades only its own coins. See PoolsConfig for the rule and
 the measurement behind the automatic exclusion. Rebuilt hourly off the loop by Scanner.pools_loop.
 """
+import bisect
 import time
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -46,17 +47,36 @@ class Pools:
         return symbol in pool
 
     def rebuild(self, markets: Dict, sectors_map: Dict[str, str],
-                coin_results: List[Tuple[str, str, int, float]]) -> None:
+                entries: List[Tuple[str, str, int, int, float]],
+                market_volumes: Optional[List[float]] = None) -> None:
+        """
+        entries: (strategy, symbol, ts_ms, direction, net R) of the journal's replayed, non-vetoed entries.
+        market_volumes: the 24h quote volume of EVERY Binance USDT perpetual (eng-59): a coin's class is its rank in
+        the whole market - ranked within the 70-coin universe, 'mid = rank <= 80' meant every coin.
+        """
+        from journal import block_of, proven_negative
         cfg = CONFIG.pools
         ranked = sorted(markets.items(), key=lambda kv: -(kv[1].quote_volume_24h or 0.0))
+        desc = sorted((-v for v in market_volumes or [] if v), )
         info = {}
-        for rank, (sym, md) in enumerate(ranked, 1):
+        for local_rank, (sym, md) in enumerate(ranked, 1):
+            vol = md.quote_volume_24h or 0.0
+            rank = bisect.bisect_left(desc, -vol) + 1 if desc else local_rank
             info[sym] = {'class': coin_class(sym, rank), 'sector': sector_of(sym, sectors_map) or 'other',
-                         'atr_1h_pct': atr_pct_1h(md.h1), 'volume_24h': md.quote_volume_24h or 0.0, 'rank': rank}
+                         'atr_1h_pct': atr_pct_1h(md.h1), 'volume_24h': vol, 'rank': rank}
+        # eng-59: a coin leaves a strategy's pool only when its entries there are PROVEN negative - 4h blocks of one
+        # direction resampled together, Benjamini-Hochberg over every coin x strategy pair (journal.proven_negative,
+        # the rule the regime mutes and confirmation promotions use). The old cut (mean <= -0.3R over 8 entries)
+        # dropped coins by chance: at ~1R spread per trade the mean of 8 has a standard error of ~0.35R.
+        groups: Dict[tuple, Dict[tuple, List[float]]] = {}
+        for strategy, symbol, ts_ms, direction, r in entries:
+            if r is not None:
+                groups.setdefault((strategy, symbol), {}).setdefault(block_of(int(ts_ms), int(direction or 0)), []).append(float(r))
+        stats, proven = proven_negative(groups, cfg.min_blocks, CONFIG.ml.rule_fdr, seed=13)
         bad: Dict[str, Dict[str, Tuple[int, float]]] = {}
-        for strategy, symbol, n, r in coin_results:
-            if n >= cfg.min_entries and r is not None and r <= cfg.exclude_below_r:
-                bad.setdefault(strategy, {})[symbol] = (int(n), float(r))
+        for strategy, symbol in proven:
+            values = [v for b in groups[(strategy, symbol)].values() for v in b]
+            bad.setdefault(strategy, {})[symbol] = (stats[(strategy, symbol)][0], sum(values) / len(values))
         members: Dict[str, Set[str]] = {}
         pinned = [s for s in info if s.split('/')[0] in CONFIG.exchange.pinned_bases]
         for strategy, classes, excl_sectors, min_atr, order in cfg.rules:
@@ -94,6 +114,6 @@ class Pools:
         name = lambda s: s.split('/')[0]
         return {'updated': self.updated,
                 'pools': {k: sorted((name(s) for s in v), key=lambda n: n) for k, v in self.members.items()},
-                'excluded': {k: {name(s): {'entries': n, 'r': round(r, 3)} for s, (n, r) in v.items()}
+                'excluded': {k: {name(s): {'blocks': n, 'r': round(r, 3)} for s, (n, r) in v.items()}
                              for k, v in self.excluded.items()},
                 'classes': {name(s): {'class': i['class'], 'sector': i['sector']} for s, i in self.info.items()}}

@@ -478,7 +478,7 @@ function poolsHtml() {
     table('pools', [
       { k: 'Стратегия', v: r => esc((FAMILY[r.k] || [r.k])[0]), s: r => r.k },
       { k: 'Монеты', v: r => r.coins.map(c => `${esc(c)} <span class="src">${esc((p.classes[c] || {}).sector || '')}</span>`).join(', '), wrap: true },
-      { k: 'Исключены по истории', v: r => Object.entries(r.excl).map(([c, x]) => `${esc(c)} (${x.entries} входов, ${x.r > 0 ? '+' : ''}${x.r}R)`).join(', ') || '—', wrap: true },
+      { k: 'Исключены по истории', v: r => Object.entries(r.excl).map(([c, x]) => `${esc(c)} (${x.blocks} 4ч-блоков, доказанный минус, ${x.r > 0 ? '+' : ''}${x.r}R)`).join(', ') || '—', wrap: true },
     ], rows, { empty: 'Нет пулов.' });
 }
 

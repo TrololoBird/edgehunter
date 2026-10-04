@@ -649,6 +649,9 @@ class DataFetcher:
     async def _update_24h_volumes(self):
         rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetTicker24hr', priority=1, weight=40)
         now_ms = time.time() * 1000
+        # eng-59: every USDT perpetual's 24h volume - the pools rank a coin in the whole market, not in the universe
+        self.market_volumes = [float(t.get('quoteVolume') or 0.0) for t in rows
+                               if str(t.get('symbol', '')).endswith('USDT')]
         for t in rows:
             md = self.markets.get(self._binance_keys.get(('futures', t.get('symbol'))))
             if md is not None:

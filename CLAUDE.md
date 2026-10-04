@@ -436,3 +436,14 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   and pauses 4h after 3 losses in a row (`executor.risk_limit`). Dead code removed: fib05 / SMT detectors, the
   pinbar / ifvg triggers' branches, WhaleConfig. Not done: pretraining that replays the 13 strategies (meta-labeling
   needs it) - a separate project.
+- eng-59 (the rest of the 13-item plan + the pool audit): the replaced rules are journaled as vetoed entries of the
+  same card for the comparison (`SignalBook._shadow_entry`: `weak_mss` = the old sweep trigger before the new MSS armed
+  the card, `variant_shift` = the old 5m-shift market entry beside the resting limit of continuation / an armed sweep);
+  an ICT card in its zone expires when its kill zone ends (`session_end`); altcoins' sweep / continuation / PO3 trade
+  with BTC's ICT bias (`against_btc`, journal `btc_bias`); fix: the Silver Bullet (strategy `sweep`) was vetoed
+  `killzone` in two of its three windows (`ict_gated`). Pools: a coin's class is its rank among ALL Binance USDT
+  perpetuals (`fetcher.market_volumes`; within the 70-coin universe 'mid <= 80' meant every coin); a coin leaves a
+  strategy's pool only when its entries are proven negative (`journal.proven_negative`, 4h blocks + BH, `min_blocks`
+  8; was mean <= -0.3R over 8 entries); stats split `method nature x coin state` (Dreiss' Choppiness) and `BTC bias`.
+  `research_pools.py` (pre-registered): Turtles / Connors trades on the daily archive by coin attributes (market volume
+  rank, ATR %, Choppiness, ER, beta / corr to BTC) -> research/pools.md.

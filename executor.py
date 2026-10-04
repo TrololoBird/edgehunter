@@ -356,7 +356,8 @@ class DemoExecutor:
         """
         if not (bool(s.plan) and s.plan.get('trigger') == 'touch'):
             return False
-        if s.mode in ('sweep', 'continuation') and CONFIG.strategies.smt_session:
+        from signal_book import ict_gated
+        if ict_gated(s.mode, s.group_key):
             from strategies.maniac import in_session
             return in_session(int(time.time() * 1000), tuple(CONFIG.strategies.smt_session))
         return True

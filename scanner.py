@@ -168,6 +168,7 @@ class Scanner:
         self.book.band_of = self._opposite_band
         self.book.plan_key_of = self._plan_key
         self.book.map_ready_of = lambda symbol: symbol in self._level_raw
+        self.book.btc_bias_of = self._btc_bias
         self.fetcher.log_liquidations = self.journal is not None
         # Setup detectors (sweeps, liquidation exhaustion, absorption, whale accumulation) and the quick level map of
         # every coin they use (rebuilt from the closed 15m candles after each close; card coins get the full map)
@@ -1197,6 +1198,22 @@ class Scanner:
                 out['rs_btc_z'] = r24 / (sd * 24 ** 0.5) if sd > 0 else None
         return out
 
+    def _btc_bias(self) -> Optional[int]:
+        """
+        eng-59: BTC's ICT bias (weekly, else daily: the close beyond the previous candle's high / low), the direction
+        altcoins' ICT models trade with (SignalBook._against_day: 'against_btc').
+        """
+        md = self.market_data.get('BTC/USDT:USDT')
+        if md is None:
+            return None
+        for bars in (md.w1, md.d1):
+            if len(bars) >= 2:
+                prev, last = bars[-2], bars[-1]
+                bias = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
+                if bias:
+                    return bias
+        return None
+
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
         """Live context that is not part of the scored row."""
         sig.update(self.market_state)
@@ -1220,6 +1237,7 @@ class Scanner:
             prev, last = md.w1[-2], md.w1[-1]
             sig['weekly_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
+        sig['btc_bias'] = self._btc_bias()
         sig.update(self._positioning_features(symbol, md))
         # eng-53: Binance's Monitoring Tag / a scheduled delisting (longs vetoed 'event_risk'), the nearness to the
         # 52-week high (Jia et al. 2025: predicts next week's cross-section; ours: rank IC +0.09, t 2.9, quintile
@@ -1491,7 +1509,8 @@ class Scanner:
                 since = int((time.time() - CONFIG.pools.lookback_days * 86400) * 1000)
                 sector_map = await asyncio.to_thread(sectors.load)
                 results = await asyncio.to_thread(self.journal.coin_results, since) if self.journal else []
-                await asyncio.to_thread(self.pools.rebuild, dict(self.market_data), sector_map, results)
+                await asyncio.to_thread(self.pools.rebuild, dict(self.market_data), sector_map, results,
+                                        list(getattr(self.fetcher, 'market_volumes', None) or []))
                 sizes = {k: len(v) for k, v in self.pools.members.items()}
                 excl = sum(len(v) for v in self.pools.excluded.values())
                 logger.info(f"Coin pools rebuilt: {sizes}; {excl} coin x strategy pairs excluded by their results")
