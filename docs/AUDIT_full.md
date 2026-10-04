@@ -59,7 +59,7 @@
 | C2 | Ветки триггеров `pinbar` и `ifvg` и импорт `in_session` — ни одна стратегия их не ставит | `signal_book.py` |
 | C3 | Docstring `leg.py` описывает удалённые развороты BULL A / B / E, BEAR C; docstring `level.py` — удалённую стратегию absorption; docstring Боллинджера — measured move вместо противоположной полосы | `strategies/*.py` |
 | C4 | CLAUDE.md: «стоп никогда не ближе min_stop_atr» (A5), список параметров ICT / sweep, устаревшие описания | CLAUDE.md |
-| C5 | `WhaleConfig` помечен «для совместимости» — проверить и удалить, если не нужен | `config.py` |
+| C5 | `WhaleConfig` (`CONFIG.whales`) нигде не читается — мёртвый целиком | `config.py` |
 
 ## Порядок исправлений
 
