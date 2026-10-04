@@ -101,6 +101,34 @@ def _dur(sec: float) -> str:
 
 
 @dataclass
+def _jsonable(v) -> bool:
+    if isinstance(v, (int, float, str, bool, type(None))):
+        return True
+    if isinstance(v, (list, tuple)):
+        return all(_jsonable(x) for x in v)
+    if isinstance(v, dict):
+        return all(isinstance(k, str) and _jsonable(x) for k, x in v.items())
+    return False
+
+
+def _exit_flags(s: 'TrackedSignal') -> Dict:
+    """The exit-relevant plan fields of a trade saved without its plan (before eng-55), rebuilt from its signal and
+    setup as the strategies set them at the entry."""
+    g, sig = s.group_key, s.sig or {}
+    plan: Dict = {}
+    if g.startswith('BREAKOUT') and sig.get('trail_days'):
+        plan.update(trail_days=sig['trail_days'], no_tp=True, turtle_n=sig.get('turtle_n'), tf='4h')
+    elif g.startswith('RSI2'):
+        plan.update(connors_exit=True, no_tp=True, tf='4h')
+    elif g.startswith('ORB') and (s.logic_version or '') >= 'eng-50':
+        plan.update(no_tp=True, tf='15m')
+    elif g.startswith('BB ') and (s.logic_version or '') >= 'eng-55':
+        plan.update(band_exit=True, no_tp=True, tf='15m')
+    elif g == 'PUMP START':
+        plan.update(add_half=True, tf='15m')
+    return plan
+
+
 class TrackedSignal:
     symbol: str
     group_key: str
@@ -901,7 +929,11 @@ class SignalBook:
             if s.finished:
                 continue
             d = asdict(s)
-            d['plan'] = None
+            # a waiting card's plan is recomputed from the frames; an ENTERED trade's is not (the entry froze it), so
+            # its exit-relevant fields are kept (eng-55: lost on every restart before - the Turtles' channel exit and
+            # pyramid, Connors' SMA5 exit, no_tp ... ran on the stop and the time cap only)
+            d['plan'] = {k: v for k, v in s.plan.items() if k != 'zones' and _jsonable(v)} \
+                if s.entered_at and s.plan else None
             d['sig'] = {k: v for k, v in s.sig.items() if isinstance(v, (int, float, str, bool, list, type(None)))}
             cards.append(d)
         legs = [[sym, d, list(key), at] for (sym, d), (key, at) in self.finished_legs.items()]
@@ -932,6 +964,10 @@ class SignalBook:
                 s.zone_since_ms = None
             # A restored card is not at its confirmation any more: no entry at a price from before the restart
             s.confirm_checked = True
+            if s.entered_at and not s.plan:
+                s.plan = _exit_flags(s)          # a trade saved before eng-55 kept no plan
+            self.signals[(s.symbol, s.group_key)] = s
+            continue
             self.signals[(s.symbol, s.group_key)] = s
         for item in (state or {}).get('finished_legs', []):
             if len(item) == 4 and isinstance(item[2], list):
