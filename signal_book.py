@@ -100,7 +100,6 @@ def _dur(sec: float) -> str:
     return f"{int(sec // 3600)}h" if sec >= 3600 and sec % 3600 == 0 else f"{int(sec // 60)}m"
 
 
-@dataclass
 def _jsonable(v) -> bool:
     if isinstance(v, (int, float, str, bool, type(None))):
         return True
@@ -129,6 +128,7 @@ def _exit_flags(s: 'TrackedSignal') -> Dict:
     return plan
 
 
+@dataclass
 class TrackedSignal:
     symbol: str
     group_key: str
