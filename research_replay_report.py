@@ -37,9 +37,9 @@ def main():
     ap.add_argument('--run', default=os.path.join('data', 'replay', 'run'))
     ap.add_argument('--out', default=os.path.join('research', 'replay.md'))
     args = ap.parse_args()
-    cards = pl.concat([pl.read_parquet(f) for f in glob.glob(os.path.join(args.run, '*', 'cards.parquet'))],
+    cards = pl.concat([pl.read_parquet(f) for f in glob.glob(os.path.join(args.run, '**', 'cards.parquet'), recursive=True)],
                       how='diagonal_relaxed')
-    entries = pl.concat([pl.read_parquet(f) for f in glob.glob(os.path.join(args.run, '*', 'entries.parquet'))],
+    entries = pl.concat([pl.read_parquet(f) for f in glob.glob(os.path.join(args.run, '**', 'entries.parquet'), recursive=True)],
                         how='diagonal_relaxed')
     rng = np.random.default_rng(23)
     lines: List[str] = ['# Archive replay of the live card lifecycle (B9)', '',
