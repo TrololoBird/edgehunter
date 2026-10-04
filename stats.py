@@ -499,6 +499,9 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
         ('with the signal' if _col(r, 'hl_net_usd') * _col(r, 'direction') > 0 else 'against the signal')),
     ('Coinbase premium', lambda r: None if _col(r, 'cb_premium') is None else
         ('> +0.05%' if _col(r, 'cb_premium') > 0.0005 else '< -0.05%' if _col(r, 'cb_premium') < -0.0005 else 'flat')),
+    # eng-57: Weis's effort into the spring / upthrust vs the range's earlier waves (< 1 = supply / demand drying up)
+    ('Weis wave into the test (wyckoff)', lambda r: None if _col(r, 'weis_ratio') is None else
+        ('< 0.8 (drying up)' if _col(r, 'weis_ratio') < 0.8 else '0.8-1.2' if _col(r, 'weis_ratio') <= 1.2 else '> 1.2 (effort)')),
 ]
 
 
@@ -724,6 +727,8 @@ def hl_haircut(sr: float, n: int, trials: int) -> Optional[float]:
     Harvey & Liu (2015, "Backtesting", JPM): the Sharpe haircut for multiple testing - the t-stat of the per-cluster
     Sharpe (t = SR x sqrt(n)), its two-sided p-value Bonferroni-adjusted for `trials` (p x M, their most conservative
     rule), translated back to a Sharpe; haircut = 1 - SR_adj / SR (100% = nothing left once the trials are counted).
+    Bonferroni is the strictest of their three (Bonferroni / Holm / BHY; they advocate BHY, which needs every trial's
+    p-value - we have only the live cells'): an UPPER bound of the haircut.
     """
     if n < 2 or sr <= 0 or trials < 1:
         return None

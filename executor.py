@@ -611,6 +611,9 @@ class DemoExecutor:
                     self._band_warned.add(symbol)
                     logger.warning(f"Demo: {symbol} market close rejected by BingX's price band: reduce-only limit "
                                    f"{left} @ {px} (re-placed each pass until filled)")
+                # kept open (an UNTRACKED row was not in self.open: each 5-min check would insert another row): the
+                # reconcile loop's orphan path re-places the limit and finalizes once the position is 0
+                self.open.setdefault(trade['card_id'], trade)
                 return
         await self._finalize(trade, reason, journal_r)
 

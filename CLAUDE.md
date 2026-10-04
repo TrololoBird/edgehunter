@@ -381,7 +381,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   before the first console write.
 - eng-57 (checked against ICT by web search 2026-10-04; ICT's own definition is only in his videos, so the common
   ground of several independent write-ups): an order block's displacement must close beyond the last CONFIRMED swing
-  (a 2 x 2 fractal confirmed by the block's candle: ICT's break of structure), not the highest high / lowest low of the
+  (ICT's 3-candle swing: the middle candle's high above both neighbours', confirmed by the block's candle), not the highest high / lowest low of the
   ten candles before it; the rest already matched (the last opposite candle, an FVG in the displacement, the zone open
   -> wick, the breaker on a close through the far side). joshyattridge/smart-money-concepts was compared on 20 coins x
   499 1h candles: FVG detection identical; its order block (the lowest candle between swing and break, any colour, no

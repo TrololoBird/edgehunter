@@ -364,8 +364,8 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
     - FVG (kind 'fvg'): three candles where the first's high < the third's low (bullish; mirrored bearish): the gap
       between them is the zone; the part price has not traded back through since is kept, a fully filled gap dropped;
     - order block (kind 'ob'): the last opposite candle before a displacement that broke structure - a down-close
-      candle whose next three candles close above the last CONFIRMED swing high (a 2 x 2 fractal confirmed by the
-      block's candle: ICT's break of structure is a swing, eng-57; was the highest high of the ten candles before)
+      candle whose next three candles close above the last CONFIRMED swing high (ICT's 3-candle swing, confirmed by
+      the block's candle: his break of structure is a swing, eng-57; was the highest high of the ten candles before)
       while leaving a bullish FVG (bearish mirrored); the zone runs from its body (open) to its wick (low); mitigated
       (traded back into) = dropped.
     - breaker (kind 'breaker'): an order block that FAILED - price later closed through its far side - flips: a broken
@@ -399,15 +399,16 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
                 lo = max(lo, high_after)
                 out.append((abs(last - lo), RawLevel(lo, f'fvg_{tf}', f"FVG {tf} bear", +1, ts=int(candles[i - 1][0]),
                                                      body=hi)))
-    # the last confirmed 2 x 2 fractal high / low at each candle (confirmed = its two right neighbours closed by then)
+    # the last confirmed ICT swing high / low at each candle: the 3-candle formation (the middle candle's high above
+    # both neighbours'), confirmed once its right neighbour closed
     last_hi, last_lo = [None] * n, [None] * n
     hi_p = lo_p = None
     for j in range(n):
-        k = j - 2
-        if k >= 2:
-            if h[k] > max(h[k - 2], h[k - 1], h[k + 1], h[k + 2]):
+        k = j - 1
+        if k >= 1:
+            if h[k] > max(h[k - 1], h[k + 1]):
                 hi_p = h[k]
-            if l[k] < min(l[k - 2], l[k - 1], l[k + 1], l[k + 2]):
+            if l[k] < min(l[k - 1], l[k + 1]):
                 lo_p = l[k]
         last_hi[j], last_lo[j] = hi_p, lo_p
     for j in range(10, n - 3):
