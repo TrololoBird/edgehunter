@@ -966,26 +966,48 @@ def demo_gap_table(console: Console, db: str = 'demo_trades.db'):
     console.print(table)
 
 
-def demo_table(console: Console, db: str = 'demo_trades.db'):
-    """The BingX demo fills next to the journal's replay of the same cards: do the two agree?"""
+def demo_table(console: Console, db: str = 'demo_trades.db', journal_db: str = CONFIG.journal.db_path):
+    """
+    The BingX demo fills next to the same card's own result (eng-59, research/demo_gap.md: the journal's replay
+    trades thirds to fixed targets over 8h while the card and the demo exit by the method - time stop, session, band,
+    SMA5 - so `journal_r` was the wrong partner: half of the -0.32R gap was that). The card is the first finished card
+    of the coin and direction after the demo's entry (`card_r`, netted by card_r_net).
+    """
     if not os.path.exists(db):
         return
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
-        rows = conn.execute("SELECT strategy, close_reason, r, journal_r FROM demo_trades").fetchall()
+        raw = conn.execute("SELECT strategy, close_reason, r, symbol, direction, opened_ms FROM demo_trades").fetchall()
     finally:
         conn.close()
+    rows = []
+    jconn = sqlite3.connect(f"file:{journal_db}?mode=ro", uri=True) if os.path.exists(journal_db) else None
+    if jconn is not None:
+        jconn.row_factory = sqlite3.Row
+    try:
+        for strategy, reason, r, symbol, direction, opened in raw:
+            card = None
+            if jconn is not None and r is not None and opened:
+                row = jconn.execute(
+                    "SELECT * FROM signals WHERE kind = 'card' AND symbol = ? AND direction = ? AND card_r IS NOT NULL "
+                    "AND ts_ms BETWEEN ? AND ? ORDER BY ts_ms LIMIT 1",
+                    (symbol, direction, opened, opened + 40 * 86_400_000)).fetchone()
+                card = card_r_net(row) if row is not None else None
+            rows.append((strategy, reason, r, card))
+    finally:
+        if jconn is not None:
+            jconn.close()
     if not rows:
         return
-    table = Table(title="BingX demo vs the journal (closed trades; ERROR / NO_MARKET / EARLY_CLOSE counted apart)",
+    table = Table(title="BingX demo vs the card's own net R (closed trades; ERROR / NO_MARKET / EARLY_CLOSE apart)",
                   header_style="bold magenta", border_style="blue")
-    for name in ("Strategy", "Trades", "Demo R", "Journal R", "Both", "Diff", "Not traded"):
+    for name in ("Strategy", "Trades", "Demo R", "Card R", "Both", "Diff", "Not traded"):
         table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in rows:
         groups.setdefault(r[0] or '?', []).append(r)
     for strategy, members in sorted(groups.items()):
-        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE', 'OVERLAP', 'INVALID_ENTRY', 'PRICE_GAP', 'LATE_FILL', 'UNTRACKED', 'NO_STOP', 'NOT_FILLED') and r[2] is not None]
+        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE', 'OVERLAP', 'INVALID_ENTRY', 'PRICE_GAP', 'LATE_FILL', 'UNTRACKED', 'NO_STOP', 'NOT_FILLED', 'ORPHAN') and r[2] is not None]
         demo = [r[2] for r in done]
         jr = [r[3] for r in done if r[3] is not None]
         both = [(r[2], r[3]) for r in done if r[3] is not None]
