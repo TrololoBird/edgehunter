@@ -154,6 +154,9 @@ class Scanner:
         self.positioning = Positioning(self.fetcher)
         self.macro = Macro()
         self._pump_cache: Dict = {}
+        # wide watch (eng-57): 1h candles of every Binance perpetual OUTSIDE the universe -> pump / dump monitor + journal
+        self.wide_h1: Dict[str, list] = {}
+        self._wide_fired: set = set()
         self.pools = Pools()      # pumps.monitor: symbol -> (last 1h candle ts, scan result)
         self._level_raw: Dict[str, List[RawLevel]] = {}
         self._level_sig: Dict[str, tuple] = {}
@@ -230,7 +233,8 @@ class Scanner:
     def start(self):
         self._running = True
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
-                 self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop(), self.event_risk_loop()]
+                 self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop(), self.event_risk_loop(),
+                 self.wide_watch_loop()]
         if self.demo.enabled:
             loops.append(self.demo.reconcile_loop(lambda: self._running))
         running = lambda: self._running
@@ -872,6 +876,70 @@ class Scanner:
             return None
         self._oi_sig_fired.add(key)
         return found
+
+    async def wide_watch_loop(self):
+        """
+        eng-57: the universe holds 70 coins with complete data (a spot pair, >= 2 other venues, >= $10M): the biggest
+        small-cap pumps / dumps (no spot pair, a fresh listing) were never seen. Once an hour (a few minutes after the
+        close) the 1h candles of every other USDT perpetual >= wide_min_volume run the pump / dump monitor (dashboard)
+        and the dump-bounce rule; its events are JOURNALED (vetoed 'outside_universe': no streams there, so no card /
+        demo trade) - the forward test of the research rule on the whole market it was measured on.
+        """
+        from strategies.pump import MAJORS, dump_bounce
+        cfg = CONFIG.strategies
+        await asyncio.sleep(600)
+        while self._running:
+            started = time.time()
+            try:
+                rows = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetTicker24hr',
+                                                     priority=2, weight=40)
+                by_id = getattr(self.fetcher.futures_exchange, 'markets_by_id', {}) or {}
+                wanted = []
+                for t in rows or []:
+                    m = by_id.get(t.get('symbol'))
+                    m = m[0] if isinstance(m, list) else m
+                    if not m or not m.get('swap') or m.get('quote') != 'USDT' or m['symbol'] in self.market_data:
+                        continue
+                    if (m.get('info', {}).get('underlyingType') in CONFIG.exchange.excluded_underlying_types or
+                            m.get('base') in CONFIG.exchange.excluded_bases or m.get('base') in MAJORS):
+                        continue
+                    if float(t.get('quoteVolume') or 0) >= cfg.wide_min_volume:
+                        wanted.append((m['symbol'], t['symbol'], float(t.get('lastPrice') or 0)))
+                sem = asyncio.Semaphore(4)
+
+                async def one(sym, bid, last):
+                    async with sem:
+                        try:
+                            k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
+                                                              {'symbol': bid, 'interval': '1h', 'limit': 200},
+                                                              priority=2, weight=2)
+                        except Exception as e:
+                            logger.debug(f"wide watch: 1h candles failed for {sym}: {e}")
+                            return
+                    now_ms = time.time() * 1000
+                    h1 = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7]), float(x[10])]
+                          for x in k or [] if int(x[6]) < now_ms]
+                    self.wide_h1[sym] = h1
+                    found = dump_bounce(h1, int(now_ms)) if len(h1) >= 190 else None
+                    if found and (sym, found['anchor_ts']) not in self._wide_fired:
+                        self._wide_fired.add((sym, found['anchor_ts']))
+                        sig = dict(found, is_setup=True, is_structured=False, is_tier_0_anomaly=False,
+                                   active_phases=[], long_score=0, short_score=0, alert_type='SHORT',
+                                   card_veto='outside_universe')
+                        logger.info(f"Wide watch: {sym} {found['setup']} - {found['setup_note']} (journal only)")
+                        await self.journal.arecord([(sym, sig)], {sym: last or h1[-1][4]})
+
+                await asyncio.gather(*(one(*w) for w in wanted))
+                for sym in [s for s in self.wide_h1 if s in self.market_data or s not in {w[0] for w in wanted}]:
+                    self.wide_h1.pop(sym, None)
+                logger.info(f"Wide watch: {len(wanted)} perpetuals outside the universe scanned in "
+                            f"{time.time() - started:.0f}s")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Wide watch failed: {e}")
+            now = time.time()
+            await asyncio.sleep(max(600.0, 3600 - now % 3600 + 240))
 
     def _dump_bounce(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
         """The short of the first bounce after a dump (strategies.pump.dump_bounce) on each closed 1h candle."""

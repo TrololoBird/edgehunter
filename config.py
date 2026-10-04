@@ -704,6 +704,8 @@ class StrategiesConfig:
     # below the previous low; stop above the bounce + 0.25 ATR(1h); TP1 the dump's low, TP2 the 1.618 extension
     dump_min_move: float = 0.15
     dump_vol_x: float = 3.0
+    # eng-57 wide watch: perpetuals outside the universe above this 24h volume (pretraining's floor, research_pumps)
+    wide_min_volume: float = 3_000_000
     # eng-56 OI signal (strategies/oi_signal.py, a live test of cryptomillion's OI [15m] alerts): our thresholds
     oi_sig_oi_15m: float = 0.03
     oi_sig_price_15m: float = 0.02

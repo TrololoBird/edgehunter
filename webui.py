@@ -300,7 +300,9 @@ def build_state(scanner) -> Dict:
         'pools': scanner.pools.view(),
         'archive_negative': list(CONFIG.strategies.archive_negative),
         'pumps': [dict(r, name=_name(r['symbol'])) for r in pumps.monitor(scanner.market_data, now * 1000,
-                                                                          scanner._pump_cache)],
+                                                                          scanner._pump_cache)]
+                 + [dict(r, name=_name(r['symbol']) + ' ·вне') for r in pumps.monitor_wide(scanner.wide_h1,
+                                                                                         scanner._pump_cache)],
         'session': {'results': dict(results), 'r': [_num(r) for r in r_list]},
         'logic_version': CONFIG.journal.logic_version,
     }
