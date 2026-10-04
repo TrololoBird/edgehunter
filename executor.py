@@ -76,6 +76,16 @@ class DemoExecutor:
                                   # VST round trips took 5-11s from here: a 5s signed window expired ('timestamp is invalid')
                                   'options': {'defaultType': 'swap', 'recvWindow': 60_000}})
             self.ex.set_sandbox_mode(True)       # VST demo: forced, the only mode this module has
+            # ccxt's BingX signer sends no recvWindow (options['recvWindow'] reaches only a few endpoints), so BingX's
+            # 5s default applied and the ~11s VST round trips failed 'timestamp is invalid': add it to every signed call
+            sign = self.ex.sign
+
+            def sign_with_window(path, api='public', method='GET', params={}, headers=None, body=None):
+                if 'private' in str(api):
+                    params = dict(params)
+                    params.setdefault('recvWindow', 60_000)
+                return sign(path, api, method, params, headers, body)
+            self.ex.sign = sign_with_window
         if not self._markets_ready:
             await self.ex.load_markets()
             try:

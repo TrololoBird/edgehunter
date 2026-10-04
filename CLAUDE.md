@@ -390,3 +390,8 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   stats.py `robustness_table` (tail / coin / halves / cost-to-zero, PBO by CSCV) and the Harvey-Liu haircut in the
   verdict, journal `weis_ratio` (Weis wave into SPRING / UTAD), the demo's reduce-only limit close on BingX's price
   band (102202).
+  eng-57 fixes found by the error audit: trendline never fired in the journal's whole history (`tl_flat_deg` 7.5, his
+  15m bot's cut, excluded every 1h line gentler than 0.13 ATR a candle - all lines spanning 40+ candles; now 0) and
+  its 'map' target read an empty list (also oi_signal's: `geometry.exit_target` reads the map at the entry); the demo
+  signs every private BingX call with recvWindow 60s (ccxt's signer sent none: BingX's 5s default vs ~11s VST round
+  trips = 'timestamp is invalid').

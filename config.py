@@ -764,7 +764,9 @@ class StrategiesConfig:
     tl_touch_gap: int = 5
     tl_violation_atr: float = 0.10
     tl_max_dist_atr: float = 3.0
-    tl_flat_deg: float = 7.5
+    # eng-57: 0 (was 7.5, his 15m bot's cut): on 1h a line spanning 40+ candles is gentler than 0.13 ATR a candle, so
+    # 7.5 degrees left no line at all - 0 events on 20 coins x 250 hours, 9 without it. Steep lines stay out (tl_max_deg)
+    tl_flat_deg: float = 0.0
     tl_min_pivot_touches: int = 3
     tl_pivot_tol_atr: float = 0.20
     tl_max_deg: float = 35.0
