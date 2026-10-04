@@ -183,6 +183,7 @@ class Scanner:
         self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
         self._orb_checked: Dict[str, int] = {}       # symbol -> the last final minute Crabel's ORB was checked on
         self._orb_fired: set = set()                 # (symbol, day) ORBs already fired (one a day)
+        self._orb_day: Dict[str, Dict] = {}          # symbol -> the UTC day's open and extremes so far (ORB)
         self._dump_checked: Dict[str, int] = {}      # symbol -> the last closed 1h candle the dump bounce was checked on
         self._dump_fired: set = set()                # (symbol, dump hour) bounces already fired
         self._sb_checked: Dict[str, int] = {}        # symbol -> the last final minute the Silver Bullet was checked on
@@ -815,19 +816,35 @@ class Scanner:
         if (symbol, day_start) in self._orb_fired or int(md.d1[-1][0]) + 86_400_000 < day_start:
             return None                           # traded today / yesterday's daily candle not loaded yet
         minutes = self._minute_candles(symbol)
-        today = [c for c in minutes if c[0] >= day_start]
-        if not today:
+        if not minutes or minutes[-1][0] < day_start:
             return None
-        last = today[-1]
-        m15 = [c for c in part_candles(self._frame_parts.get(symbol))[0] if day_start <= c[0] < last[0] // 900_000 * 900_000]
-        first = m15[0] if m15 and m15[0][0] == day_start else today[0] if today[0][0] == day_start else None
-        if first is None:
-            return None                           # the day's open is not known (restart mid-day): no ORB today
-        earlier = today[:-1] + m15
+        last = minutes[-1]
+        # the day's open and extremes before this minute: built ONCE a day from the 15m frame + the minutes (building
+        # the 15m candles of every coin each minute stalled the loop), then extended minute by minute
+        st = self._orb_day.get(symbol)
+        if st is None or st['day'] != day_start:
+            m15 = [c for c in part_candles(self._frame_parts.get(symbol))[0] if c[0] >= day_start]
+            today = [c for c in minutes if day_start <= c[0] < last[0]]
+            first = m15[0] if m15 and m15[0][0] == day_start else today[0] if today and today[0][0] == day_start else None
+            if first is None:
+                self._orb_day[symbol] = {'day': day_start, 'open': None}
+                return None                       # the day's open is not known (restart mid-day): no ORB today
+            earlier = [c for c in m15 if c[0] < last[0] // 900_000 * 900_000] + today
+            st = {'day': day_start, 'open': first[1], 'last': last[0] - 60_000,
+                  'hi': max((c[2] for c in earlier), default=None), 'lo': min((c[3] for c in earlier), default=None)}
+            self._orb_day[symbol] = st
+        if st['open'] is None:
+            return None
+        before_hi, before_lo = st['hi'], st['lo']
+        for c in minutes[-5:]:
+            if st['last'] < c[0] < last[0]:          # minutes missed between checks join the "before" extremes
+                before_hi = c[2] if before_hi is None else max(before_hi, c[2])
+                before_lo = c[3] if before_lo is None else min(before_lo, c[3])
         from strategies.classic import orb_event
-        found = orb_event(md.d1, first[1], last[2], last[3],
-                          max(c[2] for c in earlier) if earlier else None,
-                          min(c[3] for c in earlier) if earlier else None, now_ms)
+        found = orb_event(md.d1, st['open'], last[2], last[3], before_hi, before_lo, now_ms)
+        st['hi'] = last[2] if before_hi is None else max(before_hi, last[2])
+        st['lo'] = last[3] if before_lo is None else min(before_lo, last[3])
+        st['last'] = last[0]
         if found is not None:
             self._orb_fired.add((symbol, day_start))
         return found
