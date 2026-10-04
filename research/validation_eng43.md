@@ -77,3 +77,24 @@ research_turtle (illiquid days, N ~ 0: +-1e9 R), placebo time of day (all replay
 HMM stable names, null-world alignment and daily candles, research_classic pump volatility index, research_vol zero-RV
 lags, drift table thread safety, research_cache (pickle / path), queue pgrep self-match, container reclaimed when the
 session idles (runs restarted by run_all.sh + a watcher).
+
+## Confirmation study (2026-10-04; research_confirms.py, pre-registered in its docstring)
+
+The archive replay now records every entry's confirmations as the live bot computes them (flow, spot, oi, CVD
+divergence, vsa, htf_zone, SMT, kill zone; conf_n) with the 4h / daily / weekly context, the SPRING / UTAD test and the
+maniac context vetoes; `--confirm record` enters every trigger so the minimum-confirmation rule is measured, not applied.
+
+| window | entries passed the context vetoes | base R dev / holdout | splits passing the rule |
+|---|---:|---|---|
+| prior 2023-10 .. 2025-03 (research/confirms_2023.md) | 166 291 | -0.056 / -0.049 | none |
+| main 2025-04 .. 2026-09 (research/confirms_main.md) | 151 455 | -0.080 / -0.073 | none |
+
+- No single confirmation and no conf_n >= k threshold selects better trades in development AND holds in the holdout,
+  in either window. conf_n >= 1 (the live minimum) cannot be tested: almost every trigger already has `flow`.
+- Pattern seen in both windows: more confirmations look better in development (conf_n >= 4 / 5: +0.05..+0.06 R) and
+  worse in the holdout (-0.08..-0.10 R); `vsa` flips sign (+0.03 R dev, -0.18 R holdout, prior window).
+- `continuation` main-window holdout +0.145 R [+0.01..+0.28] on 119 entries, but -0.04 R in its development half and
+  negative in both halves of the prior window: one positive sample out of four, not a pass.
+- trendline (first test since the eng-44 fix): dev -0.05 R / holdout +0.02 R on 79 / 33 entries, intervals around 0.
+- Not testable on the archive (live journal only): footprint order flow, multi-venue flows / perp-led, liquidations,
+  books, Hyperliquid, Coinbase.
