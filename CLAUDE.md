@@ -353,3 +353,21 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
 - eng-54: the cost guard (risk >= 3x the execution cost) also applies to target-less plans (Turtles, Connors, ORB:
   the `trail` branch of `geometry.system_levels` skipped it) - ETH's ORB of 2026-10-03 had a 0.10% stop on a 0.15%
   range and lost -2.2R in the demo.
+- eng-55 (the audit's plan, docs/PLAN_after_audit.md; every rule checked against its source by web search 2026-10-04;
+  the owner lifted the freeze): ORB = Crabel's book rule - stop orders at the day's (00:00 UTC) open +- the Stretch
+  (10-day SMA of min(H - O, O - L)), entered on the touch loop-side (`Scanner._orb_touch`), the other level the stop,
+  out at the UTC day's close (the 30-minute US-open range + 15m close of eng-29..54 was not his rule); Bollinger W / M
+  needs Accumulation / Distribution NOT confirming the retest (method III compares tags with A/D; rule 6 "tags are not
+  signals") and exits at the LIVE opposite band (`SignalBook.band_of`, no TP orders); Seiden's leg-out candle body >
+  half its range (OTA's "exciting" candle); Wyckoff's range from phase A EVENTS (SC -> AR -> ST, `_phase_a`; the
+  20-candle sideways window was ours), the test also needs a narrower spread (`levels.pullback_spread_ok`), TP adds the
+  point-and-figure count (box = a tenth of the range, 3-box reversal: our box); Connors' 2% stop -> a catastrophic stop
+  3 daily ATR away labelled as our deviation (he uses none); Turtles at most 6 units per direction (Faith: closely
+  correlated markets) and the demo unit shrunk so 4 units fit the notional cap; PUMP TOP journaled without a card
+  (the archive's fade, negative in every period); new `DUMP BOUNCE SHORT` (pump strategy, `strategies.pump.dump_bounce`,
+  the research rule positive in every period 2021-2026, small caps only). stats.py: `verdict_table` - the two-level
+  verdict (SUSPEND at >= 30 clusters with the 90% lower bound < -0.05R; DEPRECATE only at >= 200 clusters - MinTRL of
+  a +0.1R edge - with the upper bound < 0), PSR / DSR (N = logic version x strategy cells: an upper bound, ONC not
+  computed) / MinTRL; `demo_gap_table` (entry and stop slippage of the demo vs the plan). Checked and kept as the
+  sources define them: trendlines already trade the break (two closes beyond the line), VA80 on the UTC day, the Silver
+  Bullet's New York windows (ICT applies them to every market).

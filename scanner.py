@@ -162,6 +162,7 @@ class Scanner:
         self.book.daily_of = lambda symbol: (lambda md: md.d1 if md else None)(self.market_data.get(symbol))
         self.book.htf_of = lambda symbol: (lambda md: (md.h1 or md.htf_klines) if md else None)(self.market_data.get(symbol))
         self.book.context_of = lambda symbol: self.detector.context.get(symbol)
+        self.book.band_of = self._opposite_band
         self.book.plan_key_of = self._plan_key
         self.book.map_ready_of = lambda symbol: symbol in self._level_raw
         self.fetcher.log_liquidations = self.journal is not None
@@ -180,6 +181,10 @@ class Scanner:
         self._connors_checked: Dict[str, int] = {}   # symbol -> the daily close Connors' RSI(2) was checked at
         self._turtle_checked: Dict[str, int] = {}    # symbol -> the last final minute the Turtle channel was checked on
         self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
+        self._orb_checked: Dict[str, int] = {}       # symbol -> the last final minute Crabel's ORB was checked on
+        self._orb_fired: set = set()                 # (symbol, day) ORBs already fired (one a day)
+        self._dump_checked: Dict[str, int] = {}      # symbol -> the last closed 1h candle the dump bounce was checked on
+        self._dump_fired: set = set()                # (symbol, dump hour) bounces already fired
         self._sb_checked: Dict[str, int] = {}        # symbol -> the last final minute the Silver Bullet was checked on
         self._sb_fired: set = set()                  # (symbol, direction, window start) setups already fired
         self._pump_checked: Dict[str, int] = {}      # symbol -> the last final minute the pump checks ran on
@@ -670,6 +675,12 @@ class Scanner:
             turtle = self._turtle_breakout(symbol, md, now_ms)
             if turtle:
                 setups.append(turtle)
+            orb = self._orb_touch(symbol, md, now_ms)
+            if orb:
+                setups.append(orb)
+            dump = self._dump_bounce(symbol, md, now_ms)
+            if dump:
+                setups.append(dump)
             bullet = self._silver_bullet(symbol, md, now_ms)
             if bullet:
                 setups.append(bullet)
@@ -780,6 +791,63 @@ class Scanner:
         if key in self._turtle_fired:
             return None
         self._turtle_fired.add(key)
+        return found
+
+    def _opposite_band(self, symbol: str, direction: int) -> Optional[float]:
+        """BB(20, 2) of the closed 15m candles: the upper band for a long, the lower for a short (Bollinger exit)."""
+        closes = [c[4] for c in part_candles(self._frame_parts.get(symbol))[0][-20:]]
+        if len(closes) < 20:
+            return None
+        mean = sum(closes) / 20
+        sd = (sum((x - mean) ** 2 for x in closes) / 20) ** 0.5       # population sigma (Bollinger)
+        return mean + direction * 2 * sd
+
+    def _orb_touch(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
+        """Crabel's ORB (strategies.classic.orb_event): the day's open +- Stretch touched by the last final minute,
+        once per coin and day (eng-55)."""
+        if len(md.d1) < 10:
+            return None
+        minute = md.minute_closed_until
+        if not minute or self._orb_checked.get(symbol) == minute:
+            return None
+        self._orb_checked[symbol] = minute
+        day_start = int(now_ms // 86_400_000 * 86_400_000)
+        if (symbol, day_start) in self._orb_fired or int(md.d1[-1][0]) + 86_400_000 < day_start:
+            return None                           # traded today / yesterday's daily candle not loaded yet
+        minutes = self._minute_candles(symbol)
+        today = [c for c in minutes if c[0] >= day_start]
+        if not today:
+            return None
+        last = today[-1]
+        m15 = [c for c in part_candles(self._frame_parts.get(symbol))[0] if day_start <= c[0] < last[0] // 900_000 * 900_000]
+        first = m15[0] if m15 and m15[0][0] == day_start else today[0] if today[0][0] == day_start else None
+        if first is None:
+            return None                           # the day's open is not known (restart mid-day): no ORB today
+        earlier = today[:-1] + m15
+        from strategies.classic import orb_event
+        found = orb_event(md.d1, first[1], last[2], last[3],
+                          max(c[2] for c in earlier) if earlier else None,
+                          min(c[3] for c in earlier) if earlier else None, now_ms)
+        if found is not None:
+            self._orb_fired.add((symbol, day_start))
+        return found
+
+    def _dump_bounce(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
+        """The short of the first bounce after a dump (strategies.pump.dump_bounce) on each closed 1h candle."""
+        h1 = list(md.h1)
+        if len(h1) < 190:
+            return None
+        closed = int(h1[-1][0])
+        if self._dump_checked.get(symbol) == closed:
+            return None
+        self._dump_checked[symbol] = closed
+        from strategies.pump import MAJORS, dump_bounce
+        if symbol.split('/')[0] in MAJORS:
+            return None                           # measured on small caps (research_pumps: majors apart)
+        found = dump_bounce(h1, now_ms)
+        if found is None or (symbol, found['anchor_ts']) in self._dump_fired:
+            return None
+        self._dump_fired.add((symbol, found['anchor_ts']))
         return found
 
     def _connors_daily(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:

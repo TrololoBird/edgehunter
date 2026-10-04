@@ -31,35 +31,27 @@ class ValueAreaStrategy(_System):
 
 
 class OrbStrategy(_System):
-    """Crabel's opening range breakout: stop at the range's other side, the target from the map."""
+    """Crabel's opening range breakout (eng-55): the stop order at open +- Stretch, the other level the stop, out at
+    the session's (UTC day's) close, no profit target."""
     name = 'orb'
     setups = {'ORB UP': 1, 'ORB DOWN': -1}
-    min_rr = 1.0                     # Crabel: no target / ratio rule (exits by time or the opposite side)
+    min_rr = 0.0                     # Crabel: no target / ratio rule (exits by time or the opposite level)
     ttl_key = 'classic_ttl'
     time_exit = 'session'
 
     def session_end(self, entered_at: float) -> Optional[float]:
-        # Crabel: the opening range trade is closed at the session's close - 16:00 New York of the entry day
-        import datetime as _dt
-        from zoneinfo import ZoneInfo
-        ny = _dt.datetime.fromtimestamp(entered_at, ZoneInfo('America/New_York'))
-        end = ny.replace(hour=16, minute=0, second=0, microsecond=0)
-        if end <= ny:
-            end += _dt.timedelta(days=1)
-        return end.timestamp()
+        # Crabel: the ORB is a day trade, closed at the session's close - the UTC day's for crypto
+        return (int(entered_at) // 86400 + 1) * 86400
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig = x.sig
         if sig.get('orb_hi') is None:
             return None
         other = sig['orb_lo'] if x.direction > 0 else sig['orb_hi']
-        # Crabel: no profit target - the stop at the range's other side, out at the session's close (eng-47's
-        # session exit). A map target killed 38 of 49 ORB plans on 2026-10-03 (a break into price discovery has no
-        # level beyond; journaled as 'no_leg') - eng-50
         exit = {'stop': ['price', other], 'tp': ['trail'], 'atr': x.atr,
-                'stop_src': "the opening range's other side (Crabel)",
+                'stop_src': "the opposite open +- Stretch level (Crabel)",
                 'tp_src': "none: out at the session's close (Crabel)"}
-        plan = _confirm_plan(x, self.name, '15m', exit, 'close beyond the US-open 30m range')
+        plan = _confirm_plan(x, self.name, '15m', exit, 'stop order at open +- Stretch (Crabel)')
         if plan and not plan.get('skip'):
             plan['no_tp'] = True
         return plan
@@ -79,7 +71,17 @@ class ConnorsStrategy(_System):
             return None
         # Connors: out on the first daily CLOSE above (long) / below (short) the CURRENT 5-day SMA - a moving
         # exit, not the SMA5 of the signal day touched intraday (eng-48); SignalBook checks it on each daily close
-        exit = {'stop': ['pct', 0.02], 'tp': ['level', sig['connors_sma5'], 0.0, None], 'atr': x.atr,
+        # eng-55: Connors uses no stop; the perpetual's margin needs one - a catastrophic stop connors_disaster_atr
+        # daily ATR away, labelled as OUR deviation (eng-48..54: a 2% stop sat inside one day's noise)
+        from config import CONFIG
+        datr = sig.get('connors_atr')
+        if datr:
+            stop = ['price', sig['anchor_close'] - x.direction * CONFIG.strategies.connors_disaster_atr * datr]
+        else:
+            stop = ['pct', 0.10]
+        exit = {'stop': stop, 'tp': ['level', sig['connors_sma5'], 0.0, None], 'atr': x.atr,
+                'stop_src': f"catastrophic stop {CONFIG.strategies.connors_disaster_atr:g} daily ATR (our deviation: "
+                            f"Connors uses none)",
                 'tp_src': 'SMA5 (Connors exit)', 'connors_exit': True}
         plan = _confirm_plan(x, self.name, '4h', exit, 'daily RSI(2) extreme with the SMA200 trend')
         if plan and not plan.get('skip'):

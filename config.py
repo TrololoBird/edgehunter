@@ -418,6 +418,9 @@ class LevelsConfig:
     target_through_bps: float = 2.0
     # Spring "test": average 1m volume of the pullback <= this share of the spring candle's average minute
     spring_test_volume_ratio: float = 0.6
+    # eng-55 Wyckoff's test also NARROWS the spread (StockCharts Wyckoff tutorial, tradingwyckoff: ranges 40-70%
+    # smaller than the spring's): the pullback's average 15m range <= this x the spring candle's range scaled to 15m
+    spring_test_spread_ratio: float = 0.6
     # Lifetimes: waiting for the pullback, waiting for the trigger inside the zone, managing the trade
     watch_ttl_sec: int = 6 * 3600
     # A new card waits this long for the coin's 1h history / level map before its first plan is taken anyway
@@ -566,7 +569,9 @@ class StrategiesConfig:
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
     # is unknown, a head fake comes first) and it is no Wyckoff phase - journaled, no card (eng-30, classic rule)
-    disabled_setups: tuple = ('BULL E', 'BULL A')
+    # eng-55 PUMP TOP: a short against the pump at its first turn - the archive's FADE (-0.08R on 560 trades
+    # Apr-Sep 2026, -0.19R on 60%+ pumps, negative in every period and split): journaled, no card
+    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP')
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
@@ -677,16 +682,27 @@ class StrategiesConfig:
     time_after_tp1: float = 3.0
     time_stop_min_sec: int = 4 * 3600
     # The Turtles' units (strategies/turtle.py): +1 unit every turtle_add_n x N in favour, at most turtle_max_units per
-    # coin and turtle_max_direction_units in one direction overall (their "12 units long / short" limit); a unit is
-    # turtle_unit_risk of the account per N (1%: the 2N stop risks 2%)
+    # coin and turtle_max_direction_units in one direction overall; a unit is turtle_unit_risk of the account per N
+    # (1%: the 2N stop risks 2%). eng-55: 6 = the Turtles' limit for CLOSELY correlated markets (Faith: 4 per market,
+    # 6 closely / 10 loosely correlated, 12 per direction) - altcoins move with BTC at 0.6-0.9, one cluster
     turtle_add_n: float = 0.5
     turtle_max_units: int = 4
-    turtle_max_direction_units: int = 12
+    turtle_max_direction_units: int = 6
     turtle_unit_risk: float = 0.01
-    orb_minutes: int = 30                 # Crabel's opening range: the first 30 minutes after the US equity open
-    orb_window_min: int = 150             # a break later than 2.5h after the open is no opening-range trade
+    # eng-55 Crabel's ORB as his book defines it (Oxfordstrat; Crabel's pattern definitions): stop orders at the day's
+    # open +- the Stretch (the 10-day SMA of min(High - Open, Open - Low) of the daily candles); the first one hit is
+    # the trade, the other its stop; out at the session's (UTC day's) close. Crypto's daily candle opens 00:00 UTC.
+    orb_stretch_days: int = 10
     connors_rsi_low: float = 10.0         # Connors' RSI(2) buy level (shorts above connors_rsi_high)
     connors_rsi_high: float = 90.0
+    # eng-55: Connors uses no stop. A perpetual with leverage needs one for the margin: a CATASTROPHIC stop this many
+    # daily ATR(20) away, journaled as our deviation (it is not part of his exit)
+    connors_disaster_atr: float = 3.0
+    # eng-55 dump bounce (research/pumps*.md, positive in every period 2021-2026): a DUMP = close >= dump_min_move
+    # below the 6h high on >= 3x the hour's volume of the week before; short the first 38.2-61.8% bounce on a 1h close
+    # below the previous low; stop above the bounce + 0.25 ATR(1h); TP1 the dump's low, TP2 the 1.618 extension
+    dump_min_move: float = 0.15
+    dump_vol_x: float = 3.0
     # ICT optimal trade entry for the continuations (trend / momentum): the pullback into 0.62-0.79 of a leg that left
     # a fair value gap (displacement); invalid beyond the leg's start (ICT: "past the 100% level")
     require_displacement: bool = True
@@ -898,7 +914,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-54"
+    logic_version: str = "eng-55"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)

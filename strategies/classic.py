@@ -7,19 +7,18 @@ Classic published methods added as their authors define them (eng-29), detected 
               period's close, target the opposite edge, stop beyond the edge it re-entered through (outside the value
               area is where the idea is wrong). Crypto has no session open: the UTC day is the session.
 - orb         Toby Crabel's opening range breakout ("Day Trading with Short Term Price Patterns and Opening Range
-              Breakout", 1990): the range of the first 30 minutes of the session; a close beyond it is taken in its
-              direction, the stop at the range's other side. For crypto the session is the US equity open (09:30 New
-              York, DST-aware): the largest volume shift of the day. Crabel's narrow-range days (NR4 / NR7: yesterday's
-              range the smallest of 4 / 7) precede the larger expansions: journaled (`nr7`), not a filter.
+              Breakout", 1990) as the book defines it (eng-55; Oxfordstrat, Crabel's pattern definitions): stop
+              orders at the day's open +- the Stretch (10-day SMA of min(High - Open, Open - Low)); the first touched
+              is the trade, the other level its stop; out at the session's close. Crypto's day opens 00:00 UTC.
+              Checked loop-side on every final minute (Scanner._orb_touch). NR4 / NR7 (Crabel's contraction days)
+              are journaled. (eng-29..54 used a 30-minute range after the US equity open and a 15m close: not his rule.)
 - connors     Larry Connors' RSI(2) ("Short Term Trading Strategies That Work", 2008): with the trend (close above the
               200-day SMA) buy when RSI(2) < 10, exit on a close above the 5-day SMA (shorts mirrored: below the
               SMA200, RSI(2) > 90, out below the SMA5), on DAILY candles (fetcher._daily_candles_loop), checked
-              loop-side once per coin after each daily close (Scanner._connors_daily). He uses no stop: ours is the structure beyond the entry (the journal
-              needs an R), the target is the SMA5 at the entry (his exit is a close beyond it). Expected: high hit
-              rate, small targets - most entries fail R:R >= 2 and are journaled `low_rr`, the replay measures them.
+              loop-side once per coin after each daily close (Scanner._connors_daily). He uses no stop: a perpetual
+              needs one for the margin, so a catastrophic stop 3 daily ATR away (our deviation, journaled as such).
 """
 import math
-from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
@@ -109,57 +108,51 @@ def value_area_event(m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]
 
 # ------------------------------------------------------------------------------------------------ opening range
 
-def _ny_open_ms(cut: int) -> int:
-    """09:30 New York of the New York day `cut` falls in (epoch ms)."""
-    local = datetime.fromtimestamp(cut / 1000, tz=timezone.utc).astimezone(NY)
-    return int(local.replace(hour=9, minute=30, second=0, microsecond=0).timestamp() * 1000)
-
-
-def narrow_range(h1: Sequence[Sequence[float]], days: int, cut: int) -> Optional[bool]:
-    """Crabel's NR-n: yesterday's (UTC) range the smallest of the last n days (None without the history)."""
-    today = cut - cut % DAY_MS
-    ranges = []
-    for k in range(1, days + 1):
-        day = [c for c in h1 if today - k * DAY_MS <= c[0] < today - (k - 1) * DAY_MS]
-        if len(day) < 20:
-            return None
-        ranges.append(max(c[2] for c in day) - min(c[3] for c in day))
-    return ranges[0] <= min(ranges)
-
-
-def orb_event(m15: Sequence[Sequence[float]], h1: Sequence[Sequence[float]], cut: int) -> Optional[Dict]:
-    """The first 15m close beyond the first 30 minutes' range after the US equity open, within 2.5h of the open."""
-    cfg = CONFIG.strategies
-    start = _ny_open_ms(cut)
-    or_end = start + cfg.orb_minutes * 60_000
-    if not or_end < cut <= start + cfg.orb_window_min * 60_000:
+def stretch(d1: Sequence[Sequence[float]], days: int = 10) -> Optional[float]:
+    """Crabel's Stretch: the SMA of the last `days` closed days' min(High - Open, Open - Low)."""
+    if len(d1) < days:
         return None
-    opening = [c for c in m15 if start <= c[0] < or_end]
-    after = [c for c in m15 if or_end <= c[0] < cut]
-    if len(opening) < cfg.orb_minutes // 15 or not after:
+    return sum(min(c[2] - c[1], c[1] - c[3]) for c in d1[-days:]) / days
+
+
+def narrow_range(d1: Sequence[Sequence[float]], days: int) -> Optional[bool]:
+    """Crabel's NR-n: the last closed day's range the smallest of the last n days (None without the history)."""
+    if len(d1) < days:
         return None
-    hi, lo = max(c[2] for c in opening), min(c[3] for c in opening)
-    last = after[-1]
-    earlier = after[:-1]
-    if any(c[4] > hi or c[4] < lo for c in earlier):
-        return None                                # only the first break of the day
-    if last[4] > hi:
-        side = 1
-    elif last[4] < lo:
-        side = -1
+    ranges = [c[2] - c[3] for c in d1[-days:]]
+    return ranges[-1] <= min(ranges)
+
+
+def orb_event(d1: Sequence[Sequence[float]], day_open: float, price_hi: float, price_lo: float,
+              before_hi: Optional[float], before_lo: Optional[float], now_ms: int) -> Optional[Dict]:
+    """
+    Crabel's opening range breakout (eng-55, his book's rule): buy stop at Open + Stretch, sell stop at Open - Stretch
+    on the day's open; the first level the price touches is the trade (on the touch, like a stop order), the other
+    level is its stop. `d1`: closed daily candles; `before_hi` / `before_lo`: today's extremes before this minute (a
+    level crossed earlier today is no fresh entry). NR4 / NR7 (Crabel's contraction filter) are journaled.
+    """
+    s = stretch(d1, CONFIG.strategies.orb_stretch_days)
+    if not s or s <= 0 or not day_open:
+        return None
+    up, down = day_open + s, day_open - s
+    if before_hi is not None and before_hi >= up or before_lo is not None and before_lo <= down:
+        return None                                # one ORB a day: the first level already traded
+    if price_hi >= up:
+        side, level, other = 1, up, down
+    elif price_lo <= down:
+        side, level, other = -1, down, up
     else:
         return None
-    nr7 = narrow_range(h1, 7, cut)
-    nr4 = narrow_range(h1, 4, cut)
-    edge, other = (hi, lo) if side > 0 else (lo, hi)
+    nr7, nr4 = narrow_range(d1, 7), narrow_range(d1, 4)
+    day_start = now_ms - now_ms % DAY_MS
     return {'setup': 'ORB UP' if side > 0 else 'ORB DOWN', 'direction': side,
-            'setup_note': f"15m close {'above' if side > 0 else 'below'} the US-open 30m range {lo:.6g}-{hi:.6g} "
+            'setup_note': f"price touched the day's open {day_open:.6g} {'+' if side > 0 else '-'} Stretch {s:.6g} "
                           f"(Crabel){'; NR7 day' if nr7 else '; NR4 day' if nr4 else ''}",
-            'anchor_level': edge, 'anchor_extreme': other, 'anchor_label': 'opening range',
-            'anchor_ts': start, 'anchor_close': last[4], 'orb_hi': hi, 'orb_lo': lo,
+            'anchor_level': level, 'anchor_extreme': other, 'anchor_label': 'open +- stretch',
+            'anchor_ts': day_start, 'anchor_close': level, 'orb_hi': up, 'orb_lo': down, 'orb_stretch': s,
             'nr7': 1.0 if nr7 else 0.0 if nr7 is not None else None,
             'nr4': 1.0 if nr4 else 0.0 if nr4 is not None else None,
-            'event_ts': int(last[0]) + QUARTER_MS}
+            'event_ts': int(now_ms // 60_000 * 60_000) + 60_000}
 
 
 # ------------------------------------------------------------------------------------------------ Connors RSI(2)
@@ -208,7 +201,9 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     else:
         return None
     extreme = min(x[3] for x in h1[-3:]) if side > 0 else max(x[2] for x in h1[-3:])
-    return {'setup': 'RSI2 LONG' if side > 0 else 'RSI2 SHORT', 'direction': side,
+    trs = [max(x[2], p[4]) - min(x[3], p[4]) for p, x in zip(h1[-21:-1], h1[-20:])]
+    atr = sum(trs) / len(trs) if trs else None
+    return {'setup': 'RSI2 LONG' if side > 0 else 'RSI2 SHORT', 'direction': side, 'connors_atr': atr,
             'setup_note': f"daily RSI(2) {r:.0f} {'below 10 above' if side > 0 else 'above 90 below'} the SMA200 "
                           f"{sma200:.6g} (Connors); exit at the SMA5 {sma5:.6g}",
             'anchor_level': c, 'anchor_extreme': extreme, 'anchor_label': 'RSI(2) extreme',
@@ -218,7 +213,7 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
 
 def classic_events(m15: List[List[float]], h1: List[List[float]], cut: int) -> List[Dict]:
     out = []
-    for found in (value_area_event(m15, cut), orb_event(m15, h1, cut)):
-        if found:
-            out.append(found)
-    return out                     # Connors' RSI(2) runs on daily candles, loop-side (Scanner._connors_daily)
+    found = value_area_event(m15, cut)
+    if found:
+        out.append(found)
+    return out                     # ORB (on the touch) and Connors' RSI(2) run on daily candles, loop-side (Scanner)

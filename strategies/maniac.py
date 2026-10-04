@@ -145,6 +145,10 @@ def _sd_departure(c15, i: int, zone: Dict, atr: float, kind: str) -> Optional[Tu
     body = abs(first[4] - first[1])
     if body < 0.55 * atr:
         return None
+    # eng-55 Seiden / OTA (secondary sources agree): the leg-out is an "exciting" candle, its body > half its range
+    # (the base's "boring" candles have bodies <= half)
+    if first[2] - first[3] <= 0 or body <= 0.5 * (first[2] - first[3]):
+        return None
     future = range(i + 1, min(len(c15), i + cfg.sd_lookahead + 1))
     if zone['type'] > 0:
         if first[4] <= first[1] or first[4] <= zone['high'] + 0.15 * atr:
@@ -491,8 +495,19 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
     upper, lower = ma + 2 * sd, ma - 2 * sd
     width = upper - lower
     pb = np.where(width > 0, (c - lower) / np.where(width > 0, width, 1), np.nan)
+    # Accumulation Distribution (Williams / Chaikin): the volume-weighted close location, cumulated
+    vol = [float(x[5]) if len(x) > 5 and x[5] is not None else None for x in c15]
+    ad: List[Optional[float]] = []
+    acc = 0.0
+    for k in range(n):
+        rng = h[k] - l[k]
+        if vol[k] is None:
+            ad.append(None)
+            continue
+        acc += (((c[k] - l[k]) - (h[k] - c[k])) / rng * vol[k]) if rng > 0 else 0.0
+        ad.append(acc)
     i = n - 1
-    start = n - 30
+    start = n - 30                     # our search window (Bollinger / Merrill set none): journaled as such
     for d in (1, -1):
         # first test: closed outside the band
         firsts = [k for k in range(start, i - 3) if (pb[k] < 0 if d > 0 else pb[k] > 1)]
@@ -510,6 +525,11 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
         inside = pb[b_] >= 0 if d > 0 else pb[b_] <= 1
         if not inside:
             continue
+        # eng-55: method III compares the band tags with a VOLUME indicator (Bollinger: Accumulation Distribution; "tags
+        # are not signals"): the retest must not be confirmed by it - AD higher at the W's retest than at its first
+        # low (accumulation), lower at the M's retest (distribution)
+        if ad[b_] is None or ad[a_] is None or not (ad[b_] > ad[a_] if d > 0 else ad[b_] < ad[a_]):
+            continue
         level = h[peak] if d > 0 else l[peak]
         broke_now = c[i] > level if d > 0 else c[i] < level
         broke_before = any((c[k] > level) if d > 0 else (c[k] < level) for k in range(b_ + 1, i))
@@ -523,7 +543,9 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
         return {'setup': 'BB W-BOTTOM' if d > 0 else 'BB M-TOP', 'direction': d,
                 'setup_note': f"15m {'W-bottom' if d > 0 else 'M-top'} on BB(20, 2): first {'low' if d > 0 else 'high'} "
                               f"closed outside the band, the retest held inside (%b {pb[b_]:.2f}), close beyond the "
-                              f"middle {'peak' if d > 0 else 'trough'} {level:.6g} (Bollinger)",
+                              f"middle {'peak' if d > 0 else 'trough'} {level:.6g}, A/D not confirming the retest "
+                              f"(Bollinger method III; window {i - a_} candles)",
+                'bb_gap': float(i - a_),
                 'anchor_level': float(level), 'anchor_extreme': float(stop), 'anchor_label': 'Bollinger W / M',
                 'bb_stop': float(stop), 'bb_target': float(target),
                 'anchor_ts': int(c15[a_][0]), 'anchor_close': float(c[i]), 'event_ts': int(c15[-1][0]) + QUARTER_MS}

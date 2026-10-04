@@ -80,6 +80,105 @@ def pump_top(minutes: Sequence[Sequence[float]], m: Dict, now_ms: int) -> Option
             'anchor_close': last[4], 'pump_low': low, 'pump_high': hi, 'event_ts': int(last[0]) + QUARTER_MS}
 
 
+MAJORS = ('BTC', 'ETH', 'SOL', 'XRP', 'BNB')
+
+
+def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
+    """
+    eng-55, the rule of research_pumps.py (DIP-BUY mirrored for a dump; the only pump / dump rule positive in every
+    period 2021-2026: +0.14R on 156 trades Apr-Sep 2026, 900 perpetuals). On CLOSED 1h candles [ts, o, h, l, c, vol]:
+    - DUMP at hour t: close >= dump_min_move below the highest high of the last 6 hours, and the hours since that high
+      traded >= dump_vol_x x the average hour of the week before; one dump per 48h.
+    - its low: the lowest low until the first close above the previous hour's high (exhaustion), within 24h.
+    - the bounce: price retraces to 38.2% of the dump (from the low toward the 6h high) within 24h, not beyond 61.8%,
+      then a 1h close below the previous hour's low -> short at market now (the research entered at the next open).
+    - stop above the bounce's high + 0.25 ATR(1h); TP1 the dump's low; TP2 the 1.618 extension of the dump.
+    Fires only when the trigger is the candle that just closed.
+    """
+    cfg = CONFIG.strategies
+    n = len(h1)
+    if n < 190:
+        return None
+    h = [c[2] for c in h1]
+    lo = [c[3] for c in h1]
+    cl = [c[4] for c in h1]
+    v = [c[5] for c in h1]
+    last_event = -10 ** 9
+    found = None
+    for t in range(max(175, n - 75), n - 1):
+        if t - last_event < 48:
+            continue
+        k0 = max(range(t - 5, t + 1), key=lambda k: h[k])
+        base = h[k0]
+        if not cl[t] or base / cl[t] - 1 < cfg.dump_min_move:
+            continue
+        week = v[t - 168 - 5:t - 5 + 1]
+        vol7 = sum(week) / len(week) if week else 0.0
+        if not vol7 or sum(v[k0:t + 1]) < cfg.dump_vol_x * (t + 1 - k0) * vol7:
+            continue
+        last_event = t
+        if t < n - 26:
+            continue                                  # too old to be still bouncing
+        trs = [max(h[k], cl[k - 1]) - min(lo[k], cl[k - 1]) for k in range(t - 13, t + 1)]
+        atr = sum(trs) / len(trs)
+        peak = lo[t]
+        for k in range(t + 1, min(n, t + 25)):
+            peak = min(peak, lo[k])
+            if cl[k] > h[k - 1]:
+                break
+        size = base - peak
+        if size <= 0:
+            continue
+        lo_r, hi_r = peak + 0.382 * size, peak + 0.618 * size
+        touched, pull = False, None
+        for k in range(t + 1, min(n, t + 25)):
+            if not touched:
+                if h[k] >= lo_r:
+                    touched, pull = True, h[k]
+                continue
+            pull = max(pull, h[k])
+            if pull > hi_r:
+                break
+            if cl[k] < lo[k - 1]:
+                if k == n - 1:
+                    stop = pull + 0.25 * atr
+                    found = {'setup': 'DUMP BOUNCE SHORT', 'direction': -1,
+                             'setup_note': f"1h dump -{base / cl[t] - 1:.0%} from the 6h high {base:.6g} on "
+                                           f"{sum(v[k0:t + 1]) / ((t + 1 - k0) * vol7):.1f}x volume; the bounce reached "
+                                           f"{(pull - peak) / size:.0%} of it and closed below the previous low",
+                             'anchor_level': cl[k], 'anchor_extreme': stop, 'anchor_label': 'dump bounce',
+                             'anchor_ts': int(h1[t][0]), 'anchor_close': cl[k], 'dump_low': peak, 'dump_high': base,
+                             'dump_stop': stop, 'dump_ext': base - 1.618 * size,
+                             'event_ts': int(h1[k][0]) + 3_600_000}
+                break
+    return found
+
+
+class DumpBounceStrategy(Strategy):
+    """The short of the first bounce after a dump (eng-55): at market on the trigger close, stop above the bounce,
+    TP1 the dump's low, TP2 its 1.618 extension (research_pumps.py)."""
+    name = 'pump'
+    anchor_type = 'level'
+    setups = {'DUMP BOUNCE SHORT': -1}
+    min_rr = 0.0                     # the research rule has no ratio filter: TP1 is the dump's low wherever it is
+    ttl_key = 'pump_ttl'
+
+    def gate_key(self, x: PlanInput) -> Optional[tuple]:
+        return (x.sig.get('anchor_ts'), 'dump') if x.sig.get('dump_low') is not None else None
+
+    def plan(self, x: PlanInput) -> Optional[Dict]:
+        from strategies.maniac_strategies import _confirm_plan
+        sig = x.sig
+        if sig.get('dump_low') is None:
+            return None
+        exit = {'stop': ['price', sig['dump_stop']], 'stop_src': 'above the bounce + 0.25 ATR(1h)',
+                'tp': ['level', sig['dump_low'], 0.0, None], 'tp_src': "the dump's low", 'atr': x.atr}
+        plan = _confirm_plan(x, self.name, '1h', exit, 'first bounce after a dump, 1h close below the previous low')
+        if plan and not plan.get('skip'):
+            plan['key'] = (sig['anchor_ts'], 'dump')
+        return plan
+
+
 class PumpStartStrategy(Strategy):
     name = 'pump'
     anchor_type = 'level'

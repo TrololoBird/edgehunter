@@ -20,6 +20,7 @@ sample cannot tell the setup from noise yet.
 import argparse
 import bisect
 import json
+import math
 import os
 import random
 import sqlite3
@@ -680,6 +681,141 @@ def card_results_table(console: Console, rows: List):
     console.print(table)
 
 
+def _moments(xs: List[float]) -> Tuple[float, float, float, float]:
+    """Mean, sd, skewness, kurtosis (not excess) of xs."""
+    n = len(xs)
+    m = statistics.fmean(xs)
+    sd = statistics.pstdev(xs) if n > 1 else 0.0
+    if not sd:
+        return m, 0.0, 0.0, 3.0
+    g3 = sum((x - m) ** 3 for x in xs) / n / sd ** 3
+    g4 = sum((x - m) ** 4 for x in xs) / n / sd ** 4
+    return m, sd, g3, g4
+
+
+def psr(sr: float, n: int, g3: float, g4: float, sr0: float = 0.0) -> Optional[float]:
+    """Probabilistic Sharpe ratio (Bailey & Lopez de Prado 2012): P(true SR > sr0) given n observations."""
+    den = 1 - g3 * sr + (g4 - 1) / 4 * sr * sr
+    if n < 2 or den <= 0:
+        return None
+    return statistics.NormalDist().cdf((sr - sr0) * math.sqrt(n - 1) / math.sqrt(den))
+
+
+def min_trl(sr: float, g3: float, g4: float, sr0: float = 0.0, conf: float = 0.95) -> Optional[float]:
+    """Minimum track record length: observations for the observed SR to beat sr0 at `conf` (only if sr > sr0)."""
+    if sr <= sr0:
+        return None
+    z = statistics.NormalDist().inv_cdf(conf)
+    return 1 + (1 - g3 * sr + (g4 - 1) / 4 * sr * sr) * (z / (sr - sr0)) ** 2
+
+
+def expected_max_sr(trials: int, n: int) -> float:
+    """The SR the best of `trials` independent zero-edge trials reaches by luck (Bailey & Lopez de Prado's deflated
+    Sharpe threshold; the variance of an SR estimate under the null ~ 1 / n)."""
+    if trials <= 1 or n < 2:
+        return 0.0
+    gamma = 0.5772156649
+    nd = statistics.NormalDist()
+    return math.sqrt(1 / n) * ((1 - gamma) * nd.inv_cdf(1 - 1 / trials) + gamma * nd.inv_cdf(1 - 1 / (trials * math.e)))
+
+
+def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None):
+    """
+    eng-55: the two-level verdict per strategy (the owner's decision after the audit, written before results):
+    SUSPEND (no demo, still journaled) at >= 30 independent 4h clusters when the 90% cluster interval's LOWER bound is
+    below -0.05R; DEPRECATE (delete the code) only at >= 200 clusters (MinTRL of a +0.1R edge with skew 1.8 / kurtosis
+    7.8) with the UPPER bound below 0. PSR = P(true mean R > 0) per cluster mean (skew / kurtosis aware); DSR = the
+    same against the SR the best of N trials reaches by luck, N = the (logic version x strategy) cells journaled - an
+    UPPER bound of the effective number of trials (ONC clustering of correlated trials not computed yet).
+    """
+    cards = [r for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
+    if not cards:
+        return
+    pool = all_rows if all_rows is not None else rows
+    trials = len({(_col(r, 'logic_version'), _col(r, 'strategy')) for r in pool if _col(r, 'strategy')}) or 1
+    table = Table(title=f"Verdict (suspend: >=30 clusters & low < -0.05R; deprecate: >=200 & high < 0); DSR trials N={trials}",
+                  header_style="bold magenta", border_style="blue")
+    for name in ("Strategy", "Cards", "Clusters", "Mean R", "90% CI", "Skew", "Kurt", "PSR", "DSR", "MinTRL", "Verdict"):
+        table.add_column(name, justify="left" if name in ("Strategy", "Verdict") else "right", no_wrap=True)
+    groups: Dict[str, List] = {}
+    for r in cards:
+        groups.setdefault(_col(r, 'strategy') or '?', []).append(r)
+    for name, members in sorted(groups.items()):
+        rs = [r['card_r'] for r in members]
+        keys = [cluster_of(r) for r in members]
+        blocks: Dict = {}
+        for k, v in zip(keys, rs):
+            blocks.setdefault(k, []).append(v)
+        means = [statistics.fmean(v) for v in blocks.values()]
+        k = len(means)
+        ci = bootstrap_ci(rs, clusters=keys)
+        m, sd, g3, g4 = _moments(means)
+        sr = m / sd if sd else 0.0
+        p = psr(sr, k, g3, g4)
+        dsr = psr(sr, k, g3, g4, expected_max_sr(trials, k))
+        mt = min_trl(sr, g3, g4)
+        if ci and k >= 200 and ci[1] < 0:
+            verdict = Text("DEPRECATE", style="bold red")
+        elif ci and k >= 30 and ci[0] < -0.05:
+            verdict = Text("SUSPEND", style="red")
+        elif k < 30:
+            verdict = Text(f"wait ({k}/30)", style="dim")
+        else:
+            verdict = Text("keep", style="green")
+        table.add_row(name, str(len(rs)), str(k), f"{statistics.fmean(rs):+.2f}R",
+                      f"[{ci[0]:+.2f}..{ci[1]:+.2f}]" if ci else "", f"{g3:+.1f}", f"{g4:.1f}",
+                      f"{p:.0%}" if p is not None else "", f"{dsr:.0%}" if dsr is not None else "",
+                      f"{mt:.0f}" if mt else "-", verdict)
+    console.print(table)
+
+
+def demo_gap_table(console: Console, db: str = 'demo_trades.db'):
+    """
+    eng-55 (audit 3.8 / 3.9): where the demo's R differs from the journal's - the entry slip (BingX fill vs the plan's
+    entry, carried by the basis), the stop slip on SL exits (exit vs the stop: the mark-price trigger's delay shows
+    here) and the share of skipped trades by reason.
+    """
+    if not os.path.exists(db):
+        return
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        cols = {c[1] for c in conn.execute("PRAGMA table_info(demo_trades)")}
+        rows = conn.execute("SELECT * FROM demo_trades").fetchall()
+    finally:
+        conn.close()
+    if not rows or not {'entry_fill', 'exit_avg', 'direction'} <= cols:
+        return
+    table = Table(title="BingX demo vs plan: slippage in bps (+ = against us)", header_style="bold magenta",
+                  border_style="blue")
+    for name in ("Strategy", "Trades", "Entry slip", "SL exits", "Stop slip", "Demo R", "Journal R", "Skipped"):
+        table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
+    groups: Dict[str, List] = {}
+    for r in rows:
+        groups.setdefault(r['strategy'] or '?', []).append(r)
+
+    def bps(a, b, d):
+        return d * (a - b) / b * 1e4 if a and b else None
+
+    for strategy, members in sorted(groups.items()):
+        traded = [r for r in members if r['entry_fill'] and r['r'] is not None]
+        plan_entry = 'entry_plan' if 'entry_plan' in cols else None
+        e_slip = [x for x in (bps(r['entry_fill'], r[plan_entry], r['direction']) for r in traded)
+                  if x is not None] if plan_entry else []
+        stop_col = 'sl' if 'sl' in cols else 'stop' if 'stop' in cols else None
+        sl_rows = [r for r in traded if (r['close_reason'] or '').startswith('SL')]
+        s_slip = [x for x in (bps(r[stop_col], r['exit_avg'], r['direction']) for r in sl_rows) if x is not None] \
+            if stop_col else []
+        skipped = sum(1 for r in members if r['close_reason'] in ('PRICE_GAP', 'NOT_FILLED', 'LATE_FILL', 'NO_STOP'))
+        jr = [r['journal_r'] for r in traded if 'journal_r' in cols and r['journal_r'] is not None]
+        table.add_row(strategy, str(len(traded)),
+                      f"{statistics.fmean(e_slip):+.1f}" if e_slip else "", str(len(sl_rows)),
+                      f"{statistics.fmean(s_slip):+.1f}" if s_slip else "",
+                      f"{statistics.fmean([r['r'] for r in traded]):+.2f}R" if traded else "",
+                      f"{statistics.fmean(jr):+.2f}R" if jr else "", str(skipped))
+    console.print(table)
+
+
 def demo_table(console: Console, db: str = 'demo_trades.db'):
     """The BingX demo fills next to the journal's replay of the same cards: do the two agree?"""
     if not os.path.exists(db):
@@ -845,8 +981,10 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     vetoes_table(console, rows)
     reversal_test_table(console, rows)
     card_results_table(console, rows)
+    verdict_table(console, rows)
     cards_table(console, rows)
     demo_table(console)
+    demo_gap_table(console)
     features_table(console, rows, baseline)
 
     if last:

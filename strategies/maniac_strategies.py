@@ -178,9 +178,19 @@ class BollingerStrategy(_System):
         sig = x.sig
         if sig.get('bb_stop') is None:
             return None
-        exit = {'stop': ['ref', 0.0], 'stop_src': 'beyond the W / M retest',
-                'tp': ['level', sig['bb_target'], 1.0, None], 'tp_src': 'the opposite Bollinger band (Bollinger)', 'atr': x.atr}
-        return _confirm_plan(x, self.name, '15m', exit, 'Bollinger W / M confirmed', stop_ref=sig['bb_stop'])
+        # eng-55: the target is the opposite band AS IT MOVES (a band is the current mean +- 2 sigma: a level frozen at
+        # the entry sits 3-4 sigma away once the bands contract) - out at market when price reaches the live band
+        # (SignalBook band exit), no take-profit orders. Entered only while the band at the signal pays > the risk.
+        close, d = sig['anchor_close'], x.direction
+        if d * (sig['bb_target'] - close) <= abs(close - sig['bb_stop']):
+            return {'skip': 'low_rr'}
+        exit = {'stop': ['price', sig['bb_stop']], 'stop_src': 'beyond the W / M retest', 'tp': ['trail'],
+                'tp_src': 'the opposite Bollinger band, live (Bollinger)', 'atr': x.atr}
+        plan = _confirm_plan(x, self.name, '15m', exit, 'Bollinger W / M confirmed by A/D')
+        if plan and not plan.get('skip'):
+            plan['band_exit'] = True
+            plan['no_tp'] = True
+        return plan
 
 
 MANIAC_STRATEGIES: List[Strategy] = [SupplyDemandStrategy(), AuctionStrategy(), TrendlineStrategy(),

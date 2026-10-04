@@ -41,7 +41,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
 from journal import classify, veto_reason
-from levels import MINUTE_MS, ltf_trigger, pullback_volume_ok, resample
+from levels import MINUTE_MS, ltf_trigger, pullback_spread_ok, pullback_volume_ok, resample
 from strategies.maniac import ifvg_trigger, in_session, pinbar_trigger
 from strategies.maniac_strategies import MANIAC_STRATEGIES
 
@@ -194,6 +194,8 @@ class SignalBook:
         self.levels_of: Optional[Callable[[str], Optional[list]]] = None
         self.htf_of: Optional[Callable[[str], Optional[list]]] = None
         self.daily_of: Optional[Callable[[str], Optional[list]]] = None     # closed daily candles (Turtle exits)
+        # the opposite Bollinger band BB(20, 2) of the closed 15m candles (Bollinger W / M exit, eng-55)
+        self.band_of: Optional[Callable[[str, int], Optional[float]]] = None
         self.context_of: Optional[Callable[[str], Optional[object]]] = None
         # symbol -> hashable key of everything a plan depends on (None: always recompute); plans cached per card
         self.plan_key_of: Optional[Callable[[str], Optional[tuple]]] = None
@@ -651,6 +653,9 @@ class SignalBook:
         if s.group_key in ('BULL B', 'SPRING', 'UTAD', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL') and not pullback_volume_ok(minutes, s.zone_since_ms, trigger['time'],
                                                              spring_minute or 0.0):
             reason = 'no_spring_test'
+        elif s.group_key in ('SPRING', 'UTAD') and not pullback_spread_ok(minutes, s.zone_since_ms, trigger['time'],
+                                                                         s.sig.get('spring_range')):
+            reason = 'no_spring_test'                # eng-55: the test's spread did not narrow
         confirms = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, trigger['time'], trigger.get('extreme_time')) \
             if confirm_of else {}
         if confirms is not None and s.plan:
@@ -790,6 +795,11 @@ class SignalBook:
                 if d1[-1][0] / 1000 + 86400 > s.entered_at and d * (d1[-1][4] - sma5) > 0:
                     return self._finish(s, 'CLOSED', now, f"daily close {d1[-1][4]:.6g} beyond the SMA5 {sma5:.6g} "
                                                           f"(Connors exit)")
+        if (s.plan or {}).get('band_exit') and self.band_of:
+            # Bollinger W / M (eng-55): out when price reaches the opposite band as it stands now
+            band = self.band_of(s.symbol, d)
+            if band is not None and d * (price - band) >= 0:
+                return self._finish(s, 'CLOSED', now, f"the opposite Bollinger band {band:.6g} reached (Bollinger)")
         days = (s.plan or {}).get('trail_days')
         if days and self.daily_of:
             from strategies.turtle import trail_level

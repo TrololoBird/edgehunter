@@ -2,15 +2,20 @@
 Wyckoff springs and upthrusts after distribution (UTAD) as Wyckoff defines them (Pruden, "The Three Skills of Top
 Trading"; Weis, "Trades About to Happen"): events of an established TRADING RANGE that followed a trend's stop, on 1h.
 
-- The range: the last R 1h candles before the event (R = 168 / 96 / 48 / 24, the longest that qualifies) moved
-  sideways: the net move over them <= half their high - low.
-- The trend it stopped: the close R + 48 candles back lay beyond the range (above it for accumulation - price came
-  down into it; below it for distribution).
-- SPRING (phase C of accumulation): the 1h candle that just closed traded below the range low and closed back inside,
-  its lower wick >= half the candle, the pierce <= 30% of the range height. UTAD mirrored at the range high.
-- The trade (Wyckoff buys the test, not the spring): a pullback toward the spring's area; the entry on the 15m
-  structure shift there; the stop beyond the spring's low (+ the protected swing / measured pierce of the geometry);
-  the first target the range's far side (the "range" intent), then the map beyond.
+- The range is defined by Wyckoff's phase A EVENTS, not a bar count (eng-55; StockCharts' Wyckoff tutorial, Wyckoff
+  Analytics): the selling climax (SC: a wide 1h candle on climactic volume at a new 2-day low after a decline) sets
+  the range low, the automatic rally (AR: the high of the rebound after it) the range high, the secondary test (ST:
+  back toward the SC on LESS volume, holding above its low) completes phase A. The decline it stopped: the close 48h
+  before the SC above the AR's high. Distribution mirrored (BC -> AR -> ST, UTAD). The quantification of "climactic"
+  (volume >= 2x and range >= 1.5x the 20 candles before) is ours: Wyckoff describes it, he gives no number.
+- SPRING (phase C): the 1h candle that just closed traded below the SC low and closed back inside, its lower wick >=
+  half the candle, the pierce <= 30% of the range height, after the ST and with the range unbroken (no close beyond
+  either edge since the ST). UTAD mirrored at the AR / BC high.
+- The trade (Wyckoff buys the test, not the spring): a pullback toward the spring's area on less volume AND a narrower
+  spread (SignalBook: pullback_volume_ok / pullback_spread_ok); the entry on the 15m structure shift there; the stop
+  beyond the spring's low; targets: the range's far side, the point-and-figure count of the range (Wyckoff's cause ->
+  effect: columns x box x 3 from the spring's low; box = a tenth of the range height, 3-box reversal - our box
+  choice), then the map.
 
 Replaces the 15m "BULL B / BEAR C" phase scores (a 5-hour window called a range; C was a CVD divergence at a new
 high with no range at all). BULL E, the selling climax, is not bought: Wyckoff reads it as the range's start.
@@ -22,46 +27,119 @@ from strategies.geometry import select_targets
 from zones import RawLevel, merge
 
 HOUR_MS = 3_600_000
-WINDOWS = (168, 96, 48, 24)
+SEARCH = 168          # the SC / BC within the last week of 1h candles
 TREND_BACK = 48
 MAX_PIERCE = 0.30
+CLIMAX_VOL = 2.0      # our quantification of a climax (Wyckoff gives none): volume and spread vs the 20 candles before
+CLIMAX_SPREAD = 1.5
+
+
+def _phase_a(h1: Sequence[Sequence[float]], d: int) -> Optional[Dict]:
+    """The latest SC -> AR -> ST (d = +1; BC -> AR -> ST for d = -1) before the last candle, with the range intact."""
+    n = len(h1)
+    hi = [x[2] for x in h1]
+    lo = [x[3] for x in h1]
+    cl = [x[4] for x in h1]
+    vol = [x[5] for x in h1]
+    last = n - 1
+    for i in range(last - 4, max(TREND_BACK + 20, last - SEARCH) - 1, -1):
+        prev = range(i - 20, i)
+        avg_v = sum(vol[k] for k in prev) / 20
+        avg_r = sum(hi[k] - lo[k] for k in prev) / 20
+        if not avg_v or not avg_r or vol[i] < CLIMAX_VOL * avg_v or hi[i] - lo[i] < CLIMAX_SPREAD * avg_r:
+            continue
+        extreme = lo[i] if d > 0 else hi[i]
+        window = range(i - TREND_BACK, i)
+        if (d > 0 and extreme > min(lo[k] for k in window)) or (d < 0 and extreme < max(hi[k] for k in window)):
+            continue                                  # the climax makes a new 2-day extreme
+        # the automatic rally (reaction) and the secondary test after it
+        for k in range(i + 3, last):
+            seg = range(i + 1, k)
+            p = max(seg, key=lambda j: hi[j]) if d > 0 else min(seg, key=lambda j: lo[j])
+            ar = hi[p] if d > 0 else lo[p]
+            height = abs(ar - extreme)
+            if p < i + 1 or not height:
+                continue
+            near = (lo[k] <= extreme + 0.5 * height and lo[k] >= extreme) if d > 0 else \
+                   (hi[k] >= extreme - 0.5 * height and hi[k] <= extreme)
+            if k <= p or not near or vol[k] >= vol[i]:
+                continue
+            before = cl[i - TREND_BACK]
+            if (d > 0 and before <= ar) or (d < 0 and before >= ar):
+                return None                           # no prior trend into the range
+            # the range intact from the ST to the candle before the spring: no close beyond either edge
+            lo_e, hi_e = (extreme, ar) if d > 0 else (ar, extreme)
+            if any(cl[j] < lo_e or cl[j] > hi_e for j in range(k, last)):
+                return None
+            return {'climax': i, 'ar': p, 'st': k, 'lo': lo_e, 'hi': hi_e}
+        return None
+    return None
+
+
+def pnf_count(closes: Sequence[float], box: float, reversal: int = 3) -> int:
+    """Columns of a close-only point-and-figure chart (box size `box`, `reversal`-box reversal)."""
+    if box <= 0 or len(closes) < 2:
+        return 0
+    cols, direction, ref = 1, 0, closes[0]
+    for c in closes[1:]:
+        if direction >= 0 and c >= ref + box:
+            ref += box * int((c - ref) / box)
+            direction = 1
+        elif direction <= 0 and c <= ref - box:
+            ref -= box * int((ref - c) / box)
+            direction = -1
+        elif direction > 0 and c <= ref - reversal * box:
+            cols += 1
+            ref -= box * int((ref - c) / box)
+            direction = -1
+        elif direction < 0 and c >= ref + reversal * box:
+            cols += 1
+            ref += box * int((c - ref) / box)
+            direction = 1
+    return cols
 
 
 def wyckoff_events(h1: Sequence[Sequence[float]]) -> List[Dict]:
-    """A spring / UTAD on the 1h candle that just closed (h1[-1]), else []."""
-    if len(h1) < WINDOWS[-1] + TREND_BACK + 2:
+    """A spring / UTAD on the 1h candle that just closed (h1[-1]) inside a phase-A range, else []."""
+    if len(h1) < TREND_BACK + 30:
         return []
     last = h1[-1]
     o, h, l, c = last[1], last[2], last[3], last[4]
     span = h - l
     if span <= 0:
         return []
-    for r in WINDOWS:
-        if len(h1) < r + TREND_BACK + 2:
+    for d in (1, -1):
+        rng = _phase_a(h1, d)
+        if rng is None:
             continue
-        rng = h1[-1 - r:-1]
-        hi, lo = max(x[2] for x in rng), min(x[3] for x in rng)
+        lo, hi = rng['lo'], rng['hi']
         height = hi - lo
-        if height <= 0 or abs(rng[-1][4] - rng[0][1]) > 0.5 * height:
-            continue
-        before = h1[-1 - r - TREND_BACK][4]
-        if l < lo and c > lo and (min(o, c) - l) >= 0.5 * span and (lo - l) <= MAX_PIERCE * height and before > hi:
-            return [_event('SPRING', 1, lo, hi, l, rng, last, r)]
-        if h > hi and c < hi and (h - max(o, c)) >= 0.5 * span and (h - hi) <= MAX_PIERCE * height and before < lo:
-            return [_event('UTAD', -1, lo, hi, h, rng, last, r)]
+        if d > 0 and l < lo and c > lo and (min(o, c) - l) >= 0.5 * span and (lo - l) <= MAX_PIERCE * height:
+            return [_event('SPRING', 1, lo, hi, l, h1, rng, last)]
+        if d < 0 and h > hi and c < hi and (h - max(o, c)) >= 0.5 * span and (h - hi) <= MAX_PIERCE * height:
+            return [_event('UTAD', -1, lo, hi, h, h1, rng, last)]
     return []
 
 
-def _event(setup: str, d: int, lo: float, hi: float, extreme: float, rng, last, r: int) -> Dict:
+def _event(setup: str, d: int, lo: float, hi: float, extreme: float, h1, rng: Dict, last) -> Dict:
     edge = lo if d > 0 else hi
+    height = hi - lo
+    box = height / 10
+    cols = pnf_count([x[4] for x in h1[rng['climax']:]], box)
+    count = extreme + d * cols * box * 3
+    hours = len(h1) - 1 - rng['climax']
     return {'setup': setup, 'direction': d,
-            'setup_note': f"1h {'spring below' if d > 0 else 'upthrust above'} a {r}h trading range {lo:.6g}-{hi:.6g} "
-                          f"after a {'decline' if d > 0 else 'rally'}: closed back inside; the entry waits for the test",
+            'setup_note': f"1h {'spring below' if d > 0 else 'upthrust above'} a {hours}h trading range {lo:.6g}-{hi:.6g} "
+                          f"({'SC' if d > 0 else 'BC'} -> AR -> ST) after a {'decline' if d > 0 else 'rally'}: closed "
+                          f"back inside; P&F count {cols} columns -> {count:.6g}; the entry waits for the test",
             'range_lo': lo, 'range_hi': hi, 'anchor_level': edge, 'anchor_extreme': extreme,
-            'anchor_label': f"{r}h range {'low' if d > 0 else 'high'}", 'anchor_ts': int(rng[0][0]),
-            'anchor_close': last[4], 'event_ts': int(last[0]) + HOUR_MS,
-            # the spring candle's average FUTURES minute: Wyckoff's test must trade on less (levels.pullback_volume_ok)
-            'fut_candle_minute_usd': float(last[5]) / 60 if len(last) > 5 else None}
+            'anchor_label': f"{'SC low' if d > 0 else 'BC high'} (phase A range)",
+            'anchor_ts': int(h1[rng['climax']][0]), 'anchor_close': last[4], 'event_ts': int(last[0]) + HOUR_MS,
+            'pnf_target': count, 'pnf_cols': float(cols),
+            # the spring candle's average FUTURES minute and range: Wyckoff's test trades on less volume and a narrower
+            # spread (levels.pullback_volume_ok / pullback_spread_ok)
+            'fut_candle_minute_usd': float(last[5]) / 60 if len(last) > 5 else None,
+            'spring_range': float(last[2] - last[3])}
 
 
 class WyckoffRangeStrategy(Strategy):
@@ -87,7 +165,8 @@ class WyckoffRangeStrategy(Strategy):
         edge, far = (lo, hi) if d > 0 else (hi, lo)
         zones = merge(list(x.raw_levels or []) + [RawLevel(hi, 'range', 'range high', +1),
                                                    RawLevel(lo, 'range', 'range low', -1)], atr, symbol=x.symbol)
-        targets, sources = select_targets(zones, edge, d, atr, 'range', (far,), 'range far side')
+        fillers = (far,) + ((sig['pnf_target'],) if sig.get('pnf_target') and d * (sig['pnf_target'] - far) > 0 else ())
+        targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F count')
         # the test: back toward the spring's area (the spring's extreme to a fifth into the range)
         zone = sorted((extreme, edge + d * 0.2 * (hi - lo)))
         anchor = {'type': 'range', 'tf': '1h', 'lo': lo, 'hi': hi, 'ts': sig['anchor_ts']}

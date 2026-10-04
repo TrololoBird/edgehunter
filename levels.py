@@ -254,6 +254,22 @@ def pullback_volume_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     return sum(window) / len(window) <= CONFIG.levels.spring_test_volume_ratio * reference_minute_usd
 
 
+def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int, until_ms: int,
+                       spring_range_1h: Optional[float]) -> bool:
+    """
+    eng-55: Wyckoff's test also NARROWS the spread (StockCharts Wyckoff tutorial; tradingwyckoff: test ranges 40-70%
+    smaller than the spring's). The pullback's 15m candles average a range <= spring_test_spread_ratio x the 1h spring
+    candle's range scaled to 15m (/ 2: ranges grow ~ sqrt(time)).
+    """
+    if not spring_range_1h:
+        return True
+    bars = resample([c for c in minute_candles if since_ms <= c[0] < until_ms], 15, until_ms)
+    if not bars:
+        return True
+    avg = sum(b[2] - b[3] for b in bars) / len(bars)
+    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range_1h / 2
+
+
 def slippage_bps(volume_24h: Optional[float] = None) -> float:
     """Slippage of one market order in bps: the base for liquid coins, more for thin ones (CONFIG.levels)."""
     cfg = CONFIG.levels

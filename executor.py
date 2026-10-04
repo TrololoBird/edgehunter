@@ -220,6 +220,14 @@ class DemoExecutor:
         # whole position risks risk_pct
         risk_usd /= float(s.levels.get('risk_units') or 1.0)
         qty = min(risk_usd / stop_dist, balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
+        if n:
+            # eng-55: the full pyramid (turtle_max_units units) must fit the notional cap - a smaller unit (a lower risk
+            # per N, the same for every unit) instead of a first unit of full size and the rest cut off
+            fit = cfg.max_notional_usd / (lv['entry'] * CONFIG.strategies.turtle_max_units)
+            if qty > fit:
+                logger.info(f"Demo: {symbol} Turtle unit {qty:.6g} -> {fit:.6g} so {CONFIG.strategies.turtle_max_units} "
+                            f"units fit ${cfg.max_notional_usd:,.0f} (risk per N {CONFIG.strategies.turtle_unit_risk * fit / qty:.2%})")
+                qty = fit
         qty = float(ex.amount_to_precision(symbol, qty))
         min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
         if qty <= 0 or qty < min_qty:

@@ -40,7 +40,7 @@ from strategies.maniac_strategies import MANIAC_STRATEGIES
 from strategies.wyckoff_range import WyckoffRangeStrategy
 from strategies.classic_strategies import CLASSIC_STRATEGIES
 from strategies.silver_bullet import SilverBulletStrategy
-from strategies.pump import PumpStartStrategy, PumpTopStrategy
+from strategies.pump import DumpBounceStrategy, PumpStartStrategy, PumpTopStrategy
 from strategies.cup_handle import CupHandleStrategy
 
 # eng-35: one methodology = one strategy name; a methodology with several playbooks (Wyckoff's climax test and
@@ -50,7 +50,7 @@ _ALL: Tuple[Strategy, ...] = (
     TrendStrategy(), MomentumStrategy(), SweepStrategy(), SilverBulletStrategy(), ExhaustionStrategy(),
     WyckoffRangeStrategy(),
     BreakoutStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES, PumpStartStrategy(), PumpTopStrategy(),
-    CupHandleStrategy())
+    DumpBounceStrategy(), CupHandleStrategy())
 STRATEGIES: Dict[str, Strategy] = {}
 for _s in _ALL:
     STRATEGIES.setdefault(_s.name, _s)
