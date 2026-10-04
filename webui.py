@@ -246,7 +246,10 @@ def card_view(s, now: float) -> Dict:
         'anchor': _anchor_view(plan.get('anchor')), 'tf': plan.get('tf'),
         'fib': fib_view(plan, lv, s.direction),
         'trigger_minutes': plan.get('trigger_minutes'),
-        'levels': {k: (v if isinstance(v, str) else _num(v)) for k, v in lv.items()} if lv else None,
+        # a method without profit targets (Turtles / Connors / ORB / Bollinger's live band, plan no_tp): its TP1-3 are
+        # 100 / 200 / 300 R placeholders the lifecycle never reaches - shown as none (a short's came out negative)
+        'levels': {k: (None if plan.get('no_tp') and k in ('tp1', 'tp2', 'tp3') else
+                       v if isinstance(v, str) else _num(v)) for k, v in lv.items()} if lv else None,
         'sizing': sizing_view(lv, s.direction, s.sig.get('funding_rate')) if lv else None,
         'r_now': _num(s.r_now), 'best_target': s.best_target, 'final_r': _num(s.final_r),
         'vetoed_triggers': s.vetoed_triggers, 'veto_log': list(s.veto_log), 'veto_notes': list(s.veto_notes), 'of_confirm': s.of_confirm,

@@ -257,7 +257,8 @@ class DemoExecutor:
         qty = float(order.get('filled') or 0) or qty
         trade = {'card_id': card_id, 'symbol': symbol, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
                  'opened_ms': int(time.time() * 1000), 'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty,
-                 'sl': lv['sl'], 'tp1': lv['tp1'], 'tp2': lv['tp2'], 'tp3': lv['tp3'],
+                 'sl': lv['sl'], **{k: (None if (getattr(s, 'plan', None) or {}).get('no_tp') else lv[k])
+                                    for k in ('tp1', 'tp2', 'tp3')},     # no_tp: placeholders are no targets
                  'risk_usd': qty * abs(fill - lv['sl'])}
         try:
             await ex.create_order(symbol, 'market', exit_side, qty, None,
