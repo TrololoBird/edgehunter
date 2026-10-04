@@ -478,17 +478,20 @@ class ZonesConfig:
     # liquidations of jittered placebo levels over 14h, within noise) - it may label a zone, not make one strong
     # eng-57 (research/level_weights.md, 60 coins x 12 months, placebo levels 0.3-1.5% away): swings 15m / 1h, equal
     # highs / lows, previous day high / low and round numbers all hold price LESS often than a random price nearby
-    # (odds ratio 0.79-0.86, both halves) and alike - so they weigh the same, 1.0 (were 1.0 / 1.5 / 2.0 / 2.0 / 1.0,
-    # set by hand). The other kinds' weights are still unmeasured hand-set values.
-    weights: tuple = (('swing_1h', 1.0), ('swing_15m', 1.0), ('equal', 1.0), ('pdhl', 1.0), ('poc', 1.5),
+    # (odds ratio 0.78-0.87, both halves) and alike - so they weigh the same, 1.0 (were 1.0 / 1.5 / 2.0 / 2.0 / 1.0,
+    # set by hand). Extended: FVG 15m / 1h (0.83 / 0.90), order blocks 1h (0.94) and breakers 1h (0.83) hold worse
+    # than random too, the day's volume profile POC / VA / HVN / LVN exactly like random (0.98-1.02) -> all 1.0 (were
+    # 0.5-1.5). ob_15m / breaker_15m set to 1.0 with them. Still unmeasured hand-set values: the 4h / daily / weekly
+    # ICT zones, vwap, fib, range, book, wall, liquidations, opens, htf, swing_1d, bpr.
+    weights: tuple = (('swing_1h', 1.0), ('swing_15m', 1.0), ('equal', 1.0), ('pdhl', 1.0), ('poc', 1.0),
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 0.5), ('liq_hit', 1.0), ('wall', 1.0),
                       ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0),
-                      ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 0.5),
-                      # ICT zones by timeframe: the higher the timeframe, the more it holds (a 15m FVG is noise next
-                      # to a daily one)
-                      ('fvg_15m', 0.5), ('fvg_1h', 1.0), ('fvg_4h', 1.5), ('fvg_1d', 2.5),
-                      ('ob_15m', 1.0), ('ob_1h', 1.5), ('ob_4h', 2.0), ('ob_1d', 3.0),
-                      ('breaker_15m', 1.0), ('breaker_1h', 1.5), ('breaker_4h', 2.0), ('breaker_1d', 3.0),
+                      ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 1.0),
+                      # ICT zones: 15m / 1h measured (no hold beyond random, weight 1); the 4h / daily / weekly
+                      # scaling is an UNMEASURED hypothesis (research/level_weights.md covers 15m / 1h only)
+                      ('fvg_15m', 1.0), ('fvg_1h', 1.0), ('fvg_4h', 1.5), ('fvg_1d', 2.5),
+                      ('ob_15m', 1.0), ('ob_1h', 1.0), ('ob_4h', 2.0), ('ob_1d', 3.0),
+                      ('breaker_15m', 1.0), ('breaker_1h', 1.0), ('breaker_4h', 2.0), ('breaker_1d', 3.0),
                       ('fvg_1w', 3.5), ('ob_1w', 4.0), ('breaker_1w', 4.0), ('open', 1.0),
                       ('bpr_1h', 1.5), ('bpr_4h', 2.5))
     # Round-number levels / pools within this many ATR of price (zones.round_levels)

@@ -2,7 +2,16 @@
 Do level kinds hold price better than random prices nearby? The data behind the map's source weights
 (CONFIG.zones.weights were set by hand in the first commit; eng-57 audit).
 
-For every level of research_overshoot.levels_of (swing_15m, swing_1h, equal, pdhl, round) a PLACEBO level is drawn at
+Levels: research_overshoot.levels_of (swing_15m, swing_1h, equal, pdhl, round), plus ICT zones and the day's volume
+profile, each known only from the candle that confirms it (eng-57 extension):
+  fvg_15m / fvg_1h  a fair value gap (gap >= 0.1 of the middle candle, as zones.imbalances), known at the third
+                    candle's close; the level = its near edge (a bullish gap's top is support)
+  ob_1h             zones.imbalances' order block: the last opposite candle before a displacement that closed beyond
+                    the last ICT 3-candle swing within 3 candles and left an FVG; known at the end of that window;
+                    the level = its open (the near edge)
+  breaker_1h        such an order block closed through its far side later: the level = that far side, flipped
+  poc / va / hvn / lvn  zones.volume_profile of each UTC day's 15m candles, known at the day's close
+For every level a PLACEBO level is drawn at
 the same known time, on the same side of price, shifted by a random 0.3-1.5% of the level (seeded per coin). Both get
 research_overshoot.tests_of: the first 15m candle beyond the level is a test, a 15m close back within 1h is a
 REJECTION. Per kind: rejection rate of the real levels vs their placebos, the odds ratio, and a 90% interval by
@@ -27,6 +36,101 @@ import numpy as np
 
 from research_overshoot import KINDS, levels_of, tests_of
 
+HOUR_MS = 3_600_000
+DAY_MS = 86_400_000
+EXTRA_KINDS = ('fvg_15m', 'fvg_1h', 'ob_1h', 'breaker_1h', 'poc', 'va', 'hvn', 'lvn')
+ALL_KINDS = tuple(KINDS) + EXTRA_KINDS
+
+
+def hourly(c15: np.ndarray) -> np.ndarray:
+    """Complete 1h candles [ts, o, h, l, c, v] from 15m ones."""
+    ts = c15[:, 0]
+    hour = (ts // HOUR_MS).astype(np.int64)
+    starts = np.flatnonzero(np.r_[True, hour[1:] != hour[:-1]])
+    rows = []
+    for a, b in zip(starts, list(starts[1:]) + [len(ts)]):
+        if b - a == 4:
+            rows.append((ts[a], c15[a, 1], c15[a:b, 2].max(), c15[a:b, 3].min(), c15[b - 1, 4], c15[a:b, 5].sum()))
+    return np.asarray(rows, dtype=float)
+
+
+def fvg_levels(c: np.ndarray, tf_ms: int, kind: str):
+    ts, h, l = c[:, 0], c[:, 2], c[:, 3]
+    out = []
+    for i in range(2, len(c)):
+        min_gap = 0.1 * (h[i - 1] - l[i - 1])
+        if h[i - 2] < l[i] and l[i] - h[i - 2] >= min_gap:
+            out.append((ts[i] + tf_ms, l[i], -1, kind))           # bullish gap: its top is support
+        elif l[i - 2] > h[i] and l[i - 2] - h[i] >= min_gap:
+            out.append((ts[i] + tf_ms, h[i], 1, kind))            # bearish gap: its bottom is resistance
+    return out
+
+
+def ob_levels(c: np.ndarray, tf_ms: int):
+    """zones.imbalances' order blocks / breakers as events in time (same rules, ICT 3-candle swings)."""
+    ts, o, h, l, cl = c[:, 0], c[:, 1], c[:, 2], c[:, 3], c[:, 4]
+    n = len(c)
+    last_hi, last_lo = [None] * n, [None] * n
+    hi_p = lo_p = None
+    for j in range(n):
+        k = j - 1
+        if k >= 1:
+            if h[k] > max(h[k - 1], h[k + 1]):
+                hi_p = h[k]
+            if l[k] < min(l[k - 1], l[k + 1]):
+                lo_p = l[k]
+        last_hi[j], last_lo[j] = hi_p, lo_p
+    out = []
+    for j in range(10, n - 3):
+        nxt = range(j + 1, j + 4)
+        if cl[j] < o[j] and last_hi[j] is not None:
+            broke = any(cl[k] > last_hi[j] for k in nxt)
+            gap = any(h[k - 2] < l[k] for k in range(j + 2, j + 4))
+            if broke and gap:
+                out.append((ts[j + 3] + tf_ms, o[j], -1, 'ob_1h'))
+                below = np.flatnonzero(cl[j + 4:] < l[j])
+                if len(below):
+                    b = j + 4 + int(below[0])
+                    out.append((ts[b] + tf_ms, l[j], 1, 'breaker_1h'))
+        elif cl[j] > o[j] and last_lo[j] is not None:
+            broke = any(cl[k] < last_lo[j] for k in nxt)
+            gap = any(l[k - 2] > h[k] for k in range(j + 2, j + 4))
+            if broke and gap:
+                out.append((ts[j + 3] + tf_ms, o[j], 1, 'ob_1h'))
+                above = np.flatnonzero(cl[j + 4:] > h[j])
+                if len(above):
+                    b = j + 4 + int(above[0])
+                    out.append((ts[b] + tf_ms, h[j], -1, 'breaker_1h'))
+    return out
+
+
+def profile_levels(c15: np.ndarray):
+    """The day's volume profile (zones.volume_profile on its 15m candles), known at the UTC day's close."""
+    from zones import volume_profile
+    ts = c15[:, 0]
+    day = (ts // DAY_MS).astype(np.int64)
+    tr = np.maximum(c15[1:, 2] - c15[1:, 3], np.maximum(abs(c15[1:, 2] - c15[:-1, 4]), abs(c15[1:, 3] - c15[:-1, 4])))
+    out = []
+    for d in np.unique(day)[:-1]:
+        idx = np.flatnonzero(day == d)
+        if len(idx) < 90:
+            continue
+        atr = float(tr[max(0, idx[-1] - 14):idx[-1]].mean()) if idx[-1] > 14 else None
+        if not atr:
+            continue
+        close = c15[idx[-1], 4]
+        for lv in volume_profile(c15[idx].tolist(), atr, '24h'):
+            kind = lv.kind if lv.kind in ('poc', 'va', 'hvn', 'lvn') else None
+            if kind:
+                out.append(((d + 1) * DAY_MS, lv.price, 1 if lv.price > close else -1, kind))
+    return out
+
+
+def all_levels(c15: np.ndarray):
+    h1 = hourly(c15)
+    return (levels_of(c15) + fvg_levels(c15, 900_000, 'fvg_15m') + fvg_levels(h1, HOUR_MS, 'fvg_1h') +
+            ob_levels(h1, HOUR_MS) + profile_levels(c15))
+
 
 def placebo_of(levels, seed: int):
     rnd = random.Random(seed)
@@ -44,7 +148,7 @@ def run_coin(job) -> Dict:
     c15 = arch.klines_ohlc('futures', symbol, '15m', date.fromisoformat(start), date.fromisoformat(end))
     if len(c15) < 2000:
         return {'symbol': symbol, 'real': [], 'placebo': []}
-    lv = levels_of(c15)
+    lv = sorted(all_levels(c15))
     seed = sum(map(ord, symbol))
     real = [(ts, k, rej) for ts, k, rej, _ in tests_of(c15, lv)]
     fake = [(ts, k, rej) for ts, k, rej, _ in tests_of(c15, placebo_of(lv, seed))]
@@ -107,7 +211,7 @@ def main():
              '| kind | tests | rejected | placebo rejected | OR [90%] | OR older half | OR newer half |',
              '|---|---:|---:|---:|---|---:|---:|']
     model = {'window': [start.isoformat(), end.isoformat()], 'kinds': {}}
-    for kind in KINDS:
+    for kind in ALL_KINDS:
         pr, n = rate(kind, 'real', 'all', symbols)
         pp, npl = rate(kind, 'placebo', 'all', symbols)
         if not n or not npl or pr is None or pp is None:
