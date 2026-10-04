@@ -11,13 +11,13 @@ Classic published methods added as their authors define them (eng-29), detected 
               Breakout", 1990) as the book defines it (eng-55; Oxfordstrat, Crabel's pattern definitions): stop
               orders at the day's open +- the Stretch (10-day SMA of min(High - Open, Open - Low)); the first touched
               is the trade, the other level its stop; out at the session's close. Crypto's day opens 00:00 UTC.
-              Checked loop-side on every final minute (Scanner._orb_touch). NR4 / NR7 (Crabel's contraction days)
+              Checked loop-side on every final minute (strategies.loopside.LoopDetectors._orb_touch). NR4 / NR7 (Crabel's contraction days)
               are journaled. (eng-29..54 used a 30-minute range after the US equity open and a 15m close: not his rule.)
 - connors     Larry Connors' RSI(2) ("Short Term Trading Strategies That Work", 2008): with the trend (close above the
               200-day SMA) buy when RSI(2) < 5 (eng-58; the original 2-period RSI rule - < 10 is a later variant),
               exit on a close above the 5-day SMA (shorts mirrored: below the
               SMA200, RSI(2) > 90, out below the SMA5), on DAILY candles (fetcher._daily_candles_loop), checked
-              loop-side once per coin after each daily close (Scanner._connors_daily). He uses no stop: a perpetual
+              loop-side once per coin after each daily close (strategies.loopside.LoopDetectors._connors_daily). He uses no stop: a perpetual
               needs one for the margin, so a catastrophic stop 3 daily ATR away (our deviation, journaled as such).
 """
 import math

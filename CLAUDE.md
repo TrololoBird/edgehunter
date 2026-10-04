@@ -447,3 +447,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   8; was mean <= -0.3R over 8 entries); stats split `method nature x coin state` (Dreiss' Choppiness) and `BTC bias`.
   `research_pools.py` (pre-registered): Turtles / Connors trades on the daily archive by coin attributes (market volume
   rank, ATR %, Choppiness, ER, beta / corr to BTC) -> research/pools.md.
+- eng-59 B9 (archive replay of the live lifecycle): the loop-side detectors moved from scanner.Scanner to
+  `strategies/loopside.py` (`LoopDetectors`: pump, Silver Bullet, PO3, Turtles, ORB, OI signal, dump bounce, Connors)
+  so `replay.py` runs the same code: the live `SignalBook` stepped once a minute over the Binance archive (1m futures /
+  spot, 5-minute OI metrics, funding, daily candles), fed by `build_maps` (maps + 15m-close events), `LiveDetector`,
+  `LoopDetectors`, the scorer's phases / Tier-0, confirmations from Binance's own 1m flows / OI; every entry (passed and
+  vetoed) also replayed by `levels.simulate`; outputs data/replay/<run>/group_NN/{cards,entries}.parquet (groups of
+  `--group` coins share one book). Not in the archive: liquidations (no cascade setups), books, other venues,
+  Hyperliquid, footprint. `research_replay_report.py` -> research/replay.md (cards' net R, exits by nature, vetoes).

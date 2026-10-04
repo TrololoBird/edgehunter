@@ -1,7 +1,7 @@
 """
 The Turtles' breakout systems as the original rules define them (Curtis Faith, "Way of the Turtle", 2007; "The
 Original Turtle Trading Rules"), on DAILY candles (fetcher._daily_candles_loop), checked loop-side every final minute
-(Scanner._turtle_breakout):
+(strategies.loopside.LoopDetectors._turtle_breakout):
 
 - N = the 20-day exponential average of the true range: N = (19 x previous N + TR) / 20, seeded by the 20-day mean.
 - System 1: a trade the moment price exceeds the high (low) of the previous 20 days by a tick - intraday, on the touch,
