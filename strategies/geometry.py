@@ -332,7 +332,14 @@ def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: in
         if fallback is None:
             return None, '', True
         return entry + direction * fallback * risk, f"{fallback:g} R", False
-    ahead = [(t, s) for t, s in zip(plan['targets'], plan['target_src']) if direction * (t - entry) > 0]
+    targets, sources = plan.get('targets') or [], plan.get('target_src') or []
+    if not targets:
+        # a system entering at its signal's close (_confirm_plan) has no planned targets yet: the map's TP1 as of the
+        # entry (eng-57, the cloud session's eng-44 fix d90605a: 'map' read the empty list, so trendline and oi_signal
+        # never made a plan - journaled 'no_target'); Edwards & Magee: the next support / resistance on the map
+        targets, sources = select_targets(plan.get('zones') or [], entry, direction,
+                                          exit.get('atr') or plan.get('atr') or risk, 'opposite_liquidity')
+    ahead = [(t, s) for t, s in zip(targets, sources) if direction * (t - entry) > 0 and s != 'ATR step']
     if not ahead:
         return None, '', True
     t, s = ahead[0]

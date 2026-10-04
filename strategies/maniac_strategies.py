@@ -160,7 +160,7 @@ class TrendlineStrategy(_System):
             return None
         # classic trendline break (Edwards & Magee): the targets are the next support / resistance levels (the map), not
         # the line's first anchor (his robot's target, kept in the setup note)
-        exit = {'stop': ['price', stop], 'stop_src': '5m structure beyond the entry', 'tp': ['map', 1.0]}
+        exit = {'stop': ['price', stop], 'stop_src': '5m structure beyond the entry', 'tp': ['map', 1.0], 'atr': x.atr}
         return _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
 
 
