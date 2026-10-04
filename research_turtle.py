@@ -52,7 +52,8 @@ def trades(d1, cost=COST):
             pos['stop'] = stop
             continue
         n = ns[i - 1]
-        if not n:
+        # a flat-lined market (delisted / settled contract: N ~ 1e-17 of the price) is no data: R explodes (-1.9e15)
+        if not n or n < 1e-4 * d1[i - 1][4]:
             continue
         hi20, lo20 = max(x[2] for x in d1[i - 20:i]), min(x[3] for x in d1[i - 20:i])
         hi55, lo55 = max(x[2] for x in d1[i - 55:i]), min(x[3] for x in d1[i - 55:i])
