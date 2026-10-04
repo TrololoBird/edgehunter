@@ -184,6 +184,8 @@ class Scanner:
         self._orb_checked: Dict[str, int] = {}       # symbol -> the last final minute Crabel's ORB was checked on
         self._orb_fired: set = set()                 # (symbol, day) ORBs already fired (one a day)
         self._orb_day: Dict[str, Dict] = {}          # symbol -> the UTC day's open and extremes so far (ORB)
+        self._oi_sig_checked: Dict[str, int] = {}    # symbol -> the last final minute the OI signal was checked on
+        self._oi_sig_fired: set = set()              # (symbol, direction, 15m bucket) OI signals already fired
         self._dump_checked: Dict[str, int] = {}      # symbol -> the last closed 1h candle the dump bounce was checked on
         self._dump_fired: set = set()                # (symbol, dump hour) bounces already fired
         self._sb_checked: Dict[str, int] = {}        # symbol -> the last final minute the Silver Bullet was checked on
@@ -682,6 +684,9 @@ class Scanner:
             dump = self._dump_bounce(symbol, md, now_ms)
             if dump:
                 setups.append(dump)
+            oi_sig = self._oi_signal(symbol, md, now_ms)
+            if oi_sig:
+                setups.append(oi_sig)
             bullet = self._silver_bullet(symbol, md, now_ms)
             if bullet:
                 setups.append(bullet)
@@ -847,6 +852,25 @@ class Scanner:
         st['last'] = last[0]
         if found is not None:
             self._orb_fired.add((symbol, day_start))
+        return found
+
+    def _oi_signal(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
+        """The OI [15m] live test (strategies.oi_signal): each final minute, once per coin / direction / 15m."""
+        minute = md.minute_closed_until
+        if not minute or self._oi_sig_checked.get(symbol) == minute:
+            return None
+        self._oi_sig_checked[symbol] = minute
+        oi5 = (md.tier0 or {}).get('oi_change_5m')
+        if oi5 is None or oi5 <= 0:
+            return None                           # cheap gate: OI is not rising at all right now
+        from strategies.oi_signal import oi_signal
+        found = oi_signal(self._minute_candles(symbol), list(md.oi_samples), now_ms)
+        if found is None:
+            return None
+        key = (symbol, found['direction'], now_ms // 900_000)
+        if key in self._oi_sig_fired:
+            return None
+        self._oi_sig_fired.add(key)
         return found
 
     def _dump_bounce(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:

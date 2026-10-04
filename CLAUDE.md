@@ -371,3 +371,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   computed) / MinTRL; `demo_gap_table` (entry and stop slippage of the demo vs the plan). Checked and kept as the
   sources define them: trendlines already trade the break (two closes beyond the line), VA80 on the UTC day, the Silver
   Bullet's New York windows (ICT applies them to every market).
+- eng-56: `oi_signal` (OI SIGNAL LONG / SHORT, strategies/oi_signal.py, `Scanner._oi_signal`): a LIVE TEST of
+  cryptomillion's "OI [15m]" alerts (teletype; a commercial channel with no published evidence): 15m OI >= +3% and
+  price >= 2% with the 15m futures taker delta and the 1h OI / price agreeing; OI rising while price and CVD fall =
+  the short. Thresholds ours (they publish none). Entered at market, stop beyond the 15 minutes' extreme, map targets.
+  Also eng-55 fixes: entered trades keep their plan in scanner_state.json (lost on every restart: Turtle channel
+  exit / pyramid, Connors' SMA5 exit, no_tp placeholders shown as negative TPs), the demo's BingX ratio rebuilt after
+  a restart, ORB keeps the day's state per coin (15m candles rebuilt each minute stalled the loop), QuickEdit off
+  before the first console write.

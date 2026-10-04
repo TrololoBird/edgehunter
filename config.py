@@ -546,7 +546,8 @@ class PoolsConfig:
                     ('connors', 'all', '', 0.0, 'volume'),
                     ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
                     ('sweep', 'all', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
-                    ('pump', 'all', '', 0.0, 'volatility'), ('cup_handle', 'all', '', 0.0, 'volume'))
+                    ('pump', 'all', '', 0.0, 'volatility'), ('cup_handle', 'all', '', 0.0, 'volume'),
+                    ('oi_signal', 'all', '', 0.0, 'volume'))
 
 
 @dataclass(frozen=True)
@@ -564,7 +565,7 @@ class StrategiesConfig:
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
-                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle')
+                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'oi_signal')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
@@ -703,6 +704,9 @@ class StrategiesConfig:
     # below the previous low; stop above the bounce + 0.25 ATR(1h); TP1 the dump's low, TP2 the 1.618 extension
     dump_min_move: float = 0.15
     dump_vol_x: float = 3.0
+    # eng-56 OI signal (strategies/oi_signal.py, a live test of cryptomillion's OI [15m] alerts): our thresholds
+    oi_sig_oi_15m: float = 0.03
+    oi_sig_price_15m: float = 0.02
     # ICT optimal trade entry for the continuations (trend / momentum): the pullback into 0.62-0.79 of a leg that left
     # a fair value gap (displacement); invalid beyond the leg's start (ICT: "past the 100% level")
     require_displacement: bool = True
@@ -914,7 +918,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-55"
+    logic_version: str = "eng-56"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
