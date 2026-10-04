@@ -518,7 +518,13 @@ class DemoExecutor:
                     await ex.cancel_all_orders(symbol)
                 except Exception as e:
                     logger.debug(f"Demo cancel {symbol}: {e}")
-                scale = float(trade.get('scale') or 1.0)
+                # BingX's price ratio to Binance (contract scale x basis) lives in memory only: after a restart it is
+                # the BingX plan entry over the card's Binance entry (1.0 put a 1000-unit contract's stop 1000x off)
+                scale = float(trade.get('scale') or 0.0)
+                if not scale and trade.get('entry_plan') and s.levels.get('entry'):
+                    scale = float(trade['entry_plan']) / float(s.levels['entry'])
+                    trade['scale'] = scale
+                scale = scale or 1.0
                 await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', total, None,
                                       {'stopLossPrice': float(ex.price_to_precision(symbol, s.levels['sl'] * scale)),
                                        'reduceOnly': True, 'workingType': 'MARK_PRICE'})

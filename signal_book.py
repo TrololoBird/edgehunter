@@ -125,6 +125,8 @@ def _exit_flags(s: 'TrackedSignal') -> Dict:
         plan.update(band_exit=True, no_tp=True, tf='15m')
     elif g == 'PUMP START':
         plan.update(add_half=True, tf='15m')
+    elif sig.get('ch_tf'):
+        plan.update(tf=sig['ch_tf'])          # cup with handle: 1h / 4h (the time exit / TTL scale with it)
     return plan
 
 
