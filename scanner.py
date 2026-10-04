@@ -193,6 +193,8 @@ class Scanner:
         self._dump_fired: set = set()                # (symbol, dump hour) bounces already fired
         self._sb_checked: Dict[str, int] = {}        # symbol -> the last final minute the Silver Bullet was checked on
         self._sb_fired: set = set()                  # (symbol, direction, window start) setups already fired
+        self._po3_checked: Dict[str, int] = {}       # eng-58: ICT Power of Three, as the Silver Bullet
+        self._po3_fired: set = set()
         self._pump_checked: Dict[str, int] = {}      # symbol -> the last final minute the pump checks ran on
         self._pump_fired: set = set()                # pump starts / tops already fired
 
@@ -664,6 +666,8 @@ class Scanner:
             for tracked, event in self.book.events:
                 if event == 'ADD':
                     self._background_task(self.demo.on_add(tracked))
+                elif event == 'RESTOP':
+                    self._background_task(self.demo.on_restop(tracked))
             for tracked in self.book.finished_now:
                 self._background_task(self.demo.on_finish(tracked))
 
@@ -691,6 +695,9 @@ class Scanner:
             oi_sig = self._oi_signal(symbol, md, now_ms)
             if oi_sig:
                 setups.append(oi_sig)
+            po3 = self._po3(symbol, md, now_ms)
+            if po3:
+                setups.append(po3)
             bullet = self._silver_bullet(symbol, md, now_ms)
             if bullet:
                 setups.append(bullet)
@@ -755,15 +762,39 @@ class Scanner:
         if self._sb_checked.get(symbol) == minute:
             return None
         self._sb_checked[symbol] = minute
-        bars = resample([c for c in self._minute_candles(symbol) if c[0] >= start - 3_600_000], 5,
+        bars = resample([c for c in self._minute_candles(symbol) if c[0] >= start - 2 * 3_600_000], 5,
                         minute + 60_000)
-        found = silver_bullet(bars, now_ms)
+        # ICT's draw: the previous day's high / low (the last closed daily candle)
+        pd = md.d1[-1] if md.d1 else None
+        found = silver_bullet(bars, now_ms, pdh=pd[2] if pd else None, pdl=pd[3] if pd else None)
         if found is None:
             return None
         key = (symbol, found['direction'], start)
         if key in self._sb_fired:
             return None
         self._sb_fired.add(key)
+        return found
+
+    def _po3(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
+        """ICT's Power of Three / Judas swing (strategies.po3) in the London kill zone, on each new final 5m bar, once
+        per coin, day and direction."""
+        from strategies.po3 import FIVE_MS, london_window, po3
+        w = london_window(now_ms)
+        minute = md.minute_closed_until
+        if w is None or not minute or (minute + 60_000) % FIVE_MS:
+            return None
+        if self._po3_checked.get(symbol) == minute:
+            return None
+        self._po3_checked[symbol] = minute
+        bars = resample([c for c in self._minute_candles(symbol) if c[0] >= w[2]], 5, minute + 60_000)
+        pd = md.d1[-1] if md.d1 else None
+        found = po3(bars, now_ms, pdh=pd[2] if pd else None, pdl=pd[3] if pd else None)
+        if found is None:
+            return None
+        key = (symbol, found['direction'], w[0])
+        if key in self._po3_fired:
+            return None
+        self._po3_fired.add(key)
         return found
 
     def _turtle_breakout(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:

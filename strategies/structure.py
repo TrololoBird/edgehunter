@@ -231,12 +231,11 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
             events.append({k: (v.item() if hasattr(v, 'item') and not isinstance(v, (list, dict)) else v)
                            for k, v in e.items()})
     run('Bollinger W / M', maniac.bollinger_wm_event, m15)
-    if cut % HOUR_MS == 0 and len(h1) >= 60:
-        # O'Neil's cup with handle on 1h, and on 4h at the 4h close
+    if cut % (24 * HOUR_MS) == 0 and len(d1) >= 120:
+        # O'Neil's cup with handle on DAILY candles at the UTC day's close (eng-58: his weekly / daily bases of >= 7
+        # weeks; the 1h / 4h version of eng-40..57 was another pattern under his name)
         from strategies.cup_handle import cup_handle
-        run('cup with handle 1h', cup_handle, h1, '1h', HOUR_MS)
-        if cut % (4 * HOUR_MS) == 0 and len(h4) >= 60:
-            run('cup with handle 4h', cup_handle, list(h4), '4h', 4 * HOUR_MS)
+        run('cup with handle 1d', cup_handle, list(d1), '1d', 24 * HOUR_MS)
     if cut % HOUR_MS == 0 and len(h1) >= 30:
         # Edwards & Magee: a line's significance grows with its timeframe - lines of 1h candles (was 15m)
         run('trendline', maniac.trendline_event, h1, HOUR_MS, '1h')

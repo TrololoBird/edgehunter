@@ -43,6 +43,7 @@ from strategies.silver_bullet import SilverBulletStrategy
 from strategies.pump import DumpBounceStrategy, PumpStartStrategy, PumpTopStrategy
 from strategies.cup_handle import CupHandleStrategy
 from strategies.oi_signal import OiSignalStrategy
+from strategies.po3 import Po3Strategy
 
 # eng-35: one methodology = one strategy name; a methodology with several playbooks (Wyckoff's climax test and
 # spring, Market Profile's 80% rule and POC retest, the continuation's two impulse detectors) keeps one class per
@@ -51,7 +52,7 @@ _ALL: Tuple[Strategy, ...] = (
     TrendStrategy(), MomentumStrategy(), SweepStrategy(), SilverBulletStrategy(), ExhaustionStrategy(),
     WyckoffRangeStrategy(),
     BreakoutStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES, PumpStartStrategy(), PumpTopStrategy(),
-    DumpBounceStrategy(), CupHandleStrategy(), OiSignalStrategy())
+    DumpBounceStrategy(), CupHandleStrategy(), OiSignalStrategy(), Po3Strategy())
 STRATEGIES: Dict[str, Strategy] = {}
 for _s in _ALL:
     STRATEGIES.setdefault(_s.name, _s)

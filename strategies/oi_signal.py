@@ -73,5 +73,8 @@ class OiSignalStrategy(Strategy):
         if x.sig.get('oi_sig_oi15') is None:
             return None
         exit = {'stop': ['ref', 0.0], 'stop_src': "beyond the 15 minutes' extreme", 'tp': ['map', 1.0], 'atr': x.atr}
-        return _confirm_plan(x, self.name, '15m', exit, 'price + OI + CVD together (OI [15m])',
+        plan = _confirm_plan(x, self.name, '15m', exit, 'price + OI + CVD together (OI [15m])',
                              stop_ref=x.sig['anchor_extreme'])
+        if plan and not plan.get('skip'):
+            plan['trail_after_tp1'] = True        # eng-58: a momentum trade - half at TP1, the rest trailed
+        return plan

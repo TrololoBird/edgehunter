@@ -31,6 +31,19 @@ def bull_bars(t0, final_q=8e3):
             bar(2, 109.3, 110.2, 109.3, 110.1, Q=6e3), bar(3, 110.1, 111.5, 110.0, 111.4, Q=final_q)]
 
 
+def _shift_entry(monkeypatch):
+    """eng-58: continuation enters on a resting limit in the kill zones; these lifecycle tests exercise the 5m
+    structure-shift trigger (Wyckoff / cascade still use it) on the continuation fixture, outside any session gate."""
+    import dataclasses
+    import config as config_mod
+    from strategies.leg import LegContinuation
+    monkeypatch.setattr(config_mod.CONFIG, 'strategies',
+                        dataclasses.replace(config_mod.CONFIG.strategies, smt_session=()))
+    orig = LegContinuation.plan
+    monkeypatch.setattr(LegContinuation, 'plan', lambda self, x: (
+        lambda p: {**p, 'trigger': 'shift', 'trail_after_tp1': False} if p and not p.get('skip') else p)(orig(self, x)))
+
+
 def _book_in_zone(rally_frame, confirm):
     book = SignalBook()
     price = {'X': 119.5}
@@ -51,18 +64,27 @@ def _book_in_zone(rally_frame, confirm):
 def test_continuation_lifecycle_with_orderflow_confirm(rally_frame, monkeypatch):
     # the synthetic rally has no swing between its origin and the pullback: no protected swing (strategies/ict.py)
     monkeypatch.setattr('strategies.ict.protected_swing', lambda *a, **k: None)
+    _shift_entry(monkeypatch)
     confirm = lambda sym, strategy, d, since, until, extreme: {'flow': True, 'oi': True, 'orderflow': 'imbalance'}
     book, s, price, candles, pf, cf = _book_in_zone(rally_frame, confirm)
     now = CUR15 / 1000 + 4 * 300 + 5
     _, entries = book.update([], Frames(rally_frame), pf, cf, now, confirm_of=confirm)
     assert entries == [s] and s.status == 'ENTRY' and s.levels['entry'] == 111.4 and s.of_confirm == 'imbalance'
     assert s.confirms['orderflow'] == 'imbalance'
-    price['X'] = s.levels['tp1'] + 0.01
+    # eng-58: targets / stops on the final 1m candles' extremes (a target traded 2 bps through)
+    t = s.managed_ms
+    tp1, sl = s.levels['tp1'], s.levels['sl']
+    candles['X'].append([t, 111.4, tp1 * 1.0003, 111.3, tp1, 1e4, 6e3])
+    price['X'] = tp1
     book.update([], Frames(rally_frame), pf, cf, now + 60, confirm_of=confirm)
     assert s.status == 'TP1'
-    price['X'] = s.levels['sl'] - 0.01
+    candles['X'].append([t + 60_000, tp1, tp1, sl * 0.999, sl * 0.999, 1e4, 3e3])
+    price['X'] = sl * 0.999
     book.update([], Frames(rally_frame), pf, cf, now + 120, confirm_of=confirm)
     assert s.status == 'SL' and book.session_results['SL after TP1'] == 1
+    e, risk = s.levels['entry'], s.levels['risk0']
+    gross = ((tp1 - e) + 2 * (sl - e)) / 3 / risk               # a third at TP1, the rest at the stop
+    assert s.final_r is not None and 0 < gross - s.final_r < 0.5   # net of the round trip's costs (eng-58)
 
 
 def test_trigger_without_orderflow_is_vetoed_and_card_keeps_waiting(rally_frame, monkeypatch):
@@ -70,6 +92,7 @@ def test_trigger_without_orderflow_is_vetoed_and_card_keeps_waiting(rally_frame,
     import config as config_mod
     monkeypatch.setattr(config_mod.CONFIG, 'orderflow',
                         dataclasses.replace(config_mod.CONFIG.orderflow, require_orderflow_confirm=True))
+    _shift_entry(monkeypatch)
     none = lambda sym, strategy, d, since, until, extreme: {'flow': True, 'oi': True, 'orderflow': False}
     book, s, price, candles, pf, cf = _book_in_zone(rally_frame, none)
     now = CUR15 / 1000 + 4 * 300 + 5

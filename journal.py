@@ -165,7 +165,7 @@ EXTRA_COLUMNS = {
     'prem_1h': 'REAL', 'prem_z': 'REAL', 'funding_1h': 'REAL', 'oi_vol': 'REAL', 'er_1h': 'REAL', 'chop_1h': 'REAL',
     'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
-    'weis_ratio': 'REAL', 'tp1_min': 'REAL',
+    'weis_ratio': 'REAL', 'tp1_min': 'REAL', 'limit_entry': 'INTEGER',
 }
 
 FEATURE_KEYS = {
@@ -542,6 +542,8 @@ class SignalJournal:
                     'perp_led': 0, 'p_edge': tracked.sig.get('p_edge'),
                     'tp1_src': lv.get('tp1_src'), 'tp2_src': lv.get('tp2_src'), 'tp3_src': lv.get('tp3_src'),
                     'range_pos': lv.get('range_pos'),
+                    # eng-58: a resting limit (Seiden's line, ICT's CE / OTE): the replay fills it at the entry price
+                    'limit_entry': int((tracked.plan or {}).get('trigger') == 'touch'),
                     'sl_src': lv.get('sl_src'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
                     'anchor': _anchor_json(tracked.plan),

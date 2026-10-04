@@ -308,7 +308,9 @@ class OrderflowConfig:
     promote_confirmations: bool = True
     promote_min_clusters: int = 30
     # an entry needs at least this many positive confirmations (flow / spot / oi / orderflow); 0 = off
-    min_confirmations: int = 1
+    # eng-58: 0 (was 1) - one positive of five ~50/50 readings passes ~95% of entries: a filter in name only, set from
+    # one bucket (0 of 4: -0.44R on 67 entries). Confirmations stay journaled; vetoes_table / features_table judge them
+    min_confirmations: int = 0
 
 
 @dataclass(frozen=True)
@@ -348,13 +350,6 @@ class MLConfig:
     # P(edge): shown on cards once trained on this many labelled rows; shadow mode (never filters)
     success_enabled: bool = True
     success_min_trained: int = 300
-
-
-@dataclass(frozen=True)
-class WhaleConfig:
-    """Kept for compatibility (display window); sizing moved to SweepConfig."""
-    min_usd: float = 25_000
-    window_sec: int = 900
 
 
 @dataclass(frozen=True)
@@ -552,14 +547,16 @@ class PoolsConfig:
     # eng-48, by the methods' sources: Connors' mean reversion was built on liquid indices / large caps (major,
     # large); Crabel's ORB and Dalton's profile need a session with real volume (up to mid); pumps are a small-cap
     # event (mid, small); the Turtles diversified over everything; the rest name no asset class
-    rules: tuple = (('continuation', 'all', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
+    # eng-58: ICT's models (sweep / Silver Bullet, continuation, PO3) on liquid coins only - in crypto they are applied
+    # to BTC / ETH and liquid majors; thin books turn every wick into a 'raid'
+    rules: tuple = (('continuation', 'major,large,mid', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
                     ('orb', 'all', '', 0.0, 'volume'), ('trendline', 'all', '', 0.0, 'volatility'),
                     ('market_profile', 'all', '', 0.0, 'volume'),
                     ('connors', 'all', '', 0.0, 'volume'),
                     ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
-                    ('sweep', 'all', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
+                    ('sweep', 'major,large,mid', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
                     ('pump', 'all', '', 0.0, 'volatility'), ('cup_handle', 'all', '', 0.0, 'volume'),
-                    ('oi_signal', 'all', '', 0.0, 'volume'))
+                    ('oi_signal', 'all', '', 0.0, 'volume'), ('po3', 'major,large,mid', '', 0.0, 'volume'))
 
 
 @dataclass(frozen=True)
@@ -577,7 +574,7 @@ class StrategiesConfig:
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
-                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'oi_signal')
+                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'oi_signal', 'po3')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
@@ -669,6 +666,7 @@ class StrategiesConfig:
     # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
     classic_ttl: tuple = (3600, 3600, 12 * 3600)
     silver_bullet_ttl: tuple = (3600, 3600, 4 * 3600)
+    po3_ttl: tuple = (3 * 3600, 3 * 3600, 12 * 3600)   # eng-58: the London window, the trade into New York
     # pumps (strategies/pump.py): the start = +15m >= max(min %, z x the coin's 15m volatility) on RVOL, OI and spot
     # buying at a fresh 24h high; the top = a buying climax after >= pump_top_min_pct within 4h
     pump_start_min_pct: float = 0.03
@@ -676,8 +674,9 @@ class StrategiesConfig:
     pump_start_rvol: float = 5.0
     pump_top_min_pct: float = 0.10
     pump_ttl: tuple = (3600, 3600, 12 * 3600)
-    cup_ttl: tuple = (3600, 3600, 5 * 86400)        # O'Neil's breakouts work over days   # the window's hour to come back to the FVG, 4h trade
-    connors_ttl: tuple = (3600, 3600, 10 * 86400)  # daily RSI(2): out at the SMA5, else on day 10 (Connors, eng-51)
+    cup_ttl: tuple = (86400, 86400, 60 * 86400)     # eng-58: daily bases; O'Neil holds breakouts for weeks
+    # daily RSI(2): out at the SMA5 (Connors); eng-58: no 10-day exit (no source found for it) - a 60-day safety cap
+    connors_ttl: tuple = (3600, 3600, 60 * 86400)
     # Time exits (eng-47; Strategy.time_exit): a trade that has not reached TP1 within time_stop_bars bars of its
     # structure timeframe failed to work (Kaufman / Le Beau's time stop: 15m 6h, 1h 24h, 4h 4 days, at least
     # time_stop_min_sec); once TP1 traded the rest may run time_after_tp1 x as long. A flat 12h clock closed working
@@ -702,8 +701,9 @@ class StrategiesConfig:
     # open +- the Stretch (the 10-day SMA of min(High - Open, Open - Low) of the daily candles); the first one hit is
     # the trade, the other its stop; out at the session's (UTC day's) close. Crypto's daily candle opens 00:00 UTC.
     orb_stretch_days: int = 10
-    connors_rsi_low: float = 10.0         # Connors' RSI(2) buy level (shorts above connors_rsi_high)
-    connors_rsi_high: float = 90.0
+    # Connors' RSI(2) levels (eng-58: 5 / 95, his original rule; 10 / 90 is a later variant)
+    connors_rsi_low: float = 5.0
+    connors_rsi_high: float = 95.0
     # eng-55: Connors uses no stop. A perpetual with leverage needs one for the margin: a CATASTROPHIC stop this many
     # daily ATR(20) away, journaled as our deviation (it is not part of his exit)
     connors_disaster_atr: float = 3.0
@@ -778,7 +778,7 @@ class StrategiesConfig:
     tl_min_body_atr: float = 0.35
     tl_max_depth_atr: float = 1.2
     tl_close_pos_max: float = 0.40
-    trendline_ttl: tuple = (3600, 3600, 48 * 3600)   # 1h lines
+    trendline_ttl: tuple = (24 * 3600, 24 * 3600, 48 * 3600)   # 1h lines; eng-58: a day for the retest
     bollinger_ttl: tuple = (900, 900, 12 * 3600)   # W / M: the trade lives until the opposite band, hours
 
 
@@ -893,7 +893,10 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-57"
+    logic_version: str = "eng-58"
+    # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
+    # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
+    verdict_since: str = "eng-55"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
@@ -950,6 +953,12 @@ class ExecutorConfig:
     max_notional_usd: float = 4_000.0
     limit_wait_min: int = 15      # a touch plan's BingX limit kept this long after Binance's touch (eng-46)
     max_leverage: int = 20
+    # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak) - ours inside
+    # those ranges: -3R a day, 6 trades a day, 4 hours after 3 losses in a row
+    daily_loss_r: float = 3.0
+    max_trades_day: int = 6
+    pause_losses: int = 3
+    pause_hours: float = 4.0
 
 
 @dataclass(frozen=True)
@@ -972,7 +981,6 @@ class AppConfig:
     tier0: Tier0Config = field(default_factory=Tier0Config)
     rest: RestConfig = field(default_factory=RestConfig)
     journal: JournalConfig = field(default_factory=JournalConfig)
-    whales: WhaleConfig = field(default_factory=WhaleConfig)
     sweeps: SweepConfig = field(default_factory=SweepConfig)
     liquidations: LiquidationConfig = field(default_factory=LiquidationConfig)
     depth: DepthConfig = field(default_factory=DepthConfig)

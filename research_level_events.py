@@ -491,7 +491,11 @@ def run_coin(job) -> Dict:
     if len(c15) < 5000:
         return {'symbol': symbol, 'rows': 0}
     btc = load_15m(arch, 'BTCUSDT', s, e) if symbol != 'BTCUSDT' else c15
-    oi = arch.metrics(symbol, s, e) if with_oi else {}
+    try:
+        oi = arch.metrics(symbol, s, e) if with_oi else {}
+    except Exception as err:                       # an archive file that keeps failing: the coin without OI
+        logging.warning(f"{symbol}: no OI metrics ({err})")
+        oi = {}
     tfc = {tf: resample(c15, TF_MS[tf]) for tf in TF_MS}
     atrs = {tf: atr_of(tfc[tf]) for tf in TF_MS}
     ctx = context(c15, tfc, atrs, btc, oi)
@@ -528,7 +532,11 @@ def main():
                 logging.info(f"events: {k}/{len(jobs)} {r['symbol']} {r['rows']} rows")
     else:
         for k, job in enumerate(jobs, 1):
-            r = run_coin(job)
+            try:
+                r = run_coin(job)
+            except Exception as err:
+                logging.warning(f"events: {job[0]} failed: {err}")
+                continue
             logging.info(f"events: {k}/{len(jobs)} {r['symbol']} {r['rows']} rows")
 
 

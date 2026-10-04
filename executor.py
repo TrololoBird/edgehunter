@@ -147,6 +147,15 @@ class DemoExecutor:
                 p.update(entered=True, entered_ms=int(time.time() * 1000), card_id=card_id)
                 self._save_pending()
                 return                               # the limit stands; check_limits fills or cancels it
+        limit = self.risk_limit()
+        if limit is not None:
+            # eng-58: the day's risk rules (prop practice): not traded, recorded with the rule
+            logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {limit}")
+            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                          'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': limit,
+                          'closed_ms': int(time.time() * 1000),
+                          'close_reason': 'PAUSE' if limit.startswith('pause') else 'DAILY_LIMIT'})
+            return
         busy = next((t for t in self.open.values() if t['symbol'].split('/')[0].replace('1000', '') ==
                      s.symbol.split('/')[0].replace('1000', '')), None)
         if busy is not None:
@@ -167,6 +176,44 @@ class DemoExecutor:
                 self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
                               'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': repr(e)[:300],
                               'closed_ms': int(time.time() * 1000), 'close_reason': 'ERROR'})
+
+    @staticmethod
+    def tp_parts(ex, symbol: str, qty: float, trail: bool, no_tp: bool):
+        """(target index, amount) of the take-profit orders: thirds at TP1-3; eng-58 trailing plans (continuation,
+        pump, oi_signal) half at TP1 and the rest on the card's trailing stop (RESTOP); target-less plans none."""
+        if no_tp:
+            return []
+        if trail:
+            return [(1, float(ex.amount_to_precision(symbol, qty / 2)))]
+        third = float(ex.amount_to_precision(symbol, qty / 3))
+        return [(1, third), (2, third), (3, float(ex.amount_to_precision(symbol, qty - 2 * third)))]
+
+    def risk_limit(self) -> Optional[str]:
+        """
+        eng-58, the account's day (prop firms: a daily loss limit of 1-5%, 2-3 trades a day, a pause after a losing
+        streak): no new demo trade once the UTC day's closed trades lost daily_loss_r R, after max_trades_day trades
+        were opened today, or within pause_hours after pause_losses stops in a row. The numbers are ours, inside the
+        prop firms' ranges. Cards and the journal are not limited (they measure the signals).
+        """
+        cfg = CONFIG.executor
+        day0 = int(time.time() // 86400 * 86400 * 1000)
+        try:
+            with sqlite3.connect(self.db_path) as c:
+                closed = c.execute("SELECT r FROM demo_trades WHERE closed_ms >= ? AND r IS NOT NULL", (day0,)).fetchall()
+                opened = c.execute("SELECT COUNT(*) FROM demo_trades WHERE opened_ms >= ? AND entry_fill IS NOT NULL",
+                                   (day0,)).fetchone()[0]
+                last = c.execute("SELECT r, closed_ms FROM demo_trades WHERE r IS NOT NULL ORDER BY closed_ms DESC LIMIT ?",
+                                 (cfg.pause_losses,)).fetchall()
+        except sqlite3.Error:
+            return None
+        day_r = sum(r for (r,) in closed)
+        if day_r <= -cfg.daily_loss_r:
+            return f"daily loss limit: {day_r:+.2f}R today"
+        if opened >= cfg.max_trades_day:
+            return f"daily trade limit: {opened} trades today"
+        if len(last) == cfg.pause_losses and all(r < 0 for r, _ in last) and                 time.time() * 1000 - last[0][1] < cfg.pause_hours * 3_600_000:
+            return f"pause after {cfg.pause_losses} losses in a row"
+        return None
 
     async def _open(self, card_id: str, s) -> None:
         cfg = CONFIG.executor
@@ -281,11 +328,9 @@ class DemoExecutor:
             logger.warning(f"Demo ENTRY {symbol}: stop not placed ({e!r}): closed at market")
             await self._close(trade, 'NO_STOP', None)
             return
-        third = float(ex.amount_to_precision(symbol, qty / 3))
-        parts = [third, third, float(ex.amount_to_precision(symbol, qty - 2 * third))]
-        trailing = bool((getattr(s, 'plan', None) or {}).get('no_tp'))   # Turtles: out on the channel, no TPs
-        for k, amount in zip((1, 2, 3), parts):
-            if not trailing and amount > 0 and amount >= min_qty:
+        plan = getattr(s, 'plan', None) or {}
+        for k, amount in self.tp_parts(ex, symbol, qty, bool(plan.get('trail_after_tp1')), bool(plan.get('no_tp'))):
+            if amount > 0 and amount >= min_qty:
                 await ex.create_order(symbol, 'market', exit_side, amount, None,
                                       {'takeProfitPrice': float(ex.price_to_precision(symbol, lv[f'tp{k}'])),
                                        'reduceOnly': True})
@@ -304,8 +349,17 @@ class DemoExecutor:
 
     @staticmethod
     def is_limit_plan(s) -> bool:
-        """Plans whose source enters with a resting limit at a price known in advance (trigger 'touch')."""
-        return bool(s.plan) and s.plan.get('trigger') == 'touch'
+        """
+        Plans whose source enters with a resting limit at a price known in advance (trigger 'touch'). eng-58: ICT's
+        limits (sweep CE, continuation OTE) rest only inside the London / New York kill zones - outside them the card
+        would veto the fill ('killzone'), so the limit is cancelled there (the setup lives within its session).
+        """
+        if not (bool(s.plan) and s.plan.get('trigger') == 'touch'):
+            return False
+        if s.mode in ('sweep', 'continuation') and CONFIG.strategies.smt_session:
+            from strategies.maniac import in_session
+            return in_session(int(time.time() * 1000), tuple(CONFIG.strategies.smt_session))
+        return True
 
     async def sync_limits(self, cards) -> None:
         """
@@ -340,6 +394,8 @@ class DemoExecutor:
     async def _place_limit(self, key: str, s) -> None:
         from strategies.geometry import entry_levels
         d, plan = s.direction, s.plan
+        if self.risk_limit() is not None:
+            return                                   # eng-58: the day's risk rules - no new resting limit (retried later)
         coin = s.symbol.split('/')[0].replace('1000', '')
         if any(t['symbol'].split('/')[0].replace('1000', '') == coin for t in self.open.values()) or                 any(p.get('symbol', '').split('/')[0].replace('1000', '') == coin for p in self.pending.values()
                     if not p.get('skip')):
@@ -387,7 +443,8 @@ class DemoExecutor:
         order = await ex.create_order(symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
         self.pending[key] = {'order_id': order['id'], 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio,
                              'basis': ratio / scale - 1, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
-                             'placed_ms': int(time.time() * 1000), 'risk_usd': qty * stop_dist}
+                             'placed_ms': int(time.time() * 1000), 'risk_usd': qty * stop_dist,
+                             'trail': bool(plan.get('trail_after_tp1')), 'no_tp': bool(plan.get('no_tp'))}
         self._save_pending()
         logger.info(f"Demo LIMIT {symbol} {s.group_key} {'buy' if d > 0 else 'sell'} {qty} @ {price:.6g} "
                     f"(Binance line {line:.6g}, basis {ratio / scale - 1:+.3%}), SL {lv['sl']:.6g}")
@@ -478,8 +535,7 @@ class DemoExecutor:
             await self._close(trade, 'SL', None)
             return
         self.open[trade['card_id']] = trade
-        third = float(ex.amount_to_precision(symbol, qty / 3))
-        for k, amount in zip((1, 2, 3), (third, third, float(ex.amount_to_precision(symbol, qty - 2 * third)))):
+        for k, amount in self.tp_parts(ex, symbol, qty, bool(p.get('trail')), bool(p.get('no_tp'))):
             if amount > 0:
                 await ex.create_order(symbol, 'market', exit_side, amount, None,
                                       {'takeProfitPrice': float(ex.price_to_precision(symbol, lv[f'tp{k}'])),
@@ -505,6 +561,38 @@ class DemoExecutor:
             trade['id'] = self._insert(trade)
             logger.warning(f"Demo: untracked BingX position {pos['symbol']} {pos.get('side')} {qty}: closed at market")
             await self._close(trade, 'UNTRACKED', None)
+
+    async def on_restop(self, s) -> None:
+        """eng-58: the card trailed its stop (after TP1: the entry, then the EMA20): the remaining position's stop is
+        moved on BingX (its TP1 half is already out, so no take-profit is left to re-place)."""
+        if not self.enabled or not s.entered_at:
+            return
+        card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
+        trade = self.open.get(card_id)
+        if trade is None:
+            return
+        async with self._lock:
+            try:
+                ex = await self._exchange()
+                symbol, d = trade['symbol'], trade['direction']
+                left = await self._position_qty(symbol)
+                if left <= 0:
+                    return
+                scale = float(trade.get('scale') or 0.0)
+                if not scale and trade.get('entry_plan') and s.levels.get('entry'):
+                    scale = float(trade['entry_plan']) / float(s.levels['entry'])
+                    trade['scale'] = scale
+                scale = scale or 1.0
+                try:
+                    await ex.cancel_all_orders(symbol)
+                except Exception as e:
+                    logger.debug(f"Demo cancel {symbol}: {e}")
+                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None,
+                                      {'stopLossPrice': float(ex.price_to_precision(symbol, s.levels['sl'] * scale)),
+                                       'reduceOnly': True, 'workingType': 'MARK_PRICE'})
+                logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
+            except Exception as e:
+                logger.warning(f"Demo restop {s.symbol}: {e!r}")
 
     async def on_add(self, s) -> None:
         """A Turtle unit added on the card: the same quantity again at market, the stop of the whole position moved."""

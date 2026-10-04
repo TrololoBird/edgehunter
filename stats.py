@@ -777,7 +777,7 @@ def robustness_table(console: Console, rows: List):
     (bps of price) that brings the total to 0 = sum R / sum(1 / risk in bps). Below the table: PBO of picking the best
     strategy (days x strategies, CSCV).
     """
-    cards = [r for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
+    cards = [dict(r, card_r=card_r_net(r)) for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
     if not cards:
         return
     table = Table(title="Robustness: is the result a few lucky trades? (R sums; cost = extra bps per round trip to 0)",
@@ -828,6 +828,28 @@ def robustness_table(console: Console, rows: List):
                          if pbo is not None else "not enough days (>= 16) or strategies (>= 2)"))
 
 
+def version_no(v: Optional[str]) -> int:
+    """'eng-57' -> 57 (0 for anything else)."""
+    try:
+        return int(str(v).split('-')[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def card_r_net(row) -> Optional[float]:
+    """A card's R net of costs: rows from eng-58 on are net already (SignalBook._exit_r); older ones were gross - the
+    round trip's fees and slippage (by the coin's 24h volume) are taken off here (funding / gaps not known for them)."""
+    r = _col(row, 'card_r')
+    if r is None or version_no(_col(row, 'logic_version')) >= 58:
+        return r
+    entry, sl = _col(row, 'entry'), _col(row, 'sl')
+    if not entry or sl is None or entry == sl:
+        return r
+    from levels import slippage_bps
+    cost = CONFIG.journal.fee_round_trip + 2 * slippage_bps(_col(row, 'volume_24h')) / 1e4
+    return r - cost * entry / abs(entry - sl)
+
+
 def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None):
     """
     eng-55: the two-level verdict per strategy (the owner's decision after the audit, written before results):
@@ -837,7 +859,7 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
     same against the SR the best of N trials reaches by luck, N = the (logic version x strategy) cells journaled - an
     UPPER bound of the effective number of trials (ONC clustering of correlated trials not computed yet).
     """
-    cards = [r for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
+    cards = [dict(r, card_r=card_r_net(r)) for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
     if not cards:
         return
     pool = all_rows if all_rows is not None else rows
@@ -1092,8 +1114,12 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     vetoes_table(console, rows)
     reversal_test_table(console, rows)
     card_results_table(console, rows)
-    verdict_table(console, rows)
-    robustness_table(console, rows)
+    # eng-58: the verdict over the version family since CONFIG.journal.verdict_since (net card R)
+    family = [r for r in all_rows if has_version and version_no(r['logic_version']) >= version_no(CONFIG.journal.verdict_since)]
+    console.print(f"[dim]Verdict / robustness over logic {CONFIG.journal.verdict_since}+ ({len(family)} rows), card R net of "
+                  f"costs[/dim]")
+    verdict_table(console, family, all_rows)
+    robustness_table(console, family)
     cards_table(console, rows)
     demo_table(console)
     demo_gap_table(console)

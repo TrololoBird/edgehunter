@@ -414,3 +414,25 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   Extended (research/level_weights.md): FVG 15m / 1h (OR 0.83 / 0.90), order blocks 1h (0.94), breakers 1h (0.83) hold
   price no better than placebo, the day's volume profile POC / VA / HVN / LVN exactly like it (0.98-1.02) -> those
   weights are 1.0 too; the 4h / daily / weekly ICT scaling, vwap, fib, range, book, liquidations stay unmeasured.
+- eng-58 (the full audit, docs/AUDIT_full.md; the practice review, docs/STRATEGY_PRACTICE.md): result honesty - the
+  card's R (`card_r`, the verdict's input) is NET of fees, slippage by liquidity and funding (`SignalBook._cost_r`)
+  and a stop gapped through fills at the candle's open (`exit_fill`); trades are managed on the final 1m candles'
+  extremes since `managed_ms` (targets 2 bps through, the stop first in a candle - as the journal's replay; the scan
+  price missed every wick); resting limits (Seiden, ICT CE / OTE, trendline retest, PO3) are replayed at their price
+  (`limit_entry`); the 1 ATR stop floor applies with the pierce model too; the waiting zone's end prices costs by
+  liquidity; `min_confirmations` 0 (one of five ~50/50 readings passed ~95%); the verdict / robustness run over the
+  version family since `journal.verdict_since` (eng-55) with older gross card R netted (`stats.card_r_net`). ICT by
+  its practice: the sweep's MSS is a close beyond the swing the raid came from (`ict.fvg_setup`), which ARMS a resting
+  limit at the gap's CE (`TrackedSignal.armed`: the plan becomes a touch plan the demo places); continuation needs a
+  leg that broke structure (`no_bos`) and enters on a limit at the OTE zone's near edge; sweep / continuation enter
+  only in the London / New York kill zones (`killzone`; their demo limits rest only there); the Silver Bullet needs
+  the MSS and targets the previous day's high / low; new `po3` (ICT Power of Three / Judas swing, strategies/po3.py);
+  ICT pools major / large / mid. Others by their sources: trendline enters on the retest (a limit at the broken line),
+  supply / demand vetoes against the daily trend (`big_picture`), the cup with handle runs on daily candles (35+ day
+  bases, 12-33% deep), Connors RSI(2) 5 / 95 without a 10-day exit, VA80 on the TPO value area, the liquidation
+  climax needs a prior trend (`no_prior_trend`) with a 15m structure. System: one direction per coin a day
+  (`against_day`, the Turtles exempt); continuation / oi_signal take half at TP1 and trail the rest (entry, then the
+  entry timeframe's EMA20; RESTOP moves the demo's stop); the demo stops trading for the day at -3R, after 6 trades,
+  and pauses 4h after 3 losses in a row (`executor.risk_limit`). Dead code removed: fib05 / SMT detectors, the
+  pinbar / ifvg triggers' branches, WhaleConfig. Not done: pretraining that replays the 13 strategies (meta-labeling
+  needs it) - a separate project.

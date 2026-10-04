@@ -31,7 +31,7 @@ def cost_of(price: float, volume_24h: Optional[float] = None) -> float:
     return (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h) / 1e4) * price
 
 
-from pierce import model as _overshoot_model, measured_kind, overshoot  # noqa: E402  (measured level pierce)
+from pierce import measured_kind, overshoot  # noqa: E402  (measured level pierce)
 
 
 def kind_at(zones: List[Zone], price: float) -> Optional[str]:
@@ -281,12 +281,15 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
     kind = kind_at(zones, base) or kind_of_label(src, plan.get('tf', '15m'))
     measured = overshoot(plan.get('symbol'), kind, base)
     if measured is not None:
-        # the measured pierce of this kind of level on this coin, no ATR constants: a stop closer than where price
-        # usually pierces before turning back is inside the level's noise; a stop so far that it does not pay is a
-        # wrong entry (low_rr), not a reason to move it closer
-        return base - direction * measured, f"{src} + measured pierce {measured / base:.2%}"
-    stop = base - direction * cfg.stop_buffer_atr * (plan.get('leg_atr') or atr)
+        # the measured pierce of this kind of level on this coin: a stop closer than where price usually pierces
+        # before turning back is inside the level's noise; a stop so far that it does not pay is a wrong entry
+        # (low_rr), not a reason to move it closer
+        stop, src = base - direction * measured, f"{src} + measured pierce {measured / base:.2%}"
+    else:
+        stop = base - direction * cfg.stop_buffer_atr * (plan.get('leg_atr') or atr)
     # the floor in the structure's own ATR too (a 1h / 4h leg's stop floored by the 15m ATR sat inside its noise)
+    # eng-58: the volatility floor holds with the pierce model too (it was skipped whenever the model existed - i.e.
+    # always - while the docs and levels.min_leg_atr assumed it; live eng-6: stops < 1 ATR hit on 8 of 10 entries)
     floor = stop_floor(max(atr, plan.get('leg_atr') or 0.0), plan.get('recent_atr'))
     if direction * (entry - stop) < floor:
         stop = entry - direction * floor
@@ -433,7 +436,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
     risk = direction * (entry - stop)
-    if 0 < risk < floor and not _overshoot_model():
+    if 0 < risk < floor:                                # eng-58: with the pierce model too (stop_levels)
         stop, risk = entry - direction * floor, floor
         sl_src = f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
     if fixed_tp and zones:
@@ -531,13 +534,14 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
 
 
 def cap_for_rr(tp1: float, stop_est: float, direction: int, atr: float, recent_atr: Optional[float],
-               min_rr: Optional[float] = None) -> float:
+               min_rr: Optional[float] = None, volume_24h: Optional[float] = None) -> float:
     """
     The furthest entry (from the extreme toward TP1) that still pays min_rr_tp1 (net of fees) to TP1 with the stop at `stop_est`
     or the stop floor, whichever is wider: a waiting zone ends there.
     """
     rr = CONFIG.levels.min_rr_tp1 if min_rr is None else min_rr
-    fee = cost_of(tp1)                                  # R:R is net of the execution cost (entry_levels)
+    # R:R is net of the execution cost by the coin's liquidity, as finish_levels judges it (eng-58: was a flat 5 bps)
+    fee = cost_of(tp1, volume_24h)
     by_stop = (tp1 + rr * stop_est - direction * (1 + rr) * fee) / (1 + rr)
     by_floor = tp1 - direction * (rr * stop_floor(atr, recent_atr) + (1 + rr) * fee)
     return min(by_stop, by_floor) if direction > 0 else max(by_stop, by_floor)

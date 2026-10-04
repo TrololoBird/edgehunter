@@ -26,7 +26,7 @@ MINUTE_MS = 60_000
 TF_MS = {'1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000}
 # Entry trigger timeframe (minutes) per leg timeframe, and how much longer the card may wait for the pullback
 # Entry trigger timeframe (minutes) per structure timeframe: a 3-6x step (Elder's factor of ~5)
-TRIGGER_MINUTES = {'5m': 5, '15m': 5, '1h': 15, '4h': 60}
+TRIGGER_MINUTES = {'5m': 5, '15m': 5, '1h': 15, '4h': 60, '1d': 240}
 TTL_FACTOR = {'15m': 1, '1h': 2, '4h': 4}
 
 
@@ -343,7 +343,9 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
     targets = [t if t is not None else entry + direction * 1e12 for t in (levels['tp1'], levels['tp2'], levels['tp3'])]
     result = {'filled': 1, 'outcome': 'OPEN', 'r_tp1': None, 'r_tp2': None, 'r_be': None, 'entry_fill': None}
     if use_fill:
-        fill = fill_price(levels, direction, candles)
+        # eng-58: a resting limit (Seiden, ICT CE / OTE) fills AT its price - it was traded at the trigger; only the
+        # market entries take the next minute's open + slippage (a human's reaction)
+        fill = float(entry) if levels.get('limit_entry') and candles else fill_price(levels, direction, candles)
         if fill is None:
             result['filled'] = 0
             return result

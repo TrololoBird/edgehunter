@@ -1,13 +1,16 @@
 """
 ICT's Silver Bullet: a one-hour window of the New York day (03:00-04:00, 10:00-11:00, 14:00-15:00 NY time) in which
-price raids nearby liquidity and displaces the other way, leaving a fair value gap; the trade is the retrace into that
-gap, entered at its consequent encroachment (CE, the gap's 50%), the stop beyond the raid's extreme, the target the
-opposite liquidity. Detected loop-side on the final 1m candles built into 5m bars (Scanner._silver_bullet).
+price raids nearby liquidity, shifts structure and displaces the other way, leaving a fair value gap; the trade is
+the retrace into that gap, entered at its consequent encroachment (CE, the gap's 50%), the stop beyond the raid's
+extreme, the target the DRAW ON LIQUIDITY of the day (eng-58: the previous day's high / low in the trade's
+direction; the hour's opposite side only without it). Detected loop-side on the final 1m candles built into 5m bars
+(Scanner._silver_bullet).
 
 - liquidity: the high / low of the hour BEFORE the window;
 - the raid: a 5m bar inside the window trades beyond it;
-- the displacement: after the raid, a 5m bar with a body >= half its range in the other direction leaves an FVG
-  (bullish: the first bar's high < the third bar's low) inside the window;
+- the market structure shift (eng-58, ICT): the displacement closes beyond the last 3-candle swing the raid came from;
+- the displacement: a 5m bar with a body >= half its range in the other direction that leaves the FIRST FVG after
+  the raid (bullish: the first bar's high < the third bar's low) inside the window;
 - one setup per coin, window and direction.
 """
 from datetime import datetime, timezone
@@ -28,7 +31,8 @@ def window_of(ts_ms: int) -> Optional[int]:
     return None
 
 
-def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
+def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = None,
+                  pdl: Optional[float] = None) -> Optional[Dict]:
     """bars5: final 5m bars [open_time, o, h, l, c, ...] covering at least the hour before the window."""
     start = window_of(now_ms)
     if start is None:
@@ -42,11 +46,25 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int) -> Optional[Dic
         raid = next((k for k, b in enumerate(inside) if (b[3] < ref_lo if d > 0 else b[2] > ref_hi)), None)
         if raid is None:
             continue
+        # the swing the raid came from: the last 3-bar swing high (long; low short) before the raid
+        lead = [b for b in bars5 if b[0] < inside[raid][0]][-48:]
+        swing = None
+        for k in range(len(lead) - 2, 0, -1):
+            if d > 0 and lead[k][2] > lead[k - 1][2] and lead[k][2] > lead[k + 1][2]:
+                swing = lead[k][2]
+                break
+            if d < 0 and lead[k][3] < lead[k - 1][3] and lead[k][3] < lead[k + 1][3]:
+                swing = lead[k][3]
+                break
+        if swing is None:
+            continue
         for i in range(max(raid + 2, 2), len(inside)):
             a, m, c = inside[i - 2], inside[i - 1], inside[i]
             body, span = abs(m[4] - m[1]), m[2] - m[3]
             if span <= 0 or body < 0.5 * span or (m[4] - m[1]) * d <= 0:
                 continue
+            if (max(m[4], c[4]) <= swing) if d > 0 else (min(m[4], c[4]) >= swing):
+                continue                           # no market structure shift yet
             if d > 0 and a[2] < c[3]:
                 lo, hi = a[2], c[3]
             elif d < 0 and a[3] > c[2]:
@@ -54,7 +72,8 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int) -> Optional[Dic
             else:
                 continue
             extreme = min(b[3] for b in inside[:i + 1]) if d > 0 else max(b[2] for b in inside[:i + 1])
-            target = ref_hi if d > 0 else ref_lo
+            draw = pdh if d > 0 else pdl
+            target = draw if draw is not None and d * (draw - (lo + hi) / 2) > 0 else (ref_hi if d > 0 else ref_lo)
             if d * (target - (lo + hi) / 2) <= 0:
                 continue
             ce = (lo + hi) / 2
@@ -62,7 +81,7 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int) -> Optional[Dic
             return {'setup': 'SILVER BULLET LONG' if d > 0 else 'SILVER BULLET SHORT', 'direction': d,
                     'setup_note': f"ICT Silver Bullet {local:%H}:00-{local.hour + 1:02d}:00 NY: took the hour's "
                                   f"{'low' if d > 0 else 'high'} {ref_lo if d > 0 else ref_hi:.6g}, displaced, 5m FVG "
-                                  f"{lo:.6g}-{hi:.6g} (CE {ce:.6g}); target the {'high' if d > 0 else 'low'} {target:.6g}",
+                                  f"{lo:.6g}-{hi:.6g} (CE {ce:.6g}) after a structure shift; target {target:.6g}",
                     'anchor_level': ce, 'anchor_extreme': extreme, 'anchor_label': 'Silver Bullet FVG',
                     'anchor_ts': start, 'anchor_close': c[4], 'fvg_lo': lo, 'fvg_hi': hi, 'sb_target': target,
                     'event_ts': int(c[0]) + FIVE_MS}
@@ -110,7 +129,7 @@ class SilverBulletStrategy(Strategy):
         zone = (lo, ce) if d > 0 else (ce, hi)
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity',
-                                          first=(sig['sb_target'], "the hour's opposite liquidity"))
+                                          first=(sig['sb_target'], "the day's draw on liquidity (PDH / PDL)"))
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
@@ -118,6 +137,6 @@ class SilverBulletStrategy(Strategy):
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
                          exit={'stop': ['ref', 0.0], 'tp': ['level', sig['sb_target'], 1.0, None], 'atr': atr,
-                               'stop_src': "beyond the raid's extreme", 'tp_src': "the hour's opposite liquidity"},
+                               'stop_src': "beyond the raid's extreme", 'tp_src': "the day's draw on liquidity (PDH / PDL)"},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
                          key=(sig['anchor_ts'], d))
