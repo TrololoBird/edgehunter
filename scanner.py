@@ -5,6 +5,7 @@ import os
 import platform
 import statistics
 import time
+import zlib
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -169,6 +170,7 @@ class Scanner:
         self.book.plan_key_of = self._plan_key
         self.book.map_ready_of = lambda symbol: symbol in self._level_raw
         self.book.btc_bias_of = self._btc_bias
+        self._micro: Dict[str, tuple] = {}
         self.fetcher.log_liquidations = self.journal is not None
         # Setup detectors (sweeps, liquidation exhaustion, absorption, whale accumulation) and the quick level map of
         # every coin they use (rebuilt from the closed 15m candles after each close; card coins get the full map)
@@ -1238,6 +1240,18 @@ class Scanner:
             sig['weekly_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
         sig['btc_bias'] = self._btc_bias()
+        # eng-59: VPIN / volume entropy / the leading venue of the last hour, once a minute per coin (~6 ms each:
+        # every scan for 70 coins would cost the loop ~0.4s)
+        minute = int((time.time() - zlib.crc32(symbol.encode()) % 60) // 60)      # coins spread over the minute
+        cached = self._micro.get(symbol)
+        if cached is None or cached[0] != minute:
+            try:
+                cached = (minute, self.fetcher.flow.micro_features(symbol, list(md.minute_klines)))
+            except Exception as e:                   # context only: never break a scan
+                logger.debug(f"micro features {symbol}: {e!r}")
+                cached = (minute, {})
+            self._micro[symbol] = cached
+        sig.update(cached[1])
         sig.update(self._positioning_features(symbol, md))
         # eng-53: Binance's Monitoring Tag / a scheduled delisting (longs vetoed 'event_risk'), the nearness to the
         # 52-week high (Jia et al. 2025: predicts next week's cross-section; ours: rank IC +0.09, t 2.9, quintile

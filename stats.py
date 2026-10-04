@@ -463,6 +463,11 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
         f"{NATURE[_col(r, 'strategy')]} method in a " +
         ('ranging coin (> 61.8)' if _col(r, 'chop_1h') > 61.8 else 'trending coin (< 38.2)' if _col(r, 'chop_1h') < 38.2
          else 'mixed coin')),
+    # eng-59 flow microstructure (journal only): who moved first, and VPIN's flow toxicity (Easley et al.: ~0.2-0.3
+    # is normal for liquid futures; the cut is ours and only splits the journal)
+    ('leading venue (1h)', lambda r: _col(r, 'lead_venue') if (_col(r, 'lead_corr') or 0) > 0.2 else
+        ('none (corr <= 0.2)' if _col(r, 'lead_corr') is not None else None)),
+    ('VPIN (1h)', lambda r: None if _col(r, 'vpin') is None else ('high >= 0.4' if _col(r, 'vpin') >= 0.4 else 'normal')),
     ('BTC bias vs the signal', lambda r: None if not _col(r, 'btc_bias') or not _col(r, 'direction') else
         ('with BTC' if _col(r, 'btc_bias') * _col(r, 'direction') > 0 else 'against BTC')),
     ('weekend', lambda r: None if _col(r, 'weekend') is None else ('weekend' if _col(r, 'weekend') else 'weekday')),
@@ -867,21 +872,72 @@ def card_r_net(row) -> Optional[float]:
     return r - cost * entry / abs(entry - sl)
 
 
+def effective_trials(rows: List) -> Tuple[int, int]:
+    """
+    eng-59 (plan 3.2): the effective number of independent trials behind the DSR - Lopez de Prado's ONC idea: the
+    trials are the (logic version x strategy) cells; their mean-R series per 4h block are correlated (one strategy across
+    versions is nearly the same bet), so they are clustered on the correlation distance sqrt((1 - rho) / 2) by k-means
+    for k = 2 .. n - 1 and the k with the best silhouette t-stat (mean / std of the samples' silhouettes) is the
+    effective N. Cells with < 10 blocks of results stay single trials. Returns (effective N, raw N).
+    """
+    series: Dict[tuple, Dict[int, List[float]]] = {}
+    for r in rows:
+        if _col(r, 'kind') not in ('entry', 'card') or not _col(r, 'strategy'):
+            continue
+        v = card_r_net(r) if _col(r, 'kind') == 'card' else net_r(r, 'r_tp1') if _col(r, 'r_tp1') is not None else None
+        if v is None or (_col(r, 'kind') == 'entry' and _col(r, 'vetoed')):
+            continue
+        series.setdefault((_col(r, 'logic_version'), _col(r, 'strategy')), {}).setdefault(
+            int(_col(r, 'ts_ms') // 14_400_000), []).append(v)
+    raw = len(series) or 1
+    keys = [k for k, d in series.items() if len(d) >= 10]
+    lone = raw - len(keys)
+    if len(keys) < 3:
+        return raw, raw
+    days = sorted({d for k in keys for d in series[k]})
+    import numpy as np
+    m = np.full((len(keys), len(days)), np.nan)
+    pos = {d: i for i, d in enumerate(days)}
+    for i, k in enumerate(keys):
+        for d, vs in series[k].items():
+            m[i, pos[d]] = statistics.fmean(vs)
+    corr = np.eye(len(keys))
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            ok = ~np.isnan(m[i]) & ~np.isnan(m[j])
+            c = np.corrcoef(m[i, ok], m[j, ok])[0, 1] if ok.sum() >= 5 and m[i, ok].std() > 0 and m[j, ok].std() > 0 else 0.0
+            corr[i, j] = corr[j, i] = 0.0 if np.isnan(c) else c
+    dist = np.sqrt(np.clip((1 - corr) / 2, 0, 1))
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_samples
+    best, best_k = -np.inf, len(keys)
+    for k in range(2, len(keys)):
+        labels = KMeans(n_clusters=k, n_init=10, random_state=0).fit_predict(dist)
+        if len(set(labels)) < 2:
+            continue
+        sil = silhouette_samples(dist, labels)
+        t = sil.mean() / sil.std() if sil.std() > 0 else -np.inf
+        if t > best:
+            best, best_k = t, k
+    return best_k + lone, raw
+
+
 def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None):
     """
     eng-55: the two-level verdict per strategy (the owner's decision after the audit, written before results):
     SUSPEND (no demo, still journaled) at >= 30 independent 4h clusters when the 90% cluster interval's LOWER bound is
     below -0.05R; DEPRECATE (delete the code) only at >= 200 clusters (MinTRL of a +0.1R edge with skew 1.8 / kurtosis
     7.8) with the UPPER bound below 0. PSR = P(true mean R > 0) per cluster mean (skew / kurtosis aware); DSR = the
-    same against the SR the best of N trials reaches by luck, N = the (logic version x strategy) cells journaled - an
-    UPPER bound of the effective number of trials (ONC clustering of correlated trials not computed yet).
+    same against the SR the best of N trials reaches by luck, N = the effective number of trials (eng-59:
+    `effective_trials`, ONC-style clustering of the version x strategy cells; was the raw cell count, an upper bound).
     """
     cards = [dict(r, card_r=card_r_net(r)) for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
     if not cards:
         return
     pool = all_rows if all_rows is not None else rows
-    trials = len({(_col(r, 'logic_version'), _col(r, 'strategy')) for r in pool if _col(r, 'strategy')}) or 1
-    table = Table(title=f"Verdict (suspend: >=30 clusters & low < -0.05R; deprecate: >=200 & high < 0); DSR trials N={trials}",
+    trials, raw_trials = effective_trials(pool)
+    table = Table(title=f"Verdict (suspend: >=30 clusters & low < -0.05R; deprecate: >=200 & high < 0); "
+                        f"DSR trials N={trials} (ONC; {raw_trials} version x strategy cells)",
                   header_style="bold magenta", border_style="blue")
     for name in ("Strategy", "Cards", "Clusters", "Mean R", "90% CI", "Skew", "Kurt", "PSR", "DSR", "HL haircut", "MinTRL",
                  "Verdict"):
