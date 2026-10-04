@@ -194,7 +194,7 @@ def main():
     block('ORB (Crabel, open +- Stretch, out at the close)', orb)
     block('ORB after an NR7 day', [t for t in orb if t['nr7']])
     block('ORB after an NR4 day (not NR7)', [t for t in orb if t['nr4'] and not t['nr7']])
-    block('ORB without NR4 / NR7', [t for t in orb if t['nr4'] is False and t['nr7'] is False])
+    block('ORB without NR4 / NR7', [t for t in orb if t['nr4'] is not None and t['nr7'] is not None and not t['nr4'] and not t['nr7']])
     block('Cup with handle (daily, O\'Neil)', cup)
     deep = [t for t in cup if t['depth_watr'] is not None]
     old = [t['depth_watr'] for t in deep if t['ts'] < mid]
