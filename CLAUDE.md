@@ -379,3 +379,14 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   exit / pyramid, Connors' SMA5 exit, no_tp placeholders shown as negative TPs), the demo's BingX ratio rebuilt after
   a restart, ORB keeps the day's state per coin (15m candles rebuilt each minute stalled the loop), QuickEdit off
   before the first console write.
+- eng-57 (checked against ICT by web search 2026-10-04; ICT's own definition is only in his videos, so the common
+  ground of several independent write-ups): an order block's displacement must close beyond the last CONFIRMED swing
+  (a 2 x 2 fractal confirmed by the block's candle: ICT's break of structure), not the highest high / lowest low of the
+  ten candles before it; the rest already matched (the last opposite candle, an FVG in the displacement, the zone open
+  -> wick, the breaker on a close through the far side). joshyattridge/smart-money-concepts was compared on 20 coins x
+  499 1h candles: FVG detection identical; its order block (the lowest candle between swing and break, any colour, no
+  FVG) departs from ICT more than ours, so it is not adopted. Also: `Scanner.wide_watch_loop` (every perpetual outside
+  the universe >= $3M: the pump / dump monitor «·вне» and DUMP BOUNCE SHORT journaled `outside_universe`, no card),
+  stats.py `robustness_table` (tail / coin / halves / cost-to-zero, PBO by CSCV) and the Harvey-Liu haircut in the
+  verdict, journal `weis_ratio` (Weis wave into SPRING / UTAD), the demo's reduce-only limit close on BingX's price
+  band (102202).
