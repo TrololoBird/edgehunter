@@ -546,6 +546,13 @@ class WebUI:
         from flow import BUY, LIQ_LONG, LIQ_SHORT, SELL
         symbol = request.query.get('symbol', '')
         f = self.scanner.fetcher
+        if not symbol:
+            # the local order books: synced, size, sequence re-syncs, buffered events (depth.py)
+            return self._json({'books': {s: {'synced': b.synced, 'levels': len(b.bids) + len(b.asks),
+                                             'resyncs': b.resyncs, 'buffer': len(b.buffer),
+                                             'pending': b.pending is not None, 'heat': len(b.heat),
+                                             'bands': len(b.bands)}
+                                         for s, b in f.depth.books.items()}})
         md = self.scanner.market_data.get(symbol)
         if md is None:
             return self._json({'error': f'unknown symbol {symbol}'})

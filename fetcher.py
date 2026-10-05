@@ -445,6 +445,7 @@ class DataFetcher:
         self.log_liquidations = False     # set by the scanner when a journal takes them
         self.venue_derivs: Dict[str, Dict[str, VenueDeriv]] = {}
         self._zone_atr: Dict[str, float] = {}
+        self._iceberg_fed: Dict[str, float] = {}
 
     # ------------------------------------------------------------------ setup
 
@@ -1692,9 +1693,14 @@ class DataFetcher:
             key = self._binance_keys.get(('futures', data.get('s')))
             if key is not None:
                 self.depth.on_diff(key, data)
-                bids, asks = self.depth.top(key)
-                if bids or asks:
-                    self.icebergs.on_book(key, bids, asks, int(data.get('E') or recv_ms))
+                # iceberg tracking reads the near book at most once a second (depth20 gave it every 500ms; the top
+                # of a few-thousand-level book on every diff event is wasted work)
+                now_s = recv_ms / 1000
+                if now_s - self._iceberg_fed.get(key, 0.0) >= 1.0:
+                    self._iceberg_fed[key] = now_s
+                    bids, asks = self.depth.top(key)
+                    if bids or asks:
+                        self.icebergs.on_book(key, bids, asks, int(data.get('E') or recv_ms))
 
     def _binance_price(self, key: str) -> Optional[float]:
         md = self.markets.get(key)
