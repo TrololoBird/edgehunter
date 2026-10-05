@@ -559,6 +559,36 @@ class SignalBook:
             lv['sl_src'] = 'trailing: entry / EMA20 after TP1'
             self.events.append((s, 'RESTOP'))
 
+    def _overlay_exit(self, s: TrackedSignal, c, candles_of) -> Optional[str]:
+        """
+        Early exits adopted by research_overlays.py (models/exit_overlays.json), checked at each final 1m candle's
+        close: noprog_H - H hours in and the trade never traded +0.3R its way; struct - a 15m close at or below -0.5R;
+        btc_K - altcoins: BTC moved K% against the trade over the last 15 minutes. Exit at the candle's close.
+        """
+        overlays = (s.plan or {}).get('exit_overlays')
+        lv, d = s.levels, s.direction
+        risk = lv.get('risk0') or 0.0
+        if not overlays or not risk or not s.entered_at:
+            return None
+        hi, lo, close, ts = float(c[2]), float(c[3]), float(c[4]), int(c[0])
+        fav = (hi - lv['entry']) * d / risk if d > 0 else (lv['entry'] - lo) / risk
+        prev = s.plan.get('ov_best')
+        s.plan['ov_best'] = fav if prev is None else max(prev, fav)
+        held_min = (ts + MINUTE_MS) / 1000 / 60 - s.entered_at / 60
+        for ov in overlays:
+            kind, _, arg = ov.partition('_')
+            if kind == 'noprog' and held_min >= float(arg) * 60 and s.plan['ov_best'] < 0.3:
+                return f"early exit: no +0.3R within {arg}h (research_overlays)"
+            if kind == 'struct' and (ts + MINUTE_MS) % (15 * MINUTE_MS) == 0 and (close - lv['entry']) * d / risk <= -0.5:
+                return "early exit: a 15m close at -0.5R (research_overlays)"
+            if kind == 'btc' and not s.symbol.startswith('BTC/') and candles_of:
+                btc = [b for b in list(candles_of('BTC/USDT:USDT')) if b[0] <= ts][-16:]
+                if len(btc) >= 16 and btc[0][4]:
+                    move = btc[-1][4] / btc[0][4] - 1
+                    if d * move <= -float(arg) / 100:
+                        return f"early exit: BTC {move:+.2%} against the trade in 15 min (research_overlays)"
+        return None
+
     def _profile_manage(self, s: TrackedSignal, hi: float, lo: float) -> None:
         """An optimized profile's stop management on each final 1m candle (research_optimize.simulate): after +1R the
         stop to the entry (`be`) and / or an ATR chandelier `trail` x the 1h ATR behind the best price, only ever
@@ -919,6 +949,9 @@ class SignalBook:
                       'pm_atr': confirms.get('_atr_1h'), 'pm_best': None, 'trail_after_tp1': False,
                       'no_tp': str(prof['pm'].get('target')) == 'none' or bool((s.plan or {}).get('no_tp'))}
         levels['risk0'] = abs(levels['entry'] - levels['sl'])
+        overlays = profiles.exit_overlays(s.mode, 'profile' if prof and prof.get('pm') else 'plan')
+        if overlays:
+            s.plan = {**(s.plan or {}), 'exit_overlays': overlays, 'ov_best': None}
         if (s.plan or {}).get('add_half'):
             # the owner's averaging: one more unit of the same size at half the way to the stop (SignalBook._manage_trade)
             s.units = [[levels['entry'], entered_at]]
@@ -1052,6 +1085,10 @@ class SignalBook:
                 return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
             self._trail(s, candles_of)
             self._profile_manage(s, hi, lo)
+            why = self._overlay_exit(s, c, candles_of)
+            if why:
+                s.exit_fill = float(c[4])
+                return self._finish(s, 'CLOSED', now, why)
         if d * (price - lv['sl']) <= 0:
             s.exit_fill = price
             return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))

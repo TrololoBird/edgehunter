@@ -155,3 +155,24 @@ def regime_labels(k: np.ndarray) -> list:
         med = np.nanmedian(atr[i - 124:i + 1])
         out.append(('trend' if adx[i] >= 25 else 'range') + ('_hv' if atr[i] > med else '_lv'))
     return out
+
+
+# ---------------------------------------------------------------------- exit overlays (research_overlays.py)
+
+OVERLAY_PATH = os.path.join(os.path.dirname(PATH), 'exit_overlays.json')
+_overlay_cache: Dict = {'mtime': None, 'data': {}}
+
+
+def exit_overlays(strategy: str, base: str) -> List[str]:
+    """The early-exit overlays adopted for this strategy and base ('plan' = the method's own plan, 'profile' = its
+    optimized profile): e.g. ['noprog_4', 'btc_1.0'] from 'noprog_4+btc_1.0'; [] when none passed the rule."""
+    try:
+        mtime = os.path.getmtime(OVERLAY_PATH)
+    except OSError:
+        return []
+    if _overlay_cache['mtime'] != mtime:
+        with open(OVERLAY_PATH, encoding='utf-8') as fh:
+            _overlay_cache.update(mtime=mtime, data=json.load(fh))
+    name = (_overlay_cache['data'].get(strategy) or {}).get(base)
+    return name.split('+') if name else []
+

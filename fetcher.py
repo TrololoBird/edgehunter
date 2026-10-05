@@ -5,6 +5,7 @@ import logging
 import errors
 import time
 import zlib
+import json
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -446,6 +447,8 @@ class DataFetcher:
         self.venue_derivs: Dict[str, Dict[str, VenueDeriv]] = {}
         self._zone_atr: Dict[str, float] = {}
         self._iceberg_fed: Dict[str, float] = {}
+        # (epoch seconds, BTC dominance %, USDT dominance %) every 5 min, a day kept (CoinGecko /global)
+        self.dominance: deque = deque(maxlen=300)
 
     # ------------------------------------------------------------------ setup
 
@@ -1308,6 +1311,41 @@ class DataFetcher:
                             f" of {len(symbols)} coins have >= 202 closed days")
             await asyncio.sleep(300)
 
+    async def _dominance_loop(self):
+        """
+        BTC and USDT dominance (CoinGecko /global, free, no key) every 5 minutes: rising together = risk-off, falling
+        together = money into altcoins (practice, not a measured rule: journaled as `_dom` on every entry until the
+        journal can judge it; the archive has no dominance history).
+        """
+        import urllib.request
+        url = 'https://api.coingecko.com/api/v3/global'
+        while self._running:
+            try:
+                def fetch():
+                    req = urllib.request.Request(url, headers={'User-Agent': 'pump-scanner'})
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        return json.load(resp)
+                data = (await asyncio.to_thread(fetch)).get('data') or {}
+                pct = data.get('market_cap_percentage') or {}
+                if 'btc' in pct and 'usdt' in pct:
+                    self.dominance.append((time.time(), float(pct['btc']), float(pct['usdt'])))
+            except Exception as e:
+                errors.report('fetcher.dominance', e)
+            await asyncio.sleep(300)
+
+    def dominance_reading(self) -> Optional[Dict]:
+        """{btc_d, usdt_d, btc_d_1h, usdt_d_1h, btc_d_4h, usdt_d_4h} (changes in percentage points) or None."""
+        if not self.dominance:
+            return None
+        now, btc, usdt = self.dominance[-1]
+        out = {'btc_d': round(btc, 3), 'usdt_d': round(usdt, 3)}
+        for tag, sec in (('1h', 3600), ('4h', 14400)):
+            past = [x for x in self.dominance if now - x[0] >= sec - 150]
+            if past:
+                out[f'btc_d_{tag}'] = round(btc - past[-1][1], 3)
+                out[f'usdt_d_{tag}'] = round(usdt - past[-1][2], 3)
+        return out
+
     async def _day_pocs_loop(self):
         """
         Each universe coin's POCs of its last 4 completed UTC days, from 5 days of 5m candles (limit 1440, weight 10),
@@ -1569,6 +1607,7 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._weekly_candles_loop()))
         self._tasks.append(asyncio.create_task(self._daily_candles_loop()))
         self._tasks.append(asyncio.create_task(self._day_pocs_loop()))
+        self._tasks.append(asyncio.create_task(self._dominance_loop()))
         self._tasks.append(asyncio.create_task(self._h4_candles_loop()))
 
     async def _start_binance_streams(self, symbols: List[str]):
@@ -1940,6 +1979,7 @@ class DataFetcher:
         # which of them confirm an entry)
         out['_ind'] = self.indicator_panel(md, direction, until_ms)
         out['_btc_slope'], out['_atr_1h'] = self.profile_context(md)
+        out['_dom'] = self.dominance_reading()
         btc = self.markets.get('BTC/USDT:USDT')
         try:
             from strategies.profiles import btc_regime
