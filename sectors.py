@@ -3,6 +3,7 @@ Coin sectors from CoinGecko's public API (no key): a fixed list of broad categor
 the first of them in CATEGORIES order, and a ticker shared by several tokens goes to the one with the biggest cap.
 Cached for a day in models/sectors.json. Used by the per-strategy coin pools (`pools.py`) and the stats splits.
 """
+import errors
 import json
 import os
 import re
@@ -56,8 +57,8 @@ def load(max_age_sec: float = 86400) -> Dict[str, str]:
         if os.path.exists(CACHE) and time.time() - os.path.getmtime(CACHE) < max_age_sec:
             with open(CACHE, encoding='utf-8') as fh:
                 return json.load(fh)
-    except Exception:
-        pass
+    except Exception as e:
+        errors.report('sectors.cache', e, f"{CACHE} unreadable, refetching")
     best: Dict[str, tuple] = {}
     try:
         for cat, name in CATEGORIES.items():
@@ -65,7 +66,8 @@ def load(max_age_sec: float = 86400) -> Dict[str, str]:
                 sym, cap = (r.get('symbol') or '').upper(), r.get('market_cap') or 0
                 if sym and (sym not in best or cap > best[sym][1]):
                     best[sym] = (name, cap)
-    except Exception:
+    except Exception as e:
+        errors.report('sectors.coingecko', e, 'using the cached sectors' if os.path.exists(CACHE) else 'no sectors at all')
         if os.path.exists(CACHE):
             with open(CACHE, encoding='utf-8') as fh:
                 return json.load(fh)

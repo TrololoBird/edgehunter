@@ -385,6 +385,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
         d1 = job[11] if len(job) > 11 else []
         h4 = job[12] if len(job) > 12 else []
         w1 = job[13] if len(job) > 13 else []
+        day_pocs = job[14] if len(job) > 14 else []
         try:
             candles, atr = part_candles(part)
             if not candles or not atr:
@@ -393,7 +394,7 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
             candles_1h = h1 if len(h1) >= len(card_1h) else card_1h
             profile = candles_4d or candles_1h[-96:]
             raw = build_raw(candles, candles_1h, oi_1h, liq_events, atr, now_ms, candles_4d=profile, candles_1d=d1,
-                            candles_4h=h4, candles_1w=w1)
+                            candles_4h=h4, candles_1w=w1, day_pocs=day_pocs)
             if with_context:
                 m15 = m15_long.tolist() if hasattr(m15_long, 'tolist') else list(m15_long)
                 # after m15 exists (eng-16 read it one line early: every coin's context failed, no worker events)

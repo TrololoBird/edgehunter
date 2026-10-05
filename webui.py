@@ -17,6 +17,7 @@ thread. Nothing here is advice: the page shows mechanical rules and their measur
 import asyncio
 import io
 import logging
+import errors
 import math
 import os
 import sqlite3
@@ -476,7 +477,7 @@ class WebUI:
             try:
                 webbrowser.open(self.url)
             except Exception as e:
-                logger.debug(f"Could not open the browser: {e}")
+                errors.report('webui.start', e, "Could not open the browser")
 
     async def stop(self):
         for ws in list(self.clients):
@@ -504,7 +505,8 @@ class WebUI:
     async def _send(self, ws, text: str):
         try:
             await asyncio.wait_for(ws.send_str(text), timeout=5)
-        except Exception:
+        except Exception as e:
+            errors.report('webui.send', e, 'dashboard client dropped')
             self.clients.discard(ws)
 
     # ---------------------------------------------------------------- handlers

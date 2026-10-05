@@ -26,6 +26,7 @@ how often each kind was reached.
 """
 from dataclasses import dataclass, field
 import math
+import time
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from config import CONFIG
@@ -479,6 +480,42 @@ def bars_of(candles_1h: Sequence[Sequence[float]], hours: int) -> List[List[floa
     return out
 
 
+def day_poc(candles: Sequence[Sequence[float]], today_ms: int) -> List[Tuple[int, float]]:
+    """[(day_ms, POC)] of each completed UTC day the 5m candles fully cover (Dalton's daily profile, volume at price:
+    short candles - 1h ones put a POC percents off). The bucket = the candles' mean range x sqrt(3) (~a 15m ATR) /
+    profile_buckets_per_atr, as the map's other profiles."""
+    if len(candles) < 2:
+        return []
+    step_ms = candles[1][0] - candles[0][0]
+    if step_ms > 5 * 60_000:
+        return []
+    days: Dict[int, List] = {}
+    for c in candles:
+        day = int(c[0]) // DAY_MS * DAY_MS
+        if day < today_ms:
+            days.setdefault(day, []).append(c)
+    out = []
+    for day, part in sorted(days.items()):
+        if len(part) < 0.9 * DAY_MS / step_ms:          # a day the window only partly covers
+            continue
+        atr = math.sqrt(3) * sum(c[2] - c[3] for c in part) / len(part)
+        profile = volume_profile(part, atr, '')
+        if profile:
+            out.append((day, profile[0].price))
+    return out
+
+
+def naked_daily_pocs(day_pocs: Sequence[Tuple[int, float]], candles: Sequence[Sequence[float]]) -> List[RawLevel]:
+    """The completed days' POCs no candle after that day has traded through (`candles`: 1h, 8 days - a touch needs
+    only the range): naked / virgin POCs (Dalton), an untested value reference. Kind 'poc' like the composites."""
+    out = []
+    for day, poc in day_pocs:
+        end = day + DAY_MS
+        if not any(c[0] >= end and c[3] <= poc <= c[2] for c in candles):
+            out.append(RawLevel(poc, 'poc', f"naked POC {time.strftime('%m-%d', time.gmtime(day / 1000))}", ts=day))
+    return out
+
+
 # ---------------------------------------------------------------------------------------------------- map
 
 def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]],
@@ -486,7 +523,8 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
               candles_4d: Optional[Sequence[Sequence[float]]] = None,
               candles_1d: Optional[Sequence[Sequence[float]]] = None,
               candles_4h: Optional[Sequence[Sequence[float]]] = None,
-              candles_1w: Optional[Sequence[Sequence[float]]] = None) -> List[RawLevel]:
+              candles_1w: Optional[Sequence[Sequence[float]]] = None,
+              day_pocs: Optional[Sequence[Tuple[int, float]]] = None) -> List[RawLevel]:
     """
     Card-independent levels of one coin (cached by the scanner; rebuilt on a new candle / new 1h history).
     `candles_4d`: 4 days of 5m candles for the 4-day volume profile (1h candles are too coarse for it).
@@ -500,6 +538,7 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     levels += day_levels(candles_1h, now_ms)
     levels += volume_profile(candles_4d or candles_1h, atr, '4d')
     levels += volume_profile(candles_15m, atr, '24h')
+    levels += naked_daily_pocs(day_pocs or (), candles_1h)
     levels += estimated_liquidations(candles_1h, oi_1h, atr)
     levels += observed_liquidations(liq_events, atr, now_ms)
     levels += vwap(candles_15m, today, 'VWAP day')

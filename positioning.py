@@ -12,6 +12,7 @@ Positioning of other traders, from public data, for coins with open cards (conte
 import asyncio
 import json
 import logging
+import errors
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -108,7 +109,7 @@ class Positioning:
                 if rows and float(rows[-1].get(field) or 0.0):
                     out[name] = float(rows[-1][field])
             except Exception as e:
-                logger.debug(f"{name} ratio failed for {symbol}: {e}")
+                errors.report('positioning._ratios_of', e, f"{name} ratio failed for {symbol}")
         mapping = f.symbol_map.by_key.get(symbol, {})
         if 'bybit' in mapping:
             try:
@@ -118,7 +119,7 @@ class Positioning:
                 if buy and sell:
                     out['bybit'] = buy / sell
             except Exception as e:
-                logger.debug(f"bybit ratio failed for {symbol}: {e}")
+                errors.report('positioning._ratios_of', e, f"bybit ratio failed for {symbol}")
         if 'okx' in mapping:
             # OKX allows 5 requests / 2s on this endpoint: one at a time, spaced
             async with self._okx_lock:
@@ -128,7 +129,7 @@ class Positioning:
                     if rows:
                         out['okx'] = float(rows[0][1])
                 except Exception as e:
-                    logger.debug(f"okx ratio failed for {symbol}: {e}")
+                    errors.report('positioning._ratios_of', e, f"okx ratio failed for {symbol}")
                 await asyncio.sleep(0.45)
         return out
 
@@ -192,7 +193,7 @@ class Positioning:
             try:
                 rows = await self._account_positions(address)
             except Exception as e:
-                logger.debug(f"Hyperliquid positions failed for {address[:10]}: {e}")
+                errors.report('positioning._refresh_positions', e, f"Hyperliquid positions failed for {address[:10]}")
                 rows = []
             for p in rows:
                 market = f.symbol_map.lookup('hyperliquid', p.get('coin', ''))
@@ -262,7 +263,7 @@ class Positioning:
                 r = await self._get(OKX_LIQ_URL, instType='SWAP', instFamily=market.native.replace('-SWAP', ''),
                                     state='filled', limit=100)
             except Exception as e:
-                logger.debug(f"OKX liquidations failed for {market.native}: {e}")
+                errors.report('positioning._okx_liquidations_backfill', e, f"OKX liquidations failed for {market.native}")
                 continue
             to_binance = f.symbol_map.key_multiplier.get(market.key, 1.0) / market.multiplier
             known = {(e[0], round(e[2])) for e in md.liq_events if e[4] == 'okx'}

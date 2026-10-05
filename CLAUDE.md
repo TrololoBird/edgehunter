@@ -379,3 +379,15 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   exit / pyramid, Connors' SMA5 exit, no_tp placeholders shown as negative TPs), the demo's BingX ratio rebuilt after
   a restart, ORB keeps the day's state per coin (15m candles rebuilt each minute stalled the loop), QuickEdit off
   before the first console write.
+- eng-60 (eng-57..59 were a worktree branch's, run live 2026-10-04 into the same journal - not in master): the map
+  holds each completed UTC day's naked POC (Dalton's virgin POC: `zones.day_poc` from 5 days of 5m candles of every
+  universe coin, once a day by `fetcher._day_pocs_loop`, ~700 weight; naked = no 1h candle after that day traded
+  through it, `zones.naked_daily_pocs`); AUCTION's target falls back to the next map POC (naked daily / 4d / 24h) when the engine's own 1h POCs hold
+  none ahead (was `no_target`), min R:R 1.5 kept. Also (no signal change): `errors.report` - no exception handler
+  swallows a failure (WARNING throttled per source, counts in the Health line); `memreport` - a 'Memory MB' line every
+  10 min (process classes by VirtualQuery + the bot's structures), `tools/vmmap.py <pid>` the same from outside;
+  `MIMALLOC_PURGE_DELAY=0` (polars' mimalloc kept freed blocks); FlowStore rows = max_pairs + 40 (was 320); the
+  BingX demo session staggers connection attempts (a dead VST address cost 21s per new connection -> 'timestamp is
+  invalid'; demo leverage now sent with side BOTH - it was never set; a BingX stop filling before our close is
+  EXCHANGE, not a failed close); winloop's 'write() when UVStream is closing' is a counted WARNING; journal warm-up vectorized (numpy) + index universe(symbol, ts_ms, price). Never combine winloop with
+  tracemalloc (create_server hangs).

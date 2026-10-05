@@ -17,6 +17,7 @@ The API key is the owner's (config.local.toml, `[executor] api_key / api_secret`
 import asyncio
 import json
 import logging
+import errors
 import os
 import sqlite3
 import time
@@ -72,9 +73,21 @@ class DemoExecutor:
             cfg = CONFIG.executor
             self.ex = ccxt.bingx({'apiKey': cfg.api_key, 'secret': cfg.api_secret, 'enableRateLimit': True,
                                   'timeout': 30_000,   # the VST contract list (~1200 markets) took > 10s under load
-                                  # VST round trips took 5-11s from here: a 5s signed window expired ('timestamp is invalid')
+                                  # recvWindow: ccxt's bingx.sign never sends it (BingX's window stays 5s); the cause of
+                                  # 'timestamp is invalid' was a dead VST address, see the session below
                                   'options': {'defaultType': 'swap', 'recvWindow': 60_000}})
             self.ex.set_sandbox_mode(True)       # VST demo: forced, the only mode this module has
+            # ccxt's own connector tries the resolved addresses with happy_eyeballs_delay=0, which here meant one at a
+            # time: one of VST's four CloudFront addresses (3.173.161.114, 2026-10-05) never answers, every new
+            # connection to it waited the 21s TCP timeout, and BingX rejected the request signed before it ('timestamp
+            # is invalid', its window is 5s; ccxt never sends the recvWindow option). Staggered attempts 250ms apart:
+            # the first call took 0.9-1.4s instead of 21.7s. ccxt closes this session in ex.close().
+            import ssl
+            import aiohttp
+            import certifi
+            self.ex.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(
+                ssl=ssl.create_default_context(cafile=certifi.where()), enable_cleanup_closed=True,
+                happy_eyeballs_delay=0.25))
         if not self._markets_ready:
             await self.ex.load_markets()
             try:
@@ -234,9 +247,9 @@ class DemoExecutor:
             logger.info(f"Demo: {symbol} size {qty} below the minimum {min_qty}")
             return
         try:
-            await ex.set_leverage(cfg.max_leverage, symbol)
+            await ex.set_leverage(cfg.max_leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
         except Exception as e:
-            logger.debug(f"Demo leverage {symbol}: {e}")
+            errors.report('executor._open', e, f"Demo leverage {symbol}")
         side, exit_side = ('buy', 'sell') if d > 0 else ('sell', 'buy')
         try:
             order = await ex.create_order(symbol, 'market', side, qty)
@@ -324,7 +337,7 @@ class DemoExecutor:
             with open(self.pending_path, 'w', encoding='utf-8') as f:
                 json.dump(self.pending, f)
         except OSError as e:
-            logger.debug(f"Demo pending state: {e}")
+            errors.report('executor._save_pending', e, "Demo pending state")
 
     async def _place_limit(self, key: str, s) -> None:
         from strategies.geometry import entry_levels
@@ -369,9 +382,9 @@ class DemoExecutor:
             self.pending[key] = {'skip': True, 'reason': f'size {qty} below the minimum'}
             return
         try:
-            await ex.set_leverage(cfg.max_leverage, symbol)
+            await ex.set_leverage(cfg.max_leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
         except Exception as e:
-            logger.debug(f"Demo leverage {symbol}: {e}")
+            errors.report('executor._place_limit', e, f"Demo leverage {symbol}")
         price = float(ex.price_to_precision(symbol, lv['entry']))
         order = await ex.create_order(symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
         self.pending[key] = {'order_id': order['id'], 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio,
@@ -390,7 +403,7 @@ class DemoExecutor:
         try:
             await ex.cancel_order(p['order_id'], p['symbol'])
         except Exception as e:
-            logger.debug(f"Demo cancel limit {p['symbol']}: {e}")
+            errors.report('executor._cancel_limit', e, f"Demo cancel limit {p['symbol']}")
         # the cancel may fail or come after a fill (live ARB / CAP 2026-10-02: 'cancelled' limits filled and sat
         # without a stop): the order's final state decides
         try:
@@ -428,7 +441,7 @@ class DemoExecutor:
             try:
                 o = await ex.fetch_order(p['order_id'], p['symbol'])
             except Exception as e:
-                logger.debug(f"Demo limit status {p['symbol']}: {e}")
+                errors.report('executor.check_limits', e, f"Demo limit status {p['symbol']}")
                 continue
             filled = float(o.get('filled') or 0)
             if o.get('status') == 'closed' or (filled and filled >= 0.999 * p['qty']):
@@ -517,7 +530,7 @@ class DemoExecutor:
                 try:
                     await ex.cancel_all_orders(symbol)
                 except Exception as e:
-                    logger.debug(f"Demo cancel {symbol}: {e}")
+                    errors.report('executor.on_add', e, f"Demo cancel {symbol}")
                 # BingX's price ratio to Binance (contract scale x basis) lives in memory only: after a restart it is
                 # the BingX plan entry over the card's Binance entry (1.0 put a 1000-unit contract's stop 1000x off)
                 scale = float(trade.get('scale') or 0.0)
@@ -582,10 +595,18 @@ class DemoExecutor:
         try:
             await ex.cancel_all_orders(symbol)
         except Exception as e:
-            logger.debug(f"Demo cancel {symbol}: {e}")
+            errors.report('executor._close', e, f"Demo cancel {symbol}")
         left = await self._position_qty(symbol)
         if left > 0:
-            await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
+            try:
+                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
+            except Exception as e:
+                # BingX's own stop / target filled between the position check and this order (BAT 2026-10-05 04:58:
+                # both stops at 0.1022, code 101290 'Reduce Only order can only decrease the position'): the exchange
+                # closed it, recorded as such - anything else, or a position still open, is a real failure
+                if '101290' not in str(e) or await self._position_qty(symbol) > 0:
+                    raise
+                reason = 'EXCHANGE'
         await self._finalize(trade, reason, journal_r)
 
     async def _finalize(self, trade: Dict, reason: str, journal_r: Optional[float]) -> None:
@@ -655,8 +676,8 @@ class DemoExecutor:
                             await self._exchange()
                             try:
                                 await self.ex.cancel_all_orders(trade['symbol'])
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                errors.report('executor.cancel_after_flat', e, f"{trade['symbol']}: its stop / targets may still rest on BingX")
                             await self._finalize(trade, 'EXCHANGE', None)
                     except Exception as e:
                         # network / signature hiccups of the VST API retry next minute: one line; anything else with

@@ -6,6 +6,7 @@ A coroutine touches a heartbeat every 100ms; a daemon thread checks it. When the
 logs the most frequent innermost frames of our code. Garbage-collection pauses are timed through gc.callbacks
 (a full collection over hundreds of MB of live objects also stops the loop) and reported with the stall.
 """
+import errors
 import asyncio
 import gc
 import logging
@@ -77,8 +78,8 @@ def free_ram_mb() -> Optional[float]:
         status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
         if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
             return status.ullAvailPhys / 2 ** 20
-    except Exception:
-        pass
+    except Exception as e:
+        errors.report('watchdog.free_ram', e)
     return None
 
 

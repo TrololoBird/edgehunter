@@ -18,6 +18,7 @@ resets once data flowed. A 'dynamic' connection supports runtime subscribe / uns
 """
 import asyncio
 import logging
+import errors
 import time
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
@@ -321,7 +322,7 @@ class VenueStream:
                     await self._send_all(transport, self.subscribe_messages(add))
                 self._dynamic_active = set(self._dynamic_wanted)
             except Exception as e:
-                logger.debug(f"{self.name} dynamic update failed: {e}")
+                errors.report('venues.set_dynamic', e, f"{self.name} dynamic update failed")
 
 
 # ====================================================================== Binance

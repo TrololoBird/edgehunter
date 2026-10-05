@@ -12,10 +12,10 @@ import asyncio
 import bisect
 import json
 import logging
-import random
 import sqlite3
-import statistics
 import threading
+
+import numpy as np
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS universe (
     price REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_universe_ts ON universe(ts_ms);
+CREATE INDEX IF NOT EXISTS idx_universe_sym ON universe(symbol, ts_ms, price);
 -- Every live liquidation of every venue (prices in Binance units) and snapshots of the liquidation LEVELS the level map
 -- used (estimated clusters 'liq_est', real Hyperliquid account liquidation prices 'liq_hl'): a forward test of whether
 -- liquidations happen where the map expects them once price gets there (the map drops crossed clusters, so only a
@@ -211,7 +212,7 @@ def proven_negative(groups: Dict[tuple, Dict[tuple, List[float]]], min_blocks: i
     proven negative with the Benjamini-Hochberg false discovery rate q over all groups tested (a setup x regime
     grid is dozens of tests at once: without the correction some mutes are chance).
     """
-    rng = random.Random(seed)
+    rng = np.random.default_rng(seed)
     stats: Dict[tuple, Tuple[int, float]] = {}
     for key, blocks_by_id in groups.items():
         blocks = list(blocks_by_id.values())
@@ -220,8 +221,11 @@ def proven_negative(groups: Dict[tuple, Dict[tuple, List[float]]], min_blocks: i
             stats[key] = (n, 1.0)
             continue
         draws = 2000
-        at_or_above = sum(statistics.fmean([v for _ in range(n) for v in blocks[rng.randrange(n)]]) >= 0
-                          for _ in range(draws))
+        # the mean of the pooled values of n resampled blocks = sum of their sums / sum of their sizes
+        sums = np.array([sum(b) for b in blocks], dtype=float)
+        sizes = np.array([len(b) for b in blocks], dtype=float)
+        idx = rng.integers(0, n, size=(draws, n))
+        at_or_above = int((sums[idx].sum(axis=1) / sizes[idx].sum(axis=1) >= 0).sum())
         stats[key] = (n, (at_or_above + 1) / (draws + 1))
     tested = sorted((p, key) for key, (n, p) in stats.items() if n >= min_blocks)
     m = len(tested)
@@ -436,7 +440,9 @@ class SignalJournal:
             self._last_logged[(symbol, family)] = (ts, rank)
         self._last_snapshot = 0.0
         self._snapshot_times: List[int] = []
-        self._snapshot_cache: Dict[int, Dict[str, float]] = {}
+        self._snapshot_cache: Dict[int, np.ndarray] = {}
+        self._snapshot_times_at = 0.0
+        self._symbol_index: Dict[str, int] = {}
         self.success = None
         if CONFIG.ml.success_enabled:
             try:
@@ -640,7 +646,11 @@ class SignalJournal:
         'median' (the P(edge) label: a balanced 'beat the median coin').
         """
         with self._lock:
-            if not self._snapshot_times or self._snapshot_times[-1] < ts_ms + minutes * 60_000:
+            # reload the snapshot times when a later one is needed, at most once a minute (a label still in the
+            # future reran a full DISTINCT scan of the table on every call)
+            if not self._snapshot_times or (self._snapshot_times[-1] < ts_ms + minutes * 60_000
+                                            and time.time() - self._snapshot_times_at > 60):
+                self._snapshot_times_at = time.time()
                 self._snapshot_times = [t for (t,) in self.conn.execute("SELECT DISTINCT ts_ms FROM universe ORDER BY ts_ms")]
 
             def nearest(t: int) -> Optional[int]:
@@ -654,15 +664,23 @@ class SignalJournal:
             snaps = []
             for t in (t0, t1):
                 if t not in self._snapshot_cache:
-                    self._snapshot_cache[t] = dict(self.conn.execute("SELECT symbol, price FROM universe WHERE ts_ms = ?", (t,)))
+                    # a dense price vector over a shared symbol index (NaN = not in that snapshot)
+                    pairs = self.conn.execute("SELECT symbol, price FROM universe WHERE ts_ms = ?", (t,)).fetchall()
+                    for sym, _ in pairs:
+                        self._symbol_index.setdefault(sym, len(self._symbol_index))
+                    vec = np.full(len(self._symbol_index), np.nan)
+                    vec[[self._symbol_index[sym] for sym, _ in pairs]] = [p if p else np.nan for _, p in pairs]
+                    self._snapshot_cache[t] = vec
                     if len(self._snapshot_cache) > 400:
                         self._snapshot_cache.pop(next(iter(self._snapshot_cache)))
                 snaps.append(self._snapshot_cache[t])
         a, b = snaps
-        changes = [b[s] / a[s] - 1 for s in a if s in b and a[s]]
+        k = min(len(a), len(b))
+        changes = b[:k] / a[:k] - 1
+        changes = changes[np.isfinite(changes)]
         if len(changes) < 20:
             return None
-        return statistics.median(changes) if stat == 'median' else statistics.fmean(changes)
+        return float(np.median(changes) if stat == 'median' else changes.mean())
 
     def _labelled_rows(self, since_ms: int = 0) -> List[sqlite3.Row]:
         with self._lock:
@@ -695,35 +713,44 @@ class SignalJournal:
         the coin's usual |4h move| (its universe snapshots over the same days). x1.0 = the label adds nothing to the
         coin's normal volatility (live 2026-09-27..30: whales, absorption, one-venue, cascades ~x1.0; impulses x1.4).
         """
-        import bisect
-        import statistics
         since = int((time.time() - days * 86_400) * 1000)
+        norm = lambda s: s.replace('/USDT:USDT', 'USDT').replace('/', '')
         with self._lock:
-            uni = self.conn.execute("SELECT ts_ms, symbol, price FROM universe WHERE ts_ms >= ? ORDER BY ts_ms",
-                                    (since,)).fetchall()
             rows = self.conn.execute("SELECT group_key, symbol, ret_4h FROM signals WHERE kind = 'anomaly' AND "
                                      "ret_4h IS NOT NULL AND ts_ms >= ?", (since,)).fetchall()
-        norm = lambda s: s.replace('/USDT:USDT', 'USDT').replace('/', '')
-        series: Dict[str, list] = {}
-        for t, s, p in uni:
-            series.setdefault(norm(s), []).append((t, p))
+            # only the labelled coins' snapshots (the whole universe was ~800k rows, ~10s of Python per refresh)
+            wanted = {norm(s) for _, s, _ in rows}
+            names = [u for (u,) in self.conn.execute("SELECT DISTINCT symbol FROM universe WHERE ts_ms >= ?", (since,))
+                     if norm(u) in wanted]
+            uni = self.conn.execute(
+                f"SELECT ts_ms, symbol, price FROM universe WHERE ts_ms >= ? AND symbol IN ({','.join('?' * len(names))})",
+                (since, *names)).fetchall() if names else []
         usual: Dict[str, float] = {}
-        for s, v in series.items():
-            ts = [x[0] for x in v]
-            moves = []
-            for t, p in v:
-                j = bisect.bisect_left(ts, t + 4 * 3_600_000)
-                if j < len(v) and abs(ts[j] - t - 4 * 3_600_000) <= 600_000 and p:
-                    moves.append(abs(v[j][1] / p - 1))
-            if len(moves) > 20:
-                usual[s] = statistics.mean(moves)
+        if uni:
+            syms = np.array([norm(s) for _, s, _ in uni])     # one series per coin however a snapshot spelled it
+            ts_all = np.array([t for t, _, _ in uni], dtype=np.int64)
+            px_all = np.array([p if p else np.nan for _, _, p in uni], dtype=float)
+            order = np.lexsort((ts_all, syms))            # by symbol, then time
+            syms, ts_all, px_all = syms[order], ts_all[order], px_all[order]
+            names, starts = np.unique(syms, return_index=True)
+            for name, lo, hi in zip(names, starts, list(starts[1:]) + [len(syms)]):
+                ts, px = ts_all[lo:hi], px_all[lo:hi]
+                target = ts + 4 * 3_600_000
+                j = np.searchsorted(ts, target)
+                ok = j < len(ts)
+                jj = np.where(ok, j, 0)
+                ok &= np.abs(ts[jj] - target) <= 600_000
+                moves = np.abs(px[jj][ok] / px[ok] - 1)
+                moves = moves[np.isfinite(moves)]
+                if len(moves) > 20:
+                    usual[str(name)] = float(moves.mean())
         ratios: Dict[str, list] = {}
         for label, s, r4 in rows:
             base = usual.get(norm(s))
             if base:
                 ratios.setdefault(label, []).append(abs(r4) / base)
         ANOMALY_EFFECT.clear()
-        ANOMALY_EFFECT.update({k: (statistics.median(v), len(v)) for k, v in ratios.items() if len(v) >= 25})
+        ANOMALY_EFFECT.update({k: (float(np.median(v)), len(v)) for k, v in ratios.items() if len(v) >= 25})
         return len(ANOMALY_EFFECT)
 
     def refresh_regime_stats(self) -> int:

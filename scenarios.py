@@ -14,6 +14,7 @@ Levels (1h candles only, so live and training see the same inputs): intact 1h an
 previous day / week and session highs / lows, the 8-day volume profile of the 1h candles, round numbers; merged at
 `merge_atr` x ATR(1h); zones weaker than `min_strength` are skipped for the scenario ladder.
 """
+import errors
 import math
 import os
 import pickle
@@ -209,7 +210,8 @@ def load_model(path: str = MODEL_PATH) -> Optional[Dict]:
         try:
             with open(path, 'rb') as fh:
                 _model_cache.update(mtime=mtime, model=pickle.load(fh))
-        except Exception:
+        except Exception as e:
+            errors.report('scenarios.model', e, f"{path} unreadable: scenario cards without the model")
             _model_cache.update(mtime=mtime, model=None)
     m = _model_cache.get('model')
     return m if m and m.get('passed') else None

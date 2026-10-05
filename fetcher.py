@@ -2,6 +2,7 @@ import asyncio
 import bisect
 import gc
 import logging
+import errors
 import time
 import zlib
 from collections import deque
@@ -132,6 +133,11 @@ class MarketData:
     # system: SMA200 + RSI(2) of DAILY closes), reloaded once per UTC day by _daily_candles_loop
     d1: list = field(default_factory=list)
     d1_day: int = 0
+    # POCs of the last completed UTC days from their 5m candles [(day_ms, poc)], refreshed once a day for every coin
+    # (`_day_pocs_loop`): the map's naked POCs (Dalton) - 1h candles put a POC percents off, and 5m history is held
+    # only for card coins
+    day_pocs: list = field(default_factory=list)
+    day_pocs_day: int = 0
     # 200 closed 4h candles (~33 days, ICT's main point-of-interest timeframe) and the 60 closed weekly candles
     h4: list = field(default_factory=list)
     h4_slot: int = 0
@@ -423,7 +429,9 @@ class DataFetcher:
 
         # Order flow state (flow.py) and the cross-venue symbol map
         self.symbol_map = SymbolMap()
-        self.flow = FlowStore()
+        # rows for the universe plus coins joining / held by open cards (it doubles if ever exceeded): 320 rows for a
+        # 70-coin universe held ~60 MB of empty ring buffers
+        self.flow = FlowStore(capacity=CONFIG.exchange.max_pairs + 40)
         self.whales = WhaleBook()
         self.sweeps = SweepTracker(self._on_sweep)
         self.footprint = Footprint()
@@ -564,7 +572,7 @@ class DataFetcher:
             res = await self._rest_call(self.futures_exchange, 'fapiPublicGetOpenInterest', {'symbol': binance_symbol},
                                         priority=1)
         except Exception as e:
-            logger.debug(f"OI fetch failed for {symbol}: {e}")
+            errors.report('fetcher.fetch_open_interest', e, f"OI fetch failed for {symbol}")
             return None
         self.oi_last_updated[symbol] = time.time()
         return float(res.get('openInterest', 0.0))
@@ -680,7 +688,7 @@ class DataFetcher:
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
-                        logger.debug(f"{venue} bulk tickers failed: {e}")
+                        errors.report('fetcher._bulk_deriv_loop', e, f"{venue} bulk tickers failed")
                 await asyncio.sleep(self.BULK_DERIV_INTERVAL_SEC)
 
     COINBASE_PRODUCTS_URL = 'https://api.coinbase.com/api/v3/brokerage/market/products?product_type=SPOT'
@@ -963,7 +971,7 @@ class DataFetcher:
         except RATE_LIMIT_ERRORS:
             raise
         except Exception as e:
-            logger.debug(f"Klines fetch skipped for {symbol}: {e}")
+            errors.report('fetcher._fetch_klines', e, f"Klines fetch skipped for {symbol}")
             return []
 
     async def fetch_minute_klines(self, futures_symbol: str, start_ms: int, count: int) -> Optional[List]:
@@ -980,7 +988,7 @@ class DataFetcher:
                 'limit': count,
             }, priority=2, weight=1 if count < 100 else 2)
         except Exception as e:
-            logger.debug(f"Minute klines failed for {futures_symbol}: {e}")
+            errors.report('fetcher.fetch_minute_klines', e, f"Minute klines failed for {futures_symbol}")
             return None
 
     async def _fetch_oi_history(self, futures_symbol: str) -> List:
@@ -993,7 +1001,7 @@ class DataFetcher:
         except RATE_LIMIT_ERRORS:
             raise
         except Exception as e:
-            logger.debug(f"OI history skipped for {futures_symbol}: {e}")
+            errors.report('fetcher._fetch_oi_history', e, f"OI history skipped for {futures_symbol}")
             return []
 
     async def _seed_minutes(self, symbol: str, md: MarketData):
@@ -1031,7 +1039,7 @@ class DataFetcher:
         except RATE_LIMIT_ERRORS:
             raise
         except Exception as e:
-            logger.debug(f"OI history seed skipped for {symbol}: {e}")
+            errors.report('fetcher._seed_oi', e, f"OI history seed skipped for {symbol}")
             return
         # openInterestHist timestamps are period END times: the OI at that moment
         points = [(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in rows or []]
@@ -1076,7 +1084,7 @@ class DataFetcher:
                                 {'symbol': binance_symbol, 'interval': '1h', 'limit': 720}, priority=1, weight=5),
             )
         except Exception as e:
-            logger.debug(f"1h history failed for {symbol}: {e}")
+            errors.report('fetcher.load_htf', e, f"1h history failed for {symbol}")
             md.htf_loaded = time.time() - CONFIG.zones.htf_refresh_sec + 300  # retry in 5 min
             return False
         md.htf_klines = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
@@ -1103,7 +1111,7 @@ class DataFetcher:
                                 {'symbol': binance_symbol, 'interval': tf, 'limit': 99}, priority=0, weight=1)
                 for tf in ('15m', '5m', '1h')])
         except Exception as e:
-            logger.debug(f"Chart candles failed for {symbol}: {e}")
+            errors.report('fetcher.chart_candles', e, f"Chart candles failed for {symbol}")
             return None
         rows = lambda ks: [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
                            for k in ks or []]
@@ -1203,7 +1211,7 @@ class DataFetcher:
                                                          {'symbol': binance_symbol, 'interval': '15m',
                                                           'limit': cfg.long_history_candles}, priority=1, weight=2)
                     except Exception as e:
-                        logger.debug(f"1h / 15m candles failed for {symbol}: {e}")
+                        errors.report('fetcher.candles_1h', e, f"1h / 15m candles failed for {symbol}")
                         return
                 # the long histories as float arrays (~28 KB a coin instead of ~150 KB of candle lists: 6 GB box)
                 hourly = parse(rows)
@@ -1246,7 +1254,7 @@ class DataFetcher:
                                                      {'symbol': binance_symbol, 'interval': '4h', 'limit': 200},
                                                      priority=2, weight=2)
                     except Exception as e:
-                        logger.debug(f"4h candles failed for {symbol}: {e}")
+                        errors.report('fetcher.candles_4h', e, f"4h candles failed for {symbol}")
                         return
                 md.h4 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
                          for k in self._closed_only(rows or [])]
@@ -1280,7 +1288,7 @@ class DataFetcher:
                                                      {'symbol': binance_symbol, 'interval': '1d', 'limit': 370},
                                                      priority=2, weight=2)
                     except Exception as e:
-                        logger.debug(f"daily candles failed for {symbol}: {e}")
+                        errors.report('fetcher.candles_1d', e, f"daily candles failed for {symbol}")
                         return
                 md.d1 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
                          for k in self._closed_only(rows or [])]
@@ -1290,6 +1298,44 @@ class DataFetcher:
                 await asyncio.gather(*(one(s) for s in symbols))
                 logger.info(f"Daily candles: {sum(1 for s in symbols if len(self.markets.get(s).d1 or []) >= 202) if symbols else 0}"
                             f" of {len(symbols)} coins have >= 202 closed days")
+            await asyncio.sleep(300)
+
+    async def _day_pocs_loop(self):
+        """
+        Each universe coin's POCs of its last 4 completed UTC days, from 5 days of 5m candles (limit 1440, weight 10),
+        once per UTC day a few minutes after the close and for coins that join (~700 weight a day).
+        """
+        from zones import day_poc
+        while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
+            await asyncio.sleep(10)
+        while self._running:
+            now = time.time()
+            day = int(now // 86400)
+            symbols = [s for s, md in self.markets.items() if md.day_pocs_day < day]
+            sem = asyncio.Semaphore(2)
+
+            async def one(symbol: str):
+                binance_symbol = self._ccxt_to_binance_symbol(symbol)
+                md = self.markets.get(symbol)
+                if not binance_symbol or md is None:
+                    return
+                async with sem:
+                    try:
+                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
+                                                     {'symbol': binance_symbol, 'interval': '5m', 'limit': 1440},
+                                                     priority=2, weight=10)
+                    except Exception as e:
+                        errors.report('fetcher.day_pocs', e, f"5m candles failed for {symbol}")
+                        return
+                candles = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
+                           for k in self._closed_only(rows or [])]
+                md.day_pocs = day_poc(candles, day * 86_400_000)
+                md.day_pocs_day = day
+
+            if symbols and now - day * 86400 >= 180:
+                await asyncio.gather(*(one(s) for s in symbols))
+                logger.info(f"Day POCs: {sum(1 for s in symbols if self.markets.get(s) and self.markets[s].day_pocs)}"
+                            f" of {len(symbols)} coins")
             await asyncio.sleep(300)
 
     async def _weekly_candles_loop(self):
@@ -1317,7 +1363,7 @@ class DataFetcher:
                                                      {'symbol': binance_symbol, 'interval': '1w', 'limit': 60},
                                                      priority=2, weight=1)
                     except Exception as e:
-                        logger.debug(f"weekly candles failed for {symbol}: {e}")
+                        errors.report('fetcher.candles_1w', e, f"weekly candles failed for {symbol}")
                         return
                 closed = self._closed_only(rows or [])
                 md.w1_ref = weekly_ref([float(k[4]) for k in closed])
@@ -1434,7 +1480,7 @@ class DataFetcher:
                         df, final = await self._load_frame(market, symbol)
                         await asyncio.sleep(CONFIG.rest.baseline_delay_sec)
                 except Exception as e:
-                    logger.debug(f"Backfill attempt failed for {symbol} ({market}): {e}")
+                    errors.report('fetcher._backfill', e, f"Backfill attempt failed for {symbol} ({market})")
                     continue
                 md = self.markets.get(symbol)
                 if md is None:
@@ -1514,6 +1560,7 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._seasonal_loop()))
         self._tasks.append(asyncio.create_task(self._weekly_candles_loop()))
         self._tasks.append(asyncio.create_task(self._daily_candles_loop()))
+        self._tasks.append(asyncio.create_task(self._day_pocs_loop()))
         self._tasks.append(asyncio.create_task(self._h4_candles_loop()))
 
     async def _start_binance_streams(self, symbols: List[str]):
@@ -1758,7 +1805,7 @@ class DataFetcher:
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.debug(f"Depth snapshot failed for {symbol}: {e}")
+                    errors.report('fetcher._deep_books_loop', e, f"Depth snapshot failed for {symbol}")
                 await asyncio.sleep(max(0.2, interval / max(1, len(symbols)) * 0.8))
             await asyncio.sleep(max(1.0, interval - (time.time() - started)))
 

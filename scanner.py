@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import errors
 import os
 import platform
 import statistics
@@ -50,7 +51,7 @@ def play_alert_sound(level: str = "normal"):
         else:
             winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
     except Exception as e:
-        logger.debug(f"Could not play sound: {e}")
+        errors.report('scanner.play_alert_sound', e, "Could not play sound")
 
 
 class _FrameLookup:
@@ -950,7 +951,8 @@ class Scanner:
         long_15m = np.asarray(md.m15_long, dtype=np.float64) if with_context and len(md.m15_long) else ()
         long_1h = np.asarray(md.h1_long, dtype=np.float64) if with_context and len(md.h1_long) else ()
         return (symbol, part.select(PART_COLUMNS), list(md.h1), list(md.htf_klines), list(md.htf_oi), liq, now_ms,
-                candles_4d, with_context, long_15m, long_1h, list(md.d1)[-60:], list(md.h4), list(md.w1))
+                candles_4d, with_context, long_15m, long_1h, list(md.d1)[-60:], list(md.h4), list(md.w1),
+                list(md.day_pocs))
 
     def _correlates(self) -> Dict[str, np.ndarray]:
         """The SMT correlates' 15m histories (BTC for every coin, ETH for BTC): the long REST history + the frame."""
@@ -1236,7 +1238,7 @@ class Scanner:
         if md is None or not candles or not atr:
             return [], atr, candles
         raw = build_raw(candles, md.htf_klines, md.htf_oi, list(md.liq_events), atr, time.time() * 1000,
-                        candles_4d=md.htf_5m)
+                        candles_4d=md.htf_5m, day_pocs=md.day_pocs)
         return raw, atr, candles
 
     async def levels_loop(self):
@@ -1467,17 +1469,19 @@ class Scanner:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.debug(f"Positioning refresh failed: {e}")
+                errors.report('scanner.positioning_loop', e, "Positioning refresh failed")
 
     async def state_loop(self):
         """Every minute: persist state and log a health line (loop timings, per-venue message rates)."""
         last_counts: Dict[str, int] = {}
         last_bytes: Dict[str, int] = {}
+        last_memory = 0.0
         try:
             import psutil
             proc = psutil.Process()
             proc.cpu_percent(None)   # the first reading only starts the measurement
-        except Exception:
+        except Exception as e:
+            errors.report('scanner.psutil', e, 'Health line without cpu / memory')
             proc = None
         while self._running:
             await asyncio.sleep(60)
@@ -1502,9 +1506,21 @@ class Scanner:
                 process = f", cpu {proc.cpu_percent(None):.0f}%, mem {proc.memory_info().rss / 2**20:.0f}MB"
             ctxs = [c for c in self.detector.context.values() if c is not None]
             pairs = sum(1 for c in ctxs if getattr(c, 'smt_pair', None))
+            failed = errors.health_text()
             logger.info(f"Health: tier0 {self.last_tier0_sec:.2f}s, scan {self.last_scan_sec:.2f}s "
                         f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
-                        f"smt pairs {pairs}/{len(ctxs)}, streams " + ", ".join(rates))
+                        f"smt pairs {pairs}/{len(ctxs)}, streams " + ", ".join(rates)
+                        + (f"; {failed}" if failed else ''))
+            if time.time() - last_memory >= 600:
+                # where the memory sits (process classes + the bot's own structures), every 10 minutes
+                last_memory = time.time()
+                try:
+                    import memreport
+                    # off the loop: walking the containers took 1.2s (2026-10-05); a container changing size while
+                    # it is read raises, reported and retried in 10 minutes
+                    logger.info(await asyncio.to_thread(memreport.report, self.fetcher, self))
+                except Exception as e:
+                    errors.report('scanner.memreport', e)
 
     def _save_state(self):
         path = CONFIG.journal.state_path

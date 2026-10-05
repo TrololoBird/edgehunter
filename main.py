@@ -13,9 +13,15 @@ Crypto Market Microstructure Scanner (Binance USD-M perpetuals).
 Ctrl+C stops gracefully (press again after 3s to force).
 """
 
+import os
+# polars' bundled mimalloc kept freed memory committed: 579 MB of large private blocks against ~290 MB of live
+# structures (memreport, 2026-10-05). Purge freed pages at once; set before polars loads (the workers inherit it).
+os.environ.setdefault('MIMALLOC_PURGE_DELAY', '0')
+
 import argparse
 import asyncio
 import logging
+import errors
 import os
 import signal
 import sys
@@ -56,6 +62,7 @@ def fast_loop_factory():
     """
     uvloop has no Windows build; winloop (uvloop-compatible) is used when installed, else the default loop.
     Returned as an asyncio.run(loop_factory=...) factory (event loop policies are deprecated since Python 3.14).
+    Never combine winloop with tracemalloc: create_server never returns while tracemalloc is tracing (2026-10-05).
     """
     try:
         if sys.platform == 'win32':
@@ -63,7 +70,8 @@ def fast_loop_factory():
             return 'winloop', winloop.new_event_loop
         import uvloop
         return 'uvloop', uvloop.new_event_loop
-    except Exception:
+    except Exception as e:
+        errors.report('main.event_loop', e, 'falling back to the default asyncio loop')
         return None, None
 
 FORCE_EXIT_AFTER_SEC = 3.0
@@ -120,15 +128,15 @@ class ConsoleQuickEdit:
                 self.saved = mode.value
                 kernel32.SetConsoleMode(self.handle, (mode.value & ~self.ENABLE_QUICK_EDIT_MODE) | self.ENABLE_EXTENDED_FLAGS)
         except Exception as e:
-            logger.debug(f"QuickEdit not changed: {e}")
+            errors.report('main.disable', e, "QuickEdit not changed")
 
     def restore(self):
         if self.saved is not None:
             try:
                 import ctypes
                 ctypes.windll.kernel32.SetConsoleMode(self.handle, self.saved)
-            except Exception:
-                pass
+            except Exception as e:
+                errors.report('main.console_restore', e)
             self.saved = None
 
 
@@ -142,6 +150,11 @@ def loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict):
     if isinstance(exc, OSError) and 'shielded future' in (context.get('message') or ''):
         if not NETWORK.failed("DNS resolver", exc):
             logger.warning(f"Network: background DNS resolution failed ({type(exc).__name__} {exc})")
+        return
+    if isinstance(exc, RuntimeError) and 'UVStream is closing' in str(exc):
+        # winloop: TLS data queued for a socket the peer / a reconnect is already closing (2026-10-05 05:12, after a
+        # 7.8s loop stall). The connection is gone either way and its owner reconnects: one counted WARNING
+        errors.report('winloop.ssl_write_on_closing', exc, context.get('message') or '')
         return
     loop.default_exception_handler(context)
 
@@ -175,7 +188,7 @@ async def main(use_web: bool = True):
             import ctypes
             ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
         except Exception as e:
-            logger.debug(f"Ctrl+C handling not re-enabled: {e}")
+            errors.report('main.main', e, "Ctrl+C handling not re-enabled")
         # winloop's add_signal_handler did not catch Ctrl+Break (the process died without its shutdown): Python's
         # own handlers cover SIGINT and SIGBREAK on Windows
         for sig in signals:

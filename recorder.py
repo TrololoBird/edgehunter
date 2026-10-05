@@ -17,6 +17,7 @@ The event loop only copies the finished minute out of the ring buffers (numpy sl
 bot's worker PROCESS (the level-map pool); building frames and writing Parquet happen there, so disk I/O and
 polars never hold the loop's GIL.
 """
+import errors
 import glob
 import logging
 import os
@@ -267,11 +268,13 @@ def heat_history(root: str, symbol: str, since_ms: int, until_ms: int, step: Opt
     for f in files:
         try:
             frames.append(pl.scan_parquet(f).select([c for c in cols]).filter(pl.col('symbol').cast(pl.Utf8) == symbol))
-        except Exception:
+        except Exception as e:
+            errors.report('recorder.heat_history', e, f"{f} skipped")
             continue
     try:
         df = pl.concat(frames, how='vertical_relaxed').collect()
-    except Exception:
+    except Exception as e:
+        errors.report('recorder.heat_history', e, f"{symbol}: no recorded heatmap")
         return {'step': step or 0.0, 'snapshots': []}
     if df.is_empty():
         return {'step': step or 0.0, 'snapshots': []}

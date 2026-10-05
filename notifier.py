@@ -7,6 +7,7 @@ Sending runs in background tasks with a timeout, so a slow network never blocks 
 """
 import asyncio
 import logging
+import errors
 import platform
 from typing import Optional, Set
 
@@ -64,7 +65,7 @@ class Notifier:
             )
             await asyncio.wait_for(proc.wait(), timeout=20)
         except Exception as e:
-            logger.debug(f"Toast failed: {e}")
+            errors.report('notifier._toast', e, "Toast failed")
 
     async def _telegram(self, text: str):
         token, chat = self.cfg.telegram_token, self.cfg.telegram_chat_id

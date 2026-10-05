@@ -15,6 +15,7 @@ stats / P(edge), never a trigger until the journal proves one:
 import asyncio
 import json
 import logging
+import errors
 import time
 from typing import Dict, Optional
 
@@ -75,7 +76,7 @@ class ExternalData:
                         calls += oi
                 self.market['pc_oi_btc'] = puts / calls if calls else None
             except Exception as e:
-                logger.debug(f"Deribit: {e!r}")
+                errors.report('extdata.deribit_loop', e, "Deribit")
             await asyncio.sleep(300)
 
     # ------------------------------------------------------------------ Hyperliquid predicted fundings
@@ -106,7 +107,7 @@ class ExternalData:
                     if len(rates) >= 2:
                         self.coin.setdefault(key, {})['funding_spread'] = max(rates) - min(rates)
             except Exception as e:
-                logger.debug(f"predictedFundings: {e!r}")
+                errors.report('extdata.funding_loop', e, "predictedFundings")
             await asyncio.sleep(300)
 
     # ------------------------------------------------------------------ OKX flow seed
@@ -131,7 +132,7 @@ class ExternalData:
                             self.fetcher.flow.seed_minute('okx', key, t + k * 60_000, float(buy) / 5, float(sell) / 5, 0)
                         seeded += 1
             except Exception as e:
-                logger.debug(f"OKX taker volume {coin}: {e!r}")
+                errors.report('extdata.seed_okx_flow', e, f"OKX taker volume {coin}")
             await asyncio.sleep(0.45)           # rubik: 5 requests / 2s
         logger.info(f"OKX flow seeded: {seeded} 5m buckets for {len(coins)} coins")
 
@@ -162,6 +163,6 @@ class ExternalData:
                         r = d.get('result') or {}
                         self.coin.setdefault(key, {})['bybit_book_imb'] = self._imbalance(r.get('b'), r.get('a'))
                 except Exception as e:
-                    logger.debug(f"books {key}: {e!r}")
+                    errors.report('extdata.books_loop', e, f"books {key}")
                 await asyncio.sleep(0.3)
             await asyncio.sleep(max(5.0, 60 - (time.time() - started)))

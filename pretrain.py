@@ -22,6 +22,7 @@ Downloads are cached (history_cache/); a re-run only computes. The result is pre
 start (journal P(edge), scanner regimes) and keeps learning on top of it. Run it while the bot is stopped or with a
 low --rate: the download shares the link with the live streams.
 """
+import errors
 import argparse
 import logging
 import pickle
@@ -719,8 +720,8 @@ def main():
     try:
         import psutil
         psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == 'nt' else 10)
-    except Exception:
-        pass
+    except Exception as e:
+        errors.report('pretrain.priority', e, 'runs at normal priority beside the bot')
     lock = cfg.lock_path
     # one run at a time (the bot starts it weekly; a manual run while it is running would double the load)
     if os.path.exists(lock):

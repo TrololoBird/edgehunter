@@ -763,8 +763,15 @@ class SignalBook:
                 # A stop that far does not pay: the question is why the signal came here (entry vs the zone's edge)
                 e = levels['entry']
                 edge = (s.plan or {}).get('zone_lo' if s.direction > 0 else 'zone_hi')
-                text = (f"low_rr ({levels.get('rr_reason') or 'R:R'}): stop {abs(e - levels['sl']) / e:.2%} ({levels.get('sl_src')}), "
-                        f"TP1 {abs(levels['tp1'] - e) / e:.2%} ({levels.get('tp1_src')})"
+                risk = abs(e - levels['sl'])
+                # a method without a profit target (Bollinger's live band, Turtles, Connors, ORB) carries 100 / 200 /
+                # 300 R placeholders: printed as a percentage they read as a real 30-100% target
+                placeholder = ((s.plan or {}).get('no_tp') or levels.get('tp1') is None
+                               or (risk and abs(levels['tp1'] - e) >= 50 * risk))
+                tp1_text = (f"no TP1 ({levels.get('tp1_src')})" if placeholder
+                            else f"TP1 {abs(levels['tp1'] - e) / e:.2%} ({levels.get('tp1_src')})")
+                text = (f"low_rr ({levels.get('rr_reason') or 'R:R'}): stop {risk / e:.2%} ({levels.get('sl_src')}), "
+                        f"{tp1_text}"
                         + (f", entry {abs(e - edge) / e:.2%} from the zone edge ({levels.get('zone_src')})"
                            if edge else ''))
                 s.veto_notes = (s.veto_notes + [text])[-5:]

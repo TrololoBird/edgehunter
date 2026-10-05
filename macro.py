@@ -7,6 +7,7 @@ Features: the 5-trading-day change of each series as of the previous day (yield 
 %). Context for the scenario card and a candidate input of its probability model (`train_scenarios.py --macro`);
 not a signal by itself.
 """
+import errors
 import bisect
 import csv
 import io
@@ -59,7 +60,8 @@ class Macro:
                     json.dump(self.data, fh)
             self.loaded_at = time.time()
             self._ts = {}
-        except Exception:
+        except Exception as e:
+            errors.report('macro.refresh', e)
             return False
         return all(self.data.get(k) for k in SERIES)
 

@@ -107,10 +107,20 @@ class AuctionStrategy(_System):
         sig = x.sig
         if sig.get('auction_stop') is None:
             return None
+        target, tp_src = sig.get('auction_target'), 'naked strong POC'
+        if target is None:
+            # the engine's own 1h POCs hold none ahead: the next POC of another profile on the map - a completed
+            # day's naked POC (Dalton's virgin POC), the 4-day or the 24h composite (was: no_target)
+            atr = sig.get('atr_1h') or x.atr
+            ahead = sorted((lv for lv in (x.raw_levels or []) if lv.kind == 'poc'
+                            and x.direction * (lv.price - sig['anchor_close']) > 0.1 * atr),
+                           key=lambda lv: x.direction * (lv.price - sig['anchor_close']))
+            if ahead:
+                target, tp_src = ahead[0].price, ahead[0].label
         exit = {'stop': ['price', sig['auction_stop']], 'stop_src': "beyond the POC test + measured pierce",
-                # no 'x R' fallback target (eng-41): the next POC or the map's level, else no trade
-                'tp': ['level', sig.get('auction_target'), cfg.auction_min_rr, None],
-                'tp_src': 'naked strong POC', 'atr': sig.get('atr_1h') or x.atr}
+                # no 'x R' fallback target (eng-41): the next POC, else no trade
+                'tp': ['level', target, cfg.auction_min_rr, None],
+                'tp_src': tp_src, 'atr': sig.get('atr_1h') or x.atr}
         return _confirm_plan(x, self.name, '1h', exit, f"POC {sig['anchor_level']:.6g} retest reaction ({sig.get('auction_kind')})")
 
 
