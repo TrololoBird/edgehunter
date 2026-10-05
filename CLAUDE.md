@@ -559,3 +559,10 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   eng-59 replay the bollinger / market_profile / connors entries do not beat placebo entries even without our stop /
   targets; trendline / pump / breakout entries do at 2 ATR (trendline's stops sat at 0.7 1h-ATR, 77% inside an hour's
   range; pump's TP1 was closer than its stop, R:R 0.63) - a replay on the current code is the cloud job's step 1.
+- eng-68 (2026-10-05, the owner: "and the take-profit - also on the lower timeframes? then the R:R is cut"): yes - TP1
+  was the nearest strong / primary zone of the WHOLE map (15m swings / FVG / OB included), spaced and filled by the 15m
+  ATR. Now `geometry.htf_zones`: a plan of timeframe tf targets only zones of tf and higher (zones whose kinds all
+  carry a lower timeframe suffix are dropped; untimed kinds - previous day / week, sessions, profile, round, VWAP -
+  stay); the planned targets that sit on such lower-timeframe zones are dropped at the entry (`_ltf_prices`) and the
+  slots refilled from the allowed zones; the spacing / ATR steps use max(15m ATR, the leg's, the structure
+  timeframe's ATR) - entry_levels, system_levels, exit_target's map branch.

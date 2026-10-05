@@ -65,6 +65,35 @@ def _near(zone: Zone, direction: int) -> float:
     return zone.lo if direction > 0 else zone.hi
 
 
+TF_RANK = {'5m': 0, '15m': 1, '1h': 2, '4h': 3, '1d': 4, '1w': 5}
+
+
+def _zone_rank(zone: Zone) -> Optional[int]:
+    """The timeframe rank of a zone built only from timeframe-suffixed kinds (swing_15m, fvg_1h, ob_4h ...); None when
+    any of its kinds has no timeframe (previous day / week, sessions, profile, round, VWAP: valid on every timeframe)."""
+    ranks = []
+    for k in zone.kinds:
+        tf = k.rsplit('_', 1)[-1] if '_' in k else None
+        if tf not in TF_RANK:
+            return None
+        ranks.append(TF_RANK[tf])
+    return max(ranks) if ranks else None
+
+
+def htf_zones(zones: List[Zone], tf: Optional[str]) -> List[Zone]:
+    """The zones a plan of timeframe `tf` may target: its own timeframe and higher (2026-10-05, the owner: a 1h / 4h
+    trade's TP1 was the nearest 15m swing / FVG, cutting the R:R of a stop now sized in the structure's ATR)."""
+    rank = TF_RANK.get(tf or '15m', 1)
+    if rank <= 1:
+        return zones
+    return [z for z in zones if (_zone_rank(z) is None or _zone_rank(z) >= rank)]
+
+
+def _ltf_prices(zones: List[Zone], tf: Optional[str], direction: int) -> List[float]:
+    keep = set(map(id, htf_zones(zones, tf)))
+    return [_near(z, direction) for z in zones if id(z) not in keep]
+
+
 def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: float, direction: int,
              gap: float) -> None:
     """
@@ -340,9 +369,12 @@ def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: in
         # a system entering at its signal's close (_confirm_plan) has no planned targets yet: the map's TP1 as of the
         # entry (eng-57, the cloud session's eng-44 fix d90605a: 'map' read the empty list, so trendline and oi_signal
         # never made a plan - journaled 'no_target'); Edwards & Magee: the next support / resistance on the map
-        targets, sources = select_targets(plan.get('zones') or [], entry, direction,
-                                          exit.get('atr') or plan.get('atr') or risk, 'opposite_liquidity')
-    ahead = [(t, s) for t, s in zip(targets, sources) if direction * (t - entry) > 0 and s != 'ATR step']
+        targets, sources = select_targets(htf_zones(plan.get('zones') or [], plan.get('tf')), entry, direction,
+                                          max(exit.get('atr') or plan.get('atr') or risk, plan.get('tf_atr') or 0.0),
+                                          'opposite_liquidity')
+    ltf = _ltf_prices(plan.get('zones') or [], plan.get('tf'), direction)
+    ahead = [(t, s) for t, s in zip(targets, sources) if direction * (t - entry) > 0 and s != 'ATR step'
+             and not any(abs(t - p) <= 1e-9 * max(abs(t), 1.0) for p in ltf)]
     if not ahead:
         return None, '', True
     t, s = ahead[0]
@@ -409,7 +441,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
                 'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,
                 'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': exit.get('stop_src', 'the system stop')}
     floor = stop_floor(max(atr, plan['atr'], plan.get('tf_atr') or 0.0), plan.get('recent_atr'))
-    zones: List[Zone] = plan.get('zones') or []
+    zones: List[Zone] = htf_zones(plan.get('zones') or [], plan.get('tf'))
     fixed_stop = exit['stop'][0] in ('pct', 'atr')
     fixed_tp = exit['tp'][0] in ('pct', 'rr')
     structural = structure_stop(zones, entry, direction, atr, floor, plan.get('symbol'), plan.get('tf', '15m')) \
@@ -448,7 +480,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     tp1, src1, low = exit_target(exit, plan, entry, risk, direction)
     if tp1 is None:
         return None
-    gap = CONFIG.zones.min_target_atr * atr
+    gap = CONFIG.zones.min_target_atr * max(atr, plan.get("tf_atr") or 0.0)   # the structure timeframe's ATR
     # TP2 / TP3: the system's own second target where it has one (the OI robot's 4% / 6%), else the next levels on
     # the map beyond TP1 (any strength); ATR steps only where the map is empty (was: always TP1 + 1 ATR, + 2 ATR)
     prices, labels = [tp1], [src1]
@@ -489,7 +521,9 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
     risk = abs(entry - stop)
     if not risk or direction * (entry - stop) <= 0:
         return None
-    atr = plan.get('leg_atr') or plan['atr']            # targets are spaced in the structure's own ATR
+    # targets are spaced in the structure's own ATR and drawn from its timeframe's zones and higher
+    atr = max(plan.get('leg_atr') or plan['atr'], plan.get('tf_atr') or 0.0)
+    tf_zones = htf_zones(plan.get('zones') or [], plan.get('tf'))
     if plan.get('retarget'):
         # Continuation: re-measured from the real entry. The impulse's objectives are the TREND-BASED extension:
         # the impulse A->B projected from the pullback's extreme C (C + k x |B - A|), not from A (eng-42)
@@ -499,15 +533,16 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
             leg = abs(imp['end'] - imp['start'])
             fillers = tuple(extreme + direction * k * leg for k in CONFIG.levels.continuation_targets)
             fill_label = 'ext'
-        targets, sources = select_targets(plan.get('zones') or [], entry, direction, atr, plan['intent'],
-                                          fillers, fill_label)
+        targets, sources = select_targets(tf_zones, entry, direction, atr, plan['intent'], fillers, fill_label)
         if imp and extreme is not None:
             # name each extension by its ratio, and mark the ones a higher-timeframe zone confirms (the screenshots'
             # daily + 4h extensions landing on one price)
             ratios = dict(zip(fillers, CONFIG.levels.continuation_targets))
             sources = [_ext_label(t, s, ratios, plan, direction) for t, s in zip(targets, sources)]
     else:
-        ahead = [(t, s) for t, s in zip(plan['targets'], plan['target_src']) if direction * (t - entry) > 0]
+        ltf = _ltf_prices(plan.get('zones') or [], plan.get('tf'), direction)
+        ahead = [(t, s) for t, s in zip(plan['targets'], plan['target_src']) if direction * (t - entry) > 0
+                 and not any(abs(t - p) <= 1e-9 * max(abs(t), 1.0) for p in ltf)]
         kept: List[Tuple[float, str]] = []
         for t, s in ahead:
             if not kept or direction * (t - kept[-1][0]) > 0:
@@ -521,7 +556,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
             if direction * (f - (targets[-1] if targets else entry)) >= gap:
                 targets.append(f)
                 sources.append(plan.get('fill_label', 'fib'))
-        map_fill(plan.get('zones') or [], targets, sources, entry, direction, gap)
+        map_fill(tf_zones, targets, sources, entry, direction, gap)
         while targets and len(targets) < 3:
             targets.append(targets[-1] + direction * gap)
             sources.append('ATR step')
