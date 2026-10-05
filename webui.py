@@ -475,7 +475,14 @@ class WebUI:
     # ---------------------------------------------------------------- handlers
 
     async def _index(self, request):
-        return web.FileResponse(os.path.join(WEB_DIR, 'index.html'), headers={'Cache-Control': 'no-cache'})
+        # app.js / style.css carry their file time as a version: the browser cached the old script after an update
+        # (charts empty until a hard reload)
+        with open(os.path.join(WEB_DIR, 'index.html'), encoding='utf-8') as fh:
+            html = fh.read()
+        for name in ('app.js', 'style.css'):
+            v = int(os.path.getmtime(os.path.join(WEB_DIR, name)))
+            html = html.replace(f'/static/{name}"', f'/static/{name}?v={v}"')
+        return web.Response(text=html, content_type='text/html', headers={'Cache-Control': 'no-cache'})
 
     async def _ws(self, request):
         ws = web.WebSocketResponse(heartbeat=30)
