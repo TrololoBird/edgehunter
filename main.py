@@ -159,11 +159,31 @@ def loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict):
     loop.default_exception_handler(context)
 
 
+def keep_awake(on: bool) -> None:
+    """
+    Keep Windows from sleeping while the bot runs (the display may still turn off): on 2026-10-05 the laptop slept
+    11:05 -> 12:44 and the bot saw nothing for 1h39m. ES_CONTINUOUS | ES_SYSTEM_REQUIRED, cleared at exit. A closed lid
+    or a manual sleep still wins.
+    """
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        state = 0x80000000 | (0x00000001 if on else 0)
+        if not ctypes.windll.kernel32.SetThreadExecutionState(state):
+            raise OSError('SetThreadExecutionState returned 0')
+        if on:
+            logger.info("Windows sleep blocked while the bot runs")
+    except Exception as e:
+        errors.report('main.keep_awake', e)
+
+
 async def main(use_web: bool = True):
     print("Crypto microstructure scanner - loading markets and starting streams (Ctrl+C to stop)")
 
     quick_edit = ConsoleQuickEdit()
     quick_edit.disable()
+    keep_awake(True)
     journal = SignalJournal()
     scanner = Scanner(journal=journal)
     web = None
@@ -225,6 +245,7 @@ async def main(use_web: bool = True):
             await web.stop()
         await scanner.stop()
         quick_edit.restore()
+        keep_awake(False)
         journal.close()
         logger.info("Shutdown complete")
 
