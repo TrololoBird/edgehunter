@@ -65,9 +65,9 @@ class TimeframeConfig:
 @dataclass(frozen=True)
 class MetricsConfig:
     rvol_window: int = 50
-    rvol_micro_burst_threshold: float = 1.5
     rvol_anomaly_threshold: float = 4.0
-    bbw_squeeze_lookback: int = 50
+    # Bollinger's squeeze: BandWidth at its lowest of ~6 months = 125 bars of the chart's timeframe (was 50, no source)
+    bbw_squeeze_lookback: int = 125
     squeeze_recent: int = 12          # Bollinger method I: the squeeze within the last 12 15m candles (3h)
     # Squeeze = Bollinger width at most this multiple of its bbw_squeeze_lookback minimum
     bbw_squeeze_tolerance: float = 1.05
@@ -75,8 +75,8 @@ class MetricsConfig:
     # Short OI window (15m candles) for the price/OI matrix checks in phases D and E: 4 = 1h
     oi_short_window: int = 4
     # Funding normalized to an 8h-equivalent rate (0.001 = 0.1%); Binance's neutral rate is +0.01% per 8h.
-    # Crowded longs from +0.03% (3x neutral), extreme from +0.1%; shorts are crowded below -0.05%
-    funding_crowded: float = 0.0003
+    # Extreme funding: from +0.1% (longs) / below -0.05% (shorts). Crowded = orderflow.crowded_funding_* (one place).
+    # Ours: the neutral is Binance's +0.01%; the extremes are not symmetric around it (+0.09 / -0.06) - no source
     funding_extreme_positive: float = 0.001
     funding_extreme_negative: float = -0.0005
     # Phase D: candle taker delta / candle quote volume below this (-0.2 = taker sells >= 60% of the candle)
@@ -188,7 +188,6 @@ class Tier0Config:
     # otherwise flips the flag every 2s check)
     anomaly_hold_sec: int = 60
     # Hot-symbol eviction: only subscriptions not triggered for this long, and at least this old, can be evicted
-    tier2_evict_idle_sec: int = 120
     tier2_min_age_sec: int = 60
     # Algos fire at :00/:15/:30/:45 (quarter-hour bursts, +30% volume): an RVOL-only trigger is ignored this long
     # after each quarter-hour boundary
@@ -206,7 +205,8 @@ class SweepConfig:
     percentile: float = 0.995
     min_samples: int = 300
     hist_decay_per_hour: float = 0.97
-    # USD floors by 24h-volume rank: top floor_top_n_1 coins, top floor_top_n_2, the rest
+    # USD sizes by 24h-volume rank used ONLY until a coin has min_samples sweeps (eng-57; were floors under the measured
+    # p99.5 - hand-set numbers overriding the coin's own distribution): top floor_top_n_1 coins, top floor_top_n_2, rest
     floor_top_n_1: int = 2
     floor_top_usd_1: float = 500_000
     floor_top_n_2: int = 30
@@ -308,7 +308,9 @@ class OrderflowConfig:
     promote_confirmations: bool = True
     promote_min_clusters: int = 30
     # an entry needs at least this many positive confirmations (flow / spot / oi / orderflow); 0 = off
-    min_confirmations: int = 1
+    # eng-58: 0 (was 1) - one positive of five ~50/50 readings passes ~95% of entries: a filter in name only, set from
+    # one bucket (0 of 4: -0.44R on 67 entries). Confirmations stay journaled; vetoes_table / features_table judge them
+    min_confirmations: int = 0
 
 
 @dataclass(frozen=True)
@@ -332,7 +334,8 @@ class MLConfig:
     anomaly_skip_first_sec: int = 360
     # Regimes: Gaussian mixture on market-wide features of closed 15m candles (history persisted, ~31 days)
     regime_enabled: bool = True
-    regime_clusters: int = 4
+    # the MOST clusters tried: the number is chosen by BIC over 2 .. this (eng-57; was a fixed 4)
+    regime_clusters: int = 6
     # ~7 months of 15m candles: the pretrained months (pretrain.py) plus the live ones
     regime_history: int = 20_000
     regime_min_history: int = 60
@@ -350,24 +353,23 @@ class MLConfig:
 
 
 @dataclass(frozen=True)
-class WhaleConfig:
-    """Kept for compatibility (display window); sizing moved to SweepConfig."""
-    min_usd: float = 25_000
-    avg_minute_share: float = 0.25
-    window_sec: int = 900
-
-
-@dataclass(frozen=True)
 class LevelsConfig:
     """Two-timeframe model (levels.py): 15m impulse + Fibonacci context, 5m structure-shift entry. Rules, not advice."""
     # HTF impulse: largest leg of the last N 15m candles, >= impulse_min_atr ATR and >= impulse_min_candles long
     htf_lookback_candles: int = 48          # 12h: where the leg's END is searched
     # The leg's START is searched back over 1h history up to this far (a move of hours / days is measured whole)
     leg_lookback_hours: int = 96
-    impulse_min_atr: float = 3.0
+    # eng-57: derived, not chosen - a reversal's first target is 0.382 of its leg and must pay >= 1 R over the stop
+    # floor (min_stop_atr): leg >= min_stop_atr / 0.382 = 2.62 ATR (was the rounded 3.0). levels.min_leg_atr()
+    impulse_min_atr: float = 0.0
     impulse_min_candles: int = 4            # 1h
     # ... and at least this big in price: at night ATR shrinks and a 0.5% drift can measure 7 ATR
-    impulse_min_move: float = 0.015
+    # eng-57: derived (levels.min_leg_move): the first target, 0.382 of the leg, must cover cost_guard x the round-trip
+    # cost (fees + 2 x slippage at the reference liquidity, 0.2%): 3 x 0.2% / 0.382 = 1.57% (was the rounded 1.5%)
+    impulse_min_move: float = 0.0
+    # the risk must be at least this many round-trip costs (geometry; was a literal 3 in two places). Ours, eng-44:
+    # 5x vetoed ordinary 2% stops; a source-less rule - the costs eat 1/3 of 1 R at the limit
+    cost_guard: float = 3.0
     # Continuation: look for the trigger once the pullback reaches this retracement zone of the impulse
     # The pullback band of a continuation: 0.382-0.618 of the leg (a deeper retrace is a trend failure, not an entry);
     # the zone is a real map level inside it, else the EMA20 of the leg's timeframe (Raschke's "Holy Grail"
@@ -384,12 +386,10 @@ class LevelsConfig:
     # Reversal: price must still be within this retracement of the reversed leg's end (accumulation: a bit wider)
     reversal_zone_max: float = 0.236
     # must stay below the first reversal target (0.382), or there is no room left for the trade
-    accumulation_zone_max: float = 0.3
     reversal_targets: tuple = (0.382, 0.5, 0.618)
     # LTF trigger on ltf_minutes candles built from the 1m stream (15m -> 5m keeps the 3-5x step between timeframes
     # and leaves a human time to act): close beyond the high/low of the last ltf_break_lookback candles up to the
     # zone extreme, with net taker flow of the last ltf_flow_candles candles after that extreme in the trade's direction
-    ltf_minutes: int = 5
     ltf_break_lookback: int = 5
     ltf_flow_candles: int = 3
     # Stop = structure + a volatility buffer (hybrid): beyond the farthest of the structural zone the entry comes from
@@ -471,15 +471,22 @@ class ZonesConfig:
     # Source weights; a zone's strength is the sum of its sources
     # liq_est 0.5 (was 1.5): the estimated liquidation model is unproven (forward test 2026-10-01: x1.37 the
     # liquidations of jittered placebo levels over 14h, within noise) - it may label a zone, not make one strong
-    weights: tuple = (('swing_1h', 1.5), ('swing_15m', 1.0), ('equal', 2.0), ('pdhl', 2.0), ('poc', 1.5),
+    # eng-57 (research/level_weights.md, 60 coins x 12 months, placebo levels 0.3-1.5% away): swings 15m / 1h, equal
+    # highs / lows, previous day high / low and round numbers all hold price LESS often than a random price nearby
+    # (odds ratio 0.78-0.87, both halves) and alike - so they weigh the same, 1.0 (were 1.0 / 1.5 / 2.0 / 2.0 / 1.0,
+    # set by hand). Extended: FVG 15m / 1h (0.83 / 0.90), order blocks 1h (0.94) and breakers 1h (0.83) hold worse
+    # than random too, the day's volume profile POC / VA / HVN / LVN exactly like random (0.98-1.02) -> all 1.0 (were
+    # 0.5-1.5). ob_15m / breaker_15m set to 1.0 with them. Still unmeasured hand-set values: the 4h / daily / weekly
+    # ICT zones, vwap, fib, range, book, wall, liquidations, opens, htf, swing_1d, bpr.
+    weights: tuple = (('swing_1h', 1.0), ('swing_15m', 1.0), ('equal', 1.0), ('pdhl', 1.0), ('poc', 1.0),
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 0.5), ('liq_hit', 1.0), ('wall', 1.0),
                       ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0),
-                      ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 0.5),
-                      # ICT zones by timeframe: the higher the timeframe, the more it holds (a 15m FVG is noise next
-                      # to a daily one)
-                      ('fvg_15m', 0.5), ('fvg_1h', 1.0), ('fvg_4h', 1.5), ('fvg_1d', 2.5),
-                      ('ob_15m', 1.0), ('ob_1h', 1.5), ('ob_4h', 2.0), ('ob_1d', 3.0),
-                      ('breaker_15m', 1.0), ('breaker_1h', 1.5), ('breaker_4h', 2.0), ('breaker_1d', 3.0),
+                      ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 1.0),
+                      # ICT zones: 15m / 1h measured (no hold beyond random, weight 1); the 4h / daily / weekly
+                      # scaling is an UNMEASURED hypothesis (research/level_weights.md covers 15m / 1h only)
+                      ('fvg_15m', 1.0), ('fvg_1h', 1.0), ('fvg_4h', 1.5), ('fvg_1d', 2.5),
+                      ('ob_15m', 1.0), ('ob_1h', 1.0), ('ob_4h', 2.0), ('ob_1d', 3.0),
+                      ('breaker_15m', 1.0), ('breaker_1h', 1.0), ('breaker_4h', 2.0), ('breaker_1d', 3.0),
                       ('fvg_1w', 3.5), ('ob_1w', 4.0), ('breaker_1w', 4.0), ('open', 1.0),
                       ('bpr_1h', 1.5), ('bpr_4h', 2.5))
     # Round-number levels / pools within this many ATR of price (zones.round_levels)
@@ -519,7 +526,7 @@ class PoolsConfig:
     Per-strategy coin pools (pools.py): each strategy trades only its own coins, refreshed hourly. A pool = the
     universe filtered by the strategy's rule (coin classes by 24h volume rank: major = BTC ETH SOL XRP BNB, large =
     rank <= 30, mid = rank <= 80, small = the rest; sectors to exclude; minimum 1h volatility), minus the coins where
-    the strategy's journaled entries of the last lookback_days average <= exclude_below_r over >= min_entries (walk-
+    the strategy's journaled entries of the last lookback_days are proven negative (eng-59: block bootstrap + BH) (walk-
     forward on the archive: the worst coins of the last 6 months stayed the worst the next month, -0.39R vs -0.10R;
     picking the best ones did not help), capped at `size` coins by 24h volume. Setups outside the pool are journaled
     with vetoed='not_in_pool'.
@@ -531,8 +538,9 @@ class PoolsConfig:
     size: int = 999
     refresh_sec: int = 3600
     lookback_days: int = 90
-    min_entries: int = 8
-    exclude_below_r: float = -0.3
+    # eng-59: a coin is excluded once its entries are PROVEN negative over >= min_blocks 4h blocks (block bootstrap
+    # + Benjamini-Hochberg at CONFIG.ml.rule_fdr, journal.proven_negative); was mean <= -0.3R over 8 entries
+    min_blocks: int = 8
     # (strategy, classes 'major,large,mid,small' or 'all', sectors to exclude (sectors.py names), min ATR(1h) in %)
     # (+ the order the rest is picked in: 'volume' / 'volatility' / 'alts', see pools.Pools.rebuild). The pinned coins
     # (CONFIG.exchange.pinned_bases) are in every pool on top of `size`. A hypothesis per method, not a measurement:
@@ -540,14 +548,16 @@ class PoolsConfig:
     # eng-48, by the methods' sources: Connors' mean reversion was built on liquid indices / large caps (major,
     # large); Crabel's ORB and Dalton's profile need a session with real volume (up to mid); pumps are a small-cap
     # event (mid, small); the Turtles diversified over everything; the rest name no asset class
-    rules: tuple = (('continuation', 'all', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
+    # eng-58: ICT's models (sweep / Silver Bullet, continuation, PO3) on liquid coins only - in crypto they are applied
+    # to BTC / ETH and liquid majors; thin books turn every wick into a 'raid'
+    rules: tuple = (('continuation', 'major,large,mid', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
                     ('orb', 'all', '', 0.0, 'volume'), ('trendline', 'all', '', 0.0, 'volatility'),
                     ('market_profile', 'all', '', 0.0, 'volume'),
                     ('connors', 'all', '', 0.0, 'volume'),
                     ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
-                    ('sweep', 'all', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
+                    ('sweep', 'major,large,mid', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
                     ('pump', 'all', '', 0.0, 'volatility'), ('cup_handle', 'all', '', 0.0, 'volume'),
-                    ('oi_signal', 'all', '', 0.0, 'volume'))
+                    ('oi_signal', 'all', '', 0.0, 'volume'), ('po3', 'major,large,mid', '', 0.0, 'volume'))
 
 
 @dataclass(frozen=True)
@@ -565,7 +575,7 @@ class StrategiesConfig:
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
-                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'oi_signal')
+                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'oi_signal', 'po3')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
@@ -611,8 +621,9 @@ class StrategiesConfig:
     sweep_min_depth_atr: float = 0.1
     sweep_max_depth_atr: float = 1.0
     sweep_min_rvol: float = 1.0
-    sweep_sessions: tuple = (('Asia', 0, 8), ('London', 7, 16), ('New York', 13, 21))
-    sweep_zone_atr: float = 0.25
+    # the exchanges' local hours, daylight saving included (forex session tables; eng-57: were fixed UTC 0-8 / 7-16 / 13-21)
+    sweep_sessions: tuple = (('Asia', 'Asia/Tokyo', 9, 18), ('London', 'Europe/London', 8, 17),
+                             ('New York', 'America/New_York', 8, 17))
     sweep_ttl: tuple = (2 * 3600, 2 * 3600, 8 * 3600)
     # Absorption at a level (order flow: the level is the setup, absorption the confirmation): a closed 1m candle with
     # taker delta >= the hour's orderflow.absorption_percentile against the level, volume >= absorption_min_rvol x the
@@ -623,14 +634,12 @@ class StrategiesConfig:
     absorption_level_atr: float = 0.3
     absorption_min_strength: float = 2.0
     absorption_min_move_atr: float = 1.5
-    absorption_zone_atr: float = 0.25
-    absorption_ttl: tuple = (60 * 60, 60 * 60, 6 * 3600)
     # Liquidation exhaustion (cascades overshoot mechanically; revert once the forced flow stops): a cascade
     # (liquidations.cascade_*) of longs on a drop / shorts on a rally; the leg runs from the extreme of the
     # exhaustion_pre_minutes before it to the cascade's extreme (following price until the entry), >= 3 ATR (a
     # reversal's first target 0.382 of the leg must pay 1R over the >= 1 ATR stop); entry: a 5m structure shift
     exhaustion_pre_minutes: int = 30
-    exhaustion_min_leg_atr: float = 3.0
+    exhaustion_min_leg_atr: float = 0.0          # eng-57: derived, levels.min_leg_atr() (was 3.0)
     exhaustion_ttl: tuple = (60 * 60, 60 * 60, 6 * 3600)
     # Breakout with initiative (60-70% of crypto breakouts fail: confirm by the close, volume and acceptance): the range
     # of the breakout_range_candles 15m candles before the breakout candle, breakout_min_width_atr-breakout_max_width_atr
@@ -642,9 +651,6 @@ class StrategiesConfig:
     breakout_min_width_atr: float = 0.8
     breakout_max_width_atr: float = 3.0
     breakout_min_rvol: float = 1.5
-    breakout_measured_moves: tuple = (1.0, 1.618, 2.618)
-    breakout_min_move_atr: float = 1.5
-    breakout_zone_atr: float = 0.25
     breakout_ttl: tuple = (3600, 3600, 90 * 86400)   # Turtles: entered at once, out on the trailing channel
     # ---- crypto_maniac's systems (github.com/roman-boop; strategies/maniac.py): his parameters as he ships them.
     # Longer histories they need: 15m / 1h candles of every coin (fetcher._hourly_candles_loop, limit 499 = weight 2)
@@ -661,6 +667,7 @@ class StrategiesConfig:
     # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
     classic_ttl: tuple = (3600, 3600, 12 * 3600)
     silver_bullet_ttl: tuple = (3600, 3600, 4 * 3600)
+    po3_ttl: tuple = (3 * 3600, 3 * 3600, 12 * 3600)   # eng-58: the London window, the trade into New York
     # pumps (strategies/pump.py): the start = +15m >= max(min %, z x the coin's 15m volatility) on RVOL, OI and spot
     # buying at a fresh 24h high; the top = a buying climax after >= pump_top_min_pct within 4h
     pump_start_min_pct: float = 0.03
@@ -668,8 +675,9 @@ class StrategiesConfig:
     pump_start_rvol: float = 5.0
     pump_top_min_pct: float = 0.10
     pump_ttl: tuple = (3600, 3600, 12 * 3600)
-    cup_ttl: tuple = (3600, 3600, 5 * 86400)        # O'Neil's breakouts work over days   # the window's hour to come back to the FVG, 4h trade
-    connors_ttl: tuple = (3600, 3600, 10 * 86400)  # daily RSI(2): out at the SMA5, else on day 10 (Connors, eng-51)
+    cup_ttl: tuple = (86400, 86400, 60 * 86400)     # eng-58: daily bases; O'Neil holds breakouts for weeks
+    # daily RSI(2): out at the SMA5 (Connors); eng-58: no 10-day exit (no source found for it) - a 60-day safety cap
+    connors_ttl: tuple = (3600, 3600, 60 * 86400)
     # Time exits (eng-47; Strategy.time_exit): a trade that has not reached TP1 within time_stop_bars bars of its
     # structure timeframe failed to work (Kaufman / Le Beau's time stop: 15m 6h, 1h 24h, 4h 4 days, at least
     # time_stop_min_sec); once TP1 traded the rest may run time_after_tp1 x as long. A flat 12h clock closed working
@@ -694,8 +702,9 @@ class StrategiesConfig:
     # open +- the Stretch (the 10-day SMA of min(High - Open, Open - Low) of the daily candles); the first one hit is
     # the trade, the other its stop; out at the session's (UTC day's) close. Crypto's daily candle opens 00:00 UTC.
     orb_stretch_days: int = 10
-    connors_rsi_low: float = 10.0         # Connors' RSI(2) buy level (shorts above connors_rsi_high)
-    connors_rsi_high: float = 90.0
+    # Connors' RSI(2) levels (eng-58: 5 / 95, his original rule; 10 / 90 is a later variant)
+    connors_rsi_low: float = 5.0
+    connors_rsi_high: float = 95.0
     # eng-55: Connors uses no stop. A perpetual with leverage needs one for the margin: a CATASTROPHIC stop this many
     # daily ATR(20) away, journaled as our deviation (it is not part of his exit)
     connors_disaster_atr: float = 3.0
@@ -704,6 +713,8 @@ class StrategiesConfig:
     # below the previous low; stop above the bounce + 0.25 ATR(1h); TP1 the dump's low, TP2 the 1.618 extension
     dump_min_move: float = 0.15
     dump_vol_x: float = 3.0
+    # eng-57 wide watch: perpetuals outside the universe above this 24h volume (pretraining's floor, research_pumps)
+    wide_min_volume: float = 3_000_000
     # eng-56 OI signal (strategies/oi_signal.py, a live test of cryptomillion's OI [15m] alerts): our thresholds
     oi_sig_oi_15m: float = 0.03
     oi_sig_price_15m: float = 0.02
@@ -734,7 +745,6 @@ class StrategiesConfig:
     auction_local_window: int = 30
     auction_max_levels: int = 50
     auction_min_rr: float = 1.5
-    auction_fallback_rr: float = 2.5
     auction_stop_pad_atr: float = 0.35
     auction_min_risk_atr: float = 0.15
     auction_ttl: tuple = (3600, 3600, 48 * 3600)
@@ -745,14 +755,10 @@ class StrategiesConfig:
     smt_ref_window: int = 60
     smt_ifvg_min_atr: float = 0.03
     smt_ifvg_search_back: int = 40
-    smt_sl_buffer_atr: float = 0.1
-    smt_min_rr: float = 2.0
-    smt_fallback_rr: float = 2.5
     # ICT kill zones (New York time): London open 02:00-05:00 and New York open 07:00-10:00 (not one 02-10 window)
     smt_session: tuple = ('America/New_York', '02:00', '05:00', '07:00', '10:00')
     # SMT only against a pair at least this correlated (15m returns, 200 candles): the method's precondition
     smt_min_correlation: float = 0.7
-    smt_ttl: tuple = (9 * 900, 9 * 900, 8 * 3600)
     # trendline_bot (15m, sloped lines only)
     tl_lookback: int = 400
     tl_pivot: int = 3
@@ -762,7 +768,9 @@ class StrategiesConfig:
     tl_touch_gap: int = 5
     tl_violation_atr: float = 0.10
     tl_max_dist_atr: float = 3.0
-    tl_flat_deg: float = 7.5
+    # eng-57: 0 (was 7.5, his 15m bot's cut): on 1h a line spanning 40+ candles is gentler than 0.13 ATR a candle, so
+    # 7.5 degrees left no line at all - 0 events on 20 coins x 250 hours, 9 without it. Steep lines stay out (tl_max_deg)
+    tl_flat_deg: float = 0.0
     tl_min_pivot_touches: int = 3
     tl_pivot_tol_atr: float = 0.20
     tl_max_deg: float = 35.0
@@ -771,37 +779,8 @@ class StrategiesConfig:
     tl_min_body_atr: float = 0.35
     tl_max_depth_atr: float = 1.2
     tl_close_pos_max: float = 0.40
-    tl_min_rr: float = 1.0
-    trendline_ttl: tuple = (3600, 3600, 48 * 3600)   # 1h lines
-    # thirdeye_strategy_algo (1h): CCI length, fixed SL / TP from his realtime.py
-    te_cci_length: int = 20               # Lambert's CCI(20) (his robot: 25)
-    te_sl_pct: float = 0.01
-    te_tp_pct: float = 0.05
-    thirdeye_ttl: tuple = (3600, 3600, 72 * 3600)
-    # fibonachi_trading_system (1h)
-    fib05_ttl: tuple = (3600, 3600, 72 * 3600)
-    # bomberman_bot (1h)
-    bomberman_ttl: tuple = (3600, 3600, 48 * 3600)
-    # bollinger_bands-with-clusters v6 (15m): BB(40, 1.5), RSI(96), CSI clusters, SL 0.4%, out after 3 bars
-    csi_bb_period: int = 40
-    csi_bb_std: float = 1.5
-    csi_rsi_period: int = 96
-    csi_rsi: float = 60.0
-    csi_min_cluster: int = 3
-    csi_bull_quant: float = 0.78
-    csi_bear_quant: float = 0.22
-    csi_sl_pct: float = 0.004
-    csi_ttl: tuple = (900, 900, 3 * 900)
+    trendline_ttl: tuple = (24 * 3600, 24 * 3600, 48 * 3600)   # 1h lines; eng-58: a day for the retest
     bollinger_ttl: tuple = (900, 900, 12 * 3600)   # W / M: the trade lives until the opposite band, hours
-    # oi_trading_robot v7.4 (long only): OI +5% / 1h, price growth <= 0.5 x OI growth, OI 24h > price 24h; his
-    # defaults SL 2%, TP 4% / 6%, a 3h cooldown per coin, the 15m structure filter off
-    oi_1h_threshold: float = 5.0
-    oi_price_ratio: float = 0.5
-    oi_sl_pct: float = 0.02
-    oi_tp_pcts: tuple = (0.04, 0.06)
-    oi_cooldown_sec: int = 3 * 3600
-    oi_structure_filter: bool = False
-    oi_accum_ttl: tuple = (900, 900, 24 * 3600)
 
 
 @dataclass(frozen=True)
@@ -848,9 +827,6 @@ class RestConfig:
 
 @dataclass(frozen=True)
 class WSConfig:
-    max_concurrent_trades: int = 40
-    reconnect_delay: float = 5.0
-    max_reconnect_attempts: int = 10
     ping_interval: int = 20
 
 
@@ -919,6 +895,9 @@ class JournalConfig:
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
     logic_version: str = "eng-60"
+    # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
+    # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
+    verdict_since: str = "eng-55"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
@@ -975,6 +954,12 @@ class ExecutorConfig:
     max_notional_usd: float = 4_000.0
     limit_wait_min: int = 15      # a touch plan's BingX limit kept this long after Binance's touch (eng-46)
     max_leverage: int = 20
+    # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak) - ours inside
+    # those ranges: -3R a day, 6 trades a day, 4 hours after 3 losses in a row
+    daily_loss_r: float = 3.0
+    max_trades_day: int = 6
+    pause_losses: int = 3
+    pause_hours: float = 4.0
 
 
 @dataclass(frozen=True)
@@ -997,7 +982,6 @@ class AppConfig:
     tier0: Tier0Config = field(default_factory=Tier0Config)
     rest: RestConfig = field(default_factory=RestConfig)
     journal: JournalConfig = field(default_factory=JournalConfig)
-    whales: WhaleConfig = field(default_factory=WhaleConfig)
     sweeps: SweepConfig = field(default_factory=SweepConfig)
     liquidations: LiquidationConfig = field(default_factory=LiquidationConfig)
     depth: DepthConfig = field(default_factory=DepthConfig)

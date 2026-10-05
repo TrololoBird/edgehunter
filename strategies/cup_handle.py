@@ -1,11 +1,11 @@
 """
 Cup with handle (William O'Neil, "How to Make Money in Stocks"; statistics: Thomas Bulkowski, "Encyclopedia of Chart
-Patterns"), on 1h and 4h candles at their close:
+Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
 
 - a prior advance of >= 30% into the left rim (the lowest low of the 2x cup-length before it to the rim);
-- the cup: a U-shaped bottom (not a V: >= 20% of its candles in its lowest quarter), 12-50% deep (O'Neil 12-33%,
-  up to ~50% in volatile markets), 20..300 candles, the right rim within 5% of the left one;
-- the handle after the right rim: 3 .. cup/4 candles, drifting in the cup's UPPER half and no deeper than 12% of the
+- the cup: a U-shaped bottom (not a V: >= 20% of its candles in its lowest quarter), 12-33% deep (O'Neil; eng-58,
+  was up to 50%), 35..325 daily candles (his 7 .. 65 weeks), the right rim within 5% of the left one;
+- the handle after the right rim: 5 days (O'Neil: at least one to two weeks) .. cup/4 candles, drifting in the cup's UPPER half and no deeper than 12% of the
   rim, on lower volume than the cup's;
 - the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
 - stop below the handle's low; target the pivot + the cup's depth (Bulkowski's measured move); O'Neil's own rule
@@ -40,14 +40,14 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int) -> O
         handle = list(range(r + 1, last))
         for left in reversed([p for p in pivots if p < r]):
             cup_len = r - left
-            if not 20 <= cup_len <= 300:
+            if not 35 <= cup_len <= 325:
                 continue
             if abs(h[r] / h[left] - 1) > 0.05:
                 continue
             rim = min(h[left], h[r])
             bottom = min(l[left:r + 1])
             depth = (rim - bottom) / rim
-            if not 0.12 <= depth <= 0.50:
+            if not 0.12 <= depth <= 0.33:
                 continue
             quarter = bottom + 0.25 * (rim - bottom)
             if sum(1 for i in range(left, r + 1) if l[i] <= quarter) < 0.2 * cup_len:
@@ -55,7 +55,7 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int) -> O
             before = l[max(0, left - 2 * cup_len):left]
             if not before or h[left] / min(before) - 1 < 0.30:
                 continue                             # no prior advance
-            if not 3 <= len(handle) <= max(3, cup_len // 4):
+            if not 5 <= len(handle) <= max(5, cup_len // 4):
                 break
             h_lo = min(l[i] for i in handle)
             pivot = max(h[i] for i in [r] + handle)
@@ -99,7 +99,7 @@ class CupHandleStrategy(_System):
                 'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': 'half the cup height (Bulkowski, met 76%)',
                 'tp2': ['level', sig.get('ch_target_full') or sig['ch_target'], 0.0, None],
                 'atr': x.atr}
-        return _confirm_plan(x, self.name, sig.get('ch_tf', '1h'), exit, 'close above the handle pivot on volume')
+        return _confirm_plan(x, self.name, sig.get('ch_tf', '1d'), exit, 'close above the handle pivot on volume')
 
 
 __all__ = ['cup_handle', 'CupHandleStrategy', 'Strategy']

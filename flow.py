@@ -283,6 +283,79 @@ class FlowStore:
             out[symbol] = metrics
         return out
 
+    def micro_features(self, symbol: str, minutes: Sequence[Sequence[float]], now_sec: Optional[int] = None,
+                       window: int = 3600, buckets: int = 50) -> Dict[str, Optional[float]]:
+        """
+        eng-59 journal features (context only, no rule uses them):
+        - vpin: Easley, Lopez de Prado & O'Hara (2012) volume-synchronized probability of informed trading - the last
+          hour's futures taker volume of all venues cut into `buckets` equal-volume buckets, mean |buy - sell| / bucket
+          volume (exact taker sides, so no bulk classification);
+        - vol_entropy: Shannon entropy of the hour's per-minute volume / ln(60): 1 = spread evenly, low = bursts;
+        - lead_venue / lead_corr: the futures venue whose per-minute net taker flow best predicts the NEXT minute's
+          Binance return over the hour (correlation; who moves first). `minutes`: final futures 1m candles.
+        """
+        out: Dict[str, Optional[float]] = {'vpin': None, 'vol_entropy': None, 'lead_venue': None, 'lead_corr': None}
+        row = self.rows.get(symbol)
+        if row is None:
+            return out
+        now_sec = int(now_sec or time.time())
+        start = now_sec - window
+        buy = np.zeros(window)
+        sell = np.zeros(window)
+        per_venue: Dict[str, np.ndarray] = {}
+        for venue in FUTURES_VENUES:
+            flow = self.venues.get(venue)
+            if flow is None or not flow.last_sec or row >= flow.data.shape[2]:
+                continue
+            lo, hi = max(start, flow.last_sec - flow.H + 1), min(now_sec, flow.last_sec + 1)
+            if hi <= lo:
+                continue
+            idx = np.arange(lo, hi) % flow.H
+            b = flow.data[idx, BUY, row].astype(np.float64)
+            sl = flow.data[idx, SELL, row].astype(np.float64)
+            buy[lo - start:hi - start] += b
+            sell[lo - start:hi - start] += sl
+            per_venue[venue] = np.zeros(window)
+            per_venue[venue][lo - start:hi - start] = b - sl
+        vol = buy + sell
+        total = vol.sum()
+        if total <= 0:
+            return out
+        size = total / buckets
+        cum = np.cumsum(vol)
+        edges = np.searchsorted(cum, np.arange(1, buckets) * size)
+        imb = []
+        prev = 0
+        for e in list(edges) + [window]:
+            v = vol[prev:e + 1].sum()
+            if v > 0:
+                imb.append(abs(buy[prev:e + 1].sum() - sell[prev:e + 1].sum()) / v)
+            prev = e + 1
+        out['vpin'] = float(np.mean(imb)) if imb else None
+        per_min = vol[:window // 60 * 60].reshape(-1, 60).sum(axis=1)
+        p = per_min[per_min > 0] / per_min.sum()
+        out['vol_entropy'] = float(-(p * np.log(p)).sum() / math.log(len(per_min))) if len(p) > 1 else 0.0
+        closes = {int(m[0] // 1000): float(m[4]) for m in minutes if m[0] // 1000 >= start - 60}
+        mins = [start + 60 * k for k in range(window // 60)]
+        rets = []
+        for t in mins:
+            a, b = closes.get(t), closes.get(t + 60)
+            rets.append(b / a - 1 if a and b else np.nan)
+        rets = np.array(rets)
+        best = None
+        for venue, net in per_venue.items():
+            f = net[:window // 60 * 60].reshape(-1, 60).sum(axis=1)
+            x, y = f[:-1], rets[1:]
+            ok = ~np.isnan(y) & (x != 0)
+            if ok.sum() < 20 or x[ok].std() == 0 or y[ok].std() == 0:
+                continue
+            c = float(np.corrcoef(x[ok], y[ok])[0, 1])
+            if best is None or c > best[1]:
+                best = (venue, c)
+        if best:
+            out['lead_venue'], out['lead_corr'] = best
+        return out
+
     def venue_status(self, now_ms: Optional[float] = None) -> Dict[str, Dict[str, float]]:
         now_ms = now_ms if now_ms is not None else time.time() * 1000
         return {v: {'messages': f.messages, 'lag_ms': f.lag_ms,
@@ -394,8 +467,9 @@ class WhaleBook:
         if cached is not None:
             return cached
         cfg = CONFIG.sweeps
-        floor = self.floor_usd.get(symbol, cfg.floor_rest_usd)
-        whale = max(floor, self._percentile(symbol, cfg.percentile) or 0.0)
+        # eng-57: the coin's own p99.5 sweep IS the whale size once its distribution is known; the liquidity-tier USD
+        # floors (set by hand, no source) only stand in during the cold start (< min_samples sweeps)
+        whale = self._percentile(symbol, cfg.percentile) or self.floor_usd.get(symbol, cfg.floor_rest_usd)
         # Unknown until the coin's sweep-size distribution is known: no cluster detection before that (a fixed
         # guess made five small prints a minute look like an algo on quiet coins)
         notable = self._percentile(symbol, cfg.cluster_percentile)

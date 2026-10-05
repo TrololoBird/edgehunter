@@ -88,7 +88,7 @@ Start-up: ~30s to load instrument lists of all venues, then streams start; the 1
 ### Machine learning (`ml.py`: scikit-learn, river)
 The market regime changes, so nothing is fitted once on the past: models start from a pretrained state and keep learning live.
 - **Pretraining** (`pretrain.py` + `history.py`, run before the bot; result `pretrained.pkl`, downloads cached in `history_cache/`): the archive's USDT perpetuals with a spot pair on the days they passed $3M average daily volume (judged from the 30 days before, delisted coins included), 6 months of the Binance public archive (1m klines futures + spot, 5-minute `metrics` = OI and long-short ratios, funding). Per coin (worker processes) the live code produces the journal rows the bot would have written: 15m candles from 1m, `compute_indicators_batch` + `PhaseScorer.calculate_scores` (OI attached as live, funding from its history per candle), `calculate_tier0_metrics` at each close and on every minute that could qualify (rule-based Tier-0 anomalies / impulses), `build_context` on every closed candle (sweeps / breakouts), `classify`, the journal cooldown, `SignalJournal._base_row`; the main process adds the market context (median moves, BTC, regimes, market crowd) and the label (4h return vs the median of every coin), and trains P(edge) in time order. Not in the archive, learned live only: liquidations, books, other venues, Hyperliquid, Coinbase, whale sweeps, the IsolationForest verdict. The journal starts P(edge) from it (`SuccessModel.load_pretrained`; an error drift returns to the pretrained model, not to an empty one); the scanner puts the pretrained regime candles under the live ones (`regime_history` = 20000 candles). **Automatic**: `Scanner.pretrain_loop` re-runs `pretrain.py` in a background process (below-normal priority, 1 worker, 300 KB/s; `pretrain.lock` holds its PID, one run at a time, it survives bot restarts) when `pretrained.pkl` is missing, older than 7 days or of another `logic_version`, and hot-reloads the result (P(edge) restarts from it and replays the live journal, the regime history gets the new months). Old cache files beyond the window are pruned. `pretrain_rows.parquet` keeps every labelled row with its features and the online model's prediction before learning it: `ml_eval.py` evaluates P(edge) on it (prequential; purged walk-forward base rate vs logistic vs LightGBM with uniqueness weights; Edge of the top-ranked rows).
-- **Anomalies** (`AnomalyModel`, IsolationForest, fitted and scored in a separate worker PROCESS: in a thread scikit-learn held the GIL and stalled the event loop for 1-2s at every burst): each coin's Tier-0 vector (log RVOL, |price z|, |OI z|, whale sweeps, liquidations / average minute, algo cluster, one-venue share, perp and spot flow / average minute) is sampled every 30s; the forest is refitted hourly on the last 3h of the whole universe (first fit after ~15 min, 3000 samples) and a coin is anomalous when it is among the 0.05% most unusual. Once fitted it decides (`ml_ready`), the seven rules only label the event (`t0_*` columns, `rule_anomaly`; ML-only events are `UNUSUAL`). Measured live: ~540 rule onsets/h -> ~36/h, each a multi-factor event. `ml_state.pkl` keeps the last model (any age: it scores until the refit) and the timestamped training window (samples inside `anomaly_window_sec` survive a restart; an old model is refitted as soon as the window holds `anomaly_min_samples`, right after a short restart); **delete it whenever a feature's meaning changes** (a model fitted on broken OI flags every OI move).
+- **Anomalies** (`AnomalyModel`, IsolationForest, fitted and scored in a separate worker PROCESS: in a thread scikit-learn held the GIL and stalled the event loop for 1-2s at every burst): each coin's Tier-0 vector (log RVOL, |price z|, |OI z|, whale sweeps, liquidations / average minute, algo cluster, one-venue share, perp and spot flow / average minute) is sampled every 30s; the forest is refitted hourly on the last 3h of the whole universe (first fit after ~15 min, 3000 samples) and a coin is anomalous when it is among the 0.1% most unusual (`anomaly_quantile`). Once fitted it decides (`ml_ready`), the seven rules only label the event (`t0_*` columns, `rule_anomaly`; ML-only events are `UNUSUAL`). Measured live: ~540 rule onsets/h -> ~36/h, each a multi-factor event. `ml_state.pkl` keeps the last model (any age: it scores until the refit) and the timestamped training window (samples inside `anomaly_window_sec` survive a restart; an old model is refitted as soon as the window holds `anomaly_min_samples`, right after a short restart); **delete it whenever a feature's meaning changes** (a model fitted on broken OI flags every OI move).
 - **Regimes** (`RegimeModel`, GaussianMixture, k=4): market-wide features per closed 15m candle (BTC 1h move / volatility, breadth, median funding / OI change / RVOL; NaN / null rows dropped), refitted once a day (`regime_refit_sec`; between refits the model only labels new candles: a refit every 15 min changed what a name meant - 8 names for 4 clusters in the journal), history pretrained months + live, pretraining labels each week with a model fitted on the past only (`labels_walk_forward`); clusters are named from their centers (`up·volatile`, `flat·quiet`, ...). Rows carry `regime`; `journal.REGIME_STATS` (hourly) mutes a setup in a regime once its Edge there is proven negative over >= 30 independent 4h blocks with the false discovery rate controlled over the whole setup x regime grid (`journal.proven_negative`: block-bootstrap p-values + Benjamini-Hochberg, `rule_fdr` 0.10; the same rule promotes confirmations) (`vetoed='regime'`).
 - **P(edge)** (`SuccessModel`, river logistic regression + ADWIN; whale / price z / OI z / book imbalance also enter multiplied by the signal's direction, a linear model cannot learn the sign interaction itself): learns online from every directional journal row when its 4h label arrives (label = beat the universe median), replays the journal at start, resets on error drift. Shadow only: stored as `p_edge`, shown on cards after 300 rows; stats.py splits Edge by it.
 
@@ -379,7 +379,83 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   exit / pyramid, Connors' SMA5 exit, no_tp placeholders shown as negative TPs), the demo's BingX ratio rebuilt after
   a restart, ORB keeps the day's state per coin (15m candles rebuilt each minute stalled the loop), QuickEdit off
   before the first console write.
-- eng-60 (eng-57..59 were a worktree branch's, run live 2026-10-04 into the same journal - not in master): the map
+- eng-57 (checked against ICT by web search 2026-10-04; ICT's own definition is only in his videos, so the common
+  ground of several independent write-ups): an order block's displacement must close beyond the last CONFIRMED swing
+  (ICT's 3-candle swing: the middle candle's high above both neighbours', confirmed by the block's candle), not the highest high / lowest low of the
+  ten candles before it; the rest already matched (the last opposite candle, an FVG in the displacement, the zone open
+  -> wick, the breaker on a close through the far side). joshyattridge/smart-money-concepts was compared on 20 coins x
+  499 1h candles: FVG detection identical; its order block (the lowest candle between swing and break, any colour, no
+  FVG) departs from ICT more than ours, so it is not adopted. Also: `Scanner.wide_watch_loop` (every perpetual outside
+  the universe >= $3M: the pump / dump monitor «·вне» and DUMP BOUNCE SHORT journaled `outside_universe`, no card),
+  stats.py `robustness_table` (tail / coin / halves / cost-to-zero, PBO by CSCV) and the Harvey-Liu haircut in the
+  verdict, journal `weis_ratio` (Weis wave into SPRING / UTAD), the demo's reduce-only limit close on BingX's price
+  band (102202).
+  eng-57 fixes found by the error audit: trendline never fired in the journal's whole history (`tl_flat_deg` 7.5, his
+  15m bot's cut, excluded every 1h line gentler than 0.13 ATR a candle - all lines spanning 40+ candles; now 0) and
+  its 'map' target read an empty list (also oi_signal's: `geometry.exit_target` reads the map at the entry); the demo
+  signs every private BingX call with recvWindow 60s (ccxt's signer sent none: BingX's 5s default vs ~11s VST round
+  trips = 'timestamp is invalid').
+  Parameter audit (docs/AUDIT_parameters.md, 2026-10-04): 42 config values no module read were deleted (the removed
+  systems' te_* / csi_* / oi_* robot / fib05 / bomberman, the standalone SMT / absorption, the 15m breakout, a few
+  infrastructure leftovers); the duplicate `metrics.funding_crowded` merged into `orderflow.crowded_funding_long`;
+  the Holy Grail needs ADX > 30 AND rising (`adx_prev`, Raschke). The ported robots' values were checked against their
+  repos (trendline_bot, supply_demand-v4, auction_theory_in_code): all match; they ran on 15m, ours on 1h / 4h.
+  First-commit values rechecked (docs/AUDIT_parameters.md section 9): the Bollinger squeeze is BandWidth at its
+  ~6-month low = 125 bars (`bbw_squeeze_lookback`, was 50); session pools use the exchanges' local hours with daylight
+  saving (`sweep_sessions` = Tokyo 09-18, London 08-17, New York 08-17 local; were fixed UTC 0-8 / 7-16 / 13-21).
+  Formulas / data instead of hand-set numbers (eng-57, docs/AUDIT_parameters.md section 10): the minimum leg is
+  derived (`levels.min_leg_atr` = min_stop_atr / 0.382, `min_leg_move` = cost_guard x round-trip cost / 0.382); the
+  liquidation estimate uses the tracked Hyperliquid accounts' real notional-weighted leverage (models/leverage_mix.json,
+  positioning) and each contract's maintenance margin / max leverage from Bybit's public risk limits
+  (models/maintenance.json, daily); equal highs / lows are within the coin's measured p50 pierce; the whale size is the
+  coin's own p99.5 sweep (USD floors only during the cold start); the regime count is chosen by BIC (2..6);
+  research_level_weights.py: swings / equal / previous-day / round levels hold price LESS often than placebo prices
+  (odds ratio 0.79-0.86) and alike -> their weights are all 1.0; entry replays journal `tp1_min` for a measured time stop.
+  Extended (research/level_weights.md): FVG 15m / 1h (OR 0.83 / 0.90), order blocks 1h (0.94), breakers 1h (0.83) hold
+  price no better than placebo, the day's volume profile POC / VA / HVN / LVN exactly like it (0.98-1.02) -> those
+  weights are 1.0 too; the 4h / daily / weekly ICT scaling, vwap, fib, range, book, liquidations stay unmeasured.
+- eng-58 (the full audit, docs/AUDIT_full.md; the practice review, docs/STRATEGY_PRACTICE.md): result honesty - the
+  card's R (`card_r`, the verdict's input) is NET of fees, slippage by liquidity and funding (`SignalBook._cost_r`)
+  and a stop gapped through fills at the candle's open (`exit_fill`); trades are managed on the final 1m candles'
+  extremes since `managed_ms` (targets 2 bps through, the stop first in a candle - as the journal's replay; the scan
+  price missed every wick); resting limits (Seiden, ICT CE / OTE, trendline retest, PO3) are replayed at their price
+  (`limit_entry`); the 1 ATR stop floor applies with the pierce model too; the waiting zone's end prices costs by
+  liquidity; `min_confirmations` 0 (one of five ~50/50 readings passed ~95%); the verdict / robustness run over the
+  version family since `journal.verdict_since` (eng-55) with older gross card R netted (`stats.card_r_net`). ICT by
+  its practice: the sweep's MSS is a close beyond the swing the raid came from (`ict.fvg_setup`), which ARMS a resting
+  limit at the gap's CE (`TrackedSignal.armed`: the plan becomes a touch plan the demo places); continuation needs a
+  leg that broke structure (`no_bos`) and enters on a limit at the OTE zone's near edge; sweep / continuation enter
+  only in the London / New York kill zones (`killzone`; their demo limits rest only there); the Silver Bullet needs
+  the MSS and targets the previous day's high / low; new `po3` (ICT Power of Three / Judas swing, strategies/po3.py);
+  ICT pools major / large / mid. Others by their sources: trendline enters on the retest (a limit at the broken line),
+  supply / demand vetoes against the daily trend (`big_picture`), the cup with handle runs on daily candles (35+ day
+  bases, 12-33% deep), Connors RSI(2) 5 / 95 without a 10-day exit, VA80 on the TPO value area, the liquidation
+  climax needs a prior trend (`no_prior_trend`) with a 15m structure. System: one direction per coin a day
+  (`against_day`, the Turtles exempt); continuation / oi_signal take half at TP1 and trail the rest (entry, then the
+  entry timeframe's EMA20; RESTOP moves the demo's stop); the demo stops trading for the day at -3R, after 6 trades,
+  and pauses 4h after 3 losses in a row (`executor.risk_limit`). Dead code removed: fib05 / SMT detectors, the
+  pinbar / ifvg triggers' branches, WhaleConfig. Not done: pretraining that replays the 13 strategies (meta-labeling
+  needs it) - a separate project.
+- eng-59 (the rest of the 13-item plan + the pool audit): the replaced rules are journaled as vetoed entries of the
+  same card for the comparison (`SignalBook._shadow_entry`: `weak_mss` = the old sweep trigger before the new MSS armed
+  the card, `variant_shift` = the old 5m-shift market entry beside the resting limit of continuation / an armed sweep);
+  an ICT card in its zone expires when its kill zone ends (`session_end`); altcoins' sweep / continuation / PO3 trade
+  with BTC's ICT bias (`against_btc`, journal `btc_bias`); fix: the Silver Bullet (strategy `sweep`) was vetoed
+  `killzone` in two of its three windows (`ict_gated`). Pools: a coin's class is its rank among ALL Binance USDT
+  perpetuals (`fetcher.market_volumes`; within the 70-coin universe 'mid <= 80' meant every coin); a coin leaves a
+  strategy's pool only when its entries are proven negative (`journal.proven_negative`, 4h blocks + BH, `min_blocks`
+  8; was mean <= -0.3R over 8 entries); stats split `method nature x coin state` (Dreiss' Choppiness) and `BTC bias`.
+  `research_pools.py` (pre-registered): Turtles / Connors trades on the daily archive by coin attributes (market volume
+  rank, ATR %, Choppiness, ER, beta / corr to BTC) -> research/pools.md.
+- eng-59 B9 (archive replay of the live lifecycle): the loop-side detectors moved from scanner.Scanner to
+  `strategies/loopside.py` (`LoopDetectors`: pump, Silver Bullet, PO3, Turtles, ORB, OI signal, dump bounce, Connors)
+  so `replay.py` runs the same code: the live `SignalBook` stepped once a minute over the Binance archive (1m futures /
+  spot, 5-minute OI metrics, funding, daily candles), fed by `build_maps` (maps + 15m-close events), `LiveDetector`,
+  `LoopDetectors`, the scorer's phases / Tier-0, confirmations from Binance's own 1m flows / OI; every entry (passed and
+  vetoed) also replayed by `levels.simulate`; outputs data/replay/<run>/group_NN/{cards,entries}.parquet (groups of
+  `--group` coins share one book). Not in the archive: liquidations (no cascade setups), books, other venues,
+  Hyperliquid, footprint. `research_replay_report.py` -> research/replay.md (cards' net R, exits by nature, vetoes).
+- eng-60 (local eng-56 + this note's changes, merged with origin's eng-57..59 on 2026-10-05): the map
   holds each completed UTC day's naked POC (Dalton's virgin POC: `zones.day_poc` from 5 days of 5m candles of every
   universe coin, once a day by `fetcher._day_pocs_loop`, ~700 weight; naked = no 1h candle after that day traded
   through it, `zones.naked_daily_pocs`); AUCTION's target falls back to the next map POC (naked daily / 4d / 24h) when the engine's own 1h POCs hold
@@ -391,3 +467,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   invalid'; demo leverage now sent with side BOTH - it was never set; a BingX stop filling before our close is
   EXCHANGE, not a failed close); winloop's 'write() when UVStream is closing' is a counted WARNING; journal warm-up vectorized (numpy) + index universe(symbol, ts_ms, price). Never combine winloop with
   tracemalloc (create_server hangs).
+  Merge fixes (research/replay_missing.md, the cloud replay's diagnosis of eng-58/59): ORB takes the day's open from
+  the day's first minute itself (`loopside._orb_touch`: at 00:01 UTC the minutes before the last one were empty and
+  the day stayed 'open unknown'); the maps get the whole daily history (`_map_job`: 60 daily candles never reached
+  the daily cup's 120); `minute_klines` holds 600 minutes (PO3 reads the Asian range 20:00-00:00 New York from
+  02:00-05:00 NY: 240 minutes held at most 21 of its 48 5m bars). eng-57's recvWindow-60s sign wrapper on BingX was
+  dropped (the cause was the dead address; BingX documents 5000 ms as the maximum); the demo close handles both an
+  exchange stop that filled first (101290 -> EXCHANGE) and the price band (102202 -> reduce-only limit). Futures
+  klines REST weight by Binance's table (1 / 2 / 5 / 10).

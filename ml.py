@@ -286,17 +286,28 @@ class RegimeModel:
         self.current, self.current_ts = self.names[int(self.model.predict(z)[0])], ts
         return self.current
 
+    @staticmethod
+    def _fit_bic(Z: np.ndarray):
+        """The Gaussian mixture with the lowest BIC over k = 2 .. regime_clusters (eng-57: the number of regimes is
+        chosen by the data - Schwarz's criterion - instead of a fixed 4)."""
+        from sklearn.mixture import GaussianMixture
+        kmax = min(CONFIG.ml.regime_clusters, max(2, len(Z) // 25))
+        best = None
+        for k in range(2, kmax + 1):
+            m = GaussianMixture(n_components=k, covariance_type='full', random_state=0, reg_covar=1e-3).fit(Z)
+            bic = m.bic(Z)
+            if best is None or bic < best[0]:
+                best = (bic, m)
+        return best[1]
+
     def refit(self) -> Optional[str]:
         """Fit the mixture on the whole history (pretrained months + live candles) and label its newest candle."""
-        from sklearn.mixture import GaussianMixture
         from sklearn.preprocessing import StandardScaler
-        cfg = CONFIG.ml
         stamps = sorted(self.history)
         X = np.asarray([self.history[t] for t in stamps])
         scaler = StandardScaler().fit(X)
         Z = scaler.transform(X)
-        k = min(cfg.regime_clusters, max(2, len(X) // 25))
-        model = GaussianMixture(n_components=k, covariance_type='full', random_state=0, reg_covar=1e-3).fit(Z)
+        model = self._fit_bic(Z)
         names = {i: self._name(c) for i, c in enumerate(model.means_)}
         label = int(model.predict(Z[-1:])[0])
         self.model, self.scaler, self.names = model, scaler, names
@@ -309,7 +320,6 @@ class RegimeModel:
         Regime of every history candle as known at its time: each step is labelled by a mixture fitted only on the
         candles before it (pretraining must not label the past with a model that has seen the future).
         """
-        from sklearn.mixture import GaussianMixture
         from sklearn.preprocessing import StandardScaler
         cfg = CONFIG.ml
         stamps = sorted(self.history)
@@ -324,9 +334,7 @@ class RegimeModel:
             past = X[:i]
             if len(past) >= cfg.regime_min_history:
                 scaler = StandardScaler().fit(past)
-                k = min(cfg.regime_clusters, max(2, len(past) // 25))
-                model = GaussianMixture(n_components=k, covariance_type='full', random_state=0,
-                                        reg_covar=1e-3).fit(scaler.transform(past))
+                model = self._fit_bic(scaler.transform(past))
                 names = {n: self._name(c) for n, c in enumerate(model.means_)}
                 for t, k2 in zip(stamps[i:j], model.predict(scaler.transform(X[i:j]))):
                     out[t] = names[int(k2)]

@@ -162,10 +162,11 @@ EXTRA_COLUMNS = {
     'dvol_btc': 'REAL', 'dvol_chg_1h': 'REAL', 'pc_oi_btc': 'REAL', 'funding_spread': 'REAL',
     'okx_book_imb': 'REAL', 'bybit_book_imb': 'REAL',
     # iceberg.py: hidden limit orders refilled at one price over the last 5 minutes (bid - ask USD, count)
-    'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'card_r': 'REAL',
+    'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'btc_bias': 'REAL', 'vpin': 'REAL', 'vol_entropy': 'REAL', 'lead_venue': 'TEXT', 'lead_corr': 'REAL', 'card_r': 'REAL',
     'prem_1h': 'REAL', 'prem_z': 'REAL', 'funding_1h': 'REAL', 'oi_vol': 'REAL', 'er_1h': 'REAL', 'chop_1h': 'REAL',
     'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
+    'weis_ratio': 'REAL', 'tp1_min': 'REAL', 'limit_entry': 'INTEGER',
 }
 
 FEATURE_KEYS = {
@@ -183,11 +184,11 @@ FEATURE_KEYS = {
     'trend_w': 'trend_w', 'breadth_w': 'breadth_w',
     'dvol_btc': 'dvol_btc', 'dvol_chg_1h': 'dvol_chg_1h', 'pc_oi_btc': 'pc_oi_btc', 'funding_spread': 'funding_spread',
     'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb',
-    'iceberg_net_5m': 'iceberg_net_5m', 'iceberg_n_5m': 'iceberg_n_5m', 'daily_bias': 'daily_bias', 'weekly_bias': 'weekly_bias',
+    'iceberg_net_5m': 'iceberg_net_5m', 'iceberg_n_5m': 'iceberg_n_5m', 'daily_bias': 'daily_bias', 'weekly_bias': 'weekly_bias', 'btc_bias': 'btc_bias', 'vpin': 'vpin', 'vol_entropy': 'vol_entropy', 'lead_venue': 'lead_venue', 'lead_corr': 'lead_corr',
     'prem_1h': 'prem_1h', 'prem_z': 'prem_z', 'funding_1h': 'funding_1h', 'oi_vol': 'oi_vol', 'er_1h': 'er_1h',
     'chop_1h': 'chop_1h', 'rs_btc_z': 'rs_btc_z', 'event_risk': 'event_risk', 'near52': 'near52',
     'vol_rank': 'vol_rank', 'liq_proxy': 'liq_proxy',
-    'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d',
+    'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d', 'weis_ratio': 'weis_ratio',
 }
 
 # anomaly label -> (median |4h move| / the coin's usual |4h move|, n): refreshed hourly (refresh_anomaly_effects)
@@ -547,6 +548,8 @@ class SignalJournal:
                     'perp_led': 0, 'p_edge': tracked.sig.get('p_edge'),
                     'tp1_src': lv.get('tp1_src'), 'tp2_src': lv.get('tp2_src'), 'tp3_src': lv.get('tp3_src'),
                     'range_pos': lv.get('range_pos'),
+                    # eng-58: a resting limit (Seiden's line, ICT's CE / OTE): the replay fills it at the entry price
+                    'limit_entry': int((tracked.plan or {}).get('trigger') == 'touch'),
                     'sl_src': lv.get('sl_src'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
                     'anchor': _anchor_json(tracked.plan),
@@ -827,13 +830,12 @@ class SignalJournal:
         confirm.PROMOTED.update(promoted)
         return len(promoted)
 
-    def coin_results(self, since_ms: int) -> List[Tuple[str, str, int, float]]:
-        """(strategy, symbol, entries, mean net R to TP1) of the replayed, non-vetoed entries since `since_ms`."""
+    def coin_results(self, since_ms: int) -> List[Tuple[str, str, int, int, float]]:
+        """(strategy, symbol, ts_ms, direction, net R to TP1) of every replayed, non-vetoed entry since `since_ms`."""
         with self._lock:
             return self.conn.execute(
-                "SELECT strategy, symbol, COUNT(*), AVG(r_tp1) FROM signals WHERE kind = 'entry' AND r_tp1 IS NOT NULL "
-                "AND (vetoed IS NULL OR vetoed = '') AND strategy IS NOT NULL AND ts_ms >= ? GROUP BY strategy, symbol",
-                (since_ms,)).fetchall()
+                "SELECT strategy, symbol, ts_ms, direction, r_tp1 FROM signals WHERE kind = 'entry' AND r_tp1 IS NOT NULL "
+                "AND (vetoed IS NULL OR vetoed = '') AND strategy IS NOT NULL AND ts_ms >= ?", (since_ms,)).fetchall()
 
     def summary(self) -> Tuple[int, int]:
         """(signals logged, signals with a 4h outcome)."""

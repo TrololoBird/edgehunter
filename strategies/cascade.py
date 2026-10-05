@@ -6,6 +6,10 @@ Wyckoff (Pruden, Weis): a liquidation cascade is a selling / buying climax; the 
 trade comes on the SECONDARY TEST, a return toward the climax's extreme on lower volume (eng-30: the entry trigger
 needs the pullback's average minute <= spring_test_volume_ratio x the climax's, like a spring's test).
 
+eng-58: a selling climax ENDS a decline (Wyckoff's phase A): the close 24 1h candles before the cascade must be
+beyond its start in the cascade's direction (above for a flush of longs), else 'no_prior_trend'; the structure is
+15m (our timeframe rule), the entry 5m.
+
 Anchor: a real leg - the cascade, from the extreme of the exhaustion_pre_minutes before it to its extreme. The extreme
 keeps following price until the entry (nobody knows where a running cascade ends), so there is no fixed invalidation;
 the card waits near the extreme for a 5m structure shift against the cascade. Targets: the mean (VWAP anchored at the
@@ -14,7 +18,7 @@ cascade's start, the map's VWAP / POC / nodes), the cascade's 0.382 / 0.5 / 0.61
 from typing import Dict, Optional, Sequence
 
 from config import CONFIG
-from levels import fib_price, retracement_of
+from levels import min_leg_atr, fib_price, retracement_of
 from strategies.base import PlanInput, Strategy, base_plan
 from strategies.geometry import cap_for_rr, select_targets
 from strategies.level import reached_since
@@ -88,7 +92,7 @@ class CascadeTracker:
             pre = before + [c for c in during if c[0] < end_c[0]]
             start_c = min(pre, key=lambda c: c[3])
             start, end = start_c[3], end_c[2]
-        if abs(start - end) < cfg.exhaustion_min_leg_atr * atr:
+        if abs(start - end) < (cfg.exhaustion_min_leg_atr or min_leg_atr()) * atr:
             return None
         event['fired'] = True
         side = 'longs' if direction > 0 else 'shorts'
@@ -104,7 +108,7 @@ class CascadeTracker:
 class ExhaustionStrategy(Strategy):
     name = 'wyckoff'               # eng-35: Wyckoff's phase A (climax + secondary test), with SPRING / UTAD (phase C)
     own_leg = True                 # its anchor is the cascade, not a leg of the 15m / 1h history
-    default_tf = '5m'
+    default_tf = '15m'
     anchor_type = 'leg'
     setups = {'FLUSH REVERSAL': 1, 'SQUEEZE REVERSAL': -1}
     ttl_key = 'exhaustion_ttl'
@@ -118,6 +122,9 @@ class ExhaustionStrategy(Strategy):
         leg = cascade_leg(x.sig, x.minutes, d, atr) if atr else None
         if leg is None:
             return None
+        h1 = list(x.h1 or [])
+        if len(h1) >= 25 and d * (h1[-25][4] - leg['start']) <= 0:
+            return {'skip': 'no_prior_trend'}     # no decline (rally) for the climax to end
         levels = list(x.raw_levels or []) + vwap(x.minutes, leg['start_ts'], 'VWAP pre-cascade')
         zones = merge(levels, atr, symbol=x.symbol)
         end = leg['end']
@@ -127,12 +134,13 @@ class ExhaustionStrategy(Strategy):
         retraces = [fib_price(leg, r) for r in CONFIG.levels.reversal_targets]
         targets, sources = select_targets(zones, reached, d, atr, 'mean', retraces, 'retrace')
         hi_ratio = CONFIG.levels.reversal_zone_max
-        capped = retracement_of(leg, cap_for_rr(targets[0], stop_est, d, atr, x.recent_atr))
+        capped = retracement_of(leg, cap_for_rr(targets[0], stop_est, d, atr, x.recent_atr,
+                                                 volume_24h=x.sig.get('volume_24h')))
         hi_ratio = max(0.0, min(hi_ratio, capped))
         zone = sorted((end, fib_price(leg, hi_ratio)))
-        anchor = {'type': 'leg', 'tf': '5m', 'start': leg['start'], 'end': end, 'start_ts': leg['start_ts'],
+        anchor = {'type': 'leg', 'tf': '15m', 'start': leg['start'], 'end': end, 'start_ts': leg['start_ts'],
                   'end_ts': leg['end_ts'], 'label': 'cascade'}
-        return base_plan(x, self.name, anchor, '5m', entry='pullback', zone_lo=zone[0], zone_hi=zone[1],
+        return base_plan(x, self.name, anchor, '15m', trigger_minutes=5, entry='pullback', zone_lo=zone[0], zone_hi=zone[1],
                          zone_src=f"cascade extreme (0-{hi_ratio:.2f})", invalid=None, missable=True, stop_ref=end,
                          intent='mean', fillers=tuple(retraces), fill_label='retrace', targets=targets,
                          target_src=sources, zones=zones, reached=reached, key=(x.sig.get('event_ts'), leg['start']),

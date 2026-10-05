@@ -424,6 +424,13 @@ def _confirm_value(row, name: str) -> Optional[str]:
     return 'yes' if value is True or isinstance(value, str) else 'no'
 
 
+# the nature of each method (its source's own logic): what price must do after the entry
+NATURE = {'continuation': 'trend', 'breakout': 'trend', 'orb': 'trend', 'trendline': 'trend', 'cup_handle': 'trend',
+          'oi_signal': 'trend', 'pump': 'trend', 'connors': 'reversion', 'market_profile': 'reversion',
+          'bollinger': 'reversion', 'supply_demand': 'reversion', 'sweep': 'reversal', 'wyckoff': 'reversal',
+          'po3': 'reversal'}
+
+
 FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
     ('strategy', _family),
     ('market 1h vs the signal', lambda r: None if _col(r, 'mkt_1h') is None or not _col(r, 'direction') else
@@ -448,6 +455,21 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
          'NY 13-21' if _col(r, 'hour_utc') < 21 else 'late 21-24')),
     ('ADX14 (15m)', lambda r: None if _col(r, 'adx') is None else
         ('trending >= 30' if _col(r, 'adx') >= 30 else 'weak < 20' if _col(r, 'adx') < 20 else '20-30')),
+    # eng-59 (the pool audit): does the method suit the coin's state? Dreiss' Choppiness of the coin's last hours
+    # (> 61.8 a range, < 38.2 a trend - his levels) against the method's nature: trend methods should do better in a
+    # trending coin, mean-reversion ones in a ranging one. Journal first, a pool / veto rule only once it is proven
+    ('method nature x coin state (Choppiness 1h)', lambda r: None if _col(r, 'chop_1h') is None
+        or NATURE.get(_col(r, 'strategy') or '') is None else
+        f"{NATURE[_col(r, 'strategy')]} method in a " +
+        ('ranging coin (> 61.8)' if _col(r, 'chop_1h') > 61.8 else 'trending coin (< 38.2)' if _col(r, 'chop_1h') < 38.2
+         else 'mixed coin')),
+    # eng-59 flow microstructure (journal only): who moved first, and VPIN's flow toxicity (Easley et al.: ~0.2-0.3
+    # is normal for liquid futures; the cut is ours and only splits the journal)
+    ('leading venue (1h)', lambda r: _col(r, 'lead_venue') if (_col(r, 'lead_corr') or 0) > 0.2 else
+        ('none (corr <= 0.2)' if _col(r, 'lead_corr') is not None else None)),
+    ('VPIN (1h)', lambda r: None if _col(r, 'vpin') is None else ('high >= 0.4' if _col(r, 'vpin') >= 0.4 else 'normal')),
+    ('BTC bias vs the signal', lambda r: None if not _col(r, 'btc_bias') or not _col(r, 'direction') else
+        ('with BTC' if _col(r, 'btc_bias') * _col(r, 'direction') > 0 else 'against BTC')),
     ('weekend', lambda r: None if _col(r, 'weekend') is None else ('weekend' if _col(r, 'weekend') else 'weekday')),
     ('pullback zone', lambda r: None if not _col(r, 'zone_src') or _col(r, 'kind') != 'entry' else
         ('Fibonacci only' if 'fib only' in _col(r, 'zone_src') else 'map level')),
@@ -499,6 +521,9 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
         ('with the signal' if _col(r, 'hl_net_usd') * _col(r, 'direction') > 0 else 'against the signal')),
     ('Coinbase premium', lambda r: None if _col(r, 'cb_premium') is None else
         ('> +0.05%' if _col(r, 'cb_premium') > 0.0005 else '< -0.05%' if _col(r, 'cb_premium') < -0.0005 else 'flat')),
+    # eng-57: Weis's effort into the spring / upthrust vs the range's earlier waves (< 1 = supply / demand drying up)
+    ('Weis wave into the test (wyckoff)', lambda r: None if _col(r, 'weis_ratio') is None else
+        ('< 0.8 (drying up)' if _col(r, 'weis_ratio') < 0.8 else '0.8-1.2' if _col(r, 'weis_ratio') <= 1.2 else '> 1.2 (effort)')),
 ]
 
 
@@ -719,23 +744,203 @@ def expected_max_sr(trials: int, n: int) -> float:
     return math.sqrt(1 / n) * ((1 - gamma) * nd.inv_cdf(1 - 1 / trials) + gamma * nd.inv_cdf(1 - 1 / (trials * math.e)))
 
 
+def hl_haircut(sr: float, n: int, trials: int) -> Optional[float]:
+    """
+    Harvey & Liu (2015, "Backtesting", JPM): the Sharpe haircut for multiple testing - the t-stat of the per-cluster
+    Sharpe (t = SR x sqrt(n)), its two-sided p-value Bonferroni-adjusted for `trials` (p x M, their most conservative
+    rule), translated back to a Sharpe; haircut = 1 - SR_adj / SR (100% = nothing left once the trials are counted).
+    Bonferroni is the strictest of their three (Bonferroni / Holm / BHY; they advocate BHY, which needs every trial's
+    p-value - we have only the live cells'): an UPPER bound of the haircut.
+    """
+    if n < 2 or sr <= 0 or trials < 1:
+        return None
+    z = statistics.NormalDist()
+    p = 2 * (1 - z.cdf(sr * math.sqrt(n)))
+    p_adj = min(1.0, p * trials)
+    if p_adj >= 1.0:
+        return 1.0
+    sr_adj = z.inv_cdf(1 - p_adj / 2) / math.sqrt(n)
+    return max(0.0, 1 - sr_adj / sr)
+
+
+def pbo_cscv(matrix: List[List[float]], blocks: int = 8) -> Optional[float]:
+    """
+    Bailey, Borwein, Lopez de Prado & Zhu (2017): the probability of backtest overfitting by combinatorially symmetric
+    cross-validation. `matrix` = T periods x N configurations (here: days x strategies, the day's summed R). The T rows
+    are cut into `blocks` contiguous parts; for every half / half split the in-sample best configuration's
+    out-of-sample relative rank w gives logit ln(w / (1 - w)); PBO = the share of splits with logit <= 0 (the IS winner
+    at or below the OOS median). ~0.5 = choosing the best strategy is a coin flip.
+    """
+    from itertools import combinations
+    t, n = len(matrix), len(matrix[0]) if matrix else 0
+    if n < 2 or t < 2 * blocks:
+        return None
+    size = t // blocks
+    parts = [matrix[i * size:(i + 1) * size] for i in range(blocks)]
+    below, total = 0, 0
+    for ins in combinations(range(blocks), blocks // 2):
+        is_rows = [r for b in ins for r in parts[b]]
+        oos_rows = [r for b in range(blocks) if b not in ins for r in parts[b]]
+        is_mean = [statistics.fmean(r[j] for r in is_rows) for j in range(n)]
+        oos_mean = [statistics.fmean(r[j] for r in oos_rows) for j in range(n)]
+        best = max(range(n), key=lambda j: is_mean[j])
+        rank = sum(1 for j in range(n) if oos_mean[j] < oos_mean[best]) + 1
+        w = rank / (n + 1)
+        below += math.log(w / (1 - w)) <= 0
+        total += 1
+    return below / total if total else None
+
+
+def robustness_table(console: Console, rows: List):
+    """
+    Is a strategy's result a few lucky trades? (the crypto-backtest-audit checks, chrisamz/crypto-skills): total card R
+    without the best trade / the best 5, without the best coin / the best 5 coins, the best trade's share of the total;
+    the mean R of the first and second half by entry time; the first card per coin only; the extra round-trip cost
+    (bps of price) that brings the total to 0 = sum R / sum(1 / risk in bps). Below the table: PBO of picking the best
+    strategy (days x strategies, CSCV).
+    """
+    cards = [dict(r, card_r=card_r_net(r)) for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
+    if not cards:
+        return
+    table = Table(title="Robustness: is the result a few lucky trades? (R sums; cost = extra bps per round trip to 0)",
+                  header_style="bold magenta", border_style="blue")
+    for name in ("Strategy", "Cards", "Total R", "-best", "-top5", "-best coin", "-top5 coins", "Best share",
+                 "1st half", "2nd half", "1st/coin", "Cost to 0"):
+        table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
+    groups: Dict[str, List] = {}
+    for r in cards:
+        groups.setdefault(_col(r, 'strategy') or '?', []).append(r)
+    for name, members in sorted(groups.items()):
+        members.sort(key=lambda r: r['ts_ms'])
+        rs = [r['card_r'] for r in members]
+        total = sum(rs)
+        top = sorted(rs, reverse=True)
+        coins: Dict[str, float] = {}
+        first: Dict[str, float] = {}
+        for r in members:
+            coins[r['symbol']] = coins.get(r['symbol'], 0.0) + r['card_r']
+            first.setdefault(r['symbol'], r['card_r'])
+        ctop = sorted(coins.values(), reverse=True)
+        half = len(rs) // 2
+        h1, h2 = rs[:half], rs[half:]
+        inv = 0.0
+        for r in members:
+            entry, sl = _col(r, 'entry'), _col(r, 'sl')
+            if entry and sl and entry != sl:
+                inv += 1 / (abs(entry - sl) / entry * 1e4)
+        cost = total / inv if inv and total > 0 else None
+        share = top[0] / total if total > 0 else None
+        f = lambda v: f"{v:+.1f}"
+        table.add_row(name, str(len(rs)), f(total), f(total - top[0]), f(total - sum(top[:5])),
+                      f(total - ctop[0]), f(total - sum(ctop[:5])), f"{share:.0%}" if share is not None else "-",
+                      f"{statistics.fmean(h1):+.2f}R" if h1 else "-", f"{statistics.fmean(h2):+.2f}R" if h2 else "-",
+                      f"{statistics.fmean(first.values()):+.2f}R", f"{cost:.0f}" if cost else "-")
+    console.print(table)
+    names = sorted(groups)
+    days: Dict[int, Dict[str, float]] = {}
+    for r in cards:
+        d = days.setdefault(int(r['ts_ms'] // 86_400_000), {})
+        key = _col(r, 'strategy') or '?'
+        d[key] = d.get(key, 0.0) + r['card_r']
+    if days:
+        span = range(min(days), max(days) + 1)
+        pbo = pbo_cscv([[days.get(d, {}).get(n, 0.0) for n in names] for d in span])
+        console.print(f"PBO (CSCV, {len(span)} days x {len(names)} strategies, 8 blocks): "
+                      + (f"{pbo:.0%} - the chance that the in-sample best strategy is below the median out of sample"
+                         if pbo is not None else "not enough days (>= 16) or strategies (>= 2)"))
+
+
+def version_no(v: Optional[str]) -> int:
+    """'eng-57' -> 57 (0 for anything else)."""
+    try:
+        return int(str(v).split('-')[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def card_r_net(row) -> Optional[float]:
+    """A card's R net of costs: rows from eng-58 on are net already (SignalBook._exit_r); older ones were gross - the
+    round trip's fees and slippage (by the coin's 24h volume) are taken off here (funding / gaps not known for them)."""
+    r = _col(row, 'card_r')
+    if r is None or version_no(_col(row, 'logic_version')) >= 58:
+        return r
+    entry, sl = _col(row, 'entry'), _col(row, 'sl')
+    if not entry or sl is None or entry == sl:
+        return r
+    from levels import slippage_bps
+    cost = CONFIG.journal.fee_round_trip + 2 * slippage_bps(_col(row, 'volume_24h')) / 1e4
+    return r - cost * entry / abs(entry - sl)
+
+
+def effective_trials(rows: List) -> Tuple[int, int]:
+    """
+    eng-59 (plan 3.2): the effective number of independent trials behind the DSR - Lopez de Prado's ONC idea: the
+    trials are the (logic version x strategy) cells; their mean-R series per 4h block are correlated (one strategy across
+    versions is nearly the same bet), so they are clustered on the correlation distance sqrt((1 - rho) / 2) by k-means
+    for k = 2 .. n - 1 and the k with the best silhouette t-stat (mean / std of the samples' silhouettes) is the
+    effective N. Cells with < 10 blocks of results stay single trials. Returns (effective N, raw N).
+    """
+    series: Dict[tuple, Dict[int, List[float]]] = {}
+    for r in rows:
+        if _col(r, 'kind') not in ('entry', 'card') or not _col(r, 'strategy'):
+            continue
+        v = card_r_net(r) if _col(r, 'kind') == 'card' else net_r(r, 'r_tp1') if _col(r, 'r_tp1') is not None else None
+        if v is None or (_col(r, 'kind') == 'entry' and _col(r, 'vetoed')):
+            continue
+        series.setdefault((_col(r, 'logic_version'), _col(r, 'strategy')), {}).setdefault(
+            int(_col(r, 'ts_ms') // 14_400_000), []).append(v)
+    raw = len(series) or 1
+    keys = [k for k, d in series.items() if len(d) >= 10]
+    lone = raw - len(keys)
+    if len(keys) < 3:
+        return raw, raw
+    days = sorted({d for k in keys for d in series[k]})
+    import numpy as np
+    m = np.full((len(keys), len(days)), np.nan)
+    pos = {d: i for i, d in enumerate(days)}
+    for i, k in enumerate(keys):
+        for d, vs in series[k].items():
+            m[i, pos[d]] = statistics.fmean(vs)
+    corr = np.eye(len(keys))
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            ok = ~np.isnan(m[i]) & ~np.isnan(m[j])
+            c = np.corrcoef(m[i, ok], m[j, ok])[0, 1] if ok.sum() >= 5 and m[i, ok].std() > 0 and m[j, ok].std() > 0 else 0.0
+            corr[i, j] = corr[j, i] = 0.0 if np.isnan(c) else c
+    dist = np.sqrt(np.clip((1 - corr) / 2, 0, 1))
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_samples
+    best, best_k = -np.inf, len(keys)
+    for k in range(2, len(keys)):
+        labels = KMeans(n_clusters=k, n_init=10, random_state=0).fit_predict(dist)
+        if len(set(labels)) < 2:
+            continue
+        sil = silhouette_samples(dist, labels)
+        t = sil.mean() / sil.std() if sil.std() > 0 else -np.inf
+        if t > best:
+            best, best_k = t, k
+    return best_k + lone, raw
+
+
 def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None):
     """
     eng-55: the two-level verdict per strategy (the owner's decision after the audit, written before results):
     SUSPEND (no demo, still journaled) at >= 30 independent 4h clusters when the 90% cluster interval's LOWER bound is
     below -0.05R; DEPRECATE (delete the code) only at >= 200 clusters (MinTRL of a +0.1R edge with skew 1.8 / kurtosis
     7.8) with the UPPER bound below 0. PSR = P(true mean R > 0) per cluster mean (skew / kurtosis aware); DSR = the
-    same against the SR the best of N trials reaches by luck, N = the (logic version x strategy) cells journaled - an
-    UPPER bound of the effective number of trials (ONC clustering of correlated trials not computed yet).
+    same against the SR the best of N trials reaches by luck, N = the effective number of trials (eng-59:
+    `effective_trials`, ONC-style clustering of the version x strategy cells; was the raw cell count, an upper bound).
     """
-    cards = [r for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
+    cards = [dict(r, card_r=card_r_net(r)) for r in rows if r['kind'] == 'card' and _col(r, 'card_r') is not None]
     if not cards:
         return
     pool = all_rows if all_rows is not None else rows
-    trials = len({(_col(r, 'logic_version'), _col(r, 'strategy')) for r in pool if _col(r, 'strategy')}) or 1
-    table = Table(title=f"Verdict (suspend: >=30 clusters & low < -0.05R; deprecate: >=200 & high < 0); DSR trials N={trials}",
+    trials, raw_trials = effective_trials(pool)
+    table = Table(title=f"Verdict (suspend: >=30 clusters & low < -0.05R; deprecate: >=200 & high < 0); "
+                        f"DSR trials N={trials} (ONC; {raw_trials} version x strategy cells)",
                   header_style="bold magenta", border_style="blue")
-    for name in ("Strategy", "Cards", "Clusters", "Mean R", "90% CI", "Skew", "Kurt", "PSR", "DSR", "MinTRL", "Verdict"):
+    for name in ("Strategy", "Cards", "Clusters", "Mean R", "90% CI", "Skew", "Kurt", "PSR", "DSR", "HL haircut", "MinTRL",
+                 "Verdict"):
         table.add_column(name, justify="left" if name in ("Strategy", "Verdict") else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in cards:
@@ -754,6 +959,7 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
         p = psr(sr, k, g3, g4)
         dsr = psr(sr, k, g3, g4, expected_max_sr(trials, k))
         mt = min_trl(sr, g3, g4)
+        hl = hl_haircut(sr, k, trials)
         if ci and k >= 200 and ci[1] < 0:
             verdict = Text("DEPRECATE", style="bold red")
         elif ci and k >= 30 and ci[0] < -0.05:
@@ -765,7 +971,7 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
         table.add_row(name, str(len(rs)), str(k), f"{statistics.fmean(rs):+.2f}R",
                       f"[{ci[0]:+.2f}..{ci[1]:+.2f}]" if ci else "", f"{g3:+.1f}", f"{g4:.1f}",
                       f"{p:.0%}" if p is not None else "", f"{dsr:.0%}" if dsr is not None else "",
-                      f"{mt:.0f}" if mt else "-", verdict)
+                      f"{hl:.0%}" if hl is not None else "-", f"{mt:.0f}" if mt else "-", verdict)
     console.print(table)
 
 
@@ -816,26 +1022,48 @@ def demo_gap_table(console: Console, db: str = 'demo_trades.db'):
     console.print(table)
 
 
-def demo_table(console: Console, db: str = 'demo_trades.db'):
-    """The BingX demo fills next to the journal's replay of the same cards: do the two agree?"""
+def demo_table(console: Console, db: str = 'demo_trades.db', journal_db: str = CONFIG.journal.db_path):
+    """
+    The BingX demo fills next to the same card's own result (eng-59, research/demo_gap.md: the journal's replay
+    trades thirds to fixed targets over 8h while the card and the demo exit by the method - time stop, session, band,
+    SMA5 - so `journal_r` was the wrong partner: half of the -0.32R gap was that). The card is the first finished card
+    of the coin and direction after the demo's entry (`card_r`, netted by card_r_net).
+    """
     if not os.path.exists(db):
         return
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
-        rows = conn.execute("SELECT strategy, close_reason, r, journal_r FROM demo_trades").fetchall()
+        raw = conn.execute("SELECT strategy, close_reason, r, symbol, direction, opened_ms FROM demo_trades").fetchall()
     finally:
         conn.close()
+    rows = []
+    jconn = sqlite3.connect(f"file:{journal_db}?mode=ro", uri=True) if os.path.exists(journal_db) else None
+    if jconn is not None:
+        jconn.row_factory = sqlite3.Row
+    try:
+        for strategy, reason, r, symbol, direction, opened in raw:
+            card = None
+            if jconn is not None and r is not None and opened:
+                row = jconn.execute(
+                    "SELECT * FROM signals WHERE kind = 'card' AND symbol = ? AND direction = ? AND card_r IS NOT NULL "
+                    "AND ts_ms BETWEEN ? AND ? ORDER BY ts_ms LIMIT 1",
+                    (symbol, direction, opened, opened + 40 * 86_400_000)).fetchone()
+                card = card_r_net(row) if row is not None else None
+            rows.append((strategy, reason, r, card))
+    finally:
+        if jconn is not None:
+            jconn.close()
     if not rows:
         return
-    table = Table(title="BingX demo vs the journal (closed trades; ERROR / NO_MARKET / EARLY_CLOSE counted apart)",
+    table = Table(title="BingX demo vs the card's own net R (closed trades; ERROR / NO_MARKET / EARLY_CLOSE apart)",
                   header_style="bold magenta", border_style="blue")
-    for name in ("Strategy", "Trades", "Demo R", "Journal R", "Both", "Diff", "Not traded"):
+    for name in ("Strategy", "Trades", "Demo R", "Card R", "Both", "Diff", "Not traded"):
         table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in rows:
         groups.setdefault(r[0] or '?', []).append(r)
     for strategy, members in sorted(groups.items()):
-        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE', 'OVERLAP', 'INVALID_ENTRY', 'PRICE_GAP', 'LATE_FILL', 'UNTRACKED', 'NO_STOP', 'NOT_FILLED') and r[2] is not None]
+        done = [r for r in members if r[1] not in ('ERROR', 'NO_MARKET', 'EARLY_CLOSE', 'OVERLAP', 'INVALID_ENTRY', 'PRICE_GAP', 'LATE_FILL', 'UNTRACKED', 'NO_STOP', 'NOT_FILLED', 'ORPHAN') and r[2] is not None]
         demo = [r[2] for r in done]
         jr = [r[3] for r in done if r[3] is not None]
         both = [(r[2], r[3]) for r in done if r[3] is not None]
@@ -981,7 +1209,12 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     vetoes_table(console, rows)
     reversal_test_table(console, rows)
     card_results_table(console, rows)
-    verdict_table(console, rows)
+    # eng-58: the verdict over the version family since CONFIG.journal.verdict_since (net card R)
+    family = [r for r in all_rows if has_version and version_no(r['logic_version']) >= version_no(CONFIG.journal.verdict_since)]
+    console.print(f"[dim]Verdict / robustness over logic {CONFIG.journal.verdict_since}+ ({len(family)} rows), card R net of "
+                  f"costs[/dim]")
+    verdict_table(console, family, all_rows)
+    robustness_table(console, family)
     cards_table(console, rows)
     demo_table(console)
     demo_gap_table(console)

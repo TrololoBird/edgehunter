@@ -5,17 +5,19 @@ Classic published methods added as their authors define them (eng-29), detected 
               previous day's value area (70% of its volume around the POC), comes back into it and stays there for two
               consecutive 30-minute periods -> the market tends to traverse the whole value area. Entry at the second
               period's close, target the opposite edge, stop beyond the edge it re-entered through (outside the value
-              area is where the idea is wrong). Crypto has no session open: the UTC day is the session.
+              area is where the idea is wrong). Crypto has no session open: the UTC day is the session. The value
+              area is the TPO one (time at price, eng-58), as Dalton's; the 60 price rows are ours.
 - orb         Toby Crabel's opening range breakout ("Day Trading with Short Term Price Patterns and Opening Range
               Breakout", 1990) as the book defines it (eng-55; Oxfordstrat, Crabel's pattern definitions): stop
               orders at the day's open +- the Stretch (10-day SMA of min(High - Open, Open - Low)); the first touched
               is the trade, the other level its stop; out at the session's close. Crypto's day opens 00:00 UTC.
-              Checked loop-side on every final minute (Scanner._orb_touch). NR4 / NR7 (Crabel's contraction days)
+              Checked loop-side on every final minute (strategies.loopside.LoopDetectors._orb_touch). NR4 / NR7 (Crabel's contraction days)
               are journaled. (eng-29..54 used a 30-minute range after the US equity open and a 15m close: not his rule.)
 - connors     Larry Connors' RSI(2) ("Short Term Trading Strategies That Work", 2008): with the trend (close above the
-              200-day SMA) buy when RSI(2) < 10, exit on a close above the 5-day SMA (shorts mirrored: below the
+              200-day SMA) buy when RSI(2) < 5 (eng-58; the original 2-period RSI rule - < 10 is a later variant),
+              exit on a close above the 5-day SMA (shorts mirrored: below the
               SMA200, RSI(2) > 90, out below the SMA5), on DAILY candles (fetcher._daily_candles_loop), checked
-              loop-side once per coin after each daily close (Scanner._connors_daily). He uses no stop: a perpetual
+              loop-side once per coin after each daily close (strategies.loopside.LoopDetectors._connors_daily). He uses no stop: a perpetual
               needs one for the margin, so a catastrophic stop 3 daily ATR away (our deviation, journaled as such).
 """
 import math
@@ -32,8 +34,9 @@ NY = ZoneInfo('America/New_York')
 
 # ------------------------------------------------------------------------------------------------ value area
 
-def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets: int = 60):
-    """(VAL, POC, VAH) of the candles' volume spread evenly over each candle's range, else None."""
+def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets: int = 60, tpo: bool = False):
+    """(VAL, POC, VAH) of the candles' volume spread evenly over each candle's range, else None. tpo: each candle
+    weighs one time unit instead of its volume (Market Profile's TPO value area, Dalton - eng-58)."""
     if not candles:
         return None
     hi, lo = max(c[2] for c in candles), min(c[3] for c in candles)
@@ -44,7 +47,7 @@ def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets:
     for c in candles:
         a = min(buckets - 1, int((c[3] - lo) / size))
         b = min(buckets - 1, int((c[2] - lo) / size))
-        part = (c[5] or 0.0) / (b - a + 1)
+        part = (1.0 if tpo else (c[5] or 0.0)) / (b - a + 1)
         for k in range(a, b + 1):
             vol[k] += part
     total = sum(vol)
@@ -78,7 +81,7 @@ def value_area_event(m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]
     day = [c for c in _day_candles(m15, today) if c[0] < cut]
     if len(prev) < 90 or len(day) < 4:
         return None
-    va = value_area(prev)
+    va = value_area(prev, tpo=True)               # Dalton's value area is TPO (time), not volume (eng-58)
     if va is None:
         return None
     val, poc, vah = va
@@ -204,7 +207,7 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     trs = [max(x[2], p[4]) - min(x[3], p[4]) for p, x in zip(h1[-21:-1], h1[-20:])]
     atr = sum(trs) / len(trs) if trs else None
     return {'setup': 'RSI2 LONG' if side > 0 else 'RSI2 SHORT', 'direction': side, 'connors_atr': atr,
-            'setup_note': f"daily RSI(2) {r:.0f} {'below 10 above' if side > 0 else 'above 90 below'} the SMA200 "
+            'setup_note': f"daily RSI(2) {r:.0f} {'below ' + format(cfg.connors_rsi_low, 'g') + ' above' if side > 0 else 'above ' + format(cfg.connors_rsi_high, 'g') + ' below'} the SMA200 "
                           f"{sma200:.6g} (Connors); exit at the SMA5 {sma5:.6g}",
             'anchor_level': c, 'anchor_extreme': extreme, 'anchor_label': 'RSI(2) extreme',
             'anchor_ts': int(last[0]), 'anchor_close': c, 'connors_sma5': sma5, 'rsi2': r,

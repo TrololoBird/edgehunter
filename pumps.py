@@ -105,3 +105,19 @@ def monitor(markets: Dict, now_ms: float, cache: Dict) -> List[Dict]:
             out.append({'symbol': sym, **hit[1]})
     out.sort(key=lambda r: -r['event_ts'])
     return out
+
+
+def monitor_wide(h1_by_symbol: Dict, cache: Dict) -> List[Dict]:
+    """The same monitor on the perpetuals outside the universe (Scanner.wide_watch_loop, eng-57: small caps by
+    construction - the majors are in the universe)."""
+    out = []
+    for sym, h1 in list(h1_by_symbol.items()):
+        if not h1:
+            continue
+        hit = cache.get(sym)
+        if hit is None or hit[0] != h1[-1][0]:
+            cache[sym] = hit = (h1[-1][0], scan(h1))
+        if hit[1] is not None:
+            out.append({'symbol': sym, **hit[1]})
+    out.sort(key=lambda r: -r['event_ts'])
+    return out

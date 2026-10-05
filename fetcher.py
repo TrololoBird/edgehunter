@@ -58,7 +58,9 @@ class MarketData:
     finalized_until: dict = field(default_factory=lambda: {m: 0 for m in MARKETS})
     # 1m candles [open_time_ms, open, high, low, close, quote_volume, taker_buy_quote], latest last: futures (Tier-0
     # RVOL_1m, the LTF trigger, absorption) and spot (live spot CVD)
-    minute_klines: deque = field(default_factory=lambda: deque(maxlen=240))
+    # 10h: PO3 reads the Asian range 20:00-00:00 New York from 02:00-05:00 NY (240 minutes held at most 21 of its 48
+    # 5m bars: PO3 could never fire - research/replay_missing.md); every other reader takes a time window of it
+    minute_klines: deque = field(default_factory=lambda: deque(maxlen=600))
     # Open time of the newest FINAL futures 1m candle (kline x=true): the last deque entry may still be running
     minute_closed_until: int = 0
     spot_minute_klines: deque = field(default_factory=lambda: deque(maxlen=60))
@@ -657,6 +659,9 @@ class DataFetcher:
     async def _update_24h_volumes(self):
         rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetTicker24hr', priority=1, weight=40)
         now_ms = time.time() * 1000
+        # eng-59: every USDT perpetual's 24h volume - the pools rank a coin in the whole market, not in the universe
+        self.market_volumes = [float(t.get('quoteVolume') or 0.0) for t in rows
+                               if str(t.get('symbol', '')).endswith('USDT')]
         for t in rows:
             md = self.markets.get(self._binance_keys.get(('futures', t.get('symbol'))))
             if md is not None:
@@ -967,7 +972,9 @@ class DataFetcher:
                 'symbol': exchange.market(symbol)['id'],
                 'interval': interval or CONFIG.timeframe.rest_timeframe,
                 'limit': limit,
-            }, priority=0, weight=2 if market == 'spot' or limit >= 100 else 1)
+            }, priority=0, weight=2 if market == 'spot' else
+                # Binance futures klines: 1 below 100 candles, 2 to 499, 5 to 1000, 10 above (the 600-minute seed is 5)
+                1 if limit < 100 else 2 if limit < 500 else 5 if limit <= 1000 else 10)
         except RATE_LIMIT_ERRORS:
             raise
         except Exception as e:

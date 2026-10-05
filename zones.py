@@ -6,7 +6,7 @@ Sources (CONFIG.zones.weights):
 - swing_15m / swing_1h: fractal highs and lows (a high with `width` lower highs on each side);
 - equal: equal highs / lows (>= 2 swings within equal_tolerance_atr) that were not swept since: stop pools;
 - pdhl: previous UTC day's / week's high and low, the current day's high / low and the last completed sessions'
-  (Asia / London / New York, UTC hours in CONFIG.strategies.sweep_sessions) highs / lows: where stops rest;
+  (Asia / London / New York, the exchanges' local hours in CONFIG.strategies.sweep_sessions) highs / lows: where stops rest;
 - book: order-book liquidity that stayed (heatmap bands, depth.py);
 - poc / va / hvn: volume profile of 5m candles over ~4 days and of 15m candles over ~24h, each candle's volume spread evenly over its
   range: point of control, value-area edges (CBOT method), high-volume nodes;
@@ -25,11 +25,62 @@ Everything is a hypothesis: the journal stores which sources each target and sto
 how often each kind was reached.
 """
 from dataclasses import dataclass, field
+import json
 import math
+import os
 import time
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from config import CONFIG
+
+# Data behind the liquidation estimate (written by positioning.py, read here by the maps worker process too):
+# models/leverage_mix.json - the notional-weighted leverage of the tracked Hyperliquid accounts' real positions;
+# models/maintenance.json  - each contract's lowest-tier maintenance margin and max leverage (Bybit's public risk
+# limits; Binance publishes its brackets only to signed requests). Both replace guessed constants (eng-57).
+LEVERAGE_MIX_PATH = os.path.join('models', 'leverage_mix.json')
+MAINTENANCE_PATH = os.path.join('models', 'maintenance.json')
+_FILE_CACHE: Dict[str, Tuple[float, object]] = {}
+
+
+def _json_file(path: str):
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    hit = _FILE_CACHE.get(path)
+    if hit is None or hit[0] != mtime:
+        try:
+            with open(path, encoding='utf-8') as fh:
+                _FILE_CACHE[path] = hit = (mtime, json.load(fh))
+        except (OSError, ValueError):
+            return None
+    return hit[1]
+
+
+def leverage_mix() -> List[Tuple[float, float]]:
+    """(leverage, share of notional) of real positions; the configured guess only until the first measurement."""
+    data = _json_file(LEVERAGE_MIX_PATH)
+    mix = [(float(l), float(w)) for l, w in (data or {}).get('mix', []) if float(l) >= 1 and float(w) > 0]
+    if mix:
+        return sorted(mix)
+    cfg = CONFIG.zones
+    return list(zip(map(float, cfg.liq_leverages), cfg.liq_leverage_weights))
+
+
+def maintenance_of(symbol: Optional[str]) -> Tuple[float, Optional[float]]:
+    """(maintenance margin rate, max leverage) of the contract's lowest risk tier; the configured rate without data."""
+    data = _json_file(MAINTENANCE_PATH) or {}
+    row = data.get((symbol or '').split('/')[0] + 'USDT') if symbol else None
+    if row:
+        return float(row[0]), (float(row[1]) if row[1] else None)
+    return CONFIG.zones.liq_maintenance, None
+
+
+def equal_tolerance(symbol: Optional[str], price: float, atr: float) -> float:
+    """Two swings are 'equal' when they differ by less than the typical pierce of an equal-high / low on this coin
+    (p50, pierce.py: the measured overshoot); the ATR share only without the model."""
+    from pierce import overshoot
+    return overshoot(symbol, 'equal', price, 'p50') or CONFIG.zones.equal_tolerance_atr * atr
 
 HOUR_MS = 3_600_000
 DAY_MS = 24 * HOUR_MS
@@ -108,9 +159,10 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
     return out
 
 
-def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr: float) -> List[RawLevel]:
+def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr: float,
+                symbol: Optional[str] = None) -> List[RawLevel]:
     """Equal highs / lows: >= 2 swings within the tolerance, not traded through since the latest of them."""
-    tol = CONFIG.zones.equal_tolerance_atr * atr
+    tol = equal_tolerance(symbol, candles[-1][4], atr) if candles else CONFIG.zones.equal_tolerance_atr * atr
     out: List[RawLevel] = []
     for side in (+1, -1):
         same = sorted((l for l in levels if l.side == side), key=lambda l: l.price)
@@ -155,14 +207,24 @@ def round_levels(price: float, span: float) -> List[float]:
 
 
 def session_windows(now_ms: float) -> List[Tuple[str, int, int]]:
-    """The last COMPLETED occurrence of each session before now: (name, start ms, end ms)."""
+    """
+    The last COMPLETED occurrence of each session before now: (name, start ms, end ms). Sessions are the exchanges'
+    LOCAL hours (Tokyo 09-18, London 08-17, New York 08-17: 00-09 / 08-17 or 07-16 / 13-22 or 12-21 UTC with daylight
+    saving - the forex session tables); eng-57, were fixed UTC hours that matched neither season.
+    """
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
     out = []
-    today = int(now_ms) // DAY_MS * DAY_MS
-    for name, start_h, end_h in CONFIG.strategies.sweep_sessions:
-        for day in (today, today - DAY_MS):
-            start, end = day + start_h * HOUR_MS, day + end_h * HOUR_MS
-            if end <= now_ms:
-                out.append((name, start, end))
+    now = datetime.fromtimestamp(now_ms / 1000, timezone.utc)
+    for name, tz_name, start_h, end_h in CONFIG.strategies.sweep_sessions:
+        tz = ZoneInfo(tz_name)
+        local_day = now.astimezone(tz).date()
+        for back in (0, 1, 2):
+            d = local_day - timedelta(days=back)
+            start = datetime(d.year, d.month, d.day, start_h, tzinfo=tz)
+            end = datetime(d.year, d.month, d.day, end_h, tzinfo=tz)
+            if end.timestamp() * 1000 <= now_ms:
+                out.append((name, int(start.timestamp() * 1000), int(end.timestamp() * 1000)))
                 break
     return out
 
@@ -271,7 +333,7 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
 
 
 def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequence[Tuple[int, float]],
-                           atr: float) -> List[RawLevel]:
+                           atr: float, symbol: Optional[str] = None) -> List[RawLevel]:
     """
     Estimated liquidation clusters from 1h OI changes (see the module docstring). `oi_1h` is OI in COINS (contracts x
     contract size): OI in USD rises with the price alone and read every rally as new positions. Clusters are kept in
@@ -282,6 +344,10 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
         return []
     # openInterestHist timestamps are period END times: OI at the close of the candle opened one hour earlier
     oi_at = {ts - HOUR_MS: v for ts, v in oi_1h}
+    # the leverage mix of real positions, without the tiers this contract does not allow; its own maintenance margin
+    mmr, max_lev = maintenance_of(symbol)
+    mix = [(lev, w) for lev, w in leverage_mix() if max_lev is None or lev <= max_lev] or leverage_mix()[:1]
+    levs, weights = [m[0] for m in mix], [m[1] for m in mix]
     step = max(atr / 2, candles_1h[-1][4] * cfg.liq_bucket)
     clusters: Dict[Tuple[int, int], float] = {}   # (bucket, side liquidated: +1 longs, -1 shorts) -> USD
     prev_oi = None
@@ -297,14 +363,14 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
             if change > 0:
                 p = (c[2] + c[3] + c[4]) / 3
                 buy_share = min(1.0, max(0.0, c[6] / c[5])) if c[5] else 0.5
-                tiers = len(cfg.liq_leverages)
+                tiers = len(levs)
                 for side, aggression in ((+1, buy_share), (-1, 1 - buy_share)):
                     # Tilt the leverage mix: an aggressive side (share > 0.5) weighs the high tiers more
                     tilt = [w * (1 + (aggression - 0.5) * (2 * i / (tiers - 1) - 1)) if tiers > 1 else w
-                            for i, w in enumerate(cfg.liq_leverage_weights)]
+                            for i, w in enumerate(weights)]
                     norm = sum(tilt) or 1.0
-                    for lev, w in zip(cfg.liq_leverages, tilt):
-                        liq = p * (1 - side * (1 / lev - cfg.liq_maintenance))
+                    for lev, w in zip(levs, tilt):
+                        liq = p * (1 - side * (1 / lev - mmr))
                         key = (int(liq / step), side)
                         clusters[key] = clusters.get(key, 0.0) + change * w / norm
             elif change < 0 and prev_oi > 0:
@@ -365,8 +431,10 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
     - FVG (kind 'fvg'): three candles where the first's high < the third's low (bullish; mirrored bearish): the gap
       between them is the zone; the part price has not traded back through since is kept, a fully filled gap dropped;
     - order block (kind 'ob'): the last opposite candle before a displacement that broke structure - a down-close
-      candle whose next three candles close above the highest high of the ten before it while leaving a bullish FVG
-      (bearish mirrored); the zone runs from its body (open) to its wick (low); mitigated (traded back into) = dropped.
+      candle whose next three candles close above the last CONFIRMED swing high (ICT's 3-candle swing, confirmed by
+      the block's candle: his break of structure is a swing, eng-57; was the highest high of the ten candles before)
+      while leaving a bullish FVG (bearish mirrored); the zone runs from its body (open) to its wick (low); mitigated
+      (traded back into) = dropped.
     - breaker (kind 'breaker'): an order block that FAILED - price later closed through its far side - flips: a broken
       bullish OB is resistance (ICT's breaker block), mirrored.
     Kinds carry the timeframe ('fvg_4h', 'ob_1d', 'breaker_1h'): a daily order block outweighs a 15m one
@@ -398,10 +466,22 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
                 lo = max(lo, high_after)
                 out.append((abs(last - lo), RawLevel(lo, f'fvg_{tf}', f"FVG {tf} bear", +1, ts=int(candles[i - 1][0]),
                                                      body=hi)))
+    # the last confirmed ICT swing high / low at each candle: the 3-candle formation (the middle candle's high above
+    # both neighbours'), confirmed once its right neighbour closed
+    last_hi, last_lo = [None] * n, [None] * n
+    hi_p = lo_p = None
+    for j in range(n):
+        k = j - 1
+        if k >= 1:
+            if h[k] > max(h[k - 1], h[k + 1]):
+                hi_p = h[k]
+            if l[k] < min(l[k - 1], l[k + 1]):
+                lo_p = l[k]
+        last_hi[j], last_lo[j] = hi_p, lo_p
     for j in range(10, n - 3):
         nxt = range(j + 1, j + 4)
         if cl[j] < o[j]:
-            broke = any(cl[k] > max(h[j - 10:j]) for k in nxt)
+            broke = last_hi[j] is not None and any(cl[k] > last_hi[j] for k in nxt)
             gap = any(h[k - 2] < l[k] for k in range(j + 2, j + 4))
             mitigated = min(l[j + 4:], default=h[j]) <= o[j]
             if broke and gap and not mitigated:
@@ -412,7 +492,7 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
                 out.append((abs(last - o[j]), RawLevel(o[j], f'breaker_{tf}', f"breaker {tf} bear", +1,
                                                        ts=int(candles[j][0]), body=l[j])))
         elif cl[j] > o[j]:
-            broke = any(cl[k] < min(l[j - 10:j]) for k in nxt)
+            broke = last_lo[j] is not None and any(cl[k] < last_lo[j] for k in nxt)
             gap = any(l[k - 2] > h[k] for k in range(j + 2, j + 4))
             mitigated = max(h[j + 4:], default=l[j]) >= o[j]
             if broke and gap and not mitigated:
@@ -523,7 +603,7 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
               candles_4d: Optional[Sequence[Sequence[float]]] = None,
               candles_1d: Optional[Sequence[Sequence[float]]] = None,
               candles_4h: Optional[Sequence[Sequence[float]]] = None,
-              candles_1w: Optional[Sequence[Sequence[float]]] = None,
+              candles_1w: Optional[Sequence[Sequence[float]]] = None, symbol: Optional[str] = None,
               day_pocs: Optional[Sequence[Tuple[int, float]]] = None) -> List[RawLevel]:
     """
     Card-independent levels of one coin (cached by the scanner; rebuilt on a new candle / new 1h history).
@@ -534,12 +614,12 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     s1h = swings(candles_1h, cfg.swing_width_1h, 'swing_1h', '1h')
     today = int(now_ms) // DAY_MS * DAY_MS
     levels = s15 + s1h
-    levels += equal_pools(s15 + s1h, candles_15m, atr)
+    levels += equal_pools(s15 + s1h, candles_15m, atr, symbol)
     levels += day_levels(candles_1h, now_ms)
     levels += volume_profile(candles_4d or candles_1h, atr, '4d')
     levels += volume_profile(candles_15m, atr, '24h')
     levels += naked_daily_pocs(day_pocs or (), candles_1h)
-    levels += estimated_liquidations(candles_1h, oi_1h, atr)
+    levels += estimated_liquidations(candles_1h, oi_1h, atr, symbol)
     levels += observed_liquidations(liq_events, atr, now_ms)
     levels += vwap(candles_15m, today, 'VWAP day')
     # ICT / SMC zones of every timeframe the bot holds: 15m (last day), 1h (8 days), 4h (from the 1h candles) and the

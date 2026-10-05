@@ -7,9 +7,10 @@ Level strategies: the anchor is a price level and the extreme made at it, not a 
   opposite liquidity. A sweep against the coin's 1h trend is vetoed ('against_trend'): with the trend a sweep is a
   shakeout before the move resumes, against it the first counter-trend break usually fails (and live: sweeps of highs
   in a rising market -0.35R a trade, sweeps of lows +0.36R).
-- absorption (ABSORB BID / ABSORB ASK): a 1m candle where aggression into a significant level (a higher-timeframe pool,
-  a strong map zone, a book liquidity band) traded heavy volume without moving price, after a move into it. Entry on
-  a 5m structure shift from the level; stop beyond the absorption extreme; targets: the mean (VWAP / POC / nodes).
+- absorption_at: a 1m candle where aggression into a significant level traded heavy volume without moving price -
+  since eng-35 an entry CONFIRMATION (strategies/confirm.py 'orderflow'), not a strategy of its own.
+eng-58: after the sweep, ICT's 2022 model - a displacement that breaks the swing the raid came from and leaves a gap
+arms a resting limit at the gap's CE (ict.fvg_setup -> SignalBook: the plan becomes a touch plan the demo places).
 """
 import re
 from typing import Dict, List, Optional, Sequence

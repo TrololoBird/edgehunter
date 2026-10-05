@@ -6,6 +6,7 @@ import os
 import platform
 import statistics
 import time
+import zlib
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -155,6 +156,9 @@ class Scanner:
         self.positioning = Positioning(self.fetcher)
         self.macro = Macro()
         self._pump_cache: Dict = {}
+        # wide watch (eng-57): 1h candles of every Binance perpetual OUTSIDE the universe -> pump / dump monitor + journal
+        self.wide_h1: Dict[str, list] = {}
+        self._wide_fired: set = set()
         self.pools = Pools()      # pumps.monitor: symbol -> (last 1h candle ts, scan result)
         self._level_raw: Dict[str, List[RawLevel]] = {}
         self._level_sig: Dict[str, tuple] = {}
@@ -166,6 +170,8 @@ class Scanner:
         self.book.band_of = self._opposite_band
         self.book.plan_key_of = self._plan_key
         self.book.map_ready_of = lambda symbol: symbol in self._level_raw
+        self.book.btc_bias_of = self._btc_bias
+        self._micro: Dict[str, tuple] = {}
         self.fetcher.log_liquidations = self.journal is not None
         # Setup detectors (sweeps, liquidation exhaustion, absorption, whale accumulation) and the quick level map of
         # every coin they use (rebuilt from the closed 15m candles after each close; card coins get the full map)
@@ -179,20 +185,10 @@ class Scanner:
         self._oi_fired: Dict[str, int] = {}
         self._context_task: Optional[asyncio.Task] = None
         self._maps_pool = None          # ProcessPoolExecutor (one worker) for level maps: see _maps_executor
-        self._connors_checked: Dict[str, int] = {}   # symbol -> the daily close Connors' RSI(2) was checked at
-        self._turtle_checked: Dict[str, int] = {}    # symbol -> the last final minute the Turtle channel was checked on
-        self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
-        self._orb_checked: Dict[str, int] = {}       # symbol -> the last final minute Crabel's ORB was checked on
-        self._orb_fired: set = set()                 # (symbol, day) ORBs already fired (one a day)
-        self._orb_day: Dict[str, Dict] = {}          # symbol -> the UTC day's open and extremes so far (ORB)
-        self._oi_sig_checked: Dict[str, int] = {}    # symbol -> the last final minute the OI signal was checked on
-        self._oi_sig_fired: set = set()              # (symbol, direction, 15m bucket) OI signals already fired
-        self._dump_checked: Dict[str, int] = {}      # symbol -> the last closed 1h candle the dump bounce was checked on
-        self._dump_fired: set = set()                # (symbol, dump hour) bounces already fired
-        self._sb_checked: Dict[str, int] = {}        # symbol -> the last final minute the Silver Bullet was checked on
-        self._sb_fired: set = set()                  # (symbol, direction, window start) setups already fired
-        self._pump_checked: Dict[str, int] = {}      # symbol -> the last final minute the pump checks ran on
-        self._pump_fired: set = set()                # pump starts / tops already fired
+        from strategies.loopside import LoopDetectors
+        # eng-59: the loop-side detectors live in strategies/loopside.py (the archive replay runs the same code)
+        self.loopside = LoopDetectors(self._minute_candles,
+                                      lambda symbol: part_candles(self._frame_parts.get(symbol))[0])
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -231,7 +227,8 @@ class Scanner:
     def start(self):
         self._running = True
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
-                 self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop(), self.event_risk_loop()]
+                 self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop(), self.event_risk_loop(),
+                 self.wide_watch_loop()]
         if self.demo.enabled:
             loops.append(self.demo.reconcile_loop(lambda: self._running))
         running = lambda: self._running
@@ -661,6 +658,8 @@ class Scanner:
             for tracked, event in self.book.events:
                 if event == 'ADD':
                     self._background_task(self.demo.on_add(tracked))
+                elif event == 'RESTOP':
+                    self._background_task(self.demo.on_restop(tracked))
             for tracked in self.book.finished_now:
                 self._background_task(self.demo.on_finish(tracked))
 
@@ -673,25 +672,7 @@ class Scanner:
                 continue
             bands = self.fetcher.depth.liquidity_bands(symbol)
             setups = self.detector.scan(symbol, self._minute_candles(symbol), md.tier0, now_ms, bands)
-            connors = self._connors_daily(symbol, md, now_ms)
-            if connors:
-                setups.append(connors)
-            turtle = self._turtle_breakout(symbol, md, now_ms)
-            if turtle:
-                setups.append(turtle)
-            orb = self._orb_touch(symbol, md, now_ms)
-            if orb:
-                setups.append(orb)
-            dump = self._dump_bounce(symbol, md, now_ms)
-            if dump:
-                setups.append(dump)
-            oi_sig = self._oi_signal(symbol, md, now_ms)
-            if oi_sig:
-                setups.append(oi_sig)
-            bullet = self._silver_bullet(symbol, md, now_ms)
-            if bullet:
-                setups.append(bullet)
-            setups.extend(self._pumps(symbol, md, now_ms))
+            setups.extend(self.loopside.scan(symbol, md, now_ms))
             for setup in setups:
                 sig = dict(md.tier0)
                 sig.update(is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
@@ -702,7 +683,7 @@ class Scanner:
                 sig['perp_led_long'] = bool(row.get('perp_led_long'))
                 sig['perp_led_short'] = bool(row.get('perp_led_short'))
                 # the closed candle's 1h spot / perp flows (journal features, like the phase setups carry)
-                for key in ('spot_delta_1h', 'perp_delta_1h', 'adx'):
+                for key in ('spot_delta_1h', 'perp_delta_1h', 'adx', 'adx_prev'):
                     if row.get(key) is not None:
                         sig[key] = row[key]
                 if setup['setup'].startswith('SWEEP'):
@@ -711,94 +692,6 @@ class Scanner:
                 logger.info(f"Setup detected: {symbol} {setup['setup']} - {setup['setup_note']}")
                 out.append((symbol, sig))
         return out
-
-    def _pumps(self, symbol: str, md: MarketData, now_ms: int) -> List[Dict]:
-        """The pump's start (every final minute) and top (every 15m close), cheap gates first (strategies.pump)."""
-        from strategies.pump import pump_start, pump_top
-        minute = md.minute_closed_until
-        if not minute or self._pump_checked.get(symbol) == minute:
-            return []
-        self._pump_checked[symbol] = minute
-        minutes = self._minute_candles(symbol)
-        if len(minutes) < 120:
-            return []
-        out = []
-        cfg = CONFIG.strategies
-        if minutes[-1][4] / minutes[-16][4] - 1 >= cfg.pump_start_min_pct:
-            closes = [c[4] for c in part_candles(self._frame_parts.get(symbol))[0][-97:]]
-            rets = [b / a - 1 for a, b in zip(closes, closes[1:]) if a]
-            vol = (sum(r * r for r in rets) / len(rets)) ** 0.5 if len(rets) > 20 else None
-            found = pump_start(minutes, md.tier0 or {}, vol, now_ms)
-            if found and (symbol, found['anchor_ts'] // 3_600_000) not in self._pump_fired:
-                self._pump_fired.add((symbol, found['anchor_ts'] // 3_600_000))
-                out.append(found)
-        if (minute + 60_000) % 900_000 == 0:
-            window = [c for c in minutes if c[0] >= minute - 4 * 3_600_000]
-            if window and max(c[2] for c in window) / min(c[3] for c in window) - 1 >= cfg.pump_top_min_pct:
-                found = pump_top(minutes, md.tier0 or {}, minute + 60_000)
-                if found and (symbol, 'top', found['anchor_ts']) not in self._pump_fired:
-                    self._pump_fired.add((symbol, 'top', found['anchor_ts']))
-                    out.append(found)
-        return out
-
-    def _silver_bullet(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
-        """ICT's Silver Bullet (strategies.silver_bullet), only inside its New York windows, once per window and
-        direction per coin, on each new final 5m bar."""
-        from strategies.silver_bullet import FIVE_MS, silver_bullet, window_of
-        start = window_of(now_ms)
-        minute = md.minute_closed_until
-        if start is None or not minute or (minute + 60_000) % FIVE_MS:
-            return None
-        if self._sb_checked.get(symbol) == minute:
-            return None
-        self._sb_checked[symbol] = minute
-        bars = resample([c for c in self._minute_candles(symbol) if c[0] >= start - 3_600_000], 5,
-                        minute + 60_000)
-        found = silver_bullet(bars, now_ms)
-        if found is None:
-            return None
-        key = (symbol, found['direction'], start)
-        if key in self._sb_fired:
-            return None
-        self._sb_fired.add(key)
-        return found
-
-    def _turtle_breakout(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
-        """The Turtles' channel breakout on the touch (strategies.turtle), checked on each new final minute, once per
-        coin, direction and day."""
-        if len(md.d1) < 60:
-            return None
-        minute = md.minute_closed_until
-        if not minute or self._turtle_checked.get(symbol) == minute:
-            return None
-        self._turtle_checked[symbol] = minute
-        minutes = self._minute_candles(symbol)
-        day_start = int(now_ms // 86_400_000 * 86_400_000)
-        today = [c for c in minutes if c[0] >= day_start]
-        if not today or int(md.d1[-1][0]) + 86_400_000 < day_start:
-            return None                           # yesterday's daily candle not loaded yet
-        last = today[-1]
-        # cheap gate first: the minute reached the nearer of the 20 / 55-day channels at all (building the 15m candles
-        # of every coin each minute stalled the loop 1.4s live)
-        recent = md.d1[-20:]
-        if not (last[2] > max(c[2] for c in recent) or last[3] < min(c[3] for c in recent)) and                 not (last[2] > max(c[2] for c in md.d1[-55:]) or last[3] < min(c[3] for c in md.d1[-55:])):
-            return None
-        # today's range BEFORE the last final minute: the 15m candles of the day (complete from 00:00 UTC whatever
-        # the 1m history holds after a restart) plus the earlier minutes
-        m15 = [c for c in part_candles(self._frame_parts.get(symbol))[0] if day_start <= c[0] < last[0] // 900_000 * 900_000]
-        earlier = [c for c in today[:-1]] + m15
-        if not earlier:
-            return None                           # no record of the day before this minute: cannot tell a fresh touch
-        from strategies.turtle import turtle_breakout
-        found = turtle_breakout(md.d1, last[2], last[3], now_ms,
-                                max(c[2] for c in earlier), min(c[3] for c in earlier))
-        if found is None:
-            return None
-        key = (symbol, found['direction'], day_start)
-        if key in self._turtle_fired:
-            return None
-        self._turtle_fired.add(key)
-        return found
 
     def _opposite_band(self, symbol: str, direction: int) -> Optional[float]:
         """BB(20, 2) of the closed 15m candles: the upper band for a long, the lower for a short (Bollinger exit)."""
@@ -809,99 +702,69 @@ class Scanner:
         sd = (sum((x - mean) ** 2 for x in closes) / 20) ** 0.5       # population sigma (Bollinger)
         return mean + direction * 2 * sd
 
-    def _orb_touch(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
-        """Crabel's ORB (strategies.classic.orb_event): the day's open +- Stretch touched by the last final minute,
-        once per coin and day (eng-55)."""
-        if len(md.d1) < 10:
-            return None
-        minute = md.minute_closed_until
-        if not minute or self._orb_checked.get(symbol) == minute:
-            return None
-        self._orb_checked[symbol] = minute
-        day_start = int(now_ms // 86_400_000 * 86_400_000)
-        if (symbol, day_start) in self._orb_fired or int(md.d1[-1][0]) + 86_400_000 < day_start:
-            return None                           # traded today / yesterday's daily candle not loaded yet
-        minutes = self._minute_candles(symbol)
-        if not minutes or minutes[-1][0] < day_start:
-            return None
-        last = minutes[-1]
-        # the day's open and extremes before this minute: built ONCE a day from the 15m frame + the minutes (building
-        # the 15m candles of every coin each minute stalled the loop), then extended minute by minute
-        st = self._orb_day.get(symbol)
-        if st is None or st['day'] != day_start:
-            m15 = [c for c in part_candles(self._frame_parts.get(symbol))[0] if c[0] >= day_start]
-            today = [c for c in minutes if day_start <= c[0] < last[0]]
-            first = m15[0] if m15 and m15[0][0] == day_start else today[0] if today and today[0][0] == day_start else None
-            if first is None:
-                self._orb_day[symbol] = {'day': day_start, 'open': None}
-                return None                       # the day's open is not known (restart mid-day): no ORB today
-            earlier = [c for c in m15 if c[0] < last[0] // 900_000 * 900_000] + today
-            st = {'day': day_start, 'open': first[1], 'last': last[0] - 60_000,
-                  'hi': max((c[2] for c in earlier), default=None), 'lo': min((c[3] for c in earlier), default=None)}
-            self._orb_day[symbol] = st
-        if st['open'] is None:
-            return None
-        before_hi, before_lo = st['hi'], st['lo']
-        for c in minutes[-5:]:
-            if st['last'] < c[0] < last[0]:          # minutes missed between checks join the "before" extremes
-                before_hi = c[2] if before_hi is None else max(before_hi, c[2])
-                before_lo = c[3] if before_lo is None else min(before_lo, c[3])
-        from strategies.classic import orb_event
-        found = orb_event(md.d1, st['open'], last[2], last[3], before_hi, before_lo, now_ms)
-        st['hi'] = last[2] if before_hi is None else max(before_hi, last[2])
-        st['lo'] = last[3] if before_lo is None else min(before_lo, last[3])
-        st['last'] = last[0]
-        if found is not None:
-            self._orb_fired.add((symbol, day_start))
-        return found
-
-    def _oi_signal(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
-        """The OI [15m] live test (strategies.oi_signal): each final minute, once per coin / direction / 15m."""
-        minute = md.minute_closed_until
-        if not minute or self._oi_sig_checked.get(symbol) == minute:
-            return None
-        self._oi_sig_checked[symbol] = minute
-        oi5 = (md.tier0 or {}).get('oi_change_5m')
-        if oi5 is None or oi5 <= 0:
-            return None                           # cheap gate: OI is not rising at all right now
-        from strategies.oi_signal import oi_signal
-        found = oi_signal(self._minute_candles(symbol), list(md.oi_samples), now_ms)
-        if found is None:
-            return None
-        key = (symbol, found['direction'], now_ms // 900_000)
-        if key in self._oi_sig_fired:
-            return None
-        self._oi_sig_fired.add(key)
-        return found
-
-    def _dump_bounce(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
-        """The short of the first bounce after a dump (strategies.pump.dump_bounce) on each closed 1h candle."""
-        h1 = list(md.h1)
-        if len(h1) < 190:
-            return None
-        closed = int(h1[-1][0])
-        if self._dump_checked.get(symbol) == closed:
-            return None
-        self._dump_checked[symbol] = closed
+    async def wide_watch_loop(self):
+        """
+        eng-57: the universe holds 70 coins with complete data (a spot pair, >= 2 other venues, >= $10M): the biggest
+        small-cap pumps / dumps (no spot pair, a fresh listing) were never seen. Once an hour (a few minutes after the
+        close) the 1h candles of every other USDT perpetual >= wide_min_volume run the pump / dump monitor (dashboard)
+        and the dump-bounce rule; its events are JOURNALED (vetoed 'outside_universe': no streams there, so no card /
+        demo trade) - the forward test of the research rule on the whole market it was measured on.
+        """
         from strategies.pump import MAJORS, dump_bounce
-        if symbol.split('/')[0] in MAJORS:
-            return None                           # measured on small caps (research_pumps: majors apart)
-        found = dump_bounce(h1, now_ms)
-        if found is None or (symbol, found['anchor_ts']) in self._dump_fired:
-            return None
-        self._dump_fired.add((symbol, found['anchor_ts']))
-        return found
+        cfg = CONFIG.strategies
+        await asyncio.sleep(600)
+        while self._running:
+            started = time.time()
+            try:
+                rows = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetTicker24hr',
+                                                     priority=2, weight=40)
+                by_id = getattr(self.fetcher.futures_exchange, 'markets_by_id', {}) or {}
+                wanted = []
+                for t in rows or []:
+                    m = by_id.get(t.get('symbol'))
+                    m = m[0] if isinstance(m, list) else m
+                    if not m or not m.get('swap') or m.get('quote') != 'USDT' or m['symbol'] in self.market_data:
+                        continue
+                    if (m.get('info', {}).get('underlyingType') in CONFIG.exchange.excluded_underlying_types or
+                            m.get('base') in CONFIG.exchange.excluded_bases or m.get('base') in MAJORS):
+                        continue
+                    if float(t.get('quoteVolume') or 0) >= cfg.wide_min_volume:
+                        wanted.append((m['symbol'], t['symbol'], float(t.get('lastPrice') or 0)))
+                sem = asyncio.Semaphore(4)
 
-    def _connors_daily(self, symbol: str, md: MarketData, now_ms: int) -> Optional[Dict]:
-        """Connors' RSI(2) on the coin's daily candles, once per closed day (fresh within the day's first 2 hours)."""
-        if len(md.d1) < 202:
-            return None
-        day_close = int(md.d1[-1][0]) + 86_400_000
-        if self._connors_checked.get(symbol) == day_close or now_ms - day_close > 2 * 3_600_000:
-            return None
-        self._connors_checked[symbol] = day_close
-        from strategies.classic import connors_event
-        return connors_event(md.d1)
+                async def one(sym, bid, last):
+                    async with sem:
+                        try:
+                            k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
+                                                              {'symbol': bid, 'interval': '1h', 'limit': 200},
+                                                              priority=2, weight=2)
+                        except Exception as e:
+                            logger.debug(f"wide watch: 1h candles failed for {sym}: {e}")
+                            return
+                    now_ms = time.time() * 1000
+                    h1 = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7]), float(x[10])]
+                          for x in k or [] if int(x[6]) < now_ms]
+                    self.wide_h1[sym] = h1
+                    found = dump_bounce(h1, int(now_ms)) if len(h1) >= 190 else None
+                    if found and (sym, found['anchor_ts']) not in self._wide_fired:
+                        self._wide_fired.add((sym, found['anchor_ts']))
+                        sig = dict(found, is_setup=True, is_structured=False, is_tier_0_anomaly=False,
+                                   active_phases=[], long_score=0, short_score=0, alert_type='SHORT',
+                                   card_veto='outside_universe')
+                        logger.info(f"Wide watch: {sym} {found['setup']} - {found['setup_note']} (journal only)")
+                        await self.journal.arecord([(sym, sig)], {sym: last or h1[-1][4]})
+
+                await asyncio.gather(*(one(*w) for w in wanted))
+                for sym in [s for s in self.wide_h1 if s in self.market_data or s not in {w[0] for w in wanted}]:
+                    self.wide_h1.pop(sym, None)
+                logger.info(f"Wide watch: {len(wanted)} perpetuals outside the universe scanned in "
+                            f"{time.time() - started:.0f}s")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Wide watch failed: {e}")
+            now = time.time()
+            await asyncio.sleep(max(600.0, 3600 - now % 3600 + 240))
 
     def _sweep_wick(self, symbol: str, md: MarketData, setup: Dict, sig: Dict):
         """
@@ -951,7 +814,7 @@ class Scanner:
         long_15m = np.asarray(md.m15_long, dtype=np.float64) if with_context and len(md.m15_long) else ()
         long_1h = np.asarray(md.h1_long, dtype=np.float64) if with_context and len(md.h1_long) else ()
         return (symbol, part.select(PART_COLUMNS), list(md.h1), list(md.htf_klines), list(md.htf_oi), liq, now_ms,
-                candles_4d, with_context, long_15m, long_1h, list(md.d1)[-60:], list(md.h4), list(md.w1),
+                candles_4d, with_context, long_15m, long_1h, list(md.d1), list(md.h4), list(md.w1),
                 list(md.day_pocs))
 
     def _correlates(self) -> Dict[str, np.ndarray]:
@@ -1100,6 +963,22 @@ class Scanner:
                 out['rs_btc_z'] = r24 / (sd * 24 ** 0.5) if sd > 0 else None
         return out
 
+    def _btc_bias(self) -> Optional[int]:
+        """
+        eng-59: BTC's ICT bias (weekly, else daily: the close beyond the previous candle's high / low), the direction
+        altcoins' ICT models trade with (SignalBook._against_day: 'against_btc').
+        """
+        md = self.market_data.get('BTC/USDT:USDT')
+        if md is None:
+            return None
+        for bars in (md.w1, md.d1):
+            if len(bars) >= 2:
+                prev, last = bars[-2], bars[-1]
+                bias = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
+                if bias:
+                    return bias
+        return None
+
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
         """Live context that is not part of the scored row."""
         sig.update(self.market_state)
@@ -1123,6 +1002,19 @@ class Scanner:
             prev, last = md.w1[-2], md.w1[-1]
             sig['weekly_bias'] = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
         sig['vol_ratio'] = ctx.vol_ratio if ctx is not None else None
+        sig['btc_bias'] = self._btc_bias()
+        # eng-59: VPIN / volume entropy / the leading venue of the last hour, once a minute per coin (~6 ms each:
+        # every scan for 70 coins would cost the loop ~0.4s)
+        minute = int((time.time() - zlib.crc32(symbol.encode()) % 60) // 60)      # coins spread over the minute
+        cached = self._micro.get(symbol)
+        if cached is None or cached[0] != minute:
+            try:
+                cached = (minute, self.fetcher.flow.micro_features(symbol, list(md.minute_klines)))
+            except Exception as e:                   # context only: never break a scan
+                logger.debug(f"micro features {symbol}: {e!r}")
+                cached = (minute, {})
+            self._micro[symbol] = cached
+        sig.update(cached[1])
         sig.update(self._positioning_features(symbol, md))
         # eng-53: Binance's Monitoring Tag / a scheduled delisting (longs vetoed 'event_risk'), the nearness to the
         # 52-week high (Jia et al. 2025: predicts next week's cross-section; ours: rank IC +0.09, t 2.9, quintile
@@ -1238,7 +1130,7 @@ class Scanner:
         if md is None or not candles or not atr:
             return [], atr, candles
         raw = build_raw(candles, md.htf_klines, md.htf_oi, list(md.liq_events), atr, time.time() * 1000,
-                        candles_4d=md.htf_5m, day_pocs=md.day_pocs)
+                        candles_4d=md.htf_5m, day_pocs=md.day_pocs, symbol=symbol)
         return raw, atr, candles
 
     async def levels_loop(self):
@@ -1394,7 +1286,8 @@ class Scanner:
                 since = int((time.time() - CONFIG.pools.lookback_days * 86400) * 1000)
                 sector_map = await asyncio.to_thread(sectors.load)
                 results = await asyncio.to_thread(self.journal.coin_results, since) if self.journal else []
-                await asyncio.to_thread(self.pools.rebuild, dict(self.market_data), sector_map, results)
+                await asyncio.to_thread(self.pools.rebuild, dict(self.market_data), sector_map, results,
+                                        list(getattr(self.fetcher, 'market_volumes', None) or []))
                 sizes = {k: len(v) for k, v in self.pools.members.items()}
                 excl = sum(len(v) for v in self.pools.excluded.values())
                 logger.info(f"Coin pools rebuilt: {sizes}; {excl} coin x strategy pairs excluded by their results")

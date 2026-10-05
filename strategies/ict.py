@@ -125,6 +125,52 @@ def fvg_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, i
     return None
 
 
+def fvg_setup(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int) -> Optional[dict]:
+    """
+    ICT's 2022 model after a liquidity sweep at `since_ms` (eng-58): a displacement candle (body >= half its range, in
+    the trade's direction) that CLOSES BEYOND THE SWING THE RAID CAME FROM - the last 3-candle swing high (long; low
+    for a short) of the bars before the sweep, the market structure shift - and leaves a fair value gap. Returns the
+    gap and its consequent encroachment (CE, 50%) for a resting limit; the entry is that limit's fill (touch_trigger),
+    not a later candle's close. eng-36..57 took any close above the highest high SINCE the sweep as the shift.
+    """
+    start = next((k for k, x in enumerate(ltf) if x[0] + interval_ms > since_ms), None)
+    if start is None or len(ltf) - start < 3 or start < 3:
+        return None
+    o = [x[1] for x in ltf]
+    h = [x[2] for x in ltf]
+    l = [x[3] for x in ltf]
+    c = [x[4] for x in ltf]
+    # the swing the raid came from: the last 3-candle pivot before the sweep (up to 48 bars back)
+    swing = None
+    for k in range(start - 2, max(0, start - 48), -1):
+        if direction > 0 and h[k] > h[k - 1] and h[k] > h[k + 1]:
+            swing = h[k]
+            break
+        if direction < 0 and l[k] < l[k - 1] and l[k] < l[k + 1]:
+            swing = l[k]
+            break
+    if swing is None:
+        return None
+    for i in range(start + 2, len(ltf)):
+        j = i - 1                                          # the displacement candle
+        body, span = abs(c[j] - o[j]), h[j] - l[j]
+        if span <= 0 or body < 0.5 * span or (c[j] - o[j]) * direction <= 0:
+            continue
+        if direction > 0:
+            if not (l[i] > h[i - 2] and max(c[j], c[i]) > swing):
+                continue
+            gap_lo, gap_hi = h[i - 2], l[i]
+        else:
+            if not (h[i] < l[i - 2] and min(c[j], c[i]) < swing):
+                continue
+            gap_lo, gap_hi = h[i], l[i - 2]
+        seg = ltf[start:i + 1]
+        ext = min(seg, key=lambda x: x[3]) if direction > 0 else max(seg, key=lambda x: x[2])
+        return {'gap_lo': gap_lo, 'gap_hi': gap_hi, 'ce': (gap_lo + gap_hi) / 2, 'mss': swing,
+                'extreme': ext[3] if direction > 0 else ext[2], 'time': int(ltf[i][0]) + interval_ms}
+    return None
+
+
 def touch_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int,
                   zone_lo: float, zone_hi: float) -> Optional[dict]:
     """

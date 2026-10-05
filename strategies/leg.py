@@ -2,12 +2,12 @@
 Leg strategies: a real leg (levels.find_impulse: its end on the last 12h of 15m candles, its start searched back over
 15m and 1h history; its timeframe by duration 15m / 1h / 4h, the entry 3-6x finer).
 
-- trend (BULL F / BEAR D) and momentum (IMPULSE UP / DOWN): continuation by ICT's optimal trade entry (eng-29): a
-  leg with displacement (it left a fair value gap), the pullback zone = the strongest support inside 0.62-0.79 of the
-  leg (else the EMA20 there, Raschke); entry on a structure shift there; invalid beyond the leg's start; a new extreme resets the card to waiting; targets re-measured from the entry toward the leg's extensions.
-- wyckoff (BULL A / B / E, BEAR C): reversal of the leg. Entry at the confirmation when R:R allows it, else a pullback
-  near the leg's end; invalid beyond the end and the stop pool behind it; targets fixed beyond the furthest price
-  reached since: a trading range's far side (A, B) or the mean (C, E), the leg's retracements fill empty slots.
+continuation (BULL F / BEAR D: Bollinger method I; IMPULSE UP / DOWN: Tier-0) by ICT's optimal trade entry: a leg
+that BROKE STRUCTURE (its end beyond the last swing before its start, eng-58) with displacement (a fair value gap);
+the pullback zone = the strongest support inside 0.62-0.79 of the leg (else the EMA20 there, Raschke's Holy Grail);
+a resting limit at the zone's near edge (eng-58, ICT enters on a limit in the OTE, not on a later 5m shift); invalid
+beyond the leg's start; half out at TP1 and the rest trailed (eng-58); targets re-measured from the entry toward the
+leg's trend-based extensions.
 """
 from typing import Dict, List, Optional
 
@@ -42,6 +42,19 @@ def _ema_of_tf(x: PlanInput, tf: str, span: int) -> Optional[float]:
     for c in closes[1:]:
         ema += alpha * (c - ema)
     return ema
+
+
+def broke_structure(candles: List[List[float]], start_ts: int, end: float, direction: int) -> bool:
+    """ICT: the impulse must break structure - its end beyond the last 3-candle swing high (up; low down) formed in the
+    48 candles before the leg's start (a swing high below the start does not count for an up leg)."""
+    before = [c for c in candles if c[0] < start_ts][-48:]
+    for k in range(len(before) - 2, 0, -1):
+        a, b, c = before[k - 1], before[k], before[k + 1]
+        if direction > 0 and b[2] > a[2] and b[2] > c[2]:
+            return end > b[2]
+        if direction < 0 and b[3] < a[3] and b[3] < c[3]:
+            return end < b[3]
+    return True                     # no swing in reach: nothing to break (a leg out of price discovery)
 
 
 def displacement(candles: List[List[float]], start_ts: int, end_ts: int, direction: int) -> bool:
@@ -93,6 +106,8 @@ class LegContinuation(Strategy):
             candles = _rows(x.df) if impulse['tf'] == '15m' else [list(c) for c in (x.h1 or [])]
             if not displacement(candles, impulse['start_ts'], impulse['end_ts'], d):
                 return {'skip': 'no_displacement'}
+            if not broke_structure(candles, impulse['start_ts'], impulse['end'], d):
+                return {'skip': 'no_bos'}
         zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None), atr, symbol=x.symbol)
         lo_ratio, hi_ratio = cfg.continuation_zone
         fib_lo, fib_hi = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
@@ -112,9 +127,11 @@ class LegContinuation(Strategy):
             ema = _ema_of_tf(x, impulse['tf'], 20)
             if ema is None or not fib_lo <= ema <= fib_hi:
                 return {'skip': 'no_level'}
-            # Linda Raschke's Holy Grail, where the EMA20 pullback comes from: only in a strong trend, ADX(14) > 30
-            adx = x.sig.get('adx')
-            if adx is not None and adx <= CONFIG.strategies.holy_grail_adx:
+            # Linda Raschke's Holy Grail, where the EMA20 pullback comes from: only in a strong trend, ADX(14) > 30 and
+            # rising (Street Smarts; the 'rising' part was missing until eng-57)
+            adx, adx_prev = x.sig.get('adx'), x.sig.get('adx_prev')
+            if adx is not None and (adx <= CONFIG.strategies.holy_grail_adx or
+                                    (adx_prev is not None and adx <= adx_prev)):
                 return {'skip': 'weak_trend'}
             level_lo = level_hi = ema
             half = overshoot(x.symbol, 'swing_1h' if impulse['tf'] != '15m' else 'swing_15m', ema, 'p50')                 or CONFIG.zones.zone_half_atr * impulse['atr']
@@ -131,11 +148,15 @@ class LegContinuation(Strategy):
         # targets spaced in the ATR of the leg's own timeframe (15m ATR steps put TP1 inside a 1h / 4h leg's noise)
         targets, sources = select_targets(zones, worst_entry, d, impulse['atr'], 'extension', extensions, 'fib ext')
         zone = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
+        if stop_ref is None:
+            # the limit's stop must be known when it rests (the demo places both): beyond the zone's deep edge
+            stop_ref, stop_ref_src = (zone[0] if d > 0 else zone[1]), 'beyond the OTE zone'
         tf = impulse['tf']
         return base_plan(x, self.name, _leg_anchor(impulse), tf, trigger_minutes=TRIGGER_MINUTES.get(tf, 5),
                          leg_atr=impulse['atr'], entry='pullback', zone_lo=zone[0], zone_hi=zone[1], zone_src=zone_src,
                          # ICT: the idea is wrong beyond the impulse's start (the 100% level), not at 0.786 inside
                          # the OTE band
+                         trigger='touch', trail_after_tp1=True,
                          invalid=fib_price(impulse, CONFIG.levels.continuation_invalid), reset=impulse['end'],
                          missable=False, retarget=True,
                          stop_ref=stop_ref, stop_ref_src=stop_ref_src,

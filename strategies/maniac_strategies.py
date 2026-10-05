@@ -66,6 +66,11 @@ class SupplyDemandStrategy(_System):
     time_exit = 'fixed'                # the method's own exit (eng-47)
     uses_minutes = True
 
+    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        """eng-58, Seiden / OTA's odds enhancer 'big picture': demand only when the daily trend is not down, supply only
+        when it is not up."""
+        return 'big_picture' if sig.get('trend_1d') == -direction else None
+
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr
         if sig.get('zone_lo') is None or not atr:
@@ -165,13 +170,20 @@ class TrendlineStrategy(_System):
         bars = resample(x.minutes, 15, x.minutes[-1][0] + MINUTE_MS)
         trs = [max(b[2] - b[3], abs(b[2] - p[4]), abs(b[3] - p[4])) for p, b in zip(bars, bars[1:])][-14:]
         pad = 0.1 * (sum(trs) / len(trs)) if trs else 0.0
-        stop = structural_stop(x.minutes, d, sig['anchor_close'], pad, 15)
+        stop = structural_stop(x.minutes, d, sig['anchor_level'], pad, 15)   # beyond the line (the retest entry)
         if stop is None:
             return None
         # classic trendline break (Edwards & Magee): the targets are the next support / resistance levels (the map), not
         # the line's first anchor (his robot's target, kept in the setup note)
-        exit = {'stop': ['price', stop], 'stop_src': '5m structure beyond the entry', 'tp': ['map', 1.0]}
-        return _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
+        exit = {'stop': ['price', stop], 'stop_src': '15m structure beyond the line', 'tp': ['map', 1.0], 'atr': x.atr}
+        plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
+        if plan and not plan.get('skip'):
+            # eng-58, practice (Edwards & Magee; break -> retest -> move): the entry is a resting limit at the broken
+            # line, retested from the other side, not the second close's price; first touch only
+            line = sig['anchor_level']
+            plan.update(entry='pullback', confirm_only=False, trigger='touch', single_touch=True, missable=True,
+                        zone_lo=line, zone_hi=line, zone_src='the broken trendline, retest from the other side')
+        return plan
 
 
 # ------------------------------------------------------------------------------------------------ indicator systems

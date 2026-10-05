@@ -338,152 +338,15 @@ def trendline_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS,
     return None
 
 
-# ------------------------------------------------------------------------------------------------ SMT / Quasimodo
-
-def _swings(candles, left: int = 2, right: int = 2) -> List[Tuple[int, float, str]]:
-    """lllll find_swings: fractal swings alternating H / L (of consecutive same kinds the more extreme stays)."""
-    h, l = _arr(candles, 2), _arr(candles, 3)
-    raw = []
-    for i in range(left, len(candles) - right):
-        hw, lw = h[i - left:i + right + 1], l[i - left:i + right + 1]
-        if h[i] >= hw.max() and int(np.argmax(hw)) == left:
-            raw.append((i, float(h[i]), 'H'))
-        if l[i] <= lw.min() and int(np.argmin(lw)) == left:
-            raw.append((i, float(l[i]), 'L'))
-    raw.sort(key=lambda s: (s[0], s[2]))
-    out: List[Tuple[int, float, str]] = []
-    for s in raw:
-        if out and out[-1][2] == s[2]:
-            if (s[1] > out[-1][1]) if s[2] == 'H' else (s[1] < out[-1][1]):
-                out[-1] = s
-        else:
-            out.append(s)
-    return out
-
-
-def _trend(candles, swings, right: int = 2) -> str:
-    trend, last_h, last_l, pi = 'range', None, None, 0
-    for i, c in enumerate(candles):
-        while pi < len(swings) and swings[pi][0] + right <= i:
-            if swings[pi][2] == 'H':
-                last_h = swings[pi]
-            else:
-                last_l = swings[pi]
-            pi += 1
-        if last_h is not None and c[4] > last_h[1]:
-            trend = 'up'
-        if last_l is not None and c[4] < last_l[1]:
-            trend = 'down'
-    return trend
-
-
-def _pools(swings, trend: str):
-    highs = [s for s in swings if s[2] == 'H']
-    lows = [s for s in swings if s[2] == 'L']
-    if not highs or not lows:
-        return None, None
-    last_low, last_high = lows[-1], highs[-1]
-    if trend == 'up':
-        after = [x for x in highs if x[0] > last_low[0]]
-        return last_low, after[-1] if after else last_high
-    if trend == 'down':
-        after = [x for x in lows if x[0] > last_high[0]]
-        return after[-1] if after else last_low, last_high
-    return last_low, last_high
-
-
-def _qm_levels(candles, swings, lookback: int = 14) -> List[Tuple[int, float, float]]:
-    """Quasimodo: H1 -> L1 -> H2 > H1 then a close below L1 (sell, QML = H1); mirrored for buys. (dir, qml, head)."""
-    out = []
-    seq = swings[-lookback:]
-    closes = [c[4] for c in candles]
-    for k in range(len(seq) - 2):
-        a, b, c3 = seq[k], seq[k + 1], seq[k + 2]
-        if a[2] == 'H' and b[2] == 'L' and c3[2] == 'H' and c3[1] > a[1] and any(x < b[1] for x in closes[c3[0] + 1:]):
-            out.append((-1, a[1], c3[1]))
-        if a[2] == 'L' and b[2] == 'H' and c3[2] == 'L' and c3[1] < a[1] and any(x > b[1] for x in closes[c3[0] + 1:]):
-            out.append((1, a[1], c3[1]))
-    return out[-6:]
-
-
-def smt_event(c15: Sequence[Sequence[float]], corr: Optional[Sequence[Sequence[float]]]) -> Optional[Dict]:
-    """
-    lllll SignalEngine.on_main_bar on 15m: structure (fractal 2/2 swings, trend by break of structure), the two
-    external pools, a 2-candle sweep whose REACTION candle just closed (the piercing candle wicks beyond the pool and
-    closes back, the reaction candle closes away from it; no earlier close beyond the pool), SMT against the correlate
-    (it did NOT take its matching swing) or Quasimodo confluence (the wick inside a QM's QML-head zone substitutes
-    SMT); mode require_if_available: rejected only when SMT is proven absent and there is no QM.
-    """
-    cfg = CONFIG.strategies
-    main = c15[-cfg.smt_main_bars:]
-    n = len(main)
-    if n < 60:
-        return None
-    swings = _swings(main)
-    trend = _trend(main, swings)
-    pool_low, pool_high = _pools(swings, trend)
-    if pool_low is None or pool_high is None:
-        return None
-    j = n - 1
-    i = n - 2
-    o, h, l, c = main[j][1], main[j][2], main[j][3], main[j][4]
-    best = None
-    for side, pool in ((-1, pool_low), (1, pool_high)):
-        level = pool[1]
-        if i <= pool[0]:
-            continue
-        # a close beyond the pool before the pierce: the pool is broken, not swept
-        if any((x[4] < level) if side < 0 else (x[4] > level) for x in main[pool[0] + 1:i]):
-            continue
-        pc = main[i]
-        if side < 0 and pc[3] < level <= pc[4] and c > o and c > level:
-            best = (1, pool, min(pc[3], l))
-        elif side > 0 and pc[2] > level >= pc[4] and c < o and c < level:
-            best = (-1, pool, max(pc[2], h))
-    if best is None:
-        return None
-    direction, pool, extreme = best
-    if cfg.smt_with_trend_only and trend in ('up', 'down') and direction != (1 if trend == 'up' else -1):
-        return None
-    # SMT: the correlate's swing of the same kind nearest in time to the pool's formation, within 60 main bars, taken
-    # (or not) between it and the reaction candle
-    smt = None
-    if corr and len(corr) >= 30:
-        cswings = [s for s in _swings(corr) if s[2] == ('L' if direction > 0 else 'H')]
-        level_ts, pierce_ts, react_ts = main[pool[0]][0], main[i][0], main[j][0]
-        cands = [s for s in cswings if corr[s[0]][0] <= pierce_ts]
-        if cands:
-            ref = min(cands, key=lambda s: abs(corr[s[0]][0] - level_ts))
-            if abs(corr[ref[0]][0] - level_ts) <= cfg.smt_ref_window * QUARTER_MS:
-                seg = [x for x in corr if corr[ref[0]][0] < x[0] <= react_ts]
-                if seg:
-                    swept = min(x[3] for x in seg) < ref[1] if direction > 0 else max(x[2] for x in seg) > ref[1]
-                    smt = not swept
-    qm = any(q[0] == direction and min(q[1], q[2]) <= extreme <= max(q[1], q[2]) for q in _qm_levels(main, swings))
-    # SMT is the method: a divergence against a correlated pair (smt True) or the Quasimodo; with no pair
-    # (correlation < 0.7, structure.pick_correlate) or no reference swing it passed as a plain 'SWEEP'
-    if not smt and not qm:
-        return None
-    tags = '+'.join(t for t, on in (('SMT', smt), ('QM', qm)) if on) or 'SWEEP'
-    opposite = pool_high[1] if direction > 0 else pool_low[1]
-    atr = float(np.mean(true_range(_arr(main, 2), _arr(main, 3), _arr(main, 4))[-14:]))
-    return {'setup': 'SMT LOW' if direction > 0 else 'SMT HIGH', 'direction': direction,
-            'setup_note': f"15m 2-candle sweep of the {'low' if direction > 0 else 'high'} pool {pool[1]:.6g} "
-                          f"(trend {trend}, {tags}{'' if smt is not None else ', SMT n/a'}); entry on a 5m inversion FVG",
-            'anchor_level': pool[1], 'anchor_extreme': extreme, 'anchor_label': f"external {'low' if direction > 0 else 'high'} ({tags})",
-            'anchor_ts': int(main[i][0]), 'anchor_close': c, 'opposite_pool': opposite, 'smt': smt, 'qm': qm,
-            'smt_trend': trend, 'atr_main': atr, 'event_ts': int(main[j][0]) + QUARTER_MS}
-
-
-# ------------------------------------------------------------------------------------------------ Bollinger + CSI
+# ------------------------------------------------------------------------------------------------ Bollinger W / M
 
 def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
     """
     John Bollinger's reversal method ("Bollinger on Bollinger Bands", 2001, method III; W / M patterns after Arthur
     Merrill): a band tag is NOT a signal by itself. W-bottom: a low that closed BELOW the lower band (%b < 0), a rally,
     a retest low whose close stays INSIDE the band (%b >= 0, the price low may be lower), then the first close above the
-    rally's high between them -> long at that close; stop below the retest low; target the pattern's height from the
-    break (the double bottom's measured move), then the map.
+    rally's high between them -> long at that close; stop below the retest low; out at the OPPOSITE BAND as it moves
+    (Bollinger; eng-51 / 55), A/D must not confirm the retest.
     M-top mirrored. BB(20, 2), within the last 30 15m candles. (Replaces crypto_maniac's CSI system: a close beyond
     BB(40, 1.5) read as a reversal contradicts Bollinger's own rule, and its "candle sentiment index" is his invention.)
     """
@@ -552,88 +415,6 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
     return None
 
 
-# ------------------------------------------------------------------------------------------------ 1h systems
-
-def fib05_event(c1h: Sequence[Sequence[float]]) -> Optional[Dict]:
-    """
-    fibonachi_trading_system (1h): MarketStructureTracker (3-bar fractals; HL / HH extend a bull impulse, a lower low
-    is a CHoCH to bear, mirrored) keeps the current impulse; the candle that just closed pierced its 0.5 and closed
-    back on the impulse's side -> entry at the close, stop beyond the impulse's start. One entry per impulse.
-    """
-    n = len(c1h)
-    if n < 30:
-        return None
-    trend = None
-    last = {'HH': None, 'HL': None, 'LH': None, 'LL': None}
-    imp = None
-    for k in range(2, n - 1):                  # swings confirmed by the bar after them (not by the one just closed)
-        left, piv, right = c1h[k - 2], c1h[k - 1], c1h[k]
-        idx = k - 1
-        if piv[3] < left[3] and piv[3] < right[3]:
-            p = piv[3]
-            if trend in (None, 'bull'):
-                if last['HL'] is None or p > last['HL'][1]:
-                    last['HL'] = (idx, p)
-                    trend = trend or 'bull'
-                    if imp and imp['type'] == 'bull':
-                        imp.update(low=p, low_i=idx)
-                    else:
-                        imp = {'type': 'bull', 'low': p, 'low_i': idx, 'high': None, 'high_i': None}
-                else:
-                    trend = 'bear'
-                    last['LL'] = (idx, p)
-                    lh = last['LH']
-                    imp = {'type': 'bear', 'low': p, 'low_i': idx, 'high': lh[1] if lh else p, 'high_i': lh[0] if lh else idx}
-                    last['HL'] = last['HH'] = None
-            elif last['LL'] is None or p < last['LL'][1]:
-                last['LL'] = (idx, p)
-                if imp and imp['type'] == 'bear':
-                    imp.update(low=p, low_i=idx)
-        if piv[2] > left[2] and piv[2] > right[2]:
-            p = piv[2]
-            if trend in (None, 'bear'):
-                if last['LH'] is None or p < last['LH'][1]:
-                    last['LH'] = (idx, p)
-                    trend = trend or 'bear'
-                    if imp and imp['type'] == 'bear':
-                        imp.update(high=p, high_i=idx)
-                    else:
-                        imp = {'type': 'bear', 'high': p, 'high_i': idx, 'low': None, 'low_i': None}
-                else:
-                    trend = 'bull'
-                    last['HH'] = (idx, p)
-                    hl = last['HL']
-                    imp = {'type': 'bull', 'high': p, 'high_i': idx, 'low': hl[1] if hl else p, 'low_i': hl[0] if hl else idx}
-                    last['LL'] = last['LH'] = None
-            elif last['HH'] is None or p > last['HH'][1]:
-                last['HH'] = (idx, p)
-                if imp and imp['type'] == 'bull':
-                    imp.update(high=p, high_i=idx)
-    if not imp or imp['low'] is None or imp['high'] is None or imp['high'] <= imp['low']:
-        return None
-    d = 1 if imp['type'] == 'bull' else -1
-    lo, hi = imp['low'], imp['high']
-    half = (lo + hi) / 2
-    end_i = imp['high_i'] if d > 0 else imp['low_i']
-    last_c = c1h[-1]
-    # the 0.5 not touched between the impulse's end and this candle (one entry per impulse)
-    between = c1h[end_i + 1:-1]
-    if any((x[3] <= half) if d > 0 else (x[2] >= half) for x in between):
-        return None
-    if d > 0 and not (last_c[3] <= half < last_c[4]):
-        return None
-    if d < 0 and not (last_c[2] >= half > last_c[4]):
-        return None
-    start, end = (lo, hi) if d > 0 else (hi, lo)
-    return {'setup': 'FIB 0.5 LONG' if d > 0 else 'FIB 0.5 SHORT', 'direction': d,
-            'setup_note': f"1h pierced the 0.5 {half:.6g} of the {'bull' if d > 0 else 'bear'} impulse "
-                          f"{start:.6g} -> {end:.6g} and closed back",
-            'anchor_level': half, 'anchor_extreme': start, 'anchor_label': 'impulse 0.5',
-            'impulse_start': start, 'impulse_end': end,
-            'anchor_ts': int(c1h[imp['low_i'] if d > 0 else imp['high_i']][0]), 'anchor_close': last_c[4],
-            'event_ts': int(last_c[0]) + HOUR_MS}
-
-
 # ------------------------------------------------------------------------------------------------ inversion FVG (5m)
 
 def ifvg_trigger(ltf: Sequence[Sequence[float]], direction: int, pierce_ms: int, scan_from_ms: int,
@@ -691,7 +472,3 @@ def pinbar_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int
             return {'entry': c, 'extreme': l if direction > 0 else h, 'time': int(x[0]) + interval_ms,
                     'extreme_time': int(x[0])}
     return None
-
-
-# ------------------------------------------------------------------------------------------------ OI accumulation
-

@@ -34,15 +34,15 @@ Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CO
 """
 import copy
 import logging
-from strategies.ict import fvg_trigger, range_position, touch_trigger
+from strategies.ict import fvg_setup, fvg_trigger, range_position, touch_trigger
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
 from journal import classify, veto_reason
-from levels import MINUTE_MS, ltf_trigger, pullback_spread_ok, pullback_volume_ok, resample
-from strategies.maniac import ifvg_trigger, in_session, pinbar_trigger
+from levels import MINUTE_MS, funding_r, ltf_trigger, pullback_spread_ok, pullback_volume_ok, resample, slippage_bps
+from strategies.maniac import in_session
 from strategies.maniac_strategies import MANIAC_STRATEGIES
 
 MANIAC_NAMES = frozenset(s.name for s in MANIAC_STRATEGIES)
@@ -52,13 +52,22 @@ from strategies.geometry import entry_levels
 
 logger = logging.getLogger(__name__)
 
+def ict_gated(mode: str, setup: str) -> bool:
+    """
+    ICT's sweep / continuation models trade inside the London / New York kill zones only (eng-58). The Silver Bullet
+    shares the 'sweep' name but has its own windows (03-04, 10-11, 14-15 New York): eng-58 vetoed two of its three.
+    """
+    return (mode in ('sweep', 'continuation') and not str(setup or '').startswith('SILVER BULLET')
+            and bool(CONFIG.strategies.smt_session))
+
+
 FINAL_STATUSES = {'TP3', 'SL', 'CLOSED', 'INVALID', 'MISSED', 'EXPIRED'}
 # A setup that never became a card (no anchor / no room left to a target): removed, not a result
 DROPPED = 'DROPPED'
 # How long a finished card's anchor blocks a new card on it
 FINISHED_LEG_MEMORY_SEC = 24 * 3600
 # Structure timeframes by rank: an opposite setup closes a card only from the same or a higher timeframe
-TF_RANK = {'1m': 0, '5m': 1, '15m': 2, '1h': 3, '4h': 4}
+TF_RANK = {'1m': 0, '5m': 1, '15m': 2, '1h': 3, '4h': 4, '1d': 5}
 # A strategy's structure timeframe when a card has no plan (restored after a restart)
 DEFAULT_TF: dict = {}          # (a playbook's own `default_tf` overrides the 15m default)
 
@@ -171,6 +180,15 @@ class TrackedSignal:
     units: list = field(default_factory=list)
     # the signal logic the card was opened by: a card of an older one is closed at the next start (eng-36)
     logic_version: str = ''
+    # eng-58: the last final 1m candle the trade was managed on (stops / targets by candle extremes, as the replay);
+    # the price the trade really left at (a stop gapped through fills at the candle's open)
+    managed_ms: int = 0
+    exit_fill: Optional[float] = None
+    # eng-58: an ICT setup armed after the sweep (MSS + FVG found): the plan fields overlaid on every re-plan (the
+    # resting limit at the gap's CE)
+    armed: Optional[dict] = None
+    # eng-59: the last trigger time of the replaced rule journaled beside the card ('weak_mss' / 'variant_shift')
+    shadow_ms: int = 0
 
     @property
     def finished(self) -> bool:
@@ -223,7 +241,8 @@ class SignalBook:
         # symbol -> the coin's level map / 1h candles / structure context; set by the scanner
         self.levels_of: Optional[Callable[[str], Optional[list]]] = None
         self.htf_of: Optional[Callable[[str], Optional[list]]] = None
-        self.daily_of: Optional[Callable[[str], Optional[list]]] = None     # closed daily candles (Turtle exits)
+        self.daily_of: Optional[Callable[[str], Optional[list]]] = None
+        self.btc_bias_of: Optional[Callable[[], Optional[int]]] = None      # eng-59: BTC's ICT bias (scanner)     # closed daily candles (Turtle exits)
         # the opposite Bollinger band BB(20, 2) of the closed 15m candles (Bollinger W / M exit, eng-55)
         self.band_of: Optional[Callable[[str, int], Optional[float]]] = None
         self.context_of: Optional[Callable[[str], Optional[object]]] = None
@@ -240,6 +259,8 @@ class SignalBook:
         self._recent_setups: Dict[Tuple[str, int], float] = {}
         # (symbol, direction) -> (anchor key, finished_at) of the last finished card
         self.finished_legs: Dict[Tuple[str, int], Tuple[tuple, float]] = {}
+        # eng-58: (symbol, UTC day) -> the direction of the day's first entry (one direction per coin a day)
+        self.day_dir: Dict[Tuple[str, int], int] = {}
 
     # ------------------------------------------------------------------ input
 
@@ -510,6 +531,42 @@ class SignalBook:
         if status in ('SL', 'TP3'):
             self.events.append((s, status))
 
+    def _trail(self, s: TrackedSignal, candles_of) -> None:
+        """
+        eng-58, momentum / trend trades (plan 'trail_after_tp1': continuation, pump, oi_signal): half out at TP1
+        (Qullamaggie, ICT's partials), then the rest's stop to the entry and up behind the EMA20 of the entry
+        timeframe (the closed bars), only ever toward the trade; a RESTOP event moves the demo's stop.
+        """
+        if not (s.plan or {}).get('trail_after_tp1') or s.best_target < 1 or not candles_of:
+            return
+        lv, d = s.levels, s.direction
+        new = max(lv['sl'], lv['entry']) if d > 0 else min(lv['sl'], lv['entry'])
+        tf = int((s.plan or {}).get('trigger_minutes') or 5)
+        minutes = list(candles_of(s.symbol))
+        bars = resample(minutes, tf, minutes[-1][0] + MINUTE_MS) if minutes else []
+        if len(bars) >= 20:
+            alpha, ema = 2 / 21, bars[0][4]
+            for b in bars[1:]:
+                ema += alpha * (b[4] - ema)
+            if d * (bars[-1][4] - ema) > 0:
+                new = max(new, ema) if d > 0 else min(new, ema)
+        step = 0.1 * (lv.get('risk0') or abs(lv['entry'] - lv['sl']))
+        if d * (new - lv['sl']) > step or (d * (new - lv['sl']) > 0 and d * (lv['sl'] - lv['entry']) < 0):
+            lv['sl'] = new
+            lv['sl_src'] = 'trailing: entry / EMA20 after TP1'
+            self.events.append((s, 'RESTOP'))
+
+    @staticmethod
+    def _cost_r(s: TrackedSignal, risk: float, exit_ms: float) -> float:
+        """eng-58: the round trip's cost in R - fees, the slippage of the entry and of the exit (by the coin's
+        liquidity, levels.slippage_bps) and the funding settlements held through - as the journal's replay nets it."""
+        lv = s.levels or {}
+        entry = lv.get('entry')
+        if not entry or not risk:
+            return 0.0
+        cost = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(s.sig.get('volume_24h')) / 1e4) * entry / risk
+        return cost + funding_r(s.sig.get('funding_rate'), s.direction, entry, risk, (s.entered_at or 0) * 1000, exit_ms)
+
     @staticmethod
     def _exit_r(s: TrackedSignal, status: str) -> Optional[float]:
         """
@@ -518,15 +575,25 @@ class SignalBook:
         its thirds made +1.5R (VVV 2026-10-02), an SL after TP1 read -1.08R.
         """
         lv = s.levels or {}
+        exit_ms = (s.finished_at or s.last_seen or 0) * 1000
+        risk = lv.get('risk0') or (abs(lv['entry'] - lv['sl']) if lv.get('entry') and lv.get('sl') else None)
+        rest = s.exit_fill if (status == 'SL' and s.exit_fill is not None) else             (lv.get('sl') if status == 'SL' else s.last_price)
         if s.units or not all(isinstance(lv.get(k), (int, float)) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')):
-            return s.r_now
-        risk = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
+            gross = s.r_now
+            if status == 'SL' and s.exit_fill is not None and risk and not s.units:
+                gross = s.direction * (s.exit_fill - lv['entry']) / risk
+            return None if gross is None else gross - SignalBook._cost_r(s, risk, exit_ms) * max(1, len(s.units or []))
         if not risk:
             return s.r_now
         reached = 3 if status == 'TP3' else min(int(s.best_target or 0), 3)
-        rest = lv['sl'] if status == 'SL' else s.last_price
-        parts = [lv[f'tp{k}'] for k in range(1, reached + 1)] + [rest] * (3 - reached)
-        return sum(s.direction * (p - lv['entry']) for p in parts) / 3 / risk
+        if (s.plan or {}).get('trail_after_tp1'):
+            # half at TP1, the other half where the trail / stop / close left it
+            parts = ([lv['tp1']] if reached >= 1 else [rest]) + [rest]
+            gross = sum(s.direction * (p - lv['entry']) for p in parts) / 2 / risk
+        else:
+            parts = [lv[f'tp{k}'] for k in range(1, reached + 1)] + [rest] * (3 - reached)
+            gross = sum(s.direction * (p - lv['entry']) for p in parts) / 3 / risk
+        return gross - SignalBook._cost_r(s, risk, exit_ms)
 
     def _invalid_reason(self, s: TrackedSignal, price: float, invalid: float) -> str:
         anchor = (s.plan or {}).get('anchor') or {}
@@ -544,7 +611,7 @@ class SignalBook:
         cfg = CONFIG.levels
         s.last_price = price
         if s.entered_at:
-            self._manage_trade(s, price, now)
+            self._manage_trade(s, price, now, candles_of)
             return None
         strategy = self.strategy(s)
         if strategy is None:
@@ -589,6 +656,8 @@ class SignalBook:
         # extreme; fixed references stay). A continuation's plan is frozen once price is in its zone.
         elif not (strategy.frozen_in_zone and s.status == 'ZONE'):
             s.plan = self._plan(s, frames)
+        if s.armed and s.plan:
+            s.plan = {**s.plan, **s.armed['plan']}
         watch_ttl, zone_ttl, _ = strategy.ttls(self._tf(s))
         plan = s.plan
         if plan is None or not plan['targets']:
@@ -628,6 +697,13 @@ class SignalBook:
         elif s.status != 'ZONE':
             s.status = 'WATCH'
 
+        if s.status == 'ZONE' and ict_gated(s.mode, s.group_key) and s.zone_since_ms:
+            # eng-59, ICT: a setup lives within its kill zone - one that came into its zone inside a kill zone and saw
+            # it end without an entry is over (the next session builds its own setup)
+            kz = tuple(CONFIG.strategies.smt_session)
+            if in_session(int(s.zone_since_ms), kz) and not in_session(now_ms, kz):
+                self._finish(s, 'EXPIRED', now, "session_end: the kill zone ended without an entry")
+                return None
         if s.status == 'ZONE':
             entry = self._try_entry(s, price, now_ms, candles_of, confirm_of)
             if entry is not None:
@@ -651,19 +727,25 @@ class SignalBook:
         # kline arrives a moment after the minute ends, and the entry would be a mid-minute price)
         ltf = resample(minutes, trigger_minutes, minutes[-1][0] + MINUTE_MS)
         kind = s.plan.get('trigger', 'shift')
-        if kind == 'pinbar':
-            trigger = pinbar_trigger(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
-        elif kind == 'fvg':
-            trigger = fvg_trigger(ltf, d, s.zone_since_ms, interval_ms)
+        shadow = self._shadow_entry(s, ltf, kind, interval_ms, now_ms, price)
+        if kind == 'fvg':
+            # ICT 2022 (eng-58): the sweep is only the setup; once the displacement broke the swing the raid came from
+            # and left a gap, a limit rests at the gap's CE (the plan becomes a touch plan: the demo places it)
+            setup = fvg_setup(ltf, d, s.zone_since_ms, interval_ms)
+            if setup is not None:
+                s.armed = {'plan': {'trigger': 'touch', 'zone_lo': setup['ce'], 'zone_hi': setup['ce'],
+                                    'single_touch': True, 'fvg': [setup['gap_lo'], setup['gap_hi']],
+                                    'mss': setup['mss']},
+                           'since': setup['time']}
+                s.plan = {**s.plan, **s.armed['plan']}
+                s.zone_since_ms = setup['time']
+            return shadow
         elif kind == 'touch':
             trigger = touch_trigger(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
-        elif kind == 'ifvg':
-            trigger = ifvg_trigger(ltf, d, int(s.plan.get('trigger_from_ms') or s.zone_since_ms), s.zone_since_ms,
-                                   interval_ms)
         else:
             trigger = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms)
         if not trigger:
-            return None
+            return shadow
         if now_ms - trigger['time'] > interval_ms + 2 * MINUTE_MS:
             # A break that closed long ago (the card was restored after a restart, the feed had a gap): its price is
             # history, not an entry a human could take now. Look for the next one after it.
@@ -699,6 +781,10 @@ class SignalBook:
                 confirms['killzone'] = in_session(trigger['time'], tuple(CONFIG.strategies.smt_session))
         if reason is None:
             reason = confirm.missing(s.mode, confirms)
+        if reason is None and ict_gated(s.mode, s.group_key)                 and not in_session(trigger['time'], tuple(CONFIG.strategies.smt_session)):
+            reason = 'killzone'            # eng-58: ICT trades its models inside the London / New York kill zones only
+        if reason is None:
+            reason = self._against_day(s, trigger['time'])
         if reason is None and s.plan.get('session') and not in_session(trigger['time'], tuple(s.plan['session'])):
             reason = 'off_session'
         if reason is None and CONFIG.levels.veto_low_rr and levels.get('low_rr'):
@@ -789,19 +875,92 @@ class SignalBook:
                 return self._enter(s, levels, now_ms, 'unit_limit', confirms)
             s.units = [[levels['entry'], entered_at]]
         s.levels, s.entered_at, s.status, s.of_confirm, s.confirms = levels, entered_at, 'ENTRY', of, dict(confirms)
+        s.managed_ms = (now_ms // MINUTE_MS + 1) * MINUTE_MS
+        self.day_dir.setdefault((s.symbol, int(now_ms // 86_400_000)), s.direction)
         self.events.append((s, 'ENTRY'))
         return s
 
-    def _manage_trade(self, s: TrackedSignal, price: float, now: float):
+    def _shadow_entry(self, s: TrackedSignal, ltf, kind: str, interval_ms: int, now_ms: int,
+                      price: float) -> Optional[TrackedSignal]:
+        """
+        eng-59: the rule eng-58 replaced, journaled as a vetoed entry of the same card so the journal compares both on
+        the same events (vetoes_table): 'weak_mss' = the old sweep trigger (a close beyond the high made after the
+        raid, entry at the CE touch) while the new MSS has not armed the card; 'variant_shift' = the old market entry
+        on the 5m structure shift beside the resting limit (continuation, an armed sweep). Inside the kill zone only,
+        once per trigger.
+        """
+        if not ict_gated(s.mode, s.group_key):
+            return None
+        d = s.direction
+        if kind == 'fvg':
+            trig, reason = fvg_trigger(ltf, d, s.zone_since_ms, interval_ms), 'weak_mss'
+        elif kind == 'touch' and (s.armed or s.mode == 'continuation'):
+            trig, reason = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms), 'variant_shift'
+        else:
+            return None
+        if not trig or trig['time'] <= s.shadow_ms or now_ms - trig['time'] > interval_ms + 2 * MINUTE_MS:
+            return None
+        s.shadow_ms = int(trig['time'])
+        if not in_session(trig['time'], tuple(CONFIG.strategies.smt_session)):
+            return None
+        levels = entry_levels(s.plan, trig['entry'], trig['extreme'], d)
+        if not levels or d * (price - levels['sl']) <= 0:
+            return None
+        levels['zone_src'] = s.plan.get('zone_src')
+        levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], d)
+        shadow = copy.copy(s)
+        shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, reason
+        shadow.of_confirm, shadow.confirms = None, {}
+        return shadow
+
+    def _against_day(self, s: TrackedSignal, at_ms: int) -> Optional[str]:
+        """
+        eng-58: one direction per coin a day (ICT trades the day's bias with every model; a long and a short of two
+        strategies on one coin were one coin flip): the first entry of the UTC day sets it, an opposite entry is
+        journaled 'against_day'. The Turtles (a multi-week system) are exempt.
+        """
+        if (s.plan or {}).get('trail_days'):
+            return None
+        d = self.day_dir.get((s.symbol, int(at_ms // 86_400_000)))
+        if d is not None and d != s.direction:
+            return 'against_day'
+        # eng-59, ICT: altcoins' ICT models trade with BTC's bias (weekly, else daily) - the market's draw
+        if s.mode in ('sweep', 'continuation', 'po3') and not s.symbol.startswith('BTC/') and self.btc_bias_of:
+            btc = self.btc_bias_of()
+            if btc and btc == -s.direction:
+                return 'against_btc'
+        return None
+
+    def _manage_trade(self, s: TrackedSignal, price: float, now: float, candles_of=None):
         lv, d = s.levels, s.direction
+        # eng-58: stops and targets on the final 1m candles' extremes since the last check, as the journal's replay
+        # does (the scan's last price missed every wick between scans); a target counts once traded
+        # target_through_bps through it; a candle touching both counts the stop; a gap through the stop fills at the
+        # candle's open
+        through = CONFIG.levels.target_through_bps / 1e4
+        if not s.managed_ms:
+            # a trade restored from a state saved before eng-58: never judge it on candles before its entry
+            s.managed_ms = int(((s.entered_at or 0) // 60 + 1) * 60_000)
+        candles = [c for c in (list(candles_of(s.symbol)) if candles_of else []) if c[0] >= s.managed_ms]
+        for c in candles:
+            s.managed_ms = int(c[0]) + MINUTE_MS
+            o, hi, lo = float(c[1]), float(c[2]), float(c[3])
+            if (lo <= lv['sl']) if d > 0 else (hi >= lv['sl']):
+                s.exit_fill = min(o, lv['sl']) if d > 0 else max(o, lv['sl'])
+                return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))
+            for k in ((1,) if (s.plan or {}).get('trail_after_tp1') else (3, 2, 1)):
+                t = lv[f'tp{k}']
+                if k > s.best_target and ((hi >= t * (1 + through)) if d > 0 else (lo <= t * (1 - through))):
+                    s.best_target = k
+                    if k < 3:
+                        self.events.append((s, f'TP{k}'))
+                    break
+            if s.best_target == 3:
+                return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
+            self._trail(s, candles_of)
         if d * (price - lv['sl']) <= 0:
+            s.exit_fill = price
             return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))
-        for k in (3, 2, 1):
-            if k > s.best_target and d * (price - lv[f'tp{k}']) >= 0:
-                s.best_target = k
-                if k < 3:
-                    self.events.append((s, f'TP{k}'))
-                break
         if s.best_target == 3:
             return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
         if s.best_target:

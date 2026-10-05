@@ -99,6 +99,36 @@ def pnf_count(closes: Sequence[float], box: float, reversal: int = 3) -> int:
     return cols
 
 
+def weis_waves(closes: Sequence[float], volumes: Sequence[float], reversal: float) -> List[tuple]:
+    """Weis waves on closes: a wave runs until price closes `reversal` back from its extreme; (direction, volume)."""
+    if len(closes) < 2 or reversal <= 0:
+        return []
+    waves, d, ext, vol = [], 0, closes[0], volumes[0]
+    for c, v in zip(closes[1:], volumes[1:]):
+        if d >= 0 and c > ext:
+            d, ext = 1, c
+        elif d <= 0 and c < ext:
+            d, ext = -1, c
+        elif d > 0 and c <= ext - reversal or d < 0 and c >= ext + reversal:
+            waves.append((d, vol))
+            d, ext, vol = -d, c, 0.0
+        vol += v
+    waves.append((d, vol))
+    return waves
+
+
+def weis_ratio(h1: Sequence[Sequence[float]], start: int, d: int, reversal: float) -> Optional[float]:
+    """Weis's effort into the spring (d = +1; the upthrust for -1): the volume of the last wave against the trade
+    divided by the mean of the earlier waves against it since the climax. Below 1 = less effort into the test edge
+    (supply drying up, Weis "Trades About to Happen"). Journaled (`weis_ratio`), not a filter."""
+    waves = weis_waves([x[4] for x in h1[start:]], [x[5] for x in h1[start:]], reversal)
+    against = [v for w, v in waves if w == -d]
+    if len(against) < 2:
+        return None
+    prior = sum(against[:-1]) / len(against[:-1])
+    return against[-1] / prior if prior else None
+
+
 def wyckoff_events(h1: Sequence[Sequence[float]]) -> List[Dict]:
     """A spring / UTAD on the 1h candle that just closed (h1[-1]) inside a phase-A range, else []."""
     if len(h1) < TREND_BACK + 30:
@@ -136,6 +166,8 @@ def _event(setup: str, d: int, lo: float, hi: float, extreme: float, h1, rng: Di
             'anchor_label': f"{'SC low' if d > 0 else 'BC high'} (phase A range)",
             'anchor_ts': int(h1[rng['climax']][0]), 'anchor_close': last[4], 'event_ts': int(last[0]) + HOUR_MS,
             'pnf_target': count, 'pnf_cols': float(cols),
+            # Weis wave volume into the spring vs the range's earlier waves (reversal = 3 boxes, the P&F convention)
+            'weis_ratio': weis_ratio(h1, rng['climax'], d, 3 * box),
             # the spring candle's average FUTURES minute and range: Wyckoff's test trades on less volume and a narrower
             # spread (levels.pullback_volume_ok / pullback_spread_ok)
             'fut_candle_minute_usd': float(last[5]) / 60 if len(last) > 5 else None,
