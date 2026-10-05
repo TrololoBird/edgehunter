@@ -590,7 +590,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   CLOSED / RESTOP / INVALID / ADD. `/api/briefing` (?kind=recap, ?send=1) shows the text. Oil = Binance's CLUSDT
   (WTI, pinned). research_sessions.py -> research/sessions_leaders.md: the opens' moves vs other times and whether a
   leader's move comes before the alts' (lagged correlation, next-15m / 60m continuation).
-  The briefing is sent as pictures (`briefing_chart.py`, matplotlib; the owner's reference layout): a 1h chart with the
+  The briefing is sent as pictures (`briefing_chart.py`, matplotlib; the owner's reference layout): a 4h chart (10 days; the 1h was unreadable against daily / weekly zones) with the window's extremes, the scenarios' paths and the
   named zones (global / resistance / local resistance, the zone price sits in, next / key / global support: per side
   the three strongest 1h+ zones >= 0.4 daily ATR apart, ties to the higher timeframe's level), price tags with the
   distance, the long (acceptance above the zone -> the resistances, stop below the next support; price discovery =

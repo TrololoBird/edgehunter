@@ -184,7 +184,7 @@ class Briefing:
             chosen, edge = [], (cur['hi'] if side > 0 else cur['lo'])
             pool_ = [m for m in cands if (m['lo'] > cur['hi'] if side > 0 else m['hi'] < cur['lo'])]
             while len(chosen) < n:
-                start = edge + side * (0.25 * atr1d if chosen else 0.0)
+                start = edge + side * (0.25 * atr1d if chosen else 0.1 * atr1d)
                 for width in (1.0, 2.0, 4.0):
                     end = start + side * width * atr1d
                     win = [m for m in pool_ if (start <= m['lo'] <= end if side > 0 else end <= m['hi'] <= start)]
@@ -285,8 +285,10 @@ class Briefing:
                 tf = self.sc._tf_atrs(symbol)
                 bias_line = (f"Старший ТФ: {BIAS_RU.get(bias, bias)} · неделя {_arrow(st.get('w1'))} · день "
                              f"{_arrow(st.get('d1'))} · 4h {_arrow(st.get('h4'))}")
-                png = briefing_chart.render(f"{_short(symbol)}USDT", list(md.h1), price, self.zones.get(symbol) or [],
-                                            tf.get('1h'), bias_line, tf.get('1d'))
+                if len(md.h4) < 20:
+                    continue
+                png = briefing_chart.render(f"{_short(symbol)}USDT", list(md.h4), price, self.zones.get(symbol) or [],
+                                            tf.get('4h'), bias_line, tf.get('1d'), candles_1h=list(md.h1))
                 cap = f"<b>{_short(symbol)}</b> · {bias_line}"
                 out.append((png, (head + '\n\n' + cap) if not out else cap))
             except Exception as e:

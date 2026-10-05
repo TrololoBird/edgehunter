@@ -31,7 +31,8 @@ RED, RED2, RED3 = '#c0392b', '#d9534f', '#e57373'
 BLUE, GREEN, GREEN2 = '#3b5bdb', '#2f9e44', '#1e7b3a'
 GREY, DARK = '#7a7a7a', '#222222'
 UP_C, DN_C = '#26a69a', '#ef5350'
-BARS = 66                                  # ~2.75 days of 1h candles, as the reference
+BARS = 60                                  # 10 days of 4h candles (the owner: the 1h was unreadable against
+                                           # daily / weekly zones)
 
 
 def _fmt(p: float) -> str:
@@ -108,11 +109,14 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None) -> Dic
 
 
 def render(name: str, candles: List[List[float]], price: float, zones: List[Dict], atr_1h: Optional[float],
-           bias_text: str = '', atr_1d: Optional[float] = None, source: str = 'Binance') -> bytes:
+           bias_text: str = '', atr_1d: Optional[float] = None, source: str = 'Binance',
+           candles_1h: Optional[List[List[float]]] = None) -> bytes:
+    """`candles`: 4h candles drawn on the chart; `atr_1h`: the drawn timeframe's ATR (4h); `candles_1h` for the 24h
+    change / high / low."""
     """PNG bytes of the card. `candles`: 1h [ts, o, h, l, c, ...], oldest first (the forming one may be last)."""
     p = plan(price, zones, atr_1d)
     c = candles[-BARS:]
-    day = candles[-24:]
+    day = (candles_1h or [])[-24:] or candles[-6:]
     hi24, lo24 = max(x[2] for x in day), min(x[3] for x in day)
     chg = (price / day[0][1] - 1) * 100
     W, H = 9.21, 12.7
@@ -121,18 +125,18 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
 
     # ---- header
     fig.text(0.037, 0.972, _fmt(price), fontsize=38, weight='bold', color=GREEN if chg >= 0 else RED, va='top')
-    fig.text(0.037, 0.912, f"{name}  ·  1h  ·  за сутки {chg:+.2f}%", fontsize=13.5, color=GREY, va='top')
+    fig.text(0.037, 0.912, f"{name}  ·  4h  ·  за сутки {chg:+.2f}%", fontsize=13.5, color=GREY, va='top')
     for k, (lab, val) in enumerate((('Макс. 24ч', _fmt(hi24)), ('Мин. 24ч', _fmt(lo24)),
-                                    ('ATR 1ч', (f"{atr_1h:,.0f}".replace(',', ' ') if atr_1h and atr_1h >= 10
+                                    ('ATR 4ч', (f"{atr_1h:,.0f}".replace(',', ' ') if atr_1h and atr_1h >= 10
                                                else f"{atr_1h:.3g}" if atr_1h else '—')))):
         fig.text(0.64, 0.972 - k * 0.0255, lab, fontsize=12, color=GREY, va='top')
         fig.text(0.963, 0.972 - k * 0.0255, val, fontsize=12, weight='bold', ha='right', va='top')
     for k, tf in enumerate(('1м', '15м', '1ч', '4ч', '1д')):
         x = 0.04 + k * 0.073
-        if tf == '1ч':
+        if tf == '4ч':
             fig.patches.append(FancyBboxPatch((x - 0.018, 0.866), 0.05, 0.022, transform=fig.transFigure,
                                               boxstyle='round,pad=0.003', fc='#eef0f3', ec='none'))
-        fig.text(x, 0.877, tf, fontsize=12.5, color='#333' if tf == '1ч' else GREY, va='center')
+        fig.text(x, 0.877, tf, fontsize=12.5, color='#333' if tf == '4ч' else GREY, va='center')
     if bias_text:
         fig.text(0.42, 0.877, bias_text, fontsize=9.5, color='#555', va='center')
 
@@ -145,15 +149,17 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
         ax.add_patch(Rectangle((i - 0.33, min(x[1], x[4])), 0.66, max(abs(x[4] - x[1]), price * 2e-5), color=col,
                                zorder=3))
     ys = [z['lo'] for z in zones] + [z['hi'] for z in zones] + [x[3] for x in c] + [x[2] for x in c]
+    ys += [t for side in ('long', 'short') if p[side] for t in p[side]['targets'][:3]]   # the paths stay inside
     lo_y, hi_y = min(ys), max(ys)
     pad = (hi_y - lo_y) * 0.05
     y0, y1 = lo_y - pad, hi_y + pad
     ax.set_ylim(y0, y1)
-    xmax = n / 0.6                                   # candles in the left 60%
+    xmax = n / 0.6                                   # candles in the left 60%, the paths on the right
     ax.set_xlim(-1, xmax)
 
     def fy(v):                                       # data y -> figure y
         return 0.245 + 0.61 * (v - y0) / (y1 - y0)
+    tags: List[list] = []
     for z in zones:
         title, sub, col = p['names'].get(id(z), ('ЗОНА', '', GREY))
         ax.axhspan(z['lo'], z['hi'], color=col, alpha=0.17, zorder=1)
@@ -162,18 +168,46 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
         ym = (z['lo'] + z['hi']) / 2
         ax.annotate(title, (1.5, ym), xytext=(0, 1), textcoords='offset points', fontsize=13, weight='bold',
                     color=col, va='bottom', zorder=6)
+        sub = f"{sub} · {z['label']}" if z.get('label') else sub
         ax.annotate(sub, (1.5, ym), xytext=(0, -10), textcoords='offset points', fontsize=8.8, color='#333',
                     va='top', zorder=6)
         ax.text(xmax * 0.455, ym, f"{_fmt(z['lo'])} – {_fmt(z['hi'])}", fontsize=12, weight='bold', va='center',
                 zorder=6)
         if z['side'] != 0:
-            fig.text(0.877, fy(z['hi']), f"{_fmt(z['hi'])}\n{_pct(z['hi'], price)}", fontsize=11.5, weight='bold',
-                     color='white', va='center', linespacing=1.0,
-                     bbox=dict(boxstyle='round,pad=0.35', fc=col, ec='none'))
+            tags.append([fy(z['hi']), f"{_fmt(z['hi'])}\n{_pct(z['hi'], price)}", col])
     ax.axhline(price, color='#333', ls=(0, (5, 4)), lw=0.9, zorder=4)
-    fig.text(0.877, fy(price), f"{_fmt(price)}\n{datetime.now(timezone.utc):%H:%M} UTC", fontsize=11.5,
-             weight='bold', color='white', va='center', linespacing=1.0,
-             bbox=dict(boxstyle='round,pad=0.35', fc=DARK, ec='none'))
+    tags.append([fy(price), f"{_fmt(price)}\n{datetime.now(timezone.utc):%H:%M} UTC", DARK])
+    # right-hand tags pushed apart so none covers another (the price tag keeps its place)
+    tags.sort(key=lambda t: t[0])
+    k0 = next(i for i, t in enumerate(tags) if t[2] == DARK)
+    for i in range(k0 + 1, len(tags)):
+        tags[i][0] = max(tags[i][0], tags[i - 1][0] + 0.038)
+    for i in range(k0 - 1, -1, -1):
+        tags[i][0] = min(tags[i][0], tags[i + 1][0] - 0.038)
+    for ty, text, colr in tags:
+        fig.text(0.877, ty, text, fontsize=11.5, weight='bold', color='white', va='center', linespacing=1.0,
+                 bbox=dict(boxstyle='round,pad=0.35', fc=colr, ec='none'))
+    # the window's extremes, labelled (the reference marks them)
+    ih = max(range(n), key=lambda i: c[i][2])
+    il = min(range(n), key=lambda i: c[i][3])
+    ax.annotate(_fmt(c[ih][2]), (ih, c[ih][2]), xytext=(0, 4), textcoords='offset points', ha='center',
+                fontsize=10, weight='bold', zorder=6)
+    ax.annotate(_fmt(c[il][3]), (il, c[il][3]), xytext=(0, -4), textcoords='offset points', ha='center', va='top',
+                fontsize=10, weight='bold', zorder=6)
+    # the scenarios' paths from the last candle: solid to TP1, dashed beyond
+    import numpy as np
+    for side, colr in (('long', GREEN2), ('short', RED)):
+        sc = p[side]
+        if not sc:
+            continue
+        pts = [(n - 1, price), (n + (xmax - n) * 0.15, (sc['entry'][0] + sc['entry'][1]) / 2)]
+        for k, t in enumerate(sc['targets'][:3]):
+            pts.append((n + (xmax - n) * (0.35 + 0.22 * k), t))
+        xs_, ys_ = np.array([q[0] for q in pts]), np.array([q[1] for q in pts])
+        ax.plot(xs_[:3], ys_[:3], color=colr, lw=2.2, zorder=5)
+        ax.plot(xs_[2:], ys_[2:], color=colr, lw=2.2, ls=(0, (3, 2)), zorder=5)
+        ax.annotate('', xy=(xs_[-1], ys_[-1]), xytext=(xs_[-2], ys_[-2]),
+                    arrowprops=dict(arrowstyle='->', color=colr, lw=2.2, ls='--'), zorder=5)
     # scenario tags
     if p['long']:
         ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\nВероятность: {p['long']['p'] * 100:.0f}%*",
