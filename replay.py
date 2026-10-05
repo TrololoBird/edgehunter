@@ -238,6 +238,12 @@ class Replay:
         from strategies.detect import LiveDetector
         from strategies.loopside import LoopDetectors
         self.coins, self.btc = coins, btc
+
+        def minutes_of(s):
+            # BTC is read by every group (BTC overlays, its bias) but replayed inside only one of them
+            c = self.coins.get(s) or (self.btc if self.btc is not None and s == self.btc.key else None)
+            return c.minutes() if c is not None else []
+        self._minutes_of = minutes_of
         self.now_ms = 0
         self.book = SignalBook()
         # the replay measures the methods' OWN plans: the optimized profiles (models/profiles*.json, research_optimize*)
@@ -245,7 +251,7 @@ class Replay:
         from strategies import profiles
         profiles.select = lambda strategy, regime: (None, None)
         self.detector = LiveDetector()
-        self.loopside = LoopDetectors(lambda s: self.coins[s].minutes(), lambda s: self.coins[s].m15(self.now_ms))
+        self.loopside = LoopDetectors(self._minutes_of, lambda s: self.coins[s].m15(self.now_ms))
         self.raw: Dict[str, list] = {}
         self.ctx_sig: Dict[str, int] = {}
         b = self.book
@@ -365,7 +371,7 @@ class Replay:
                 signals.append((s, sig))
         prices = {s: c.price() for s, c in self.coins.items()}
         _, entries = self.book.update(signals, _Frames(self, now_ms), lambda s: prices.get(s),
-                                      lambda s: self.coins[s].minutes(), now_ms / 1000, confirm_of=self._confirm)
+                                      self._minutes_of, now_ms / 1000, confirm_of=self._confirm)
         for e in entries:
             self.entries.append(_entry_row(e, now_ms))
         for symbol, group_key, reason, sig in self.book.vetoed:

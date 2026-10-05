@@ -90,6 +90,33 @@ class Notifier:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    def post_photo(self, png: bytes, caption: str = ''):
+        """A briefing card (PNG) with an HTML caption (<= 1024 characters), Telegram only."""
+        if not self.enabled or not png:
+            return
+        task = asyncio.get_running_loop().create_task(self._photo(png, caption[:1024]))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _photo(self, png: bytes, caption: str):
+        token, chat = self._creds()
+        if not token or not chat:
+            return
+        try:
+            if self._session is None:
+                self._session = aiohttp.ClientSession()
+            form = aiohttp.FormData()
+            form.add_field('chat_id', str(chat))
+            form.add_field('caption', caption)
+            form.add_field('parse_mode', 'HTML')
+            form.add_field('photo', png, filename='card.png', content_type='image/png')
+            async with self._session.post(f"https://api.telegram.org/bot{token}/sendPhoto", data=form,
+                                          timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    logger.warning(f"Telegram photo failed: HTTP {resp.status} {(await resp.text())[:200]}")
+        except Exception as e:
+            logger.warning(f"Telegram photo failed: {e}")
+
     async def _send_chunks(self, chunks):
         for c in chunks:
             await self._telegram(c, html=True)

@@ -77,7 +77,7 @@ def main():
               '| open | series | n | mean 30m | P(down) 30m | mean abs 30m | abs vs other times | mean 60m | P(down) 60m |',
               '|---|---|---|---|---|---|---|---|---|']
     rng = np.random.default_rng(3)
-    for name, (tz, hh, mm) in list(opens.items()) + [('placebo random minute', None)]:
+    for name, (tz, hh, mm) in list(opens.items()) + [('placebo random minute', (None, 0, 0))]:
         idx = []
         if tz is None:
             idx = list(rng.integers(0, len(grid) - 20, 400))

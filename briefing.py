@@ -143,20 +143,39 @@ class Briefing:
             return price, []
         # one zone per place, strongest first: a zone overlapping / within half a 4h ATR of a stronger one is dropped
         # (chaining overlaps merged the whole week into one band); zones wider than 0.6 daily ATR are no level to act on
-        gap = 0.5 * (tf.get('4h') or atr1d / 2.5)
+        gap = 0.1 * (tf.get('4h') or atr1d / 2.5)
         merged: List[Dict] = []
         for z in sorted(zs, key=lambda z: -z.strength):
             if z.hi - z.lo > 0.6 * atr1d:
                 continue
-            if any(z.lo <= m['hi'] + gap and z.hi >= m['lo'] - gap for m in merged):
+            # a duplicate = more than half of the smaller zone inside a stronger one (or touching it within `gap`
+            # when both are thin); a small overlap at the edge is a different level (BTC: PWH / PDH beside a 1h BPR)
+            def dup(m):
+                ov = min(z.hi, m['hi']) - max(z.lo, m['lo'])
+                return ov > 0.5 * max(min(z.hi - z.lo, m['hi'] - m['lo']), 1e-12) or (-gap < ov <= 0 and max(
+                    z.hi - z.lo, m['hi'] - m['lo']) < gap)
+            if any(dup(m) for m in merged):
                 continue
             merged.append({'lo': z.lo, 'hi': z.hi, 'strength': z.strength, 'labels': list(z.labels)})
         if not merged:
             return price, []
-        cut = sorted(m['strength'] for m in merged)[len(merged) // 3]  # the stronger two thirds
         inside = [m for m in merged if m['lo'] <= price <= m['hi']]
-        above = sorted([m for m in merged if m['lo'] > price and m['strength'] >= cut], key=lambda m: m['lo'])[:3]
-        below = sorted([m for m in merged if m['hi'] < price and m['strength'] >= cut], key=lambda m: -m['hi'])[:3]
+        # per side the three STRONGEST zones at least 0.4 daily ATR apart (then ordered by distance): the week's /
+        # day's extremes and HTF arrays win over the nearest minor zone; the analyst's ladder spans a few percent
+        step = 0.4 * atr1d
+
+        def ladder(cands):
+            out_ = []
+            # ties: the zone holding the higher timeframe's level (the week's / day's extreme) wins
+            for m in sorted(cands, key=lambda m: (-m['strength'], min(map(_label_rank, m['labels']), default=9))):
+                if all(min(abs(m['lo'] - o['hi']), abs(o['lo'] - m['hi'])) >= step
+                       and not (m['lo'] <= o['hi'] and m['hi'] >= o['lo']) for o in out_):
+                    out_.append(m)
+                if len(out_) == 3:
+                    break
+            return out_
+        above = sorted(ladder([m for m in merged if m['lo'] > price]), key=lambda m: m['lo'])
+        below = sorted(ladder([m for m in merged if m['hi'] < price]), key=lambda m: -m['hi'])
         out = []
         for side, group in ((1, above[::-1]), (0, inside[:1]), (-1, below)):
             for m in group:
@@ -225,6 +244,30 @@ class Briefing:
         if events:
             out.append('Макро сегодня (МСК): ' + ', '.join(f"{dt:%H:%M} {name}" for dt, name in events))
         return '\n'.join(out)
+
+    def cards(self, title: str) -> List[Tuple[bytes, str]]:
+        """The briefing as pictures: (PNG, caption) per watched coin, the first caption carries the market / macro."""
+        import briefing_chart
+        out = []
+        head = f"📋 <b>{title}</b> · {datetime.now(MSK):%d.%m %H:%M} МСК\n{self.market_text()}"
+        for symbol in self.watched():
+            try:
+                text = self.coin_text(symbol)            # zones / scenario (also what the watch alerts follow)
+                price = self.sc._price_of(symbol)
+                md = self.sc.market_data.get(symbol)
+                if not text or not price or md is None or len(md.h1) < 24:
+                    continue
+                bias, st = self._bias_of(symbol)
+                tf = self.sc._tf_atrs(symbol)
+                bias_line = (f"Старший ТФ: {BIAS_RU.get(bias, bias)} · неделя {_arrow(st.get('w1'))} · день "
+                             f"{_arrow(st.get('d1'))} · 4h {_arrow(st.get('h4'))}")
+                png = briefing_chart.render(f"{_short(symbol)}USDT", list(md.h1), price, self.zones.get(symbol) or [],
+                                            tf.get('1h'), bias_line, tf.get('1d'))
+                cap = f"<b>{_short(symbol)}</b> · {bias_line}"
+                out.append((png, (head + '\n\n' + cap) if not out else cap))
+            except Exception as e:
+                errors.report('briefing.card', e, symbol)
+        return out
 
     def briefing(self, title: str) -> str:
         parts = [f"📋 <b>{title}</b> · {datetime.now(MSK):%d.%m %H:%M} МСК", self.market_text()]
@@ -427,9 +470,11 @@ class Briefing:
                     t = now.replace(hour=h, minute=m, second=0, microsecond=0)
                     if slot not in self._done_slots and timedelta(0) <= now - t <= timedelta(minutes=10):
                         self._done_slots.add(slot)
-                        text = (await asyncio.to_thread(self.recap) if title == 'recap'
-                                else await asyncio.to_thread(self.briefing, title))
-                        self.sc.notifier.post(text)
+                        if title == 'recap':
+                            self.sc.notifier.post(await asyncio.to_thread(self.recap))
+                        else:
+                            for png, cap in await asyncio.to_thread(self.cards, title):
+                                self.sc.notifier.post_photo(png, cap)
                 for dt, name in macro_today(now):
                     if timedelta(0) <= dt - now <= timedelta(minutes=30):
                         self._post(f"📅 Через {int((dt - now).total_seconds() // 60)} мин: {name} ({dt:%H:%M} МСК) — "
