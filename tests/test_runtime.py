@@ -66,15 +66,19 @@ def test_backfill_snapshot_patched_with_stream_rows():
 
 def test_binance_sinks_from_fixtures():
     f = fetcher_with()
+    f.depth.start('BTC/USDT:USDT')              # a local book (depth.py): diff events buffer until the snapshot
     for key in ('binance_fut_market:aggTrade', 'binance_fut_market:forceOrder',
                 'binance_fut_public:depth20@500ms', 'binance_fut_market:kline_1m'):
         for raw in SAMPLES[key]:
             payload = orjson.loads(raw)
             if 'data' in payload:
                 f.on_binance('futures', payload['stream'], payload['data'], NOW * 1000)
+    first = orjson.loads(SAMPLES['binance_fut_public:depth20@500ms'][0])['data']
+    f.depth.set_snapshot('BTC/USDT:USDT', {'lastUpdateId': first['U'], 'bids': first['b'], 'asks': first['a']})
+    assert f.depth.books['BTC/USDT:USDT'].synced
     btc = f.markets['BTC/USDT:USDT']
     assert btc.ticker_samples and btc.minute_klines       # price samples come from the aggTrades now
-    assert f.depth.metrics('BTC/USDT:USDT', now=f.depth.books['BTC/USDT:USDT'].ts_ms / 1000)['bid_usd_0_5'] > 0
+    assert f.depth.metrics('BTC/USDT:USDT', now=f.depth.books['BTC/USDT:USDT'].recv)['bid_usd_0_5'] > 0
     f.sweeps.flush(10 ** 15)
     assert f.flow.venues['binance'].messages >= 3
     liq = f.flow.window(('binance',), 2, 3600, 1790422647 + 60)  # LIQ_LONG at the time the fixture was recorded

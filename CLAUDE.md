@@ -475,3 +475,23 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   dropped (the cause was the dead address; BingX documents 5000 ms as the maximum); the demo close handles both an
   exchange stop that filled first (101290 -> EXCHANGE) and the price band (102202 -> reduce-only limit). Futures
   klines REST weight by Binance's table (1 / 2 / 5 / 10).
+- eng-61 (2026-10-05, the owner: "find why and fix everything"):
+  Confirmations: `orderflow` was structurally absent for the systems entering at their signal's close (footprint and
+  the absorption ATR existed only for cards waiting in a zone: ORB 4 positive of 88 entries, Bollinger 4 / 83, pump
+  0 / 19) - the footprint now runs for every universe coin (5 bps price buckets, last 30 min; an older extreme reads
+  the flow into the entry) and absorption takes a 15m ATR estimate from the 1m candles; `vsa` needed 20 5m bars
+  before the extreme inside a 3h window (never positive for extremes older than 80 min: ORB median 273, VA80 300)
+  and its no supply / no demand counted anywhere in a pullback (continuation 40 of 41 positive) - now the whole 10h
+  buffer, the last four closed bars when the extreme is older, and no supply / demand only as a TEST near the
+  window's low / high (Williams): 20% positive at random points. Every entry journals `_ind` (strategies/ind_panel.py:
+  EMA 20/50/200, RSI, MACD, ADX/DI, stochastic, %B, band width, MFI, OBV, CCI, ATR rank, RVOL as 20 directional
+  rules on 15m and 1h) and `_book` (the local book's imbalance, pulled / filled within 1% over 5 min, a $50k order's
+  impact). research_indicator_confirms.py (pre-registered; research/indicator_confirms.md): 208 strategy x rule x
+  timeframe cells on the archive replay, 0 pass BH q 0.10 - no classic indicator turns an entry set positive.
+  Order books rebuilt (depth.py): a local book per hot coin from the @depth@500ms diff stream + a 1000-level snapshot
+  with Binance's sequence rules (the 500-level REST snapshots every 60s covered BTC +-0.07%, ETH +-0.2%); every
+  decrease split into filled (aggTrades at the price) / pulled; heat snapshots of the whole book every 30s; walls
+  stand 30s within +-2%; bands drop when their pull turnover is > 3x the side's median; `slippage_bps` walks the
+  book. 'book' left zones.STRUCTURE_KINDS (no stop on pullable orders) and weighs 1.0; the chart's density lines
+  are the bot's bands (the looser second definition and the dead `LiveDetector.levels_of` were removed).
+

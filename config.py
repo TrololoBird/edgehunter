@@ -238,29 +238,28 @@ class LiquidationConfig:
 
 @dataclass(frozen=True)
 class DepthConfig:
-    """Order book (Binance <sym>@depth20@500ms) for hot symbols only: open cards and active anomalies."""
-    # 40 with the data-complete universe (~150 coins instead of 300 freed ~half of the trade / kline bandwidth)
+    """
+    Local order books (Binance <sym>@depth@500ms diff stream + a 1000-level snapshot, depth.py) of the hot symbols
+    only: open cards and active anomalies. Measured 2026-10-05: ~4.3 KB/s per book (depth20 was ~2 KB/s).
+    """
     max_symbols: int = 25          # (was 40: the laptop; pinned + open cards first)
-    # Sockets the order books are spread over (~1.5 KB / 500ms per book; one socket carries ~40-70 KB/s)
+    # Sockets the books are spread over (one socket carries ~40-70 KB/s)
     sockets: int = 6
     band_pcts: tuple = (0.005, 0.01)
-    # A level is a wall at >= wall_multiple x the median level notional of the book, counted only after it has
-    # stood wall_min_age_sec (spoofed walls are pulled within seconds)
+    # A wall: a single level >= wall_multiple x the median level notional within +-wall_range_pct, counted after it
+    # stood wall_min_age_sec (book depth refills within 5-10s of a trade: a 10s-old level said little)
     wall_multiple: float = 5.0
-    wall_min_age_sec: float = 10.0
-    # Partial-book streams push only on change: a book is stale only after this long without an update
+    wall_range_pct: float = 0.02
+    wall_min_age_sec: float = 30.0
+    # Diff streams push on change: a book is stale after this long without an event
     stale_sec: int = 60
-    # REST 500-level snapshots of the hot symbols (weight 10 each) for band depth; used while this fresh
-    # 40 books x weight 10 every 60s = 400 weight / min (every 30s it was 800 of the ~1680 budget)
-    deep_interval_sec: int = 60
-    deep_max_age_sec: int = 150
-    # Heatmap: every 500-level snapshot is bucketed by price (heat_bucket_pct of price) and kept heat_snapshots deep
-    # (2h at 30s); a bucket is a liquidity band when it held >= heat_band_multiple x the snapshot's median bucket in
-    # >= heat_band_presence of the snapshots of the last heat_band_window_sec (at least heat_band_min_snapshots):
-    # resting size that stayed, not a flashed wall
+    # Heatmap: the whole local book within +-heat_range_pct, bucketed by heat_bucket_pct of price, every
+    # heat_snapshot_sec, heat_snapshots kept (2h); a bucket is a liquidity band when it held >= heat_band_multiple x the
+    # snapshot's median bucket in >= heat_band_presence of the snapshots of heat_band_window_sec (at least
+    # heat_band_min_snapshots) and was not mostly pulled (depth._bands)
     heat_bucket_pct: float = 0.001
-    # Only buckets within this share of price around the mid are kept (memory: ~100 floats per snapshot)
     heat_range_pct: float = 0.05
+    heat_snapshot_sec: float = 30.0
     heat_snapshots: int = 240
     heat_band_window_sec: int = 1800
     heat_band_multiple: float = 4.0
@@ -285,7 +284,8 @@ class OrderflowConfig:
     crowded_premium_short: float = 0.0004
     crowded_oi_1h: float = 0.005
     # Footprint price bucket as a share of the 15m ATR, diagonal imbalance ratio and consecutive levels
-    footprint_bucket_atr: float = 0.05
+    # footprint price bucket of every coin: 5 bps (~0.05 x the 15m ATR of a mid-volatility coin)
+    footprint_bucket_pct: float = 0.0005
     imbalance_ratio: float = 3.0
     stacked_levels: int = 3
     # Absorption: a 1m delta >= this percentile of the last hour's |delta| with the minute's range <= max_move ATR
@@ -480,7 +480,7 @@ class ZonesConfig:
     # ICT zones, vwap, fib, range, book, wall, liquidations, opens, htf, swing_1d, bpr.
     weights: tuple = (('swing_1h', 1.0), ('swing_15m', 1.0), ('equal', 1.0), ('pdhl', 1.0), ('poc', 1.0),
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 0.5), ('liq_hit', 1.0), ('wall', 1.0),
-                      ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.5), ('round', 1.0),
+                      ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.0), ('round', 1.0),
                       ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 1.0),
                       # ICT zones: 15m / 1h measured (no hold beyond random, weight 1); the 4h / daily / weekly
                       # scaling is an UNMEASURED hypothesis (research/level_weights.md covers 15m / 1h only)
@@ -894,7 +894,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-60"
+    logic_version: str = "eng-61"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

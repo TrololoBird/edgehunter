@@ -142,10 +142,17 @@ def evaluate(strategy: str, direction: int, minutes: Sequence[Sequence[float]],
         out['orderflow'] = False
     from levels import resample
     from strategies import vsa
-    bars = resample([c for c in minutes if c[0] >= until_ms - 3 * HOUR_MS and c[0] < until_ms], 5)
+    # the whole minute buffer (10h): the sign needs vsa.AVG_BARS 5m bars before it - a 3h window left none for an
+    # extreme older than 80 minutes (ORB's median 273, VA80's 300: never positive, 2026-10-05)
+    bars = resample([c for c in minutes if c[0] < until_ms], 5)
+    bars = [b for b in bars if b[0] + 5 * MINUTE_MS <= until_ms]          # closed 5m bars only
     anchor = extreme_ms if extreme_ms is not None else since_ms
     # the VSA sign must be the extreme's own reading (its 5m bar and the three after it): anywhere since the setup it
-    # was positive on 13 of 16 entries (no supply is a common bar) and made the confirmation minimum meaningless
+    # was positive on 13 of 16 entries (no supply is a common bar) and made the confirmation minimum meaningless.
+    # An extreme without AVG_BARS bars before it in the buffer: the last four closed bars before the entry
     first = anchor // (5 * MINUTE_MS) * (5 * MINUTE_MS)
-    out['vsa'] = vsa.confirm([b for b in bars if b[0] < first + 4 * 5 * MINUTE_MS], first, direction)
+    i = next((k for k, b in enumerate(bars) if b[0] >= first), len(bars))
+    if i < vsa.AVG_BARS:
+        first = bars[-4][0] if len(bars) >= vsa.AVG_BARS + 4 else None
+    out['vsa'] = vsa.confirm([b for b in bars if b[0] < first + 4 * 5 * MINUTE_MS], first, direction)         if first is not None else None
     return out

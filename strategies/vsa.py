@@ -37,10 +37,15 @@ def signs(bars: List[List[float]], i: int) -> List[str]:
     low_vol = vol < p1[5] and vol < p2[5]
     high_vol = vol >= 2 * avg_vol
     up, down = b[4] > p1[4], b[4] < p1[4]
+    # Williams' no supply / no demand is a TEST in the area of the low / high: a narrow low-volume down bar in the
+    # middle of a pullback is ordinary (it made `vsa` positive on 40 of 41 continuation entries, 2026-10-05)
+    lo, hi = min(x[3] for x in hist + [b]), max(x[2] for x in hist + [b])
+    near_low = hi > lo and b[3] <= lo + 0.25 * (hi - lo)
+    near_high = hi > lo and b[2] >= hi - 0.25 * (hi - lo)
     out = []
-    if down and narrow and low_vol:
+    if down and narrow and low_vol and near_low:
         out.append('no_supply')
-    if up and narrow and low_vol and loc <= 0.6:
+    if up and narrow and low_vol and loc <= 0.6 and near_high:
         out.append('no_demand')
     if down and high_vol and loc >= 0.5:
         out.append('stopping_volume')

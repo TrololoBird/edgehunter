@@ -16,7 +16,7 @@ import polars as pl
 from config import CONFIG
 from depth import DepthBook
 from strategies import confirm
-from flow import SPOT_VENUES, Footprint, FlowStore, Sweep, SweepTracker, WhaleBook, absorption_in
+from flow import SPOT_VENUES, Footprint, FlowStore, Sweep, SweepTracker, WhaleBook, absorption_in, minute_atr_15m
 from indicators import RAW_SCHEMA, TIMEFRAME_MS, empty_raw_frame, merge_live_candle, seasonal_factors
 from ratelimit import RATE_LIMIT_ERRORS, BanState, RestGate
 from symbols import SymbolMap, VenueMarket
@@ -1561,7 +1561,7 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._funding_info_loop()))
         self._tasks.append(asyncio.create_task(self._bulk_deriv_loop()))
         self._tasks.append(asyncio.create_task(self._coinbase_prices_loop()))
-        self._tasks.append(asyncio.create_task(self._deep_books_loop()))
+        self._tasks.append(asyncio.create_task(self._book_sync_loop()))
         self._tasks.append(asyncio.create_task(self._binance_rest_tickers_loop()))
         self._tasks.append(asyncio.create_task(self._hourly_candles_loop()))
         self._tasks.append(asyncio.create_task(self._seasonal_loop()))
@@ -1664,6 +1664,8 @@ class DataFetcher:
                 self.footprint.add(key, ts, price, usd, side)
             if key in self.icebergs.levels:
                 self.icebergs.on_trade(key, ts, price, usd, side)
+            if key in self.depth.books:
+                self.depth.on_trade(key, ts, price, float(data['q']), side)
         elif event == 'kline':
             md = self.markets.get(self._binance_keys.get((market_type, data.get('s'))))
             if md is not None:
@@ -1689,8 +1691,10 @@ class DataFetcher:
         elif event == 'depthUpdate':
             key = self._binance_keys.get(('futures', data.get('s')))
             if key is not None:
-                self.depth.update(key, data.get('b') or [], data.get('a') or [], int(data.get('E') or recv_ms))
-                self.icebergs.on_book(key, data.get('b') or [], data.get('a') or [], int(data.get('E') or recv_ms))
+                self.depth.on_diff(key, data)
+                bids, asks = self.depth.top(key)
+                if bids or asks:
+                    self.icebergs.on_book(key, bids, asks, int(data.get('E') or recv_ms))
 
     def _binance_price(self, key: str) -> Optional[float]:
         md = self.markets.get(key)
@@ -1783,7 +1787,8 @@ class DataFetcher:
             wanted: List[set] = [set() for _ in range(n)]
             for s in symbols:
                 native = self.futures_exchange.market(s)['id'].lower()
-                wanted[zlib.crc32(native.encode()) % n].add(f"{native}@depth20@500ms")
+                # the diff stream (a local book, depth.py): depth20 showed BTC +-0.07%
+                wanted[zlib.crc32(native.encode()) % n].add(f"{native}@depth@500ms")
             for stream, subs in zip(self._depth_streams, wanted):
                 await stream.set_dynamic(subs)
         for s, md in self.markets.items():
@@ -1791,41 +1796,69 @@ class DataFetcher:
         for s in list(self.depth.books):
             if s not in symbols:
                 self.depth.drop(s)
+        for s in symbols:
+            book = self.depth.books.get(s)
+            if book is None:
+                self.depth.start(s)
+            elif not book.synced:
+                book.snapshot_wanted = True
         hl = self.venue_streams.get('hyperliquid')
         if hl is not None:
             natives = [m.native for s in symbols if (m := self.symbol_map.by_key.get(s, {}).get('hyperliquid'))]
             await hl.set_dynamic({('trades', n) for n in natives[:CONFIG.venues.hyperliquid_trades_max]})
 
-    async def _deep_books_loop(self):
-        """500-level REST order-book snapshots of the hot symbols (see depth.py), spread over the interval."""
-        interval = CONFIG.depth.deep_interval_sec
-        while self._running:
-            symbols = [s for s in self.depth.active() if s in self.markets]
-            started = time.time()
-            for symbol in symbols:
-                binance_symbol = self._ccxt_to_binance_symbol(symbol)
+    async def _book_sync_loop(self):
+        """
+        Local books of the hot symbols (depth.py): a 1000-level REST snapshot (weight 20) for every book whose diff
+        stream is buffering - at its start and after a sequence gap. The snapshot is taken a second after the first
+        buffered event (Binance: buffer first, then fetch, so the snapshot overlaps the buffered events).
+        """
+        sem = asyncio.Semaphore(2)
+
+        async def one(symbol: str):
+            book = self.depth.books.get(symbol)
+            if book is None:
+                return
+            book.snapshot_wanted = False
+            async with sem:
                 try:
-                    book = await self._rest_call(self.futures_exchange, 'fapiPublicGetDepth',
-                                                 {'symbol': binance_symbol, 'limit': 500}, priority=2, weight=10)
-                    if symbol in self.depth.active():
-                        self.depth.set_deep(symbol, book.get('bids') or [], book.get('asks') or [])
+                    snap = await self._rest_call(self.futures_exchange, 'fapiPublicGetDepth',
+                                                 {'symbol': self._ccxt_to_binance_symbol(symbol), 'limit': 1000},
+                                                 priority=1, weight=20)
+                    self.depth.set_snapshot(symbol, snap or {})
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    errors.report('fetcher._deep_books_loop', e, f"Depth snapshot failed for {symbol}")
-                await asyncio.sleep(max(0.2, interval / max(1, len(symbols)) * 0.8))
-            await asyncio.sleep(max(1.0, interval - (time.time() - started)))
+                    book.snapshot_wanted = True
+                    errors.report('fetcher.book_snapshot', e, f"{symbol} 1000-level snapshot")
+
+        running: set = set()
+        while self._running:
+            await asyncio.sleep(1.0)
+            for symbol in self.depth.wanting_snapshot():
+                book = self.depth.books.get(symbol)
+                if book is not None and book.buffer and time.time() * 1000 - int(book.buffer[0].get('E') or 0) >= 1000:
+                    task = asyncio.create_task(one(symbol))
+                    running.add(task)
+                    task.add_done_callback(running.discard)
 
     def set_footprint(self, zone: Dict[str, float]):
-        """Footprint accumulation for symbols waiting for an entry: symbol -> 15m ATR (bucket sizing)."""
+        """
+        Footprint accumulation for EVERY universe coin (the last Footprint.KEEP_MINUTES), bucketed by
+        `footprint_bucket_pct` of price (one fixed bucket per coin: a size change would mix two grids). Before
+        (2026-10-05) only cards waiting in a zone had one, so the systems entering at their signal's close (ORB,
+        Bollinger, VA80, pump, OI signal: 14 positive order-flow readings in 217 entries) were never judged by it.
+        `zone`: symbol -> the card's 15m ATR, kept for the absorption test.
+        """
         for s in list(self.footprint.bucket):
-            if s not in zone:
+            if s not in self.markets:
                 self.footprint.disable(s)
-                self._zone_atr.pop(s, None)
-        for s, atr in zone.items():
-            if atr and s not in self.footprint.bucket:
-                self.footprint.enable(s, atr * CONFIG.orderflow.footprint_bucket_atr)
-            self._zone_atr[s] = atr
+        for s, md in self.markets.items():
+            if s not in self.footprint.bucket:
+                price = md.last_price()
+                if price:
+                    self.footprint.enable(s, price * CONFIG.orderflow.footprint_bucket_pct)
+        self._zone_atr = {s: atr for s, atr in zone.items() if atr}
 
     def orderflow_confirm(self, symbol: str, since_ms: int, until_ms: int, direction: int) -> Optional[str]:
         """
@@ -1837,7 +1870,7 @@ class DataFetcher:
         if self.footprint.stacked_imbalance(symbol, since_ms, direction, until_ms) >= cfg.stacked_levels:
             return 'imbalance'
         md = self.markets.get(symbol)
-        atr = self._zone_atr.get(symbol)
+        atr = self._zone_atr.get(symbol) or (minute_atr_15m(md.minute_klines, until_ms) if md is not None else None)
         if md is not None and atr and absorption_in(md.minute_klines, since_ms, until_ms, direction, atr):
             return 'absorption'
         if self.footprint.finished_auction(symbol, since_ms, until_ms, direction):
@@ -1850,7 +1883,9 @@ class DataFetcher:
         md = self.markets.get(symbol)
         if md is None:
             return {}
-        orderflow = self.orderflow_confirm(symbol, extreme_ms or since_ms, until_ms, direction)
+        # the footprint holds its last KEEP_MINUTES: an extreme older than that is read as the flow into the entry
+        of_since = max(extreme_ms or since_ms, until_ms - Footprint.KEEP_MINUTES * 60_000)
+        orderflow = self.orderflow_confirm(symbol, of_since, until_ms, direction)
         spot = list(md.spot_minute_klines) if self._spot_symbol_for(symbol) or self.needs_alt_spot(symbol) else None
         # OI over the last hour: across venues (OI-weighted, as the phases' agg_oi_change_1h) when >= 2 report, else
         # Binance's samples (seeded with the last hour at start-up); the entry is evaluated at its trigger, i.e. now
@@ -1895,6 +1930,34 @@ class DataFetcher:
                                extreme_ms, orderflow, flow_usd=flow_usd, spot_usd=spot_usd)
         # the window the readings were taken over (journaled: a REST check can recompute them exactly)
         out['_window'] = [int(since_ms), int(until_ms), int(extreme_ms) if extreme_ms is not None else None]
+        # the classic indicator panel on 15m and 1h (journaled, not a vote: research/indicator_confirms.md decides
+        # which of them confirm an entry)
+        out['_ind'] = self.indicator_panel(md, direction, until_ms)
+        # the local book's readings at the entry (hot coins only; features, not a vote until the journal proves one):
+        # depth imbalance, what was pulled / filled within 1% in the last 5 minutes, the impact of a $50k market order
+        book = self.depth.metrics(symbol)
+        if book:
+            out['_book'] = {k: round(v, 4) for k, v in book.items()
+                            if k.startswith(('imbalance_', 'bid_pulled', 'bid_filled', 'ask_pulled', 'ask_filled'))}
+            out['_book']['slip_50k_bps'] = self.depth.slippage_bps(symbol, 50_000, direction)
+        return out
+
+    @staticmethod
+    def indicator_panel(md: 'MarketData', direction: int, until_ms: int) -> Dict:
+        """{'15m': {rule: bool}, '1h': {...}} on the candles closed by until_ms: the 499-candle REST histories
+        (refreshed hourly) extended by the 1m stream's closed buckets since."""
+        from levels import resample
+        from strategies.ind_panel import panel
+        minutes = [c for c in md.minute_klines if c[0] + 60_000 <= until_ms]
+        out = {}
+        for tf, size, hist in (('15m', 15, md.m15_long), ('1h', 60, md.h1_long)):
+            base = [list(r) for r in hist] if len(hist) else []
+            last = base[-1][0] if base else 0
+            base += [b for b in resample(minutes, size, until_ms) if b[0] > last]
+            try:
+                out[tf] = panel(base, direction)
+            except Exception as e:
+                errors.report('fetcher.indicator_panel', e, f"{md.symbol} {tf}")
         return out
 
     def venue_status(self) -> Dict[str, Dict]:

@@ -62,13 +62,6 @@ class LiveDetector:
         m = metrics or {}
         return (m.get('liq_long_5m') or 0.0) + (m.get('liq_short_5m') or 0.0) >= CONFIG.liquidations.cascade_min_usd
 
-    def levels_of(self, ctx: Context, bands: Sequence[Tuple[float, int, float]]) -> List[Tuple[float, str]]:
-        """Significant levels for absorption: higher-timeframe pools, strong map zones, book liquidity bands."""
-        out = [(p, label) for p, _, label, _ in ctx.pools]
-        out += [(z.price, z.label) for z in ctx.zones if z.strength >= CONFIG.strategies.absorption_min_strength]
-        out += [(p, f"{'bid' if side > 0 else 'ask'} liquidity") for p, side, _ in bands]
-        return out
-
     def scan(self, symbol: str, minutes: Sequence[Sequence[float]], metrics: Dict[str, float], now_ms: int,
              bands: Sequence[Tuple[float, int, float]] = ()) -> List[Dict]:
         """`minutes`: FINAL 1m futures candles [open_time, o, h, l, c, quote_vol, taker_buy_quote]."""

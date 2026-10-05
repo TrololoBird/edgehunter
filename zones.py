@@ -92,7 +92,10 @@ POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
 # Price-action levels whose edge the market drew with wicks (swings, equal highs / lows, previous day / week and
 # sessions, a range's edges, round numbers) or resting size that stayed (book liquidity bands): a stop belongs beyond
 # such a zone. VWAP, volume profile, Fibonacci and estimated liquidations have no 'broken here' edge.
-STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round', 'book',
+# 'book' (order-book liquidity bands) left the stop structures 2026-10-05: resting orders can be pulled (31% of large
+# crypto orders could spoof, arXiv 2504.15908) and no study shows depth holding price over hours - a stop is not
+# placed on them; they stay map levels (targets / context)
+STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round',
                    'ob_15m', 'ob_1h', 'ob_4h', 'ob_1d', 'ob_1w',
                    'breaker_15m', 'breaker_1h', 'breaker_4h', 'breaker_1d', 'breaker_1w')
 

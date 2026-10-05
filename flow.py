@@ -633,6 +633,15 @@ class Footprint:
         return late <= share * total
 
 
+def minute_atr_15m(minutes: Sequence[Sequence[float]], until_ms: int) -> Optional[float]:
+    """A 15m ATR estimate from the last hour's closed 1m candles (mean 1m range x sqrt(15)) for coins without a zone
+    card's ATR; None with fewer than 20 minutes."""
+    closed = [c for c in minutes if c[0] + 60_000 <= until_ms][-60:]
+    if len(closed) < 20:
+        return None
+    return math.sqrt(15) * sum(c[2] - c[3] for c in closed) / len(closed)
+
+
 def absorption_in(minutes: Sequence[Sequence[float]], since_ms: int, until_ms: int, direction: int,
                   atr: float) -> bool:
     """
