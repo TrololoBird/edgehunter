@@ -6,6 +6,7 @@ import errors
 import time
 import zlib
 import json
+import os
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -1377,12 +1378,20 @@ class DataFetcher:
         while self._running:
             now = time.time()
             if now - last['cal'] > 3600:
+                # cached on disk: the feed answers 429 to frequent callers (each restart refetched it)
+                cache = os.path.join('models', 'ff_calendar.json')
                 try:
-                    macro_calendar.set_live(await asyncio.to_thread(
-                        get, 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'))
-                    last['cal'] = now
+                    if os.path.exists(cache) and now - os.path.getmtime(cache) < 3 * 3600:
+                        with open(cache, encoding='utf-8') as fh:
+                            rows = json.load(fh)
+                    else:
+                        rows = await asyncio.to_thread(get, 'https://nfs.faireconomy.media/ff_calendar_thisweek.json')
+                        with open(cache, 'w', encoding='utf-8') as fh:
+                            json.dump(rows, fh)
+                    macro_calendar.set_live(rows)
                 except Exception as e:
                     errors.report('fetcher.calendar', e)
+                last['cal'] = now                      # a failure waits an hour too (429)
             for cur in ('BTC', 'ETH'):
                 try:
                     end = int(now * 1000)

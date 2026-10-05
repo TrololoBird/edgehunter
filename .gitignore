@@ -27,3 +27,4 @@ research_*.out
 research_*.parquet
 scanner_state*.bak.json
 demo_pending.json
+models/ff_calendar.json
