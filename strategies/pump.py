@@ -183,6 +183,9 @@ class PumpStartStrategy(Strategy):
     name = 'pump'
     anchor_type = 'level'
     setups = {'PUMP START': 1}
+    # eng-71: the stop spans the ignition and TP1 is its measured move - R:R ~1 by construction, the global 2 vetoed
+    # every PUMP START (ORCA / NIGHT 0.5-1.0); the owner's method has no ratio rule (as the other sources: 1)
+    min_rr = 1.0
     ttl_key = 'pump_ttl'
     uses_minutes = True
     default_tf = '15m'

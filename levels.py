@@ -291,7 +291,9 @@ def slippage_bps(volume_24h: Optional[float] = None) -> float:
     cfg = CONFIG.levels
     if not volume_24h or volume_24h <= 0:
         return cfg.slippage_bps
-    return min(cfg.slippage_max_bps, max(cfg.slippage_bps, cfg.slippage_bps * math.sqrt(cfg.slippage_ref_volume / volume_24h)))
+    # eng-71: square-root impact of a slippage_notional_usd order (was 5 x sqrt($500M / V): no order size)
+    impact = 1e4 * cfg.slippage_impact_sigma * 0.5 * math.sqrt(cfg.slippage_notional_usd / volume_24h)
+    return min(cfg.slippage_max_bps, cfg.slippage_half_spread_bps + impact)
 
 
 def stop_fill(sl: float, direction: int, candle: List, slip: float) -> float:

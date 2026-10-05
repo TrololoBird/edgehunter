@@ -415,6 +415,13 @@ class LevelsConfig:
     # understated the cost of the small ones (spreads up to 10 bps, thin books in cascades)
     slippage_ref_volume: float = 500e6
     slippage_max_bps: float = 25.0
+    # eng-71: the square-root impact law (Toth et al. 2011, Almgren): half the spread + Y x daily sigma x sqrt(Q / V)
+    # for an order of Q USD in a market trading V USD a day (Y ~ 0.5-1, sigma ~ 4% for crypto) - the old 5 x
+    # sqrt($500M / V) ignored the order size and put a $10k order on a $20M coin at 25 bps a side (true ~5 bps),
+    # inflating every plan's cost (low_rr / cost guard). Used where the 24h volume is known.
+    slippage_notional_usd: float = 10_000.0
+    slippage_half_spread_bps: float = 1.0
+    slippage_impact_sigma: float = 0.04
     # A target (a resting limit order) counts as filled in the journal's replay only once price traded this far
     # THROUGH it: a touch fills only part of the queue (backtests that fill limits on a touch overstate the result)
     target_through_bps: float = 2.0
@@ -913,7 +920,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-70"
+    logic_version: str = "eng-71"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

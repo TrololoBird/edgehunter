@@ -445,6 +445,15 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         # a system without a profit target (the Turtles: out on the opposite N-day channel, SignalBook trails it):
         # its own stop; TP1-3 are 100 / 200 / 300 R placeholders the lifecycle never reaches (R:R never vetoes it)
         stop = exit['stop'][1]
+        sl_src = exit.get('stop_src', 'the system stop')
+        if exit.get('pad'):
+            # a structural stop (Bollinger's retest): beyond it by the pierce / zone buffer, never inside 1 ATR
+            pad, how = zone_pad(plan, overshoot(plan.get('symbol'), 'swing_15m', stop))
+            if pad:
+                stop, sl_src = stop - direction * pad, f"{sl_src} + {how} {pad / stop:.2%}"
+            floor = stop_floor(max(atr, plan['atr'], plan.get('tf_atr') or 0.0), plan.get('recent_atr'))
+            if 0 < direction * (entry - stop) < floor:
+                stop, sl_src = entry - direction * floor, f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
         risk = direction * (entry - stop)
         if risk <= 0:
             return None
@@ -456,7 +465,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         return {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
                 'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
                 'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,
-                'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': exit.get('stop_src', 'the system stop')}
+                'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': sl_src}
     floor = stop_floor(max(atr, plan['atr'], plan.get('tf_atr') or 0.0), plan.get('recent_atr'))
     zones: List[Zone] = htf_zones(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'))
     fixed_stop = exit['stop'][0] in ('pct', 'atr')

@@ -206,7 +206,9 @@ class BollingerStrategy(_System):
         close, d = sig['anchor_close'], x.direction
         if d * (sig['bb_target'] - close) <= abs(close - sig['bb_stop']):
             return {'skip': 'low_rr'}
-        exit = {'stop': ['price', sig['bb_stop']], 'stop_src': 'beyond the W / M retest', 'tp': ['trail'],
+        # 'pad': the retest's low is structure, the stop goes beyond it by the measured pierce / zone buffer and the
+        # 1 ATR floor (eng-71: BTC's W stop sat 0.08% under the retest, then the cost guard vetoed it)
+        exit = {'stop': ['price', sig['bb_stop']], 'stop_src': 'beyond the W / M retest', 'tp': ['trail'], 'pad': True,
                 'tp_src': 'the opposite Bollinger band, live (Bollinger)', 'atr': x.atr}
         plan = _confirm_plan(x, self.name, '15m', exit, 'Bollinger W / M confirmed by A/D')
         if plan and not plan.get('skip'):

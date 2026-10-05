@@ -100,6 +100,8 @@ def value_area_event(m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]
         return None                               # the rule fired at the previous period already
     edge, far = (val, vah) if side > 0 else (vah, val)
     last = day[-1]
+    if side * (far - last[4]) < 0.3 * (vah - val):
+        return None       # eng-71: the value area is already traversed (XAU / ONDO / XPL: TP1 0.06-0.15% from the entry)
     extreme = min(c[3] for c in day) if side > 0 else max(c[2] for c in day)
     return {'setup': 'VA80 LONG' if side > 0 else 'VA80 SHORT', 'direction': side,
             'setup_note': f"opened {'below' if side > 0 else 'above'} yesterday's value area {val:.6g}-{vah:.6g} "

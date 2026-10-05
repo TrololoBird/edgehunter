@@ -605,3 +605,10 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   its retest, below = resistance with the short on its retest); long = 1h close above the zone + retest (or the retest
   once above), stop below the zone; short = 1h close below + retest (or the retest once below), stop above it; targets
   the resistances' / supports' near edges ahead of the price; zones of 15m / 1h swings / equal highs only are skipped.
+- eng-71 (2026-10-06, the owner: "check every 'not a card' for geometry errors"): (1) slippage by the square-root
+  impact law (Toth et al. 2011): half spread 1 bp + 0.5 x 4% x sqrt($10k / 24h volume), cap 25 bps
+  (`levels.slippage_bps`; was 5 x sqrt($500M / V) - no order size, 25 bps a side on a $20M coin, ~5x too high, every
+  plan's cost / low_rr inflated); (2) Bollinger W / M stop beyond the retest by the pierce / zone buffer with the 1 ATR
+  floor (`exit['pad']` in the trail branch of system_levels: BTC's stop sat 0.08% away and the cost guard vetoed it);
+  (3) VA80 skips a value area already traversed (< 0.3 of its width left to the far edge: TP1 0.06-0.15% away);
+  (4) PUMP START min R:R 1 (stop = the ignition, TP1 = its measured move: R:R ~1 by construction, 2 vetoed all).
