@@ -166,6 +166,7 @@ class Scanner:
         self.book.levels_of = self._levels_of
         # 1h candles of the coin: the 8 days every coin has (hourly), else a card coin's level-map history
         self.book.daily_of = lambda symbol: (lambda md: md.d1 if md else None)(self.market_data.get(symbol))
+        self.book.tf_atr_of = self._tf_atrs
         self.book.htf_of = lambda symbol: (lambda md: (md.h1 or md.htf_klines) if md else None)(self.market_data.get(symbol))
         self.book.context_of = lambda symbol: self.detector.context.get(symbol)
         self.book.band_of = self._opposite_band
@@ -901,6 +902,20 @@ class Scanner:
             md = self.market_data.get(symbol)
             if md is not None:
                 md.ret_std, md.oi_std = ret_std, oi_std
+
+    def _tf_atrs(self, symbol: str) -> Dict[str, float]:
+        """ATR14 (simple mean of true ranges, as the bot's 15m ATR) of the coin's closed 1h / 4h / daily candles."""
+        md = self.market_data.get(symbol)
+        out: Dict[str, float] = {}
+        if md is None:
+            return out
+        now_ms = time.time() * 1000
+        for tf, rows, period in (('1h', md.h1, 3_600_000), ('4h', md.h4, 14_400_000), ('1d', md.d1, 86_400_000)):
+            closed = [r for r in list(rows)[-20:] if r[0] + period <= now_ms]
+            if len(closed) >= 15:
+                trs = [max(c[2] - c[3], abs(c[2] - p[4]), abs(c[3] - p[4])) for p, c in zip(closed[-15:-1], closed[-14:])]
+                out[tf] = sum(trs) / len(trs)
+        return out
 
     def _update_market_state(self, futures_all: pl.DataFrame):
         """

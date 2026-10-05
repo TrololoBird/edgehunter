@@ -245,6 +245,8 @@ class SignalBook:
         self.levels_of: Optional[Callable[[str], Optional[list]]] = None
         self.htf_of: Optional[Callable[[str], Optional[list]]] = None
         self.daily_of: Optional[Callable[[str], Optional[list]]] = None
+        # symbol -> {'1h': ATR14, '4h': ..., '1d': ...} of its closed candles (scanner)
+        self.tf_atr_of: Optional[Callable[[str], Dict[str, float]]] = None
         self.btc_bias_of: Optional[Callable[[], Optional[int]]] = None      # eng-59: BTC's ICT bias (scanner)     # closed daily candles (Turtle exits)
         # the opposite Bollinger band BB(20, 2) of the closed 15m candles (Bollinger W / M exit, eng-55)
         self.band_of: Optional[Callable[[str, int], Optional[float]]] = None
@@ -416,7 +418,8 @@ class SignalBook:
                          minutes=list(self._candles_of(symbol)),
                          raw_levels=(self.levels_of(symbol) if self.levels_of else None) or [],
                          h1=(self.htf_of(symbol) if self.htf_of else None) or [],
-                         context=self.context_of(symbol) if self.context_of else None, reached=reached)
+                         context=self.context_of(symbol) if self.context_of else None, reached=reached,
+                         tf_atr=(self.tf_atr_of(symbol) if self.tf_atr_of else None) or {})
 
     def _card_gate(self, symbol: str, group_key: str, strategy: Strategy, direction: int, frames,
                    sig: Dict) -> Optional[str]:

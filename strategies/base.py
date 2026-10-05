@@ -19,7 +19,7 @@ The strategy interface. A strategy turns a setup (a detected event or a scored p
 
 Lifecycle, stop floor, R:R and the journal are shared (signal_book.py, geometry.py).
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import polars as pl
@@ -41,6 +41,9 @@ class PlanInput:
     h1: Sequence[Sequence[float]]                   # the coin's 1h candles
     context: Optional[object]                       # strategies.structure.Context
     reached: Optional[float]                        # fixed target reference (None: measure now)
+    # ATR14 of the coin's CLOSED 1h / 4h / daily candles: a stop is sized by the volatility of the timeframe its
+    # structure lives on (a 4h zone's stop floored by the 15m ATR sat inside the 4h noise - 2026-10-05)
+    tf_atr: Dict[str, float] = field(default_factory=dict)
 
     @property
     def atr(self) -> Optional[float]:
@@ -113,6 +116,7 @@ def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> D
     plan = {
         'symbol': x.symbol, 'volume_24h': x.sig.get('volume_24h'), 'strategy': strategy, 'setup': x.setup, 'direction': x.direction, 'anchor': anchor, 'tf': tf,
         'trigger_minutes': TRIGGER_MINUTES.get(tf, 5), 'atr': x.atr, 'recent_atr': x.recent_atr, 'leg_atr': x.atr,
+        'tf_atr': (x.tf_atr or {}).get(tf),
         'entry': 'pullback', 'invalid': None, 'fix_invalid': False, 'reset': None, 'missable': True,
         'stop_ref': None, 'stop_mid': None, 'retarget': False, 'intent': 'extension', 'fillers': (),
         'fill_label': 'fib', 'impulse': None, 'reached': x.reached,

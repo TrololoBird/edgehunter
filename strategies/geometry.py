@@ -290,7 +290,7 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
     # the floor in the structure's own ATR too (a 1h / 4h leg's stop floored by the 15m ATR sat inside its noise)
     # eng-58: the volatility floor holds with the pierce model too (it was skipped whenever the model existed - i.e.
     # always - while the docs and levels.min_leg_atr assumed it; live eng-6: stops < 1 ATR hit on 8 of 10 entries)
-    floor = stop_floor(max(atr, plan.get('leg_atr') or 0.0), plan.get('recent_atr'))
+    floor = stop_floor(max(atr, plan.get('leg_atr') or 0.0, plan.get('tf_atr') or 0.0), plan.get('recent_atr'))
     if direction * (entry - stop) < floor:
         stop = entry - direction * floor
         src = f"{src}, widened to the {cfg.min_stop_atr:g}x volatility floor"
@@ -408,7 +408,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
                 'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
                 'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,
                 'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': exit.get('stop_src', 'the system stop')}
-    floor = stop_floor(max(atr, plan['atr']), plan.get('recent_atr'))
+    floor = stop_floor(max(atr, plan['atr'], plan.get('tf_atr') or 0.0), plan.get('recent_atr'))
     zones: List[Zone] = plan.get('zones') or []
     fixed_stop = exit['stop'][0] in ('pct', 'atr')
     fixed_tp = exit['tp'][0] in ('pct', 'rr')

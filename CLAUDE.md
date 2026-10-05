@@ -549,3 +549,13 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   lose less in most strategies (+0.01..+0.24R) but no strategy passes the pre-registered bar; the gate removes ~70% of
   the (losing) trades. Methodology fixes (the owner's audit): full-trade outcomes instead of the 8h r_tp1, results by
   month / side, fixed source rules instead of searches where possible; research_htf_filter's 8h verdict is void.
+- eng-67 (2026-10-05, the owner caught it; web-checked: "use the ATR of the timeframe the setup is on" - QuantVPS,
+  ChartingPark; Seiden-style zones: the stop 1-2 ATR of the zone's timeframe beyond its distal line): the stop floor
+  (`geometry.stop_floor`) used the 15m ATR for every plan, also for 1h / 4h / daily structures (SOL: ATR 15m 0.44%,
+  4h 0.98%, 1d 4.2%) - a 4h zone's stop could sit inside 4h noise. `PlanInput.tf_atr` (Scanner._tf_atrs: ATR14 of the
+  closed 1h / 4h / daily candles), `plan['tf_atr']` = the plan's own timeframe's ATR, and both floors take the max of
+  the 15m ATR, the leg's and the structure timeframe's. The measured pierce beyond a level (per level kind) is
+  unchanged. research_entry_edge.py / research_geometry_audit.py (research/entry_edge.md, geometry_audit.md): on the
+  eng-59 replay the bollinger / market_profile / connors entries do not beat placebo entries even without our stop /
+  targets; trendline / pump / breakout entries do at 2 ATR (trendline's stops sat at 0.7 1h-ATR, 77% inside an hour's
+  range; pump's TP1 was closer than its stop, R:R 0.63) - a replay on the current code is the cloud job's step 1.
