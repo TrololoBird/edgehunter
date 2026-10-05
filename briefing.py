@@ -18,6 +18,7 @@ Information built from mechanical rules, not advice. Every message goes through 
 import asyncio
 import logging
 import sqlite3
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -117,7 +118,11 @@ class Briefing:
             if time.time() - self._sent.get(key, 0.0) < every_sec:
                 return
             self._sent[key] = time.time()
-        self.sc.notifier.post(text)
+        loop = getattr(self, '_loop', None)
+        if loop is not None and threading.current_thread() is not threading.main_thread():
+            loop.call_soon_threadsafe(self.sc.notifier.post, text)     # checks reading SQLite run in a thread
+        else:
+            self.sc.notifier.post(text)
 
     def _bias_of(self, symbol: str) -> Tuple[Optional[str], Dict]:
         md = self.sc.market_data.get(symbol)
@@ -451,6 +456,7 @@ class Briefing:
 
     # ------------------------------------------------------------------ loop
     async def loop(self):
+        self._loop = asyncio.get_running_loop()
         while not self.sc.fetcher.baselines_loaded():
             await asyncio.sleep(30)
         await asyncio.sleep(120)                            # the maps / histories of the watched coins
@@ -481,8 +487,8 @@ class Briefing:
                                    f"входы бота за 30 мин до / 60 после CPI и FOMC блокируются",
                                    key=f"macro|{dt:%Y%m%d%H%M}", every_sec=86400)
                 self.check_shock()
-                self.check_demo()
-                self.check_anomalies()
+                await asyncio.to_thread(self.check_demo)          # SQLite reads off the event loop
+                await asyncio.to_thread(self.check_anomalies)
                 if tick % 2 == 0:
                     self.check_levels()
                 if tick % 15 == 0:
