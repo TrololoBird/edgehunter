@@ -181,6 +181,7 @@ class Scanner:
         # Market state for every setup's context: universe median and BTC moves (see _update_market_state)
         self.market_state: Dict[str, float] = {}
         self._quick_raw: Dict[str, List[RawLevel]] = {}
+        self._context_poll = 0.0
         self._context_sig: Dict[str, tuple] = {}
         # crypto_maniac's OI robot: the last final minute checked and the last signal per coin (his 3h cooldown)
         self._oi_checked: Dict[str, int] = {}
@@ -614,6 +615,12 @@ class Scanner:
                 except Exception as e:
                     logger.warning(f"Regime model failed: {e}")
             logger.debug(f"Heavy pass: {len(rows)} symbols in {self.last_heavy_sec:.2f}s")
+        elif self._frame_parts and time.time() - self._context_poll > 60 and (
+                self._context_task is None or self._context_task.done()):
+            # between candle closes: rebuild the quick maps whose higher-timeframe histories arrived (the signature
+            # carries their sizes; unchanged coins are skipped)
+            self._context_poll = time.time()
+            self._context_task = asyncio.create_task(self._refresh_contexts())
 
         signals = signals_from_rows(self._rows, tier0)
         premiums = [p for md in self.market_data.values() if (p := self._coinbase_premium(md)) is not None]
