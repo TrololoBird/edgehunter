@@ -597,3 +597,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   half-daily-ATR steps, labelled) and the short (reaction at the nearest resistance) with entry / 3 targets / stop /
   condition; the scenario's % is the driftless random-walk chance of TP1 before the stop, labelled - not a forecast.
   The demo's daily loss / trade count / losing-streak stops are off in config.local.toml (the owner: the demo measures).
+- eng-70 (2026-10-05, the owner: "where 15m / 1h / 4h hold no level, the daily / weekly do"; web: the prior period's
+  extremes and major swings carry the large S/R): the map adds intact daily (fractal 3) and weekly (fractal 2) swings
+  (`swing_1d` 2.5, `swing_1w` 3.0), the previous month's high / low (`pmhl` 2.5), the month's open, the 52-week high /
+  low (`year` 3.0) - `zones.htf_swings`, structure kinds (stops), pierce as swing_1h / pdhl. Briefing card: the watched
+  zone's role follows the price at the post (role reversal: inside = reaction zone, above = support with the long on
+  its retest, below = resistance with the short on its retest); long = 1h close above the zone + retest (or the retest
+  once above), stop below the zone; short = 1h close below + retest (or the retest once below), stop above it; targets
+  the resistances' / supports' near edges ahead of the price; zones of 15m / 1h swings / equal highs only are skipped.

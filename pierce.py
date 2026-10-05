@@ -10,7 +10,9 @@ from typing import Dict, Iterable, Optional
 KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'round')
 # map-zone kinds (zones.py) -> the measured kinds
 ZONE_KIND = {'swing_15m': 'swing_15m', 'swing_1h': 'swing_1h', 'equal': 'equal', 'pdhl': 'pdhl', 'round': 'round',
-             'range': 'swing_1h', 'book': 'swing_15m'}
+             'range': 'swing_1h', 'book': 'swing_15m',
+             # eng-70: daily / weekly / monthly extremes take the closest measured kinds
+             'swing_1d': 'swing_1h', 'swing_1w': 'swing_1h', 'pmhl': 'pdhl', 'year': 'pdhl'}
 _MODEL: Optional[Dict] = None
 
 

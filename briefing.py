@@ -158,8 +158,13 @@ class Briefing:
                     hi = lo + cap
                 elif hi < price:
                     lo = hi - cap
-                else:
-                    lo, hi = max(lo, price - cap / 2), min(hi, price + cap / 2)
+                elif hi - lo > 2 * cap:
+                    continue          # a wide band around the price is no level to watch (trimming it around the
+                    # price made the price always 'inside')
+            # a zone of 15m / 1h swings and equal highs only is an intraday level, not a briefing zone: at least one
+            # 4h+ / daily / weekly / monthly / prior-period / profile level, or a strong confluence
+            if min(map(_label_rank, z.labels), default=9) > 3 and z.strength < 5:
+                continue
             cands.append({'lo': lo, 'hi': hi, 'strength': z.strength, 'labels': list(z.labels)})
         if not cands:
             return price, []
@@ -179,7 +184,7 @@ class Briefing:
             chosen, edge = [], (cur['hi'] if side > 0 else cur['lo'])
             pool_ = [m for m in cands if (m['lo'] > cur['hi'] if side > 0 else m['hi'] < cur['lo'])]
             while len(chosen) < n:
-                start = edge + side * 0.25 * atr1d
+                start = edge + side * (0.25 * atr1d if chosen else 0.0)
                 for width in (1.0, 2.0, 4.0):
                     end = start + side * width * atr1d
                     win = [m for m in pool_ if (start <= m['lo'] <= end if side > 0 else end <= m['hi'] <= start)]

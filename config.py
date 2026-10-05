@@ -484,6 +484,8 @@ class ZonesConfig:
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 0.5), ('liq_hit', 1.0), ('wall', 1.0),
                       ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.0), ('round', 1.0),
                       ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 1.0),
+                      # eng-70: weekly swings, the previous month's / 52-week extremes (unmeasured, as swing_1d)
+                      ('swing_1w', 3.0), ('pmhl', 2.5), ('year', 3.0),
                       # ICT zones: 15m / 1h measured (no hold beyond random, weight 1); the 4h / daily / weekly
                       # scaling is an UNMEASURED hypothesis (research/level_weights.md covers 15m / 1h only)
                       ('fvg_15m', 1.0), ('fvg_1h', 1.0), ('fvg_4h', 1.5), ('fvg_1d', 2.5),
@@ -910,7 +912,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-69"
+    logic_version: str = "eng-70"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

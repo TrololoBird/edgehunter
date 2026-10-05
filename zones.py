@@ -95,7 +95,7 @@ POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
 # 'book' (order-book liquidity bands) left the stop structures 2026-10-05: resting orders can be pulled (31% of large
 # crypto orders could spoof, arXiv 2504.15908) and no study shows depth holding price over hours - a stop is not
 # placed on them; they stay map levels (targets / context)
-STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'range', 'round',
+STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'swing_1d', 'swing_1w', 'pmhl', 'year', 'equal', 'pdhl', 'range', 'round',
                    'ob_15m', 'ob_1h', 'ob_4h', 'ob_1d', 'ob_1w',
                    'breaker_15m', 'breaker_1h', 'breaker_4h', 'breaker_1d', 'breaker_1w')
 
@@ -229,6 +229,40 @@ def session_windows(now_ms: float) -> List[Tuple[str, int, int]]:
             if end.timestamp() * 1000 <= now_ms:
                 out.append((name, int(start.timestamp() * 1000), int(end.timestamp() * 1000)))
                 break
+    return out
+
+
+def htf_swings(candles_1d: Optional[Sequence[Sequence[float]]], candles_1w: Optional[Sequence[Sequence[float]]],
+               now_ms: float) -> List[RawLevel]:
+    """eng-70 (the owner: "where the 15m / 1h / 4h hold no level, the daily / weekly do"): intact daily (fractal 3) and
+    weekly (fractal 2) swing highs / lows, the previous calendar month's high / low and the month's open, the 52-week
+    high / low (Murphy / Bulkowski: the prior period's extremes and major swings are where the large S/R sits)."""
+    out: List[RawLevel] = []
+    d1 = [c for c in (candles_1d or []) if c[0] + DAY_MS <= now_ms]
+    w1 = [c for c in (candles_1w or []) if c[0] + WEEK_MS <= now_ms]
+    if len(d1) >= 7:
+        out += swings(d1[-250:], 3, 'swing_1d', '1d')
+    if len(w1) >= 5:
+        out += swings(w1[-104:], 2, 'swing_1w', '1w')
+    if d1:
+        import datetime as _dt
+        now = _dt.datetime.fromtimestamp(now_ms / 1000, _dt.timezone.utc)
+        m0 = int(_dt.datetime(now.year, now.month, 1, tzinfo=_dt.timezone.utc).timestamp() * 1000)
+        pm = _dt.datetime(now.year - (now.month == 1), (now.month - 2) % 12 + 1, 1, tzinfo=_dt.timezone.utc)
+        p0 = int(pm.timestamp() * 1000)
+        prev = [c for c in d1 if p0 <= c[0] < m0]
+        if prev:
+            hi, lo = max(prev, key=lambda c: c[2]), min(prev, key=lambda c: c[3])
+            out.append(RawLevel(hi[2], 'pmhl', 'PMH', +1, body=max(hi[1], hi[4])))
+            out.append(RawLevel(lo[3], 'pmhl', 'PML', -1, body=min(lo[1], lo[4])))
+        cur = [c for c in d1 if c[0] >= m0]
+        if cur:
+            out.append(RawLevel(cur[0][1], 'open', 'month open'))
+        year = d1[-365:]
+        if len(year) >= 200:
+            hi, lo = max(year, key=lambda c: c[2]), min(year, key=lambda c: c[3])
+            out.append(RawLevel(hi[2], 'year', '52w high', +1, body=max(hi[1], hi[4])))
+            out.append(RawLevel(lo[3], 'year', '52w low', -1, body=min(lo[1], lo[4])))
     return out
 
 
@@ -618,6 +652,7 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     today = int(now_ms) // DAY_MS * DAY_MS
     levels = s15 + s1h
     levels += equal_pools(s15 + s1h, candles_15m, atr, symbol)
+    levels += htf_swings(candles_1d, candles_1w, now_ms)
     levels += day_levels(candles_1h, now_ms)
     levels += volume_profile(candles_4d or candles_1h, atr, '4d')
     levels += volume_profile(candles_15m, atr, '24h')

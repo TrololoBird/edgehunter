@@ -62,28 +62,48 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None) -> Dic
     for i, z in enumerate(dn):
         names[id(z)] = [('СЛЕДУЮЩАЯ ПОДДЕРЖКА', 'где возможен отскок', GREEN),
                         ('КЛЮЧЕВАЯ ПОДДЕРЖКА', 'глобальный уровень', GREEN2)][min(i, 1)]
+    # role reversal (polarity): the watched zone's role follows the price AT THE POST - inside it is a reaction zone,
+    # above it a support (its retest from above is the long), below it a resistance (its retest from below the short);
+    # the scenarios are built from that same position, so the card cannot contradict the price
+    rel = None
     if cur:
-        names[id(cur)] = ('ЗОНА ПОДДЕРЖКИ / РЕАКЦИЯ', 'текущая зона, за которой следим', BLUE)
-    out = {'names': names, 'cur': cur, 'up': up, 'dn': dn, 'long': None, 'short': None}
+        rel = 'inside' if cur['lo'] <= price <= cur['hi'] else ('above' if price > cur['hi'] else 'below')
+        names[id(cur)] = {'inside': ('ЗОНА РЕАКЦИИ', 'цена в зоне: ждём выход и закрепление', BLUE),
+                          'above': ('ЗОНА ПОДДЕРЖКИ', 'пробита вверх: ретест сверху = лонг', BLUE),
+                          'below': ('ЗОНА СОПРОТИВЛЕНИЯ', 'пробита вниз: ретест снизу = шорт', BLUE)}[rel]
+    out = {'names': names, 'cur': cur, 'rel': rel, 'up': up, 'dn': dn, 'long': None, 'short': None}
+    if not cur:
+        return out
     tick = price * 0.0001
-    if cur and dn and (up or atr_1d):
-        e = cur['hi']
-        tg = [z['hi'] + tick for z in up][:3]
-        discovery = len(tg) < 3 and atr_1d
-        while discovery and len(tg) < 3:          # nothing more above on the 1h+ map: daily-ATR steps, said so
-            tg.append((tg[-1] if tg else e) + atr_1d)
-        stop = dn[0]['hi']
-        out['long'] = {'entry': (e, e + max(price * 0.0007, tick)), 'targets': tg, 'stop': stop,
-                       'cond': f"пробой и ретест зоны {_fmt(e)}",
-                       'note': 'выше зон нет: цели 2-3 = +ATR дня' if discovery else '', 'p': (e - stop) / ((e - stop) + (tg[0] - e))}
-    if up and cur:
-        top = up[0]
-        tg = [cur['lo']] + [z['hi'] for z in dn]
-        stop = (up[1]['hi'] + tick) if len(up) > 1 else top['hi'] + (top['hi'] - top['lo']) * 3
-        e = top['lo']
-        if tg[0] < e:
-            out['short'] = {'entry': (top['lo'], top['hi'] + tick), 'targets': tg[:3], 'stop': stop,
-                            'cond': 'сигнал на разворот в зоне', 'p': (stop - e) / ((stop - e) + (e - tg[0]))}
+    buf = max((cur['hi'] - cur['lo']) * 0.25, price * 0.001)          # beyond the zone, not on its edge
+    # LONG: acceptance above the zone (or, once above it, its retest); stop below the zone; targets the resistances
+    if rel == 'above':
+        e0, e1, cond = cur['lo'], cur['hi'], f"ретест зоны {_fmt(cur['lo'])}–{_fmt(cur['hi'])} сверху и реакция"
+    else:
+        e0, e1, cond = cur['hi'], cur['hi'] + max(price * 0.0007, tick), f"закрытие 1h выше {_fmt(cur['hi'])} и ретест"
+    stop = cur['lo'] - buf
+    tg = [z['hi'] for z in up if z['hi'] > max(e1, price)][:3]
+    discovery = len(tg) < 3 and bool(atr_1d)
+    while discovery and len(tg) < 3:
+        tg.append((tg[-1] if tg else max(e1, price)) + atr_1d)
+    if tg:
+        e = (e0 + e1) / 2
+        out['long'] = {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond,
+                       'note': 'выше зон нет: цели = +ATR дня' if discovery else '',
+                       'tag': 'закрепление выше' if rel != 'above' else 'ретест поддержки',
+                       'p': (e - stop) / ((e - stop) + (tg[0] - e))}
+    # SHORT: the zone's breakdown (or, once below it, its retest from below); stop above the zone; targets the supports
+    if rel == 'below':
+        e0, e1, cond = cur['lo'], cur['hi'], f"ретест зоны {_fmt(cur['lo'])}–{_fmt(cur['hi'])} снизу и отказ"
+    else:
+        e0, e1, cond = cur['lo'] - max(price * 0.0007, tick), cur['lo'], f"закрытие 1h ниже {_fmt(cur['lo'])} и ретест"
+    stop = cur['hi'] + buf
+    tg = [z['hi'] for z in dn if z['hi'] < min(e0, price)][:3]     # in front of the supports (their upper edge)
+    if tg:
+        e = (e0 + e1) / 2
+        out['short'] = {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': '',
+                        'tag': 'пробой поддержки' if rel != 'below' else 'ретест сопротивления',
+                        'p': (stop - e) / ((stop - e) + (e - tg[0]))}
     return out
 
 
@@ -156,11 +176,11 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
              bbox=dict(boxstyle='round,pad=0.35', fc=DARK, ec='none'))
     # scenario tags
     if p['long']:
-        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n(пробой и закрепление)\nВероятность: {p['long']['p'] * 100:.0f}%*",
+        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\nВероятность: {p['long']['p'] * 100:.0f}%*",
                 fontsize=9.5, weight='bold', color='white', ha='center', va='top', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=GREEN2, ec='none'))
     if p['short']:
-        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n(пробой поддержки)\nВероятность: {p['short']['p'] * 100:.0f}%*",
+        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\nВероятность: {p['short']['p'] * 100:.0f}%*",
                 fontsize=9.5, weight='bold', color='white', ha='center', va='bottom', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=RED, ec='none'))
     ax.text(1.5, y0 + pad * 0.15, source, fontsize=13, weight='bold', color='#d0d0d0', zorder=5)
@@ -194,8 +214,7 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
             fig.text(x0 + 0.015, 0.165, 'нет уровней для сценария', fontsize=10, color=GREY)
             continue
         e = s['entry']
-        rows = [('Вход:', f"{_fmt(e[0])} – {_fmt(e[1])} " + ('(после закрепления)' if side == 'long'
-                                                             else '(отскок/реакция)'))]
+        rows = [('Вход:', f"{_fmt(e[0])} – {_fmt(e[1])} ({s['tag']})")]
         for i, t in enumerate(s['targets']):
             rows.append(('Цели:' if i == 0 else '', f"{_fmt(t)}  ({_pct(t, price)})"))
         rows.append(('Стоп:', f"{'ниже' if side == 'long' else 'выше'} {_fmt(s['stop'])} ({_pct(s['stop'], price)})"))
