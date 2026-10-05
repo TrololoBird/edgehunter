@@ -1275,17 +1275,28 @@ class Scanner:
         if not md.htf_loaded:
             self.fetcher.load_htf_background(symbol)
         raw, atr, candles = await asyncio.to_thread(self._build_levels, symbol)
-        live = md.live_candle('futures')
-        if live and candles and live['timestamp'] > candles[-1][0]:
-            candles = candles + [[live['timestamp'], live['open'], live['high'], live['low'], live['close'], 0.0, 0.0]]
+        minutes = list(md.minute_klines)            # closed minutes + the forming one (updated in place)
+
+        def forming(rows, tf_ms):
+            # the in-progress candle of tf_ms built from the minute stream (the page showed 15m / 1h candles only
+            # once they closed): replaces / extends the last bar of `rows`
+            if not minutes:
+                return rows
+            start = int(minutes[-1][0]) // tf_ms * tf_ms
+            part = [m for m in minutes if m[0] >= start]
+            bar = [start, part[0][1], max(m[2] for m in part), min(m[3] for m in part), part[-1][4], 0.0, 0.0]
+            rows = [r for r in rows if r[0] < start]
+            return rows + [bar]
+        candles = forming(candles, 900_000)
         cards = [s for s in self.book.signals.values() if s.symbol == symbol]
-        zones = []
-        for s in cards:
-            if s.plan and s.plan.get('zones'):
-                zones = s.plan['zones']
-                break
-        if not zones and atr:
-            zones = merge(raw + self._live_levels(symbol), atr, symbol=symbol)
+        # the full map (all timeframes) on every chart; the card's own zone / targets / levels are drawn over it (the
+        # card plan's zone list held a handful of zones - TAO 4 - and the chart lost its levels)
+        zones = merge(raw + self._live_levels(symbol), atr, symbol=symbol) if atr else []
+        if not zones:
+            for s in cards:
+                if s.plan and s.plan.get('zones'):
+                    zones = s.plan['zones']
+                    break
         price = self._price_of(symbol)
         if price and atr:
             zones = [z for z in zones if abs(z.price - price) <= 25 * atr]
@@ -1296,7 +1307,10 @@ class Scanner:
         history_5m = [c for c in md.htf_5m if not stream_5m or c[0] < stream_5m[0][0]]
         candles_5m = history_5m + stream_5m
         # 1h: 4 days, so a leg of hours or days is visible whole
-        candles_1h = list(md.htf_klines)
+        # every coin has 200 closed 1h candles (md.h1); the card-only REST history was empty for the rest (no chart, no
+        # events on the 1h); + the forming hour
+        candles_1h = forming(list(md.h1)[-120:] if len(md.h1) >= len(md.htf_klines) else list(md.htf_klines),
+                             3_600_000)
         # the two-sided scenario card (1h ladder; the same level code the probability model was trained with)
         btc = self.market_data.get('BTC/USDT:USDT')
         btc_closes = [c[4] for c in btc.h1] if btc and btc.h1 else None

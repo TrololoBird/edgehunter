@@ -668,7 +668,11 @@ function drawCoin(fit) {
     priceLines.push(series.createPriceLine({ price, color, lineWidth: width, lineStyle: style, axisLabelVisible: axis, title }));
   };
   const card0 = (d.cards || []).find(c => !c.finished) || (d.cards || [])[0];
-  const fibOn = $('#fib-on').checked && card0 && card0.fib;
+  // «фибо»: the card's own grid (continuation) or, for any other chart, the visible leg - the window's high and low,
+  // the later one is the leg's end (retracements 0.236..0.786 from it, extensions 1.272 / 1.618 beyond)
+  const fibCard = $('#fib-on').checked && card0 && card0.fib;
+  const fibAuto = $('#fib-on').checked && !fibCard && bars.length > 10;
+  const fibOn = fibCard;
   // with the Fibonacci grid on, the map keeps only its strong zones: the grid is the story, the rest is noise
   const zones = (d.zones || []).slice().filter(z => !fibOn || z.strength >= 2.5).sort((a, b) => b.strength - a.strength).slice(0, fibOn ? 10 : 28);
   const usedKinds = new Set();
@@ -707,6 +711,19 @@ function drawCoin(fit) {
     }
     for (const [k, p] of f.ext || []) line(p, '#2ecc71', `ext ${k}`, 1, k === 1.618 ? 2 : 1);
     if (f.c !== undefined) line(f.c, '#9aa6b8', 'C · дно коррекции', 2, 1);
+  }
+  if (fibAuto) {
+    const win = bars.slice(-Math.min(bars.length, 150));
+    let hi = win[0], lo = win[0];
+    for (const b of win) { if (b.high > hi.high) hi = b; if (b.low < lo.low) lo = b; }
+    const up = lo.time < hi.time;               // low first, then high = an up leg (retracements down from the high)
+    const a0 = up ? lo.low : hi.high, b0 = up ? hi.high : lo.low, rng = b0 - a0;
+    line(a0, '#7d8590', 'фибо 1.0', 2, 1); line(b0, '#7d8590', 'фибо 0', 2, 1);
+    for (const r of [0.236, 0.382, 0.5, 0.618, 0.786]) {
+      const ote = r >= 0.618;
+      line(b0 - rng * r, ote ? '#f5c542' : '#8e7cc3', 'фибо ' + r, ote ? 0 : 2, ote ? 2 : 1);
+    }
+    for (const k of [1.272, 1.618]) line(b0 + rng * (k - 1), '#2ecc71', 'ext ' + k, 1, 1);
   }
   const card = card0;
   if (card) {
