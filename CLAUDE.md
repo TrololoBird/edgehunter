@@ -525,3 +525,14 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   a vetoed entry `flow_entry` of the same card (once per card, only in a scan where the method's own trigger did not
   enter) so the journal compares the two entries. Hot set: free order-book slots go to coins with a setup in the last
   3h, then the pinned coins (the close-entry systems had no synced book at their entry; 13 of 25 slots were used).
+- eng-65 (2026-10-05): research_overlays.py (pre-registered; research/overlays.md): early exits over the method's own
+  plan - noprog_H (no +0.3R within H hours), struct (a 15m close at -0.5R), btc_K (BTC K% against within 15 min,
+  altcoins) - and the alts-vs-BTC filter (the universe's median 4h return beat BTC's the trade's way). Adopted (train
+  lower bound > 0 and validation > 0), all small (+0.01..+0.16R; no strategy turns positive): connors struct + alts_with,
+  trendline noprog_2, market_profile btc_0.7, sweep / supply_demand noprog_4+btc_1.0 (models/exit_overlays.json;
+  SignalBook._overlay_exit at each final 1m close, CLOSED at the close; the filter vetoes `alts_vs_btc`). They apply to
+  the method's own plan only, so the candidate profiles that FAILED validation left models/profiles.json (bollinger,
+  trendline, market_profile, continuation, connors). research_htf_filter.py (the owner's "the higher timeframe
+  decides"; research/htf_filter.md): the coin's daily / 4h / weekly trend and 4h trend-vs-range change no strategy's
+  mean R (0 of ~50 cells kept); continuation's entries run AGAINST the daily trend ~90% of the time (its tide is the
+  1h / 4h). BTC / USDT dominance (CoinGecko /global, 5 min) journaled as `_dom`; market state carries `btc_4h`.

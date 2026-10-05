@@ -923,6 +923,7 @@ class Scanner:
             'mkt_1h': float(r1h.median()) if len(r1h) else None,
             'mkt_4h': float(r4h.median()) if len(r4h) else None,
             'btc_1h': float(btc['r1h'][0]) if btc.height and btc['r1h'][0] is not None else None,
+            'btc_4h': float(btc['r4h'][0]) if btc.height and btc['r4h'][0] is not None else None,
             'breadth_w': sum(t > 0 for t in trends) / len(trends) if len(trends) >= 20 else None,
         }
 

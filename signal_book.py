@@ -906,6 +906,12 @@ class SignalBook:
         prof, regime_veto = profiles.select(s.mode, (confirms or {}).get('_regime'))
         if reason is None and regime_veto:
             reason = regime_veto
+        if reason is None and not prof:
+            for f in profiles.overlay_filters(s.mode, 'plan'):
+                if f == 'alts_with':
+                    mkt, btc = s.sig.get('mkt_4h'), s.sig.get('btc_4h')
+                    if mkt is not None and btc is not None and s.direction * (mkt - btc) <= 0:
+                        reason = 'alts_vs_btc'
         if reason is None and prof and confirms is not None and not confirms.get('_ind') and prof.get('filters'):
             # no indicator panel (a REST failure / no history): missing data is no veto (the project's rule)
             logger.warning(f"Profile filters of {s.symbol} {s.group_key} skipped: no indicator panel")

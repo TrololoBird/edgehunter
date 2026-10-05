@@ -176,3 +176,12 @@ def exit_overlays(strategy: str, base: str) -> List[str]:
     name = (_overlay_cache['data'].get(strategy) or {}).get(base)
     return name.split('+') if name else []
 
+
+def overlay_filters(strategy: str, base: str) -> List[str]:
+    """Entry filters adopted with the overlays (research_overlays.py) for the method's own plan: e.g. ['alts_with']
+    (the median 4h return of the universe beat BTC's in the trade's direction)."""
+    exit_overlays(strategy, base)                     # refreshes the cache
+    if base != 'plan':
+        return []
+    return list((_overlay_cache['data'].get(strategy) or {}).get('filters') or [])
+

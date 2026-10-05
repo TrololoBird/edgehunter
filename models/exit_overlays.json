@@ -1,0 +1,20 @@
+{
+ "connors": {
+  "plan": "struct",
+  "filters": [
+   "alts_with"
+  ]
+ },
+ "trendline": {
+  "plan": "noprog_2"
+ },
+ "market_profile": {
+  "plan": "btc_0.7"
+ },
+ "sweep": {
+  "plan": "noprog_4+btc_1.0"
+ },
+ "supply_demand": {
+  "plan": "noprog_4+btc_1.0"
+ }
+}
