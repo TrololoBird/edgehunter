@@ -430,6 +430,7 @@ class WebUI:
         app.router.add_get('/api/anomaly_stats', self._anomaly_stats)
         app.router.add_get('/api/stats', self._stats)
         app.router.add_get('/api/debug', self._debug)
+        app.router.add_get('/api/briefing', self._briefing)
         app.router.add_static('/static/', WEB_DIR)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
@@ -540,6 +541,17 @@ class WebUI:
         hours = float(request.query.get('hours', 24))
         symbol = request.query.get('symbol') or None
         return self._json(await asyncio.to_thread(self.reader.history, kind, hours, symbol))
+
+    async def _briefing(self, request):
+        """The briefing as it would be sent now (briefing.py), as text: ?send=1 also posts it to Telegram."""
+        b = getattr(self.scanner, 'briefing', None)
+        if b is None:
+            return web.Response(text='briefing off', status=404)
+        kind = request.query.get('kind', 'brief')
+        text = await asyncio.to_thread(b.recap) if kind == 'recap' else await asyncio.to_thread(b.briefing, 'Сводка')
+        if request.query.get('send') == '1':
+            self.scanner.notifier.post(text)
+        return web.Response(text=text, content_type='text/plain', charset='utf-8')
 
     async def _debug(self, request):
         """Internal state of one coin (verification against the exchanges' own REST numbers)."""

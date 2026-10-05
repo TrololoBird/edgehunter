@@ -47,7 +47,7 @@ class ExchangeConfig:
     # Pinned coins (the owner's, 2026-10-01): always in the universe and in EVERY strategy's pool, whatever the volume,
     # spot pair, venue count or the exclusions above say (XAU = Binance's gold TradFi perpetual: no spot pair, so the
     # strategies that require spot veto it 'no_data'). BNB / DOGE / HYPE added: the largest perpetual volumes after them
-    pinned_bases: tuple = ('BTC', 'ETH', 'XAU', 'XRP', 'SOL', 'SUI', 'BNB', 'DOGE', 'HYPE')
+    pinned_bases: tuple = ('BTC', 'ETH', 'XAU', 'CL', 'XRP', 'SOL', 'SUI', 'BNB', 'DOGE', 'HYPE')
     # The universe (top max_pairs by 24h volume) is re-selected this often: new listings join, dropped coins leave
     universe_refresh_sec: int = 3600
 
@@ -872,11 +872,25 @@ class RiskConfig:
 @dataclass(frozen=True)
 class NotifyConfig:
     """Optional notifications for a manual trader away from the screen (off by default)."""
-    enabled: bool = False
-    toast: bool = True
+    enabled: bool = True
+    toast: bool = False
     telegram_token: str = ""
     telegram_chat_id: str = ""
-    events: tuple = ('ENTRY', 'TP', 'SL', 'ZONE')
+    events: tuple = ('ENTRY', 'TP', 'SL', 'ZONE', 'CLOSED', 'RESTOP', 'INVALID', 'ADD')
+    # the owner's token / channel from the environment (TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID) when these are empty
+
+
+@dataclass(frozen=True)
+class BriefingConfig:
+    """Telegram briefings / watch alerts (briefing.py) for the coins that lead the market (the owner, 2026-10-05)."""
+    enabled: bool = True
+    coins: tuple = ('BTC', 'ETH', 'XAU', 'CL', 'SOL', 'XRP')
+    # (HH:MM Moscow, title): before the Tokyo (03:00 MSK), London (10:00 MSK) and New York cash (16:30 MSK) opens + recap
+    schedule: tuple = (('02:30', 'Сводка перед Азией'), ('09:30', 'Сводка перед Лондоном'),
+                       ('16:00', 'Сводка перед Нью-Йорком'), ('23:30', 'recap'))
+    span_atr_1d: float = 3.0           # zones within this many daily ATRs of the price
+    shock_z: float = 4.0               # a 15m move of >= this x the coin's typical 15m move ...
+    shock_min_pct: float = 0.012       # ... and >= 1.2%
 
 
 @dataclass(frozen=True)
@@ -997,6 +1011,7 @@ class AppConfig:
     positioning: PositioningConfig = field(default_factory=PositioningConfig)
     venues: VenuesConfig = field(default_factory=VenuesConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
+    briefing: BriefingConfig = field(default_factory=BriefingConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     ml: MLConfig = field(default_factory=MLConfig)

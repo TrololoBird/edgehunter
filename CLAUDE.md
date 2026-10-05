@@ -578,3 +578,15 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   (they load after the first quick map: for up to 15 min after every start the plans had only 15m levels); a failing
   map in the worker reaches scanner.log (`errors.report('scanner.maps')`, was the console only); `/api/debug` shows the
   histories' sizes and the map's kinds.
+- Briefings / watch alerts (2026-10-05, the owner: BTC, ETH, gold and oil lead the alts; the session opens move them):
+  `briefing.py` posts to the owner's Telegram channel (Notifier.post, HTML; token / channel from config.local.toml or
+  the environment's TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID; `notify.enabled` now on, toasts off): briefings before
+  the Tokyo / London / New York opens (02:30 / 09:30 / 16:00 MSK, `CONFIG.briefing`) per watched coin (BTC ETH XAU CL
+  SOL XRP: bias components, 1h+ zones of the plans' map with what holding / losing means, base / alternative
+  scenario), dominance, breadth, the day's US releases (CPI / FOMC dated, NFP / ISM / claims by their publication rule);
+  a 23:30 recap (zones tested / broken, scenario met); alerts: a 1h close beyond / a sweep of a briefing zone, a 15m
+  shock >= 4 sd and 1.2% with the breadth and the session, a BTC / ETH / XAU / CL bias change, the demo's fills /
+  exits, anomalies of the watched coins, venues down / component errors / the demo's risk stop; card events add
+  CLOSED / RESTOP / INVALID / ADD. `/api/briefing` (?kind=recap, ?send=1) shows the text. Oil = Binance's CLUSDT
+  (WTI, pinned). research_sessions.py -> research/sessions_leaders.md: the opens' moves vs other times and whether a
+  leader's move comes before the alts' (lagged correlation, next-15m / 60m continuation).

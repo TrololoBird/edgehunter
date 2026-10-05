@@ -2,11 +2,13 @@
 Optional notifications for a manual trader away from the screen (CONFIG.notify, off by default).
 
 - Windows balloon notification through PowerShell (System.Windows.Forms, no extra packages).
-- Telegram: only when the user put their own bot token and chat id into config.local.toml.
+- Telegram: the bot token / chat id of config.local.toml, else the environment's TELEGRAM_BOT_TOKEN /
+  TELEGRAM_CHANNEL_ID (the owner's channel). `post` sends briefings / watch alerts (briefing.py) as HTML.
 Sending runs in background tasks with a timeout, so a slow network never blocks the scan loop.
 """
 import asyncio
 import logging
+import os
 import errors
 import platform
 from typing import Optional, Set
@@ -67,18 +69,46 @@ class Notifier:
         except Exception as e:
             errors.report('notifier._toast', e, "Toast failed")
 
-    async def _telegram(self, text: str):
-        token, chat = self.cfg.telegram_token, self.cfg.telegram_chat_id
+    def _creds(self):
+        return (self.cfg.telegram_token or os.environ.get('TELEGRAM_BOT_TOKEN', ''),
+                self.cfg.telegram_chat_id or os.environ.get('TELEGRAM_CHANNEL_ID', ''))
+
+    def post(self, text: str):
+        """A briefing / watch alert (HTML), Telegram only; long texts are split at blank lines."""
+        if not self.enabled or not text:
+            return
+        loop = asyncio.get_running_loop()
+        chunks, cur = [], ''
+        for part in text.split('\n\n'):
+            if cur and len(cur) + len(part) > 3800:
+                chunks.append(cur)
+                cur = ''
+            cur = f"{cur}\n\n{part}" if cur else part
+        if cur:
+            chunks.append(cur)
+        task = loop.create_task(self._send_chunks(chunks))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _send_chunks(self, chunks):
+        for c in chunks:
+            await self._telegram(c, html=True)
+
+    async def _telegram(self, text: str, html: bool = False):
+        token, chat = self._creds()
         if not token or not chat:
             return
         try:
             if self._session is None:
                 self._session = aiohttp.ClientSession()
+            payload = {'chat_id': chat, 'text': text[:4000], 'disable_web_page_preview': True}
+            if html:
+                payload['parse_mode'] = 'HTML'
             async with self._session.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                                          json={'chat_id': chat, 'text': text[:4000]},
+                                          json=payload,
                                           timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    logger.warning(f"Telegram notification failed: HTTP {resp.status}")
+                    logger.warning(f"Telegram notification failed: HTTP {resp.status} {(await resp.text())[:200]}")
         except Exception as e:
             logger.warning(f"Telegram notification failed: {e}")
 

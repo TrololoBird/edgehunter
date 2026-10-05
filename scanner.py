@@ -232,6 +232,10 @@ class Scanner:
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
                  self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop(), self.event_risk_loop(),
                  self.wide_watch_loop()]
+        if CONFIG.briefing.enabled:
+            from briefing import Briefing
+            self.briefing = Briefing(self)
+            loops.append(self.briefing.loop())
         if self.demo.enabled:
             loops.append(self.demo.reconcile_loop(lambda: self._running))
         running = lambda: self._running
