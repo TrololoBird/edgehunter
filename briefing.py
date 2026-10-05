@@ -141,18 +141,18 @@ class Briefing:
         zs = [z for z in htf_zones(zs, '1h') if abs(z.price - price) <= self.cfg.span_atr_1d * atr1d]
         if not zs:
             return price, []
-        # one zone per place: overlapping / nearly touching zones coalesce (a briefing reads levels a trader can act on,
-        # not the map's every merge), labels by timeframe (weekly first)
-        gap = 0.25 * (tf.get('4h') or atr1d / 2.5)
+        # one zone per place, strongest first: a zone overlapping / within half a 4h ATR of a stronger one is dropped
+        # (chaining overlaps merged the whole week into one band); zones wider than 0.6 daily ATR are no level to act on
+        gap = 0.5 * (tf.get('4h') or atr1d / 2.5)
         merged: List[Dict] = []
-        for z in sorted(zs, key=lambda z: z.lo):
-            if merged and z.lo <= merged[-1]['hi'] + gap:
-                m = merged[-1]
-                m['hi'] = max(m['hi'], z.hi)
-                m['strength'] = max(m['strength'], z.strength)
-                m['labels'] += [l for l in z.labels if l not in m['labels']]
-            else:
-                merged.append({'lo': z.lo, 'hi': z.hi, 'strength': z.strength, 'labels': list(z.labels)})
+        for z in sorted(zs, key=lambda z: -z.strength):
+            if z.hi - z.lo > 0.6 * atr1d:
+                continue
+            if any(z.lo <= m['hi'] + gap and z.hi >= m['lo'] - gap for m in merged):
+                continue
+            merged.append({'lo': z.lo, 'hi': z.hi, 'strength': z.strength, 'labels': list(z.labels)})
+        if not merged:
+            return price, []
         cut = sorted(m['strength'] for m in merged)[len(merged) // 3]  # the stronger two thirds
         inside = [m for m in merged if m['lo'] <= price <= m['hi']]
         above = sorted([m for m in merged if m['lo'] > price and m['strength'] >= cut], key=lambda m: m['lo'])[:3]
@@ -202,7 +202,8 @@ class Briefing:
                   'dir': -1, 'inval': near_up['hi']}
         elif near_up and near_dn:
             sc = {'base': f"диапазон {_fmt(near_dn['lo'])}–{_fmt(near_up['hi'])}: работа от границ"
-                          + (f", середина 20 дней {_fmt(st['range_mid'])}" if st.get('range_mid') else ''),
+                          + (f", середина 20 дней {_fmt(st['range_mid'])}" if st.get('range_mid')
+                             and near_dn['lo'] < st['range_mid'] < near_up['hi'] else ''),
                   'alt': "выход 1h за границу задаст ход к следующей зоне", 'dir': 0, 'inval': None}
         if sc:
             lines.append(f"Базовый: {sc['base']}")
