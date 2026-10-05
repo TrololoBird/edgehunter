@@ -888,7 +888,7 @@ class BriefingConfig:
     # (HH:MM Moscow, title): before the Tokyo (03:00 MSK), London (10:00 MSK) and New York cash (16:30 MSK) opens + recap
     schedule: tuple = (('02:30', 'Сводка перед Азией'), ('09:30', 'Сводка перед Лондоном'),
                        ('16:00', 'Сводка перед Нью-Йорком'), ('23:30', 'recap'))
-    span_atr_1d: float = 3.0           # zones within this many daily ATRs of the price
+    span_atr_1d: float = 5.0           # zones within this many daily ATRs of the price (3 resistances / 2 supports)
     shock_z: float = 4.0               # a 15m move of >= this x the coin's typical 15m move ...
     shock_min_pct: float = 0.012       # ... and >= 1.2%
 

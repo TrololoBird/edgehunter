@@ -146,43 +146,54 @@ class Briefing:
         zs = [z for z in htf_zones(zs, '1h') if abs(z.price - price) <= self.cfg.span_atr_1d * atr1d]
         if not zs:
             return price, []
-        # one zone per place, strongest first: a zone overlapping / within half a 4h ATR of a stronger one is dropped
-        # (chaining overlaps merged the whole week into one band); zones wider than 0.6 daily ATR are no level to act on
-        gap = 0.1 * (tf.get('4h') or atr1d / 2.5)
-        merged: List[Dict] = []
-        for z in sorted(zs, key=lambda z: -z.strength):
-            if z.hi - z.lo > 0.6 * atr1d:
-                continue
-            # a duplicate = more than half of the smaller zone inside a stronger one (or touching it within `gap`
-            # when both are thin); a small overlap at the edge is a different level (BTC: PWH / PDH beside a 1h BPR)
-            def dup(m):
-                ov = min(z.hi, m['hi']) - max(z.lo, m['lo'])
-                return ov > 0.5 * max(min(z.hi - z.lo, m['hi'] - m['lo']), 1e-12) or (-gap < ov <= 0 and max(
-                    z.hi - z.lo, m['hi'] - m['lo']) < gap)
-            if any(dup(m) for m in merged):
-                continue
-            merged.append({'lo': z.lo, 'hi': z.hi, 'strength': z.strength, 'labels': list(z.labels)})
-        if not merged:
+        # the owner's reference card: three resistances (local / resistance / global), the zone price is watched in,
+        # two supports (next / key) - thin zones (<= 0.3 daily ATR: a wide merge is trimmed to its edge nearest the
+        # price, where the reaction is expected) about a daily ATR apart, out to ~3 daily ATR
+        cap = 0.3 * atr1d
+        cands: List[Dict] = []
+        for z in zs:
+            lo, hi = z.lo, z.hi
+            if hi - lo > cap:
+                if lo > price:
+                    hi = lo + cap
+                elif hi < price:
+                    lo = hi - cap
+                else:
+                    lo, hi = max(lo, price - cap / 2), min(hi, price + cap / 2)
+            cands.append({'lo': lo, 'hi': hi, 'strength': z.strength, 'labels': list(z.labels)})
+        if not cands:
             return price, []
-        inside = [m for m in merged if m['lo'] <= price <= m['hi']]
-        # per side the three STRONGEST zones at least 0.4 daily ATR apart (then ordered by distance): the week's /
-        # day's extremes and HTF arrays win over the nearest minor zone; the analyst's ladder spans a few percent
-        step = 0.4 * atr1d
 
-        def ladder(cands):
-            out_ = []
-            # ties: the zone holding the higher timeframe's level (the week's / day's extreme) wins
-            for m in sorted(cands, key=lambda m: (-m['strength'], min(map(_label_rank, m['labels']), default=9))):
-                if all(min(abs(m['lo'] - o['hi']), abs(o['lo'] - m['hi'])) >= step
-                       and not (m['lo'] <= o['hi'] and m['hi'] >= o['lo']) for o in out_):
-                    out_.append(m)
-                if len(out_) == 3:
+        def rank(m):   # strongest first; ties to the higher timeframe's level (the week's / day's extreme)
+            return -m['strength'], min(map(_label_rank, m['labels']), default=9)
+
+        # the watched zone: the one price is in, else the strongest within 0.5 daily ATR, else the nearest
+        near = [m for m in cands if m['lo'] - 0.5 * atr1d <= price <= m['hi'] + 0.5 * atr1d]
+        inside = [m for m in near if m['lo'] <= price <= m['hi']]
+        pool = inside or near or cands
+        cur = sorted(pool, key=lambda m: (rank(m), min(abs(m['lo'] - price), abs(m['hi'] - price))))[0]
+        def ladder(side, n):
+            """Outward from the watched zone: each step takes the STRONGEST zone in the next one-daily-ATR window
+            beyond the previous pick (+ a gap of 0.25 daily ATR), so the levels run near -> far like the reference
+            (local / resistance / global), widening the window while it is empty."""
+            chosen, edge = [], (cur['hi'] if side > 0 else cur['lo'])
+            pool_ = [m for m in cands if (m['lo'] > cur['hi'] if side > 0 else m['hi'] < cur['lo'])]
+            while len(chosen) < n:
+                start = edge + side * 0.25 * atr1d
+                for width in (1.0, 2.0, 4.0):
+                    end = start + side * width * atr1d
+                    win = [m for m in pool_ if (start <= m['lo'] <= end if side > 0 else end <= m['hi'] <= start)]
+                    if win:
+                        break
+                if not win:
                     break
-            return out_
-        above = sorted(ladder([m for m in merged if m['lo'] > price]), key=lambda m: m['lo'])
-        below = sorted(ladder([m for m in merged if m['hi'] < price]), key=lambda m: -m['hi'])
+                best = sorted(win, key=rank)[0]
+                chosen.append(best)
+                edge = best['hi'] if side > 0 else best['lo']
+            return chosen
+        above, below = ladder(1, 3), ladder(-1, 2)
         out = []
-        for side, group in ((1, above[::-1]), (0, inside[:1]), (-1, below)):
+        for side, group in ((1, above[::-1]), (0, [cur]), (-1, below)):
             for m in group:
                 labels = sorted(m['labels'], key=_label_rank)
                 out.append({'lo': m['lo'], 'hi': m['hi'], 'side': side, 'strength': m['strength'],
