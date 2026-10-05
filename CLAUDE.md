@@ -494,4 +494,15 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   stand 30s within +-2%; bands drop when their pull turnover is > 3x the side's median; `slippage_bps` walks the
   book. 'book' left zones.STRUCTURE_KINDS (no stop on pullable orders) and weighs 1.0; the chart's density lines
   are the bot's bands (the looser second definition and the dead `LiveDetector.levels_of` were removed).
-
+- eng-62 (2026-10-05, the owner: adapt the classic methods to crypto futures by search and test them on the demo):
+  research_optimize.py simulates every replayed entry (16 550, 40 coins x 12 months, 5m paths) under 524 position
+  management variants (target 1-3R / the plan's TP1 / none, breakeven after +1R, a 2-3 x 1h-ATR chandelier trail,
+  a third (research: half) at +1R, time stop 4-72h, stop 1.0 / 1.5 x) and selects per strategy filters (none, one or
+  a pair of 53: indicator rules, coin class, session, weekend, BTC's trend, ATR rank, the bot's veto) on the first 8
+  months; the last 4 months are the validation (research/optimize.md, research/optimize_robust.md: a profile also
+  stable in both training halves). Validated: only the Turtles (their own exits +0.36R on 108 validation cards; the
+  profile coin:large + 3R / breakeven +0.52R on 21). models/profiles.json: every other strategy's best profile as a
+  `candidate` for the demo (validation pump +0.29R / 11, sweep +0.02 / 18, the rest negative) -
+  strategies/profiles.py applies the filters at the entry (`vetoed='profile'`) and the position management
+  (SignalBook._profile_manage: breakeven / trail with RESTOP to the demo; the profile's time stop in _time_exit).
+  Confirmations carry `_btc_slope` / `_atr_1h` for it.

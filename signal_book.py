@@ -47,7 +47,7 @@ from strategies.maniac_strategies import MANIAC_STRATEGIES
 
 MANIAC_NAMES = frozenset(s.name for s in MANIAC_STRATEGIES)
 from strategies import PlanInput, Strategy, strategy_of
-from strategies import confirm
+from strategies import confirm, profiles
 from strategies.geometry import entry_levels
 
 logger = logging.getLogger(__name__)
@@ -556,6 +556,33 @@ class SignalBook:
             lv['sl_src'] = 'trailing: entry / EMA20 after TP1'
             self.events.append((s, 'RESTOP'))
 
+    def _profile_manage(self, s: TrackedSignal, hi: float, lo: float) -> None:
+        """An optimized profile's stop management on each final 1m candle (research_optimize.simulate): after +1R the
+        stop to the entry (`be`) and / or an ATR chandelier `trail` x the 1h ATR behind the best price, only ever
+        toward the trade; a RESTOP event moves the demo's stop."""
+        pm = (s.plan or {}).get('pm')
+        lv, d = s.levels, s.direction
+        risk = lv.get('risk0') or 0.0
+        if not pm or not risk:
+            return
+        best = hi if d > 0 else lo
+        prev = s.plan.get('pm_best')
+        s.plan['pm_best'] = best if prev is None else (max(prev, best) if d > 0 else min(prev, best))
+        if d * (s.plan['pm_best'] - lv['entry']) < risk:
+            return
+        new = lv['sl']
+        if pm.get('be'):
+            new = max(new, lv['entry']) if d > 0 else min(new, lv['entry'])
+        atr = s.plan.get('pm_atr')
+        if pm.get('trail') and atr:
+            chand = s.plan['pm_best'] - d * float(pm['trail']) * atr
+            new = max(new, chand) if d > 0 else min(new, chand)
+        if d * (new - lv['sl']) > 0.05 * risk:
+            lv['sl'] = new
+            lv['sl_src'] = 'profile: ' + ' + '.join(x for x, on in (('breakeven', pm.get('be')),
+                                                                     ('ATR trail', pm.get('trail'))) if on)
+            self.events.append((s, 'RESTOP'))
+
     @staticmethod
     def _cost_r(s: TrackedSignal, risk: float, exit_ms: float) -> float:
         """eng-58: the round trip's cost in R - fees, the slippage of the entry and of the exit (by the coin's
@@ -839,6 +866,16 @@ class SignalBook:
                 reason = 'macro_event'
         if reason is None and not (s.plan or {}).get('trail_days') and self.crowded(s.mode, s.direction, entered_at):
             reason = 'crowded'
+        prof = profiles.profile(s.mode)
+        if reason is None and prof and confirms is not None:
+            # the strategy's optimized profile (research_optimize.py): its filters, measured as the research did
+            ind = confirms.get('_ind') or {}
+            flags = profiles.masks(ind, s.sig.get('volume_24h'), now_ms, s.direction, confirms.get('_btc_slope'),
+                                   None, (ind.get('1h') or {}).get('atr_high'))
+            missing_flags = profiles.failed(s.mode, flags)
+            if missing_flags:
+                reason = 'profile'
+                s.veto_notes = (s.veto_notes + [f"profile: not {', '.join(missing_flags)}"])[-5:]
         of = confirms.get('orderflow') or None
         if reason:
             vetoed = copy.copy(s)
@@ -863,6 +900,12 @@ class SignalBook:
                 s.veto_notes = (s.veto_notes + [text])[-5:]
             s.veto_log.append(reason)
             return vetoed
+        if prof and prof.get('pm'):
+            # the profile's position management: stop / targets now, breakeven / trail / time stop in _manage_trade
+            profiles.apply_pm(levels, prof['pm'], s.direction)
+            s.plan = {**(s.plan or {}), 'pm': dict(prof['pm']), 'profile': prof.get('status', 'candidate'),
+                      'pm_atr': confirms.get('_atr_1h'), 'pm_best': None, 'trail_after_tp1': False,
+                      'no_tp': str(prof['pm'].get('target')) == 'none' or bool((s.plan or {}).get('no_tp'))}
         levels['risk0'] = abs(levels['entry'] - levels['sl'])
         if (s.plan or {}).get('add_half'):
             # the owner's averaging: one more unit of the same size at half the way to the stop (SignalBook._manage_trade)
@@ -958,6 +1001,7 @@ class SignalBook:
             if s.best_target == 3:
                 return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
             self._trail(s, candles_of)
+            self._profile_manage(s, hi, lo)
         if d * (price - lv['sl']) <= 0:
             s.exit_fill = price
             return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))
@@ -1019,6 +1063,11 @@ class SignalBook:
         """Why the trade ends by time now (eng-47, Strategy.time_exit), None = it runs on."""
         strategy = self.strategy(s)
         held = now - s.entered_at
+        pm = (s.plan or {}).get('pm')
+        if pm and pm.get('hours'):
+            # an optimized profile's time stop (research_optimize.py), replacing the method's own clock
+            limit = float(pm['hours']) * 3600
+            return f"profile time stop: {_dur(limit)}: closed at market" if held > limit else None
         if strategy is None:
             ttl = CONFIG.levels.trade_ttl_sec
             return f"trade open {_dur(ttl)}: closed at market" if held > ttl else None

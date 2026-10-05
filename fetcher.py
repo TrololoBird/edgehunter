@@ -1939,6 +1939,7 @@ class DataFetcher:
         # the classic indicator panel on 15m and 1h (journaled, not a vote: research/indicator_confirms.md decides
         # which of them confirm an entry)
         out['_ind'] = self.indicator_panel(md, direction, until_ms)
+        out['_btc_slope'], out['_atr_1h'] = self.profile_context(md)
         # the local book's readings at the entry (hot coins only; features, not a vote until the journal proves one):
         # depth imbalance, what was pulled / filled within 1% in the last 5 minutes, the impact of a $50k market order
         book = self.depth.metrics(symbol)
@@ -1947,6 +1948,25 @@ class DataFetcher:
                             if k.startswith(('imbalance_', 'bid_pulled', 'bid_filled', 'ask_pulled', 'ask_filled'))}
             out['_book']['slip_50k_bps'] = self.depth.slippage_bps(symbol, 50_000, direction)
         return out
+
+    def profile_context(self, md: 'MarketData'):
+        """For the optimized profiles (strategies/profiles.py), as research_optimize.py measured them: BTC's 1h EMA50
+        slope over 10 closed hours and the coin's 1h ATR14 (simple mean of true ranges)."""
+        from strategies.ind_panel import ema
+        slope = atr = None
+        try:
+            btc = self.markets.get('BTC/USDT:USDT')
+            if btc is not None and len(btc.h1_long) >= 60:
+                e = ema(np.asarray(btc.h1_long)[:, 4], 50)
+                slope = float(e[-1] - e[-11])
+            h = np.asarray(md.h1_long) if len(md.h1_long) else None
+            if h is not None and len(h) >= 15:
+                prev = h[:-1, 4]
+                tr = np.maximum(h[1:, 2] - h[1:, 3], np.maximum(abs(h[1:, 2] - prev), abs(h[1:, 3] - prev)))
+                atr = float(tr[-14:].mean())
+        except Exception as e:
+            errors.report('fetcher.profile_context', e, md.symbol)
+        return slope, atr
 
     @staticmethod
     def indicator_panel(md: 'MarketData', direction: int, until_ms: int) -> Dict:

@@ -1,0 +1,46 @@
+{
+ "breakout": [
+  {
+   "mode": "filters + pm",
+   "filters": [
+    "coin:large",
+    "passed_veto"
+   ],
+   "pm": {
+    "target": "3",
+    "be": true,
+    "trail": 0,
+    "half": false,
+    "hours": 72,
+    "stop": 1.0
+   },
+   "val_n": 21,
+   "val_mean": 0.5151985335674935,
+   "val_lo": 0.10504396763953283,
+   "half1": 0.7951553498919147,
+   "half2": 0.5640633485686777
+  }
+ ],
+ "sweep": [
+  {
+   "mode": "filters + pm",
+   "filters": [
+    "15m:rsi_extreme",
+    "1h:ema50_slope"
+   ],
+   "pm": {
+    "target": "plan",
+    "be": true,
+    "trail": 0,
+    "half": true,
+    "hours": 24,
+    "stop": 1.5
+   },
+   "val_n": 18,
+   "val_mean": 0.019386914525648495,
+   "val_lo": -0.36204835195555213,
+   "half1": 0.2847070355295051,
+   "half2": 0.2764570497802439
+  }
+ ]
+}
