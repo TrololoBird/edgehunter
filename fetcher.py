@@ -1855,7 +1855,7 @@ class DataFetcher:
                 self.footprint.disable(s)
         for s, md in self.markets.items():
             if s not in self.footprint.bucket:
-                price = md.last_price()
+                price = md.last_price
                 if price:
                     self.footprint.enable(s, price * CONFIG.orderflow.footprint_bucket_pct)
         self._zone_atr = {s: atr for s, atr in zone.items() if atr}
