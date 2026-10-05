@@ -245,6 +245,9 @@ class Briefing:
         if ms.get('breadth_w') is not None:
             out.append(f"Рынок: {ms['breadth_w'] * 100:.0f}% монет выше недельной EMA"
                        + (f", медиана 1h {ms['mkt_1h'] * 100:+.2f}%" if ms.get('mkt_1h') is not None else ''))
+        # research_sessions.py (12 months to 2026-09): the NY cash open's first 30 min move BTC 2.5x / alts 1.8x a
+        # usual half hour, direction ~50/50; 08:30 NY (releases) 1.35x; Tokyo / London no larger than other times
+        out.append('Открытие NY (16:30 МСК): первые 30 мин BTC ×2.5, альты ×1.8 обычной амплитуды, направление ~50/50')
         events = macro_today(datetime.now(MSK))
         if events:
             out.append('Макро сегодня (МСК): ' + ', '.join(f"{dt:%H:%M} {name}" for dt, name in events))
