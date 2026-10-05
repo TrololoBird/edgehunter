@@ -1299,7 +1299,9 @@ class Scanner:
                     break
         price = self._price_of(symbol)
         if price and atr:
-            zones = [z for z in zones if abs(z.price - price) <= 25 * atr]
+            # the 1h chart spans days: the window reaches 3 daily ATRs (25 x the 15m ATR was ~3% - levels vanished)
+            span = max(25 * atr, 3 * (self._tf_atrs(symbol).get('1d') or 0.0))
+            zones = [z for z in zones if abs(z.price - price) <= span]
         from webui import card_view
         now = time.time()
         # 5m: the 4-day REST history (level-map input) extended by the live 1m stream

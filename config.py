@@ -878,7 +878,8 @@ class NotifyConfig:
     toast: bool = False
     telegram_token: str = ""
     telegram_chat_id: str = ""
-    events: tuple = ('ENTRY', 'TP', 'SL', 'ZONE', 'CLOSED', 'RESTOP', 'INVALID', 'ADD')
+    # the owner: no 'in the zone, waiting for the trigger' messages - only what happened to a trade
+    events: tuple = ('ENTRY', 'TP', 'SL', 'CLOSED', 'RESTOP', 'ADD')
     # the owner's token / channel from the environment (TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID) when these are empty
 
 

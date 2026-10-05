@@ -487,6 +487,15 @@ class Briefing:
                 self.key_zones(symbol) and self.coin_text(symbol)
             except Exception as e:
                 errors.report('briefing.init', e, symbol)
+        # the 1h candles closed before the start were judged by the previous run: alerts only for candles that close
+        # from now on (each restart re-alerted the last closed hour: CL at 01:02 and 01:07)
+        now_ms = time.time() * 1000
+        for symbol in self.watched():
+            md = self.sc.market_data.get(symbol)
+            closed = [c for c in (md.h1 if md else []) if c[0] + HOUR_MS <= now_ms]
+            if closed:
+                self._last_h1[symbol] = closed[-1][0]
+        self._sent.update({f"shock|{s}|{d}": time.time() for s in self.watched() for d in (1, -1)})
         tick = 0
         while True:
             try:
