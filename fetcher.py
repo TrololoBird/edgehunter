@@ -1940,6 +1940,13 @@ class DataFetcher:
         # which of them confirm an entry)
         out['_ind'] = self.indicator_panel(md, direction, until_ms)
         out['_btc_slope'], out['_atr_1h'] = self.profile_context(md)
+        btc = self.markets.get('BTC/USDT:USDT')
+        try:
+            from strategies.profiles import btc_regime
+            out['_regime'] = btc_regime(list(btc.h4)) if btc is not None else None
+        except Exception as e:
+            errors.report('fetcher.btc_regime', e)
+            out['_regime'] = None
         # the local book's readings at the entry (hot coins only; features, not a vote until the journal proves one):
         # depth imbalance, what was pulled / filled within 1% in the last 5 minutes, the impact of a $50k market order
         book = self.depth.metrics(symbol)

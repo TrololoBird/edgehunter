@@ -69,3 +69,11 @@ def all_strategies_enabled(monkeypatch):
         config_mod.CONFIG.levels, min_rr_tp1=1.0, continuation_zone=(0.382, 0.618), continuation_invalid=0.786))
     monkeypatch.setattr(config_mod.CONFIG, 'orderflow', dataclasses.replace(config_mod.CONFIG.orderflow,
                                                                             min_confirmations=0))
+
+
+@pytest.fixture(autouse=True)
+def _no_optimized_profiles(monkeypatch):
+    """The lifecycle tests judge the methods' own plans: the optimized profiles (models/profiles*.json, rewritten
+    by every research_optimize run) are switched off."""
+    from strategies import profiles
+    monkeypatch.setattr(profiles, 'select', lambda strategy, regime: (None, None))

@@ -240,6 +240,10 @@ class Replay:
         self.coins, self.btc = coins, btc
         self.now_ms = 0
         self.book = SignalBook()
+        # the replay measures the methods' OWN plans: the optimized profiles (models/profiles*.json, research_optimize*)
+        # are fitted on this replay's output and must not shape it
+        from strategies import profiles
+        profiles.select = lambda strategy, regime: (None, None)
         self.detector = LiveDetector()
         self.loopside = LoopDetectors(lambda s: self.coins[s].minutes(), lambda s: self.coins[s].m15(self.now_ms))
         self.raw: Dict[str, list] = {}

@@ -20,6 +20,7 @@ lower 90% bound of the mean R over 4h clusters (a small lucky sample cannot win)
 positive there go to the demo (research/optimize.md lists every strategy's best, positive or not).
 """
 import argparse
+import os
 import itertools
 import logging
 import math
@@ -38,7 +39,7 @@ FEE = 0.0005
 MAX_BARS = 72 * 12                 # 72h of 5m bars
 MIN_CLUSTERS = 30
 MIN_PER_MONTH = 4
-TRAIN_MONTHS = 8
+TRAIN_MONTHS = int(os.environ.get('OPT_TRAIN_MONTHS', 8))   # 16 for a 24-month replay (docs/CLOUD_OPTIMIZE.md)
 
 TARGETS = ('1', '1.5', '2', '3', 'plan', 'none')
 PM = [dict(target=t, be=be, trail=tr, half=h, hours=hr, stop=sm)
@@ -123,11 +124,12 @@ def main():
     p.add_argument('--rate', type=float, default=300_000)
     p.add_argument('--out', default='research/optimize')
     p.add_argument('--strategies', default='')
+    p.add_argument('--replay', default='research/replay_summary.parquet', help='replay entries (replay.py output)')
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', datefmt='%H:%M:%S')
     arch = Archive(rate_bytes=args.rate)
 
-    ent = (pl.read_parquet('research/replay_summary.parquet')
+    ent = (pl.read_parquet(args.replay)
            .filter(pl.col('r_tp1').is_not_null() & pl.col('entry').is_not_null() & pl.col('sl').is_not_null())
            .sort('ts'))
     if args.strategies:
@@ -135,7 +137,7 @@ def main():
     t0, t1 = ent['ts'].min(), ent['ts'].max()
     first, last = (datetime.fromtimestamp(x / 1000, timezone.utc).date() for x in (t0, t1))
     start = date(first.year - (first.month <= 2), (first.month - 3) % 12 + 1, 1)
-    split_ms = int(datetime(first.year + (first.month + TRAIN_MONTHS > 12), (first.month + TRAIN_MONTHS - 1) % 12 + 1, 1,
+    split_ms = int(datetime(first.year + (first.month - 1 + TRAIN_MONTHS) // 12, (first.month - 1 + TRAIN_MONTHS) % 12 + 1, 1,
                             tzinfo=timezone.utc).timestamp() * 1000)
 
     # BTC's 1h trend for the regime filter

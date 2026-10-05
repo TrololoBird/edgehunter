@@ -8,15 +8,17 @@ among those the one with the highest min(half 1, half 2) mean is chosen; validat
 Also reported: position management alone (no filter) chosen the same way.
 """
 import itertools
+import os
 import numpy as np
 from research_optimize import PM, cluster_stats, TRAIN_MONTHS
 
-z = np.load('research/optimize_matrix.npz', allow_pickle=True)
+PREFIX = os.environ.get('OPT_PREFIX', 'research/optimize')   # research_optimize.py --out
+z = np.load(PREFIX + '_matrix.npz', allow_pickle=True)
 R, M, strat, ts, clus, names = z['R'], z['M'], z['strat'], z['ts'], z['clus'], list(z['mask_names'])
 t0 = ts.min()
 from datetime import datetime, timezone
 first = datetime.fromtimestamp(t0 / 1000, timezone.utc)
-split = int(datetime(first.year + (first.month + TRAIN_MONTHS > 12), (first.month + TRAIN_MONTHS - 1) % 12 + 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+split = int(datetime(first.year + (first.month - 1 + TRAIN_MONTHS) // 12, (first.month - 1 + TRAIN_MONTHS) % 12 + 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
 mid = t0 + (split - t0) // 2
 lines = ['| strategy | mode | profile | half 1 | half 2 | validation: n, mean [lower 90%] | verdict |', '|---|---|---|---|---|---|---|']
 picks = {}
@@ -56,6 +58,6 @@ for s in sorted(set(strat)):
         if verdict == 'DEMO':
             picks.setdefault(s, []).append(dict(mode=mode, filters=[names[i] for i in combo], pm=PM[q], val_n=int(v.sum()), val_mean=float(mv), val_lo=float(lov), half1=float(sa[0]), half2=float(sb[0])))
 out = '\n'.join(['# Robust second pass (research_optimize_robust.py)', ''] + lines)
-open('research/optimize_robust.md', 'w', encoding='utf-8').write(out + '\n')
-import json; json.dump(picks, open('research/optimize_robust_picks.json', 'w'), indent=1, default=str)
+open(PREFIX + '_robust.md', 'w', encoding='utf-8').write(out + '\n')
+import json; json.dump(picks, open(PREFIX + '_robust_picks.json', 'w'), indent=1, default=str)
 print(out)

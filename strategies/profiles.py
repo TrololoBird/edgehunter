@@ -12,6 +12,8 @@ import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+import numpy as np
+
 PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', 'profiles.json')
 _cache: Dict = {'mtime': None, 'data': {}}
 
@@ -83,3 +85,73 @@ def apply_pm(levels: Dict, pm: Dict, direction: int) -> Dict:
         levels.update(tp1=entry + d * risk, tp1_src='1 R (profile partial)')
     levels['rr_tp1'] = abs(levels['tp1'] - entry) / risk if risk else None
     return levels
+
+# ---------------------------------------------------------------------- regime switch (research_optimize_regime.py)
+
+REGIME_PATH = os.path.join(os.path.dirname(PATH), 'profiles_regime.json')
+_regime_cache: Dict = {'mtime': None, 'data': {}}
+
+
+def regime_profiles() -> Dict[str, Dict]:
+    try:
+        mtime = os.path.getmtime(REGIME_PATH)
+    except OSError:
+        return {}
+    if _regime_cache['mtime'] != mtime:
+        with open(REGIME_PATH, encoding='utf-8') as fh:
+            _regime_cache.update(mtime=mtime, data=json.load(fh))
+    return _regime_cache['data']
+
+
+# strategies whose regime profiles are NOT applied live (the Turtles keep their own exits, validated in every regime)
+REGIME_EXEMPT = ('breakout',)
+
+
+def select(strategy: str, regime: Optional[str]):
+    """(profile, veto): the regime's profile when the strategy has regime profiles (veto 'regime_off' in a regime
+    without one), else its plain profile (models/profiles.json), else (None, None)."""
+    cells = regime_profiles().get(strategy)
+    if cells and strategy not in REGIME_EXEMPT:
+        cell = cells.get(regime or '')
+        if cell is None:
+            return None, 'regime_off'
+        return {**cell, 'status': f'regime {regime}'}, None
+    return profile(strategy), None
+
+
+def btc_regime(h4: List) -> Optional[str]:
+    """The regime of BTC's last closed 4h candle ([ts, o, h, l, c, ...], oldest first)."""
+    if len(h4) < 145:
+        return None
+    import numpy as np
+    k = np.asarray([row[:5] for row in h4], dtype=float)
+    return regime_labels(k)[-1]
+
+
+def regime_labels(k: np.ndarray) -> list:
+    """Regime of each 4h candle of k ([open_ms, o, h, l, c]), as strategies/profiles.regime does live."""
+    h, l, c = k[:, 2], k[:, 3], k[:, 4]
+    prev = np.concatenate(([c[0]], c[:-1]))
+    tr = np.maximum(h - l, np.maximum(abs(h - prev), abs(l - prev)))
+    up, dn = h - np.concatenate(([h[0]], h[:-1])), np.concatenate(([l[0]], l[:-1])) - l
+    pdm, mdm = np.where((up > dn) & (up > 0), up, 0.0), np.where((dn > up) & (dn > 0), dn, 0.0)
+
+    def rma(x, n=14):
+        out = np.full_like(x, np.nan)
+        if len(x) < n:
+            return out
+        out[n - 1] = x[:n].mean()
+        for i in range(n, len(x)):
+            out[i] = (out[i - 1] * (n - 1) + x[i]) / n
+        return out
+    atr = rma(tr)
+    pdi, mdi = 100 * rma(pdm) / atr, 100 * rma(mdm) / atr
+    adx = rma(np.nan_to_num(100 * abs(pdi - mdi) / np.maximum(pdi + mdi, 1e-12)))
+    out = []
+    for i in range(len(k)):
+        if i < 140 or np.isnan(adx[i]) or np.isnan(atr[i]):
+            out.append(None)
+            continue
+        med = np.nanmedian(atr[i - 124:i + 1])
+        out.append(('trend' if adx[i] >= 25 else 'range') + ('_hv' if atr[i] > med else '_lv'))
+    return out

@@ -506,3 +506,13 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   strategies/profiles.py applies the filters at the entry (`vetoed='profile'`) and the position management
   (SignalBook._profile_manage: breakeven / trail with RESTOP to the demo; the profile's time stop in _time_exit).
   Confirmations carry `_btc_slope` / `_atr_1h` for it.
+- eng-63 (2026-10-05): regime switch (research_optimize_regime.py, pre-registered): BTC 4h ADX >= 25 trend / range x
+  ATR above / below its 125-candle median -> trend_hv / trend_lv / range_hv / range_lv (strategies/profiles.regime_labels,
+  the same function live via fetcher `_regime` from BTC's h4). Per strategy x regime one filter at most, positive in
+  both training halves, validated once: ON breakout trend_hv (+0.42R [+0.18] on 105 - not applied live, the Turtles keep
+  their own exits), pump trend_lv / range_hv / range_lv and supply_demand trend_hv (1-11 validation trades: candidates).
+  Continuation failed in every regime (decay, not a regime artifact). models/profiles_regime.json: a strategy listed
+  there trades only in its ON regimes (`vetoed='regime_off'`), with that regime's profile; others keep
+  models/profiles.json. replay.py switches the profiles off (it measures the methods' own plans). Profile filters are
+  skipped (logged) when the indicator panel is missing. docs/CLOUD_OPTIMIZE.md: the 120 coins x 24 months job
+  (research_replay_summary.py, OPT_TRAIN_MONTHS / OPT_PREFIX / OPT_PROFILES).

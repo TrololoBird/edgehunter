@@ -866,13 +866,18 @@ class SignalBook:
                 reason = 'macro_event'
         if reason is None and not (s.plan or {}).get('trail_days') and self.crowded(s.mode, s.direction, entered_at):
             reason = 'crowded'
-        prof = profiles.profile(s.mode)
-        if reason is None and prof and confirms is not None:
+        prof, regime_veto = profiles.select(s.mode, (confirms or {}).get('_regime'))
+        if reason is None and regime_veto:
+            reason = regime_veto
+        if reason is None and prof and confirms is not None and not confirms.get('_ind') and prof.get('filters'):
+            # no indicator panel (a REST failure / no history): missing data is no veto (the project's rule)
+            logger.warning(f"Profile filters of {s.symbol} {s.group_key} skipped: no indicator panel")
+        if reason is None and prof and confirms is not None and confirms.get('_ind'):
             # the strategy's optimized profile (research_optimize.py): its filters, measured as the research did
             ind = confirms.get('_ind') or {}
             flags = profiles.masks(ind, s.sig.get('volume_24h'), now_ms, s.direction, confirms.get('_btc_slope'),
                                    None, (ind.get('1h') or {}).get('atr_high'))
-            missing_flags = profiles.failed(s.mode, flags)
+            missing_flags = [f for f in prof.get('filters') or [] if not flags.get(f)]
             if missing_flags:
                 reason = 'profile'
                 s.veto_notes = (s.veto_notes + [f"profile: not {', '.join(missing_flags)}"])[-5:]

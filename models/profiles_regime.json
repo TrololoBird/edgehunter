@@ -1,0 +1,113 @@
+{
+ "breakout": {
+  "trend_hv": {
+   "filters": [
+    "15m:obv_slope"
+   ],
+   "pm": {
+    "target": "3",
+    "be": true,
+    "trail": 3,
+    "half": false,
+    "hours": 72,
+    "stop": 1.0
+   },
+   "train": {
+    "n": 85,
+    "mean_r": 0.227
+   },
+   "validation": {
+    "n": 105,
+    "mean_r": 0.418
+   }
+  }
+ },
+ "pump": {
+  "trend_lv": {
+   "filters": [
+    "coin:large"
+   ],
+   "pm": {
+    "target": "plan",
+    "be": false,
+    "trail": 0,
+    "half": true,
+    "hours": 72,
+    "stop": 1.0
+   },
+   "train": {
+    "n": 18,
+    "mean_r": 0.267
+   },
+   "validation": {
+    "n": 1,
+    "mean_r": 0.858
+   }
+  },
+  "range_hv": {
+   "filters": [
+    "15m:mfi_50"
+   ],
+   "pm": {
+    "target": "none",
+    "be": true,
+    "trail": 0,
+    "half": false,
+    "hours": 12,
+    "stop": 1.0
+   },
+   "train": {
+    "n": 32,
+    "mean_r": 0.496
+   },
+   "validation": {
+    "n": 10,
+    "mean_r": 0.503
+   }
+  },
+  "range_lv": {
+   "filters": [
+    "1h:adx_trend"
+   ],
+   "pm": {
+    "target": "3",
+    "be": false,
+    "trail": 0,
+    "half": false,
+    "hours": 72,
+    "stop": 1.0
+   },
+   "train": {
+    "n": 35,
+    "mean_r": 0.59
+   },
+   "validation": {
+    "n": 11,
+    "mean_r": 0.024
+   }
+  }
+ },
+ "supply_demand": {
+  "trend_hv": {
+   "filters": [
+    "1h:atr_high"
+   ],
+   "pm": {
+    "target": "none",
+    "be": true,
+    "trail": 0,
+    "half": false,
+    "hours": 72,
+    "stop": 1.0
+   },
+   "train": {
+    "n": 18,
+    "mean_r": 3.124
+   },
+   "validation": {
+    "n": 8,
+    "mean_r": 0.245
+   }
+  }
+ }
+}
