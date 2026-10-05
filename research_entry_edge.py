@@ -12,6 +12,7 @@ same hour of the day, on random other days of the replay span. If our entries re
 the placebo, the entries have no edge and no geometry can create one; if they do, the edge is there and the
 targets / stops / costs waste it.
 """
+import os
 import random
 from datetime import date, datetime, timezone
 
@@ -48,7 +49,7 @@ def stats(path, d, entry, risk):
 def main():
     rnd = random.Random(11)
     arch = Archive(rate_bytes=300_000)
-    ent = (pl.read_parquet('research/replay_summary.parquet')
+    ent = (pl.read_parquet(os.environ.get('REPLAY_SUMMARY', 'research/replay_summary.parquet'))
            .filter(pl.col('r_tp1').is_not_null() & pl.col('vetoed').is_null() & pl.col('entry').is_not_null())
            .select('symbol', 'strategy', 'direction', 'ts', 'entry', 'sl', 'volume_24h'))
     t0, t1 = ent['ts'].min(), ent['ts'].max()
@@ -95,7 +96,7 @@ def main():
     pl.Config.set_tbl_rows(60)
     pl.Config.set_tbl_width_chars(220)
     lines = ['# Entry edge vs placebo (research_entry_edge.py)', '', '```', str(allr), '', str(out), '```']
-    with open('research/entry_edge.md', 'w', encoding='utf-8') as fh:
+    with open(f"research/entry_edge{os.environ.get('REPORT_SUFFIX', '')}.md", 'w', encoding='utf-8') as fh:
         fh.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
 

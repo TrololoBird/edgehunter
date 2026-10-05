@@ -10,6 +10,7 @@ which comes first of +-1 ATR and +-2 ATR (symmetric barriers, no stop / target o
 entry (same coin, direction, hour of day, random other days within +-120 days). If our entries beat the placebo
 here, the setup carries direction and our stop / targets waste it; if not, the setup itself has no signal.
 """
+import os
 import random
 from datetime import date, datetime, timezone
 
@@ -53,7 +54,7 @@ def forward(k5, i, d, entry, atr):
 def main():
     rnd = random.Random(5)
     arch = Archive(rate_bytes=300_000)
-    ent = (pl.read_parquet('research/replay_summary.parquet')
+    ent = (pl.read_parquet(os.environ.get('REPLAY_SUMMARY', 'research/replay_summary.parquet'))
            .filter(pl.col('r_tp1').is_not_null() & pl.col('vetoed').is_null() & pl.col('entry').is_not_null()))
     t0, t1 = ent['ts'].min(), ent['ts'].max()
     first, last = (datetime.fromtimestamp(x / 1000, timezone.utc).date() for x in (t0, t1))
@@ -107,7 +108,7 @@ def main():
              '', '```', str(geo_t), '', str(src_t), '```', '',
              '## Part 2: the entry without our stop / targets, vs placebo (same coin, side, hour; other days)', '',
              '```', str(fw_t), '```']
-    with open('research/geometry_audit.md', 'w', encoding='utf-8') as fh:
+    with open(f"research/geometry_audit{os.environ.get('REPORT_SUFFIX', '')}.md", 'w', encoding='utf-8') as fh:
         fh.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
 

@@ -13,6 +13,7 @@ allowed > blocked in at least 2/3 of the months with >= 5 trades on each side.
 """
 from datetime import date, datetime, timezone
 
+import os
 import numpy as np
 import polars as pl
 
@@ -26,7 +27,7 @@ HOUR, DAY = 3_600_000, 86_400_000
 
 def main():
     arch = Archive(rate_bytes=300_000)
-    cards = (pl.read_parquet('research/replay_summary.parquet')
+    cards = (pl.read_parquet(os.environ.get('REPLAY_SUMMARY', 'research/replay_summary.parquet'))
              .filter(pl.col('stage').is_null() | (pl.col('stage') == 'card'))      # cards (entries carry stage 'entry')
              .filter(pl.col('entered_ms').is_not_null() & pl.col('final_r').is_not_null())
              .select('symbol', 'strategy', 'direction', 'entered_ms', 'final_r'))
@@ -95,7 +96,7 @@ def main():
         f"- {m}: allowed {gm.filter(pl.col('allowed'))['r'].mean():+.3f} ({gm.filter(pl.col('allowed')).height}), "
         f"blocked {gm.filter(~pl.col('allowed'))['r'].mean():+.3f} ({gm.filter(~pl.col('allowed')).height})"
         for (m,), gm in sorted(df.group_by('month'), key=lambda x: x[0])]
-    with open('research/bias.md', 'w', encoding='utf-8') as fh:
+    with open(f"research/bias{os.environ.get('REPORT_SUFFIX', '')}.md", 'w', encoding='utf-8') as fh:
         fh.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
 

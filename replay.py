@@ -479,6 +479,8 @@ def main():
     ap.add_argument('--rate', type=float, default=2e6)
     ap.add_argument('--group', type=int, default=5, help='coins replayed together (one SignalBook)')
     ap.add_argument('--out', default=os.path.join('data', 'replay', 'run'))
+    ap.add_argument('--shard', default='', help="k/N: run only the groups with index %% N == k (parallel processes "
+                                                "on one --out; the same coin selection in every process)")
     args = ap.parse_args()
     arch = Archive(rate_bytes=args.rate)
     today = date.today()
@@ -504,7 +506,10 @@ def main():
         base = fid[:-4]
         coins.append((f"{base}/USDT:USDT", fid, _spot_pair(base, spot)))
     # groups of --group coins share one SignalBook (crowd / unit limits hold within a group): RAM ~100 MB per coin
+    k, n = (map(int, args.shard.split('/')) if args.shard else (0, 1))
     for g in range(0, len(coins), args.group):
+        if (g // args.group) % n != k:
+            continue
         out = os.path.join(args.out, f"group_{g // args.group:02d}")
         if os.path.exists(os.path.join(out, 'cards.parquet')):
             print(f"{out}: done before, skipped")
