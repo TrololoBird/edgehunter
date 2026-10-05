@@ -572,3 +572,9 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   Also `structure_stop` (the systems' fixed % / ATR stops replaced by the map) takes the same buffer; PUMP START targets
   the measured move and 1h+ zones only (`plan['target_tf']`, honoured by every `htf_zones` call): its stop spans the
   whole ignition, the nearest 15m zone gave TP1 at 0.56 of the risk (all 7 eng-60 entries `low_rr`).
+  Map fixes (the owner compared BTC with an analyst's weekly levels): the dashboard drew its own map from the card-only
+  1h history - for a coin without a card no 1h / 4h / daily / weekly level, no previous day / week (`Scanner._build_levels`
+  now returns the map the plans use); the quick map rebuilds when the 1h / 4h / daily / weekly / day-POC histories arrive
+  (they load after the first quick map: for up to 15 min after every start the plans had only 15m levels); a failing
+  map in the worker reaches scanner.log (`errors.report('scanner.maps')`, was the console only); `/api/debug` shows the
+  histories' sizes and the map's kinds.

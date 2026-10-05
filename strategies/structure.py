@@ -410,6 +410,11 @@ def build_maps(jobs: List[tuple], corr: Optional[Dict[str, object]] = None) -> D
             # a coin without a map has no levels / pools / events: say so instead of dropping it silently (the worker
             # process has no logging config: WARNING goes to its stderr, the bot's console)
             logging.getLogger(__name__).warning(f"Level map of {symbol} failed: {type(e).__name__} {e}", exc_info=True)
+            # ...and to the bot's log through the main process (the worker's stderr is only the console: a map that
+            # kept failing left the coin on a stale map without one line in scanner.log)
+            import traceback
+            out.setdefault('__errors__', []).append(f"{symbol}: {type(e).__name__} {e} | "
+                                                    f"{traceback.format_exc(limit=-3).strip().splitlines()[-3:]}")
             continue
         out[symbol] = (raw, context)
     return out

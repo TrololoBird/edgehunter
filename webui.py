@@ -589,7 +589,12 @@ class WebUI:
             'history': {'oi_samples': len(md.oi_samples),
                         'oi_span_min': (md.oi_samples[-1][0] - md.oi_samples[0][0]) / 60_000 if len(md.oi_samples) > 1 else 0,
                         'minute_klines': len(md.minute_klines), 'spot_minute_klines': len(md.spot_minute_klines),
-                        'ticker_samples': len(md.ticker_samples)},
+                        'ticker_samples': len(md.ticker_samples), 'h1': len(md.h1), 'h4': len(md.h4), 'd1': len(md.d1),
+                        'w1': len(md.w1), 'htf_klines': len(md.htf_klines)},
+            # the level map the plans read: its source and the count per level kind
+            'map': {'full': symbol in self.scanner._level_raw, 'quick': symbol in self.scanner._quick_raw,
+                    'kinds': dict(__import__('collections').Counter(
+                        l.kind for l in (self.scanner._level_raw.get(symbol) or self.scanner._quick_raw.get(symbol) or [])))},
             'whale_size': whales, 'notable_size': notable, 'hist_total': float(hist.sum()) if hist is not None else 0,
             'whale_records': [list(r) for r in list(f.whales.whales.get(symbol, ()))[-200:]],
             'whale_flow_5m': f.whales.flow(symbol, 300), 'cluster': f.whales.cluster(symbol),

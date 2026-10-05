@@ -854,7 +854,10 @@ class Scanner:
         corr = self._correlates() if any(job[8] for job in jobs) else None
         from concurrent.futures.process import BrokenProcessPool
         try:
-            return await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs, corr)
+            out = await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs, corr)
+            for err in out.pop('__errors__', ()):
+                errors.report('scanner.maps', RuntimeError(err), f"Level map failed: {err}")
+            return out
         except BrokenProcessPool:
             logger.warning(f"Maps worker died during a pass of {len(jobs)} maps: retried on the next pass")
             return {}
@@ -868,7 +871,11 @@ class Scanner:
             for symbol, part in parts.items():
                 if symbol not in self.market_data or part.is_empty():
                     continue
-                signature = (part['timestamp'][-1], part.height)
+                md = self.market_data[symbol]
+                # + the higher-timeframe histories: after a start the first quick map is built before the 1h / 4h /
+                # daily / weekly candles load and held no level of theirs until the next 15m close (eng-69)
+                signature = (part['timestamp'][-1], part.height, len(md.h1), len(md.h4), len(md.d1), len(md.w1),
+                             len(md.day_pocs))
                 if self._context_sig.get(symbol) == signature:
                     continue
                 jobs.append(self._map_job(symbol, part, True, now_ms))
@@ -1160,8 +1167,17 @@ class Scanner:
         candles, atr = self._candles_15m(symbol)
         if md is None or not candles or not atr:
             return [], atr, candles
-        raw = build_raw(candles, md.htf_klines, md.htf_oi, list(md.liq_events), atr, time.time() * 1000,
-                        candles_4d=md.htf_5m, day_pocs=md.day_pocs, symbol=symbol)
+        # the map the plans use (worker-built: 1h swings, previous day / week, sessions, 4h / daily / weekly FVG / OB /
+        # breakers); the page built its own map from the card-only 1h history - for a coin without a card it held no
+        # 1h / 4h / daily / weekly level at all (BTC 2026-10-05: only 15m zones next to the weekly levels of the owner's
+        # analyst). The fallback builds the same inputs as Scanner._map_job.
+        raw = self._level_raw.get(symbol) or self._quick_raw.get(symbol)
+        if raw:
+            return list(raw), atr, candles
+        h1 = list(md.h1) if len(md.h1) >= len(md.htf_klines) else list(md.htf_klines)
+        raw = build_raw(candles, h1, md.htf_oi, list(md.liq_events), atr, time.time() * 1000,
+                        candles_4d=list(md.htf_5m) or h1[-96:], candles_1d=list(md.d1), candles_4h=list(md.h4),
+                        candles_1w=list(md.w1), day_pocs=md.day_pocs, symbol=symbol)
         return raw, atr, candles
 
     async def levels_loop(self):
