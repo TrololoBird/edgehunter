@@ -400,6 +400,8 @@ class LevelsConfig:
     # ... and never closer than this many 15m ATRs to the entry: live, stops < 1 ATR (the low of 2-3 5m candles)
     # were hit on 8 of 10 entries while their paper R:R read 9-23
     min_stop_atr: float = 1.0
+    # eng-69: the stop sits beyond its structure by max(measured pierce, this x ATR of the structure timeframe)
+    zone_buffer_atr: float = 1.5
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
     # (vetoed='low_rr') and the card keeps waiting, so the screen only shows entries worth taking by hand
     # 2:1, the practitioners' minimum for intraday trades (breakeven win rate 33% before costs); was 1.0
@@ -894,7 +896,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-68"
+    logic_version: str = "eng-69"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

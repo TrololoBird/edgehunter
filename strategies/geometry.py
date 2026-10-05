@@ -284,6 +284,19 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     return prices, labels
 
 
+def zone_pad(plan: Dict, measured: Optional[float]) -> Tuple[Optional[float], str]:
+    """The buffer beyond the stop's structure: the larger of the measured pierce of the level and
+    zone_buffer_atr x the ATR of the structure's own timeframe (Seiden-style: 1-2 ATR of the zone's timeframe beyond
+    its distal line; the owner: beyond the zone with a 3-5% margin - on alts' 4h that is ~1.5 ATR). eng-69."""
+    k = CONFIG.levels.zone_buffer_atr
+    tf_pad = k * (plan.get('tf_atr') or 0.0)
+    if measured is None and not tf_pad:
+        return None, ''
+    if measured is None or tf_pad > measured:
+        return tf_pad, f"{k:g} ATR {plan.get('tf', '15m')}"
+    return measured, 'measured pierce'
+
+
 def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Tuple[float, str]:
     """
     The stop: beyond the strategy's reference (the anchor's extreme / the range middle / the trigger's swing) and a
@@ -309,11 +322,11 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
         base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label, plan.get('symbol'))
     kind = kind_at(zones, base) or kind_of_label(src, plan.get('tf', '15m'))
     measured = overshoot(plan.get('symbol'), kind, base)
-    if measured is not None:
-        # the measured pierce of this kind of level on this coin: a stop closer than where price usually pierces
-        # before turning back is inside the level's noise; a stop so far that it does not pay is a wrong entry
-        # (low_rr), not a reason to move it closer
-        stop, src = base - direction * measured, f"{src} + measured pierce {measured / base:.2%}"
+    pad, how = zone_pad(plan, measured)
+    if pad is not None:
+        # beyond the level by its measured pierce or the structure timeframe's ATR buffer, whichever is wider; a stop
+        # so far that it does not pay is a wrong entry (low_rr), not a reason to move it closer
+        stop, src = base - direction * pad, f"{src} + {how} {pad / base:.2%}"
     else:
         stop = base - direction * cfg.stop_buffer_atr * (plan.get('leg_atr') or atr)
     # the floor in the structure's own ATR too (a 1h / 4h leg's stop floored by the 15m ATR sat inside its noise)
@@ -453,7 +466,9 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         buffer = overshoot(plan.get('symbol'), 'swing_15m', prot)
         base, src = stop_beyond(zones, prot, entry, direction, atr, 'beyond the protected swing (BOS)',
                                 plan.get('symbol'))
-        structural = (base - direction * (buffer if buffer is not None else CONFIG.levels.stop_buffer_atr * atr), src)
+        pad, how = zone_pad(plan, buffer)
+        structural = (base - direction * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr),
+                      f"{src} + {how}" if pad is not None else src)
     if structural is not None:
         stop, sl_src = structural
     elif exit['stop'][0] == 'ref' and overshoot(plan.get('symbol'), 'swing_15m', entry) is not None:
@@ -463,8 +478,9 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         ref = (min(refs) if direction > 0 else max(refs)) if refs else entry
         base, src = stop_beyond(zones, ref, entry, direction, atr, exit.get('stop_src', 'beyond the extreme'),
                                 plan.get('symbol'))
-        pad = overshoot(plan.get('symbol'), kind_at(zones, base) or kind_of_label(src, plan.get('tf', '15m')), base)
-        stop, sl_src = base - direction * pad, f"{src} + measured pierce {pad / base:.2%}"
+        pad, how = zone_pad(plan, overshoot(plan.get('symbol'), kind_at(zones, base)
+                                            or kind_of_label(src, plan.get('tf', '15m')), base))
+        stop, sl_src = base - direction * pad, f"{src} + {how} {pad / base:.2%}"
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
     risk = direction * (entry - stop)

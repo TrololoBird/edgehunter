@@ -566,3 +566,6 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   stay); the planned targets that sit on such lower-timeframe zones are dropped at the entry (`_ltf_prices`) and the
   slots refilled from the allowed zones; the spacing / ATR steps use max(15m ATR, the leg's, the structure
   timeframe's ATR) - entry_levels, system_levels, exit_target's map branch.
+- eng-69 (2026-10-05, the owner: "stops beyond the zone with a 3-5% margin"): the buffer beyond a stop's structure is
+  max(the measured pierce, `levels.zone_buffer_atr` (1.5) x the ATR of the structure's own timeframe)
+  (`geometry.zone_pad`: stop_levels, the systems' 'ref' stops and the ICT protected-swing stop); `sl_src` names which.
