@@ -382,10 +382,11 @@ def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: in
         # a system entering at its signal's close (_confirm_plan) has no planned targets yet: the map's TP1 as of the
         # entry (eng-57, the cloud session's eng-44 fix d90605a: 'map' read the empty list, so trendline and oi_signal
         # never made a plan - journaled 'no_target'); Edwards & Magee: the next support / resistance on the map
-        targets, sources = select_targets(htf_zones(plan.get('zones') or [], plan.get('tf')), entry, direction,
+        tz = htf_zones(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'))
+        targets, sources = select_targets(tz, entry, direction,
                                           max(exit.get('atr') or plan.get('atr') or risk, plan.get('tf_atr') or 0.0),
                                           'opposite_liquidity')
-    ltf = _ltf_prices(plan.get('zones') or [], plan.get('tf'), direction)
+    ltf = _ltf_prices(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'), direction)
     ahead = [(t, s) for t, s in zip(targets, sources) if direction * (t - entry) > 0 and s != 'ATR step'
              and not any(abs(t - p) <= 1e-9 * max(abs(t), 1.0) for p in ltf)]
     if not ahead:
@@ -395,7 +396,8 @@ def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: in
 
 
 def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, floor: float,
-                   symbol: Optional[str] = None, tf: str = '15m') -> Optional[Tuple[float, str]]:
+                   symbol: Optional[str] = None, tf: str = '15m',
+                   tf_atr: Optional[float] = None) -> Optional[Tuple[float, str]]:
     """
     Stop beyond the nearest price-action structure on the stop side (swings, equal highs / lows, previous day / week /
     sessions, range edges, round numbers, book bands) that leaves at least `floor` of risk, pushed beyond a stop pool
@@ -412,7 +414,9 @@ def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, 
             continue
         kind = next((k for k in z.kinds if k in ('equal', 'pdhl', 'round', 'swing_1h', 'swing_15m')), 'swing_15m')
         measured = overshoot(symbol, kind, edge)
-        if measured is not None:
+        if measured is not None or tf_atr:
+            # eng-69: beyond the structure by max(measured pierce, zone_buffer_atr x the structure timeframe's ATR)
+            measured = max(measured or 0.0, cfg.zone_buffer_atr * (tf_atr or 0.0))
             # measured buffer; no minimum and no maximum: a structure too far away makes the entry low_rr
             cands.append((direction * (entry - edge) + measured, edge, z, measured))
         else:
@@ -454,10 +458,11 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
                 'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,
                 'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': exit.get('stop_src', 'the system stop')}
     floor = stop_floor(max(atr, plan['atr'], plan.get('tf_atr') or 0.0), plan.get('recent_atr'))
-    zones: List[Zone] = htf_zones(plan.get('zones') or [], plan.get('tf'))
+    zones: List[Zone] = htf_zones(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'))
     fixed_stop = exit['stop'][0] in ('pct', 'atr')
     fixed_tp = exit['tp'][0] in ('pct', 'rr')
-    structural = structure_stop(zones, entry, direction, atr, floor, plan.get('symbol'), plan.get('tf', '15m')) \
+    structural = structure_stop(zones, entry, direction, atr, floor, plan.get('symbol'), plan.get('tf', '15m'),
+                                plan.get('tf_atr')) \
         if fixed_stop else None
     prot = plan.get('protected')
     if structural is not None and prot is not None and direction * (entry - prot) > 0 \
@@ -539,7 +544,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
         return None
     # targets are spaced in the structure's own ATR and drawn from its timeframe's zones and higher
     atr = max(plan.get('leg_atr') or plan['atr'], plan.get('tf_atr') or 0.0)
-    tf_zones = htf_zones(plan.get('zones') or [], plan.get('tf'))
+    tf_zones = htf_zones(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'))
     if plan.get('retarget'):
         # Continuation: re-measured from the real entry. The impulse's objectives are the TREND-BASED extension:
         # the impulse A->B projected from the pullback's extreme C (C + k x |B - A|), not from A (eng-42)
@@ -556,7 +561,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
             ratios = dict(zip(fillers, CONFIG.levels.continuation_targets))
             sources = [_ext_label(t, s, ratios, plan, direction) for t, s in zip(targets, sources)]
     else:
-        ltf = _ltf_prices(plan.get('zones') or [], plan.get('tf'), direction)
+        ltf = _ltf_prices(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'), direction)
         ahead = [(t, s) for t, s in zip(plan['targets'], plan['target_src']) if direction * (t - entry) > 0
                  and not any(abs(t - p) <= 1e-9 * max(abs(t), 1.0) for p in ltf)]
         kept: List[Tuple[float, str]] = []

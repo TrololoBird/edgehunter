@@ -21,7 +21,7 @@ from typing import Dict, Optional, Sequence
 from config import CONFIG
 from levels import MINUTE_MS, resample
 from strategies.base import PlanInput, Strategy, base_plan
-from strategies.geometry import select_targets
+from strategies.geometry import htf_zones, select_targets
 from zones import merge
 
 QUARTER_MS = 900_000
@@ -198,7 +198,10 @@ class PumpStartStrategy(Strategy):
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         move = close - sig['pump_low']
         fillers = (close + move, close + 1.618 * move)
-        targets, sources = select_targets(zones, close, 1, atr, 'extension', fillers, 'measured move')
+        # eng-69: the stop spans the whole ignition, so the targets cannot be the nearest 15m swing / FVG (live eng-60:
+        # TP1 at 0.56 of the risk, every entry low_rr) - the measured move and 1h+ zones only
+        targets, sources = select_targets(htf_zones(zones, '1h'), close, 1, max(atr, x.tf_atr.get('1h') or 0.0),
+                                          'extension', fillers, 'measured move')
         anchor = {'type': 'level', 'tf': '15m', 'level': sig['anchor_level'], 'label': 'pump ignition',
                   'extreme': sig['pump_low'], 'ts': sig['anchor_ts']}
         plan = base_plan(x, self.name, anchor, '15m', entry='confirm', confirm_only=True,
@@ -208,6 +211,7 @@ class PumpStartStrategy(Strategy):
                                'stop_src': 'below the ignition'},
                          intent='extension', fillers=fillers, fill_label='measured move', targets=targets,
                          target_src=sources, zones=zones, key=(sig['anchor_ts'], 'start'))
+        plan['target_tf'] = '1h'                     # eng-69: targets from 1h+ zones (see above)
         plan['add_half'] = True                      # averaging 1:1 at half the way to the stop
         return plan
 

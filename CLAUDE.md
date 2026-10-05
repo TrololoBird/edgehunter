@@ -569,3 +569,6 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
 - eng-69 (2026-10-05, the owner: "stops beyond the zone with a 3-5% margin"): the buffer beyond a stop's structure is
   max(the measured pierce, `levels.zone_buffer_atr` (1.5) x the ATR of the structure's own timeframe)
   (`geometry.zone_pad`: stop_levels, the systems' 'ref' stops and the ICT protected-swing stop); `sl_src` names which.
+  Also `structure_stop` (the systems' fixed % / ATR stops replaced by the map) takes the same buffer; PUMP START targets
+  the measured move and 1h+ zones only (`plan['target_tf']`, honoured by every `htf_zones` call): its stop spans the
+  whole ignition, the nearest 15m zone gave TP1 at 0.56 of the risk (all 7 eng-60 entries `low_rr`).
