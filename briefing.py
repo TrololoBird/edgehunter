@@ -53,6 +53,15 @@ def _arrow(x: int) -> str:
     return {1: '↑', -1: '↓', 0: '→'}.get(x, '?')
 
 
+def _label_rank(label: str) -> int:
+    """Higher timeframes first: weekly / previous week, daily / previous day, 4h, 1h, sessions / profile, 15m."""
+    for k, r in (('1w', 0), ('PW', 0), ('week', 0), ('1d', 1), ('PD', 1), ('day', 2), ('4h', 2), ('POC', 3),
+                 ('VA', 3), ('1h', 4), ('Asia', 4), ('London', 4), ('New York', 4), ('EQ', 4), ('15m', 9)):
+        if k in label:
+            return r
+    return 5
+
+
 def macro_today(now: datetime) -> List[Tuple[datetime, str]]:
     """Today's (MSK) US releases: the calendar's dated CPI / FOMC plus the regular ones by their publication rule
     (NFP the first Friday 08:30 NY, ISM manufacturing the first business day 10:00, ISM services the third business
@@ -132,16 +141,28 @@ class Briefing:
         zs = [z for z in htf_zones(zs, '1h') if abs(z.price - price) <= self.cfg.span_atr_1d * atr1d]
         if not zs:
             return price, []
-        cut = sorted(z.strength for z in zs)[len(zs) // 3]            # the stronger two thirds
-        strong = [z for z in zs if z.strength >= cut]
-        above = sorted([z for z in strong if z.lo > price], key=lambda z: z.lo)[:3]
-        below = sorted([z for z in strong if z.hi < price], key=lambda z: -z.hi)[:3]
-        inside = [z for z in zs if z.lo <= price <= z.hi]
+        # one zone per place: overlapping / nearly touching zones coalesce (a briefing reads levels a trader can act on,
+        # not the map's every merge), labels by timeframe (weekly first)
+        gap = 0.25 * (tf.get('4h') or atr1d / 2.5)
+        merged: List[Dict] = []
+        for z in sorted(zs, key=lambda z: z.lo):
+            if merged and z.lo <= merged[-1]['hi'] + gap:
+                m = merged[-1]
+                m['hi'] = max(m['hi'], z.hi)
+                m['strength'] = max(m['strength'], z.strength)
+                m['labels'] += [l for l in z.labels if l not in m['labels']]
+            else:
+                merged.append({'lo': z.lo, 'hi': z.hi, 'strength': z.strength, 'labels': list(z.labels)})
+        cut = sorted(m['strength'] for m in merged)[len(merged) // 3]  # the stronger two thirds
+        inside = [m for m in merged if m['lo'] <= price <= m['hi']]
+        above = sorted([m for m in merged if m['lo'] > price and m['strength'] >= cut], key=lambda m: m['lo'])[:3]
+        below = sorted([m for m in merged if m['hi'] < price and m['strength'] >= cut], key=lambda m: -m['hi'])[:3]
         out = []
         for side, group in ((1, above[::-1]), (0, inside[:1]), (-1, below)):
-            for z in group:
-                out.append({'lo': z.lo, 'hi': z.hi, 'side': side, 'strength': z.strength,
-                            'label': ' · '.join(z.labels[:4])})
+            for m in group:
+                labels = sorted(m['labels'], key=_label_rank)
+                out.append({'lo': m['lo'], 'hi': m['hi'], 'side': side, 'strength': m['strength'],
+                            'label': ' · '.join(labels[:4])})
         return price, out
 
     # ------------------------------------------------------------------ briefing
