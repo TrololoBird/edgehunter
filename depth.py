@@ -128,7 +128,7 @@ class DepthBook:
     def set_snapshot(self, symbol: str, snapshot: Dict, now: Optional[float] = None):
         """REST /fapi/v1/depth (limit 1000): the book from lastUpdateId, then the buffered events."""
         book = self.books.get(symbol)
-        if book is None:
+        if book is None or book.synced:          # a second request that returned after the book synced
             return
         last_id = int(snapshot.get('lastUpdateId') or 0)
         events = [e for e in book.buffer if int(e.get('u', 0)) >= last_id]
@@ -168,7 +168,7 @@ class DepthBook:
 
     @staticmethod
     def _resync(book: BookState):
-        book.synced, book.snapshot_wanted, book.buffer = False, True, []
+        book.synced, book.snapshot_wanted, book.buffer, book.pending = False, True, [], None
         book.resyncs += 1
 
     def _apply(self, book: BookState, event: Dict, now: float, count: bool = True):
