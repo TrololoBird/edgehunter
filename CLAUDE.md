@@ -516,3 +516,12 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   models/profiles.json. replay.py switches the profiles off (it measures the methods' own plans). Profile filters are
   skipped (logged) when the indicator panel is missing. docs/CLOUD_OPTIMIZE.md: the 120 coins x 24 months job
   (research_replay_summary.py, OPT_TRAIN_MONTHS / OPT_PREFIX / OPT_PROFILES).
+- eng-64 (2026-10-05, web-checked: the OI price/OI quadrants - Bookmap, Traders Log; Trader Dale's level + order-flow
+  timing): `oi` is a confirmation of every method by its type (strategies/confirm.OI_EXPECT: breaks / continuations /
+  pump / OI signal / trendline / cup expect OI rising - new positions; fades - Bollinger W/M, market_profile, Seiden,
+  Connors, sweep, wyckoff - expect it falling: the move faded was positions closing); journaled, required only when
+  proven. The order-flow entry in the zone (`SignalBook._flow_entry`, Dale: absorption / imbalance / finished auction
+  at the level + the delta since the zone's extreme turned the trade's way, + OI as the type expects) is journaled as
+  a vetoed entry `flow_entry` of the same card (once per card, only in a scan where the method's own trigger did not
+  enter) so the journal compares the two entries. Hot set: free order-book slots go to coins with a setup in the last
+  3h, then the pinned coins (the close-entry systems had no synced book at their entry; 13 of 25 slots were used).

@@ -32,7 +32,11 @@ from config import CONFIG
 
 NAMES = ('flow', 'spot', 'oi', 'orderflow', 'vsa')
 NA = 'n/a'
-OI_EXPECT = {'continuation': 1, 'breakout': 1, 'sweep': -1, 'wyckoff': -1}
+OI_EXPECT = {'continuation': 1, 'breakout': 1, 'sweep': -1, 'wyckoff': -1,
+             # 2026-10-05: every method gets the reading its type implies (journaled; required only when proven):
+             # breaks and momentum need new positions behind them, fades of an extreme need them flushed
+             'orb': 1, 'pump': 1, 'oi_signal': 1, 'trendline': 1, 'cup_handle': 1,
+             'bollinger': -1, 'market_profile': -1, 'supply_demand': -1, 'connors': -1}
 REVERSALS = ('wyckoff', 'sweep')
 MINUTE_MS = 60_000
 HOUR_MS = 3_600_000

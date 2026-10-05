@@ -189,6 +189,9 @@ class TrackedSignal:
     armed: Optional[dict] = None
     # eng-59: the last trigger time of the replaced rule journaled beside the card ('weak_mss' / 'variant_shift')
     shadow_ms: int = 0
+    # the order-flow entry in the zone (SignalBook._flow_entry): checked once a minute, journaled once per card
+    flow_checked_ms: int = 0
+    flow_done: bool = False
 
     @property
     def finished(self) -> bool:
@@ -735,6 +738,10 @@ class SignalBook:
             entry = self._try_entry(s, price, now_ms, candles_of, confirm_of)
             if entry is not None:
                 return entry
+            # the order-flow entry is journaled only when the method's own trigger did not enter this scan
+            flow = self._flow_entry(s, list(candles_of(s.symbol)), now_ms, price, confirm_of)
+            if flow is not None:
+                return flow
             if now_ms - s.zone_since_ms > zone_ttl * 1000:
                 self._finish(s, 'EXPIRED', now, f"no valid {plan['trigger_minutes']}m trigger in the zone "
                              f"for {_dur(zone_ttl)}" + (f" ({s.vetoed_triggers} vetoed)" if s.vetoed_triggers else ''))
@@ -959,6 +966,44 @@ class SignalBook:
         shadow = copy.copy(s)
         shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, reason
         shadow.of_confirm, shadow.confirms = None, {}
+        return shadow
+
+    def _flow_entry(self, s: TrackedSignal, minutes, now_ms: int, price: float,
+                    confirm_of: Optional[ConfirmCheck]) -> Optional[TrackedSignal]:
+        """
+        The order-flow entry in the zone (2026-10-05, the owner: "we look for the best entry point in the zone"),
+        journaled beside the method's own trigger on the same card (vetoed 'flow_entry', never traded) so the journal
+        compares the two: once a minute while the card is in its zone, the confirmations since the zone was reached
+        - an order-flow reading (absorption, stacked imbalance or a finished auction at the extreme), the taker
+        delta since the zone's extreme turned the trade's way, and OI as the method's type expects (rising for
+        breaks / continuations, falling for fades; 'n/a' where a method has no OI hypothesis). All three -> an
+        entry at the price with the stop beyond the zone's extreme (the plan's own geometry), once per card.
+        """
+        if s.flow_done or not confirm_of or not s.zone_since_ms or not minutes:
+            return None
+        minute = int(minutes[-1][0]) + MINUTE_MS            # the end of the last final minute
+        if minute <= s.flow_checked_ms or minute - s.zone_since_ms < 3 * MINUTE_MS:
+            return None
+        s.flow_checked_ms = minute
+        d = s.direction
+        since = [c for c in minutes if c[0] >= s.zone_since_ms]
+        if not since:
+            return None
+        ext_bar = min(since, key=lambda c: c[3]) if d > 0 else max(since, key=lambda c: c[2])
+        extreme = ext_bar[3] if d > 0 else ext_bar[2]
+        c = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, minute, int(ext_bar[0]))
+        if not c or not confirm.positive(c.get('orderflow')) or c.get('flow') is not True \
+                or c.get('oi') not in (True, confirm.NA):
+            return None
+        levels = entry_levels(s.plan, price, extreme, d)
+        if not levels or d * (price - levels['sl']) <= 0:
+            return None
+        s.flow_done = True
+        levels['zone_src'] = s.plan.get('zone_src')
+        levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], d)
+        shadow = copy.copy(s)
+        shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, 'flow_entry'
+        shadow.of_confirm, shadow.confirms = c.get('orderflow'), dict(c)
         return shadow
 
     def _against_day(self, s: TrackedSignal, at_ms: int) -> Optional[str]:

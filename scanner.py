@@ -130,6 +130,7 @@ class Scanner:
         self._previous_keys: Set[Tuple[str, str]] = set()
         # Heavy-pass cache: closed-candle rows per symbol, the closed futures indicator frame, its signature
         self._rows: Dict[str, Dict] = {}
+        self._recent_setup: Dict[str, int] = {}     # symbol -> ms of its last detected setup (hot-set filler)
         # pretrain.py run by pretrain_loop, the loaded pretrained models' metadata, and the retry pause after a failure
         self._pretrain_proc = None
         self._pretrained_meta: Optional[Dict] = None
@@ -410,6 +411,18 @@ class Scanner:
             s in wanted or now - self.market_data[s].tier2_wanted_at < cfg.tier2_hold_sec
             or now - self.market_data[s].tier2_since < cfg.tier2_min_age_sec)]
         slots = CONFIG.depth.max_symbols
+        # free slots: coins with a setup in the last 3 hours (most recent first), then the pinned coins - the systems
+        # entering at their signal's close (ORB, VA80, Bollinger, pump) never had a waiting card, so their coin had no
+        # synced book at the entry (2026-10-05: 13 of 25 slots used, `_book` missing on nearly every entry)
+        now_ms = int(now * 1000)
+        fillers = [s for s, t in sorted(self._recent_setup.items(), key=lambda kv: -kv[1])
+                   if now_ms - t <= 3 * 3_600_000 and s in self.market_data]
+        pinned = set(CONFIG.exchange.pinned_bases)
+        fillers += [s for s in self.market_data if s.split('/')[0] in pinned]
+        for s in fillers:
+            if len(wanted) >= slots:
+                break
+            wanted.setdefault(s, 6)
         ranked = sorted(wanted.items(), key=lambda kv: (kv[1], kv[0]))
         new = list(keep)
         for symbol, priority in ranked:
@@ -673,6 +686,8 @@ class Scanner:
             bands = self.fetcher.depth.liquidity_bands(symbol)
             setups = self.detector.scan(symbol, self._minute_candles(symbol), md.tier0, now_ms, bands)
             setups.extend(self.loopside.scan(symbol, md, now_ms))
+            if setups:
+                self._recent_setup[symbol] = now_ms
             for setup in setups:
                 sig = dict(md.tier0)
                 sig.update(is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
