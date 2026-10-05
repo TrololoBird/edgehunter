@@ -28,10 +28,31 @@ def _ms(date: str, hm: str) -> int:
 TIMES = tuple((_ms(d, t), name) for d, t, name in EVENTS)
 
 
+# eng-72: the week's calendar from ForexFactory (nfs.faireconomy.media/ff_calendar_thisweek.json, hourly, fetcher):
+# [(ms, title, impact)] of USD events. High-impact ones join the blackout (the hand list above held CPI / FOMC only;
+# NFP / ISM / PCE / GDP were missing, and their dates were guessed by rule in the briefing)
+LIVE: list = []
+
+
+def set_live(rows) -> None:
+    global LIVE
+    out = []
+    for r in rows or []:
+        if r.get('country') != 'USD' or r.get('impact') not in ('High', 'Medium'):
+            continue
+        try:
+            t = int(datetime.fromisoformat(r['date']).timestamp() * 1000)
+        except (KeyError, ValueError):
+            continue
+        out.append((t, r.get('title') or '?', r['impact']))
+    if out:
+        LIVE = sorted(out)
+
+
 def blackout(now_ms: float):
     """The release whose window `now_ms` falls in, else None."""
     cfg = CONFIG.levels
-    for t, name in TIMES:
+    for t, name in list(TIMES) + [(t, n) for t, n, imp in LIVE if imp == 'High']:
         if t - cfg.macro_before_min * 60_000 <= now_ms <= t + cfg.macro_after_min * 60_000:
             return name
     return None

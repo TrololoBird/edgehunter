@@ -612,3 +612,9 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   floor (`exit['pad']` in the trail branch of system_levels: BTC's stop sat 0.08% away and the cost guard vetoed it);
   (3) VA80 skips a value area already traversed (< 0.3 of its width left to the far edge: TP1 0.06-0.15% away);
   (4) PUMP START min R:R 1 (stop = the ignition, TP1 = its measured move: R:R ~1 by construction, 2 vetoed all).
+- eng-72 (2026-10-06): `fetcher._external_loop` - ForexFactory's week calendar hourly (`macro_calendar.LIVE`, USD high /
+  medium; HIGH-impact events join the entry blackout beside the dated CPI / FOMC - NFP / PCE / GDP / minutes were
+  missing; the briefing lists the real events instead of the publication rules) and Deribit every 5 min (DVOL of BTC /
+  ETH -> the day's priced move DVOL / sqrt(365); every 30 min the option OI by strike of the two nearest expiries,
+  `fetcher.options`): briefing context only. The funding interval was already handled (`_funding_info` normalises every
+  rate to 8h), so R needs no change there.

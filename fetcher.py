@@ -378,6 +378,29 @@ def _pct_change(samples: deque, now_ms: float, window_ms: float) -> Optional[flo
     return last / base - 1 if base else None
 
 
+def _top_strikes(rows: list, n: int = 4) -> list:
+    """The strikes holding the most option open interest (in coins) over the two nearest Deribit expiries:
+    [(strike, oi, calls share, expiry 'DDMMMYY')]."""
+    by_exp: Dict[str, Dict[float, list]] = {}
+    for r in rows:
+        parts = (r.get('instrument_name') or '').split('-')      # BTC-27DEC26-90000-C
+        if len(parts) != 4 or not r.get('open_interest'):
+            continue
+        k = by_exp.setdefault(parts[1], {}).setdefault(float(parts[2]), [0.0, 0.0])
+        k[0 if parts[3] == 'C' else 1] += float(r['open_interest'])
+    import datetime as _dt
+    def exp_key(s):
+        try:
+            return _dt.datetime.strptime(s, '%d%b%y')
+        except ValueError:
+            return _dt.datetime.max
+    out = []
+    for exp in sorted(by_exp, key=exp_key)[:2]:
+        for strike, (c, p) in by_exp[exp].items():
+            out.append((strike, c + p, c / (c + p) if c + p else 0.0, exp))
+    return sorted(out, key=lambda x: -x[1])[:n]
+
+
 class DataFetcher:
     """
     Binance REST (ccxt, through RestGate) for candle history, OI and journal outcomes; own WebSocket clients
@@ -392,6 +415,7 @@ class DataFetcher:
     FUNDING_INFO_REFRESH_SEC = 3600
 
     def __init__(self):
+        self.options: Dict[str, Dict] = {}        # eng-72: Deribit DVOL / strikes of BTC, ETH
         self.spot_exchange: Optional[ccxt.Exchange] = None
         # Universe selection inputs (fetch_candidates) and the market baseline's mark prices (every USDT perpetual)
         self.spreads: Dict[str, float] = {}
@@ -1333,6 +1357,52 @@ class DataFetcher:
                 errors.report('fetcher.dominance', e)
             await asyncio.sleep(300)
 
+    async def _external_loop(self):
+        """
+        eng-72, public sources off the Binance REST budget (urllib in a thread; the funding interval is already handled:
+        _funding_info normalises every rate to 8h):
+        - ForexFactory's week calendar hourly (macro_calendar.LIVE: USD high / medium events; the high ones join the
+          entry blackout, the briefing lists them);
+        - Deribit every 5 min: DVOL (30-day implied volatility) of BTC / ETH, and every 30 min the option open interest
+          by strike of the nearest expiries (self.options: context for the briefing - unproven as levels).
+        """
+        import urllib.request
+        import macro_calendar
+
+        def get(url):
+            req = urllib.request.Request(url, headers={'User-Agent': 'pump-scanner'})
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                return json.load(resp)
+        last = {'cal': 0.0, 'strikes': 0.0}
+        while self._running:
+            now = time.time()
+            if now - last['cal'] > 3600:
+                try:
+                    macro_calendar.set_live(await asyncio.to_thread(
+                        get, 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'))
+                    last['cal'] = now
+                except Exception as e:
+                    errors.report('fetcher.calendar', e)
+            for cur in ('BTC', 'ETH'):
+                try:
+                    end = int(now * 1000)
+                    d = await asyncio.to_thread(get, 'https://www.deribit.com/api/v2/public/get_volatility_index_data'
+                                                f'?currency={cur}&resolution=3600&start_timestamp={end - 26 * 3_600_000}'
+                                                f'&end_timestamp={end}')
+                    data = (d.get('result') or {}).get('data') or []
+                    if data:
+                        o = self.options.setdefault(cur, {})
+                        o['dvol'], o['dvol_24h'] = data[-1][4], data[0][4]
+                    if now - last['strikes'] > 1800:
+                        b = await asyncio.to_thread(get, 'https://www.deribit.com/api/v2/public/get_book_summary_by_'
+                                                    f'currency?currency={cur}&kind=option')
+                        self.options.setdefault(cur, {})['strikes'] = _top_strikes(b.get('result') or [])
+                except Exception as e:
+                    errors.report('fetcher.deribit', e, cur)
+            if now - last['strikes'] > 1800:
+                last['strikes'] = now
+            await asyncio.sleep(300)
+
     def htf_bias(self, md: 'MarketData', now_ms: float) -> Optional[Dict]:
         """The top-down bias of the coin and of BTC (strategies/bias.py) from their closed daily / 4h / weekly candles:
         {'coin': {...}, 'btc': {...}, 'range_mid': the coin's 20-day range middle}."""
@@ -1628,6 +1698,7 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._daily_candles_loop()))
         self._tasks.append(asyncio.create_task(self._day_pocs_loop()))
         self._tasks.append(asyncio.create_task(self._dominance_loop()))
+        self._tasks.append(asyncio.create_task(self._external_loop()))
         self._tasks.append(asyncio.create_task(self._h4_candles_loop()))
 
     async def _start_binance_streams(self, symbols: List[str]):

@@ -69,6 +69,10 @@ def macro_today(now: datetime) -> List[Tuple[datetime, str]]:
     day 10:00, jobless claims every Thursday 08:30) - rules, not a published calendar: holidays / shutdowns move them."""
     import macro_calendar
     day = now.astimezone(MSK).date()
+    if macro_calendar.LIVE:
+        # eng-72: the real week calendar (ForexFactory, USD high / medium impact) replaces the publication rules
+        return [(datetime.fromtimestamp(t / 1000, MSK), f"{name}{' ❗' if imp == 'High' else ''}")
+                for t, name, imp in macro_calendar.LIVE if datetime.fromtimestamp(t / 1000, MSK).date() == day]
     out = []
     for t, name in macro_calendar.TIMES:
         dt = datetime.fromtimestamp(t / 1000, MSK)
@@ -264,6 +268,15 @@ class Briefing:
         # research_sessions.py (12 months to 2026-09): the NY cash open's first 30 min move BTC 2.5x / alts 1.8x a
         # usual half hour, direction ~50/50; 08:30 NY (releases) 1.35x; Tokyo / London no larger than other times
         out.append('Открытие NY (16:30 МСК): первые 30 мин BTC ×2.5, альты ×1.8 обычной амплитуды, направление ~50/50')
+        # Deribit (eng-72): DVOL = the 30-day implied volatility; the move it prices for one day = DVOL / sqrt(365)
+        for cur, o in sorted((getattr(self.sc.fetcher, 'options', None) or {}).items()):
+            if o.get('dvol'):
+                line = (f"Опционы {cur}: DVOL {o['dvol']:.0f} ({o['dvol'] - (o.get('dvol_24h') or o['dvol']):+.1f} за сутки)"
+                        f" → рынок закладывает ±{o['dvol'] / 365 ** 0.5:.1f}% за день")
+                if o.get('strikes'):
+                    line += '; крупный OI: ' + ', '.join(f"{_fmt(k)} ({'колл' if c >= 0.6 else 'пут' if c <= 0.4 else 'смеш.'}, "
+                                                        f"{e})" for k, _, c, e in o['strikes'][:3])
+                out.append(line)
         events = macro_today(datetime.now(MSK))
         if events:
             out.append('Макро сегодня (МСК): ' + ', '.join(f"{dt:%H:%M} {name}" for dt, name in events))
