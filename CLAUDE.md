@@ -536,3 +536,16 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   decides"; research/htf_filter.md): the coin's daily / 4h / weekly trend and 4h trend-vs-range change no strategy's
   mean R (0 of ~50 cells kept); continuation's entries run AGAINST the daily trend ~90% of the time (its tide is the
   1h / 4h). BTC / USDT dominance (CoinGecko /global, 5 min) journaled as `_dom`; market state carries `btc_4h`.
+- eng-66 (2026-10-05, the owner: "the higher timeframe always comes first"; web-checked: Elder's triple screen, ICT
+  top-down bias, Weinstein / Shannon stages, time-series momentum, range trading): strategies/bias.py - per coin and
+  for BTC the tide = the momentum blend (sign mean of the 30 / 90 / 365-day returns) + the daily trend (close vs EMA50
+  and its 5-day slope) for intraday methods, + the weekly (close vs EMA20) for daily methods (Connors, cup); the 4h is
+  the WAVE (a pullback against the tide is the entry); 'range' = no daily trend and 4h ADX < 25; else 'conflict'.
+  Gate (SignalBook._enter): no altcoin trade against BTC's bias (`btc_bias`), none in a conflict (`htf_conflict`),
+  trend / with-bias methods only the tide's way, range methods (market_profile, bollinger, wyckoff) in a range both
+  ways (target capped at the 20-day range middle) and in a trend only its way (`htf_bias`); the Turtles and trendline
+  (a broken line signals a change of trend) are exempt. Journaled `_bias` (coin, btc, components). research_bias.py
+  (the rule fixed by the sources; the card's full final_r, by month and side; research/bias.md): the allowed trades
+  lose less in most strategies (+0.01..+0.24R) but no strategy passes the pre-registered bar; the gate removes ~70% of
+  the (losing) trades. Methodology fixes (the owner's audit): full-trade outcomes instead of the 8h r_tp1, results by
+  month / side, fixed source rules instead of searches where possible; research_htf_filter's 8h verdict is void.

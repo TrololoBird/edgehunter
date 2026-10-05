@@ -47,7 +47,7 @@ from strategies.maniac_strategies import MANIAC_STRATEGIES
 
 MANIAC_NAMES = frozenset(s.name for s in MANIAC_STRATEGIES)
 from strategies import PlanInput, Strategy, strategy_of
-from strategies import confirm, profiles
+from strategies import bias as htf_bias, confirm, profiles
 from strategies.geometry import entry_levels
 
 logger = logging.getLogger(__name__)
@@ -903,6 +903,12 @@ class SignalBook:
                 reason = 'macro_event'
         if reason is None and not (s.plan or {}).get('trail_days') and self.crowded(s.mode, s.direction, entered_at):
             reason = 'crowded'
+        hb = (confirms or {}).get('_bias') or {}
+        if reason is None:
+            # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py)
+            key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
+            reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
+                                   (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/'))
         prof, regime_veto = profiles.select(s.mode, (confirms or {}).get('_regime'))
         if reason is None and regime_veto:
             reason = regime_veto
@@ -954,6 +960,12 @@ class SignalBook:
             s.plan = {**(s.plan or {}), 'pm': dict(prof['pm']), 'profile': prof.get('status', 'candidate'),
                       'pm_atr': confirms.get('_atr_1h'), 'pm_best': None, 'trail_after_tp1': False,
                       'no_tp': str(prof['pm'].get('target')) == 'none' or bool((s.plan or {}).get('no_tp'))}
+        mid = hb.get('range_mid')
+        if s.mode in htf_bias.RANGE and (hb.get('coin') or {}).get('bias') == 'range' and mid and not (prof and prof.get('pm')) \
+                and s.direction * (mid - levels['entry']) > 0 and s.direction * (levels['tp1'] - mid) > 0:
+            # a range trade is out at the range's middle (the higher timeframe's range, 20 days)
+            levels.update(tp1=mid, tp2=mid, tp3=mid, tp1_src='range middle (HTF)', tp2_src='range middle (HTF)',
+                          tp3_src='range middle (HTF)')
         levels['risk0'] = abs(levels['entry'] - levels['sl'])
         overlays = profiles.exit_overlays(s.mode, 'profile' if prof and prof.get('pm') else 'plan')
         if overlays:

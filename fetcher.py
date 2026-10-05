@@ -1333,6 +1333,26 @@ class DataFetcher:
                 errors.report('fetcher.dominance', e)
             await asyncio.sleep(300)
 
+    def htf_bias(self, md: 'MarketData', now_ms: float) -> Optional[Dict]:
+        """The top-down bias of the coin and of BTC (strategies/bias.py) from their closed daily / 4h / weekly candles:
+        {'coin': {...}, 'btc': {...}, 'range_mid': the coin's 20-day range middle}."""
+        from strategies import bias as htf
+        try:
+            out = {}
+            for tag, m in (('coin', md), ('btc', self.markets.get('BTC/USDT:USDT'))):
+                if m is None:
+                    continue
+                st = htf.state(htf.closed(list(m.d1), 86_400_000, now_ms), htf.closed(list(m.h4), 14_400_000, now_ms),
+                               htf.closed(list(m.w1), 7 * 86_400_000, now_ms))
+                out[tag] = htf.describe(st, htf.bias_of(st))
+                out[tag]['bias_daily'] = htf.bias_of(st, daily_method=True)     # the tide of daily methods
+                if tag == 'coin':
+                    out['range_mid'] = htf.range_mid(st)
+            return out
+        except Exception as e:
+            errors.report('fetcher.htf_bias', e, md.symbol)
+            return None
+
     def dominance_reading(self) -> Optional[Dict]:
         """{btc_d, usdt_d, btc_d_1h, usdt_d_1h, btc_d_4h, usdt_d_4h} (changes in percentage points) or None."""
         if not self.dominance:
@@ -1980,6 +2000,7 @@ class DataFetcher:
         out['_ind'] = self.indicator_panel(md, direction, until_ms)
         out['_btc_slope'], out['_atr_1h'] = self.profile_context(md)
         out['_dom'] = self.dominance_reading()
+        out['_bias'] = self.htf_bias(md, until_ms)
         btc = self.markets.get('BTC/USDT:USDT')
         try:
             from strategies.profiles import btc_regime

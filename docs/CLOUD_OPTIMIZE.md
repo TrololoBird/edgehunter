@@ -61,3 +61,12 @@ Read `CLAUDE.md` (eng-61 / eng-62 at its end) and `research/optimize.md`, `resea
 6. **Report** `research/CLOUD_OPTIMIZE_SUMMARY.md` (Russian, for the owner): per strategy - the best profile, train vs
    validation R, trades per month, verdict; which regimes; what changed against the laptop's 40 x 12 run; anything
    that did not work. Then push.
+
+7. **Methodology of every study (the owner's audit, 2026-10-05)**: outcomes over the WHOLE trade (the card's `final_r`)
+   and fixed horizons 8 / 24 / 72h side by side - never the 8h `r_tp1` alone for a daily rule; passed entries as the
+   main sample (vetoed ones apart); rolling walk-forward (3 months train -> 1 month test, rolled monthly) instead of one
+   split, with PBO by CSCV over the searched configurations; >= 100 trades for a verdict; results by month, by market
+   phase (BTC up / down / flat) and by side. Coins picked by their volume AT the time (delisted ones included).
+8. **Re-run on the 24-month replay**: `research_bias.py` (top-down bias, fixed rule), `research_overlays.py` (early
+   exits), `research_htf_filter.py` (replace its 8h `r_tp1` by the card's `final_r`), each with the summary path of
+   step 1; report them in the summary.
