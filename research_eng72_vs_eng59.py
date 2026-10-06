@@ -8,15 +8,16 @@ research/eng72_vs_eng59.md is written from them).
 - geometry and entries vs placebo come from research_geometry_audit.py / research_entry_edge.py run on each summary
   (research/geometry_audit[_eng72].md, research/entry_edge[_eng72].md), quoted by the report.
 
-    python research_eng72_vs_eng59.py research/replay_summary.parquet research/replay_summary_eng72.parquet > tables.md
+    python research_eng72_vs_eng59.py > tables.md   (research/replay_summary.parquet vs research/replay_summary_eng72.parquet)
 """
 import random
-import sys
 
 import numpy as np
 import polars as pl
 
 H4 = 4 * 3_600_000
+OLD = 'research/replay_summary.parquet'
+NEW = 'research/replay_summary_eng72.parquet'
 
 
 def boot(r, cl, n=2000, seed=11):
@@ -65,7 +66,7 @@ def fmt(x, s='+.3f'):
 
 
 def main():
-    old, new = sys.argv[1], sys.argv[2]
+    old, new = OLD, NEW
     out = []
     data = {'eng-59': cards(old), 'eng-72': cards(new)}
     sums = {k: {(r['strategy'], r['side']): r for r in summary_rows(v)} for k, v in data.items()}

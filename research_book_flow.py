@@ -48,7 +48,6 @@ import logging
 import os
 import random
 import re
-import urllib.request
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 
@@ -68,7 +67,7 @@ DAY = 86_400_000
 H4 = 4 * 3_600_000
 FEATURES = ['imb1_with', 'imb2_with', 'opp_thinned', 'delta15_with', 'delta_ext_with', 'stacked', 'absorption',
             'finished_auction']
-BASE = 'https://data.binance.vision/data/futures/um/daily'
+RUN = os.path.join('data', 'replay', 'eng72')
 OUT = os.path.join('research', 'book_flow_archive.md')
 SYMBOL = re.compile(r'^[A-Z0-9]{2,20}USDT$')
 
@@ -90,24 +89,17 @@ def book_day(arch: Archive, fid: str, d: date):
     return tuple(df[c].to_numpy().astype(np.float64) for c in ('ts', cols[-1.0], cols[1.0], cols[-2.0], cols[2.0]))
 
 
-def agg_day(fid: str, d: date):
-    """aggTrades of one day (not cached: ~5-25 MB a day per coin) -> (ts_ms, price, usd, side +1 taker buy)."""
+def agg_day(arch: Archive, fid: str, d: date):
+    """aggTrades of one day -> (ts_ms, price, usd, side +1 taker buy); read through the archive's cache and deleted
+    right after (~5-25 MB a day per coin would not fit the disk)."""
     if not SYMBOL.match(fid):
         return None
-    url = f"{BASE}/aggTrades/{fid}/{fid}-aggTrades-{d.isoformat()}.zip"
-    for attempt in range(5):
-        try:
-            with urllib.request.urlopen(url, timeout=120) as r:
-                data = r.read()
-            break
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None
-        except Exception as e:  # network: retry
-            log.info(f"aggTrades {fid} {d}: {type(e).__name__} {e}, retry")
-        import time
-        time.sleep(2 ** attempt)
-    else:
+    path = f"futures/um/daily/aggTrades/{fid}/{fid}-aggTrades-{d.isoformat()}.zip"
+    data = arch._fetch(path)
+    local = os.path.join(arch.cache_dir, *path.split('/'))
+    if os.path.exists(local):
+        os.remove(local)
+    if data is None:
         return None
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         raw = zf.read(zf.namelist()[0])
@@ -225,7 +217,6 @@ def boot_did(rows, feat, n_boot=2000, seed=11):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--run', default=os.path.join('data', 'replay', 'eng72'))
     ap.add_argument('--groups', type=int, default=6, help='the run\'s first N groups = the 30 most liquid coins')
     ap.add_argument('--start', default='2026-04-01')
     ap.add_argument('--end', default='2026-09-30')
@@ -237,7 +228,7 @@ def main():
     s_ms, e_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
     ents, cards = [], []
     for g in range(args.groups):
-        for path in glob.glob(os.path.join(args.run, f'group_{g:02d}', '**', 'entries.parquet'), recursive=True):
+        for path in glob.glob(os.path.join(RUN, f'group_{g:02d}', '**', 'entries.parquet'), recursive=True):
             ents.append(pl.read_parquet(path))
             cards.append(pl.read_parquet(path.replace('entries.parquet', 'cards.parquet')))
     ent = pl.concat(ents, how='diagonal_relaxed').filter(
@@ -277,7 +268,7 @@ def main():
         for day in days:
             books[day] = book_day(arch, fid, day)
         for day in days:
-            trades = {day: agg_day(fid, day)}
+            trades = {day: agg_day(arch, fid, day)}
             for kind, t, d, ext, r, cl in [p for p in probes
                                            if datetime.fromtimestamp(p[1] / 1000, tz=timezone.utc).date() == day]:
                 f = features(t, d, ext, m1, books, trades)
