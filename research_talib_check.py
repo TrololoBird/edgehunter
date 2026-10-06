@@ -16,7 +16,6 @@ Also: how often the entry panel's boolean rules (strategies/ind_panel.rules) cha
 Output: research/talib_check.md. Changes nothing in the bot.
 """
 import os
-import sys
 from datetime import date
 
 import numpy as np
@@ -147,7 +146,7 @@ def main():
             '| rule | changed | of | share |', '|---|---:|---:|---:|']
     for rname, (a, b) in sorted(flips.items(), key=lambda x: -x[1][0]):
         out.append(f'| {rname} | {a} | {b} | {a / max(b, 1):.1%} |')
-    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join('research', 'talib_check_data.md')
+    path = os.path.join('research', 'talib_check_data.md')
     with open(path, 'w', encoding='utf-8') as fh:
         fh.write('\n'.join(out) + '\n')
     print('\n'.join(out))
