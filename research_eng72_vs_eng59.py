@@ -10,7 +10,6 @@ research/eng72_vs_eng59.md is written from them).
 
     python research_eng72_vs_eng59.py > tables.md   (research/replay_summary.parquet vs research/replay_summary_eng72.parquet)
 """
-import random
 
 import numpy as np
 import polars as pl
@@ -27,11 +26,11 @@ def boot(r, cl, n=2000, seed=11):
     blocks = list(groups.values())
     if len(blocks) < 5:
         return None, None, len(blocks)
-    rng = random.Random(seed)
+    rng = np.random.default_rng(seed)
     k = len(blocks)
     means = []
     for _ in range(n):
-        vals = [v for _ in range(k) for v in blocks[rng.randrange(k)]]
+        vals = [v for _ in range(k) for v in blocks[int(rng.integers(k))]]
         means.append(float(np.mean(vals)))
     lo, hi = np.percentile(means, [5, 95])
     return lo, hi, k

@@ -46,7 +46,6 @@ import glob
 import io
 import logging
 import os
-import random
 import re
 import shutil
 import zipfile
@@ -206,8 +205,8 @@ def boot_did(rows, feat, n_boot=2000, seed=11):
         return (m[1, 1] - m[1, 0]) - (m[0, 1] - m[0, 0])
 
     est = stat(keys)
-    rng = random.Random(seed)
-    draws = np.array([stat([keys[rng.randrange(len(keys))] for _ in keys]) for _ in range(n_boot)])
+    rng = np.random.default_rng(seed)
+    draws = np.array([stat([keys[int(rng.integers(len(keys)))] for _ in keys]) for _ in range(n_boot)])
     draws = draws[np.isfinite(draws)]
     lo, hi = np.percentile(draws, [5, 95])
     below = (draws <= 0).mean()
@@ -240,7 +239,7 @@ def main():
         ent = ent.with_columns(pl.lit(None, pl.Int64).alias('f_anchor_ts'))
     log.info(f"{ent.height} passed entries with a card in {args.start} .. {args.end}")
     arch = Archive(rate_bytes=args.rate)
-    rng = random.Random(7)
+    rng = np.random.default_rng(7)
     ttl = CONFIG.levels.trade_ttl_sec * 1000
     rows = []
     for sym in sorted(ent['symbol'].unique().to_list()):
@@ -259,12 +258,12 @@ def main():
             probes.append(('entry', t, d, ext, r, cl))
             for _ in range(args.placebos):
                 for _try in range(50):
-                    pt = t + rng.randint(-120, 120) * DAY
+                    pt = t + int(rng.integers(-120, 121)) * DAY
                     if pt != t and first + DAY <= pt <= last - ttl and abs(pt - t) >= DAY:
                         probes.append(('placebo', pt, d, ext, r, cl))
                         break
         days = sorted({datetime.fromtimestamp(p[1] / 1000, tz=timezone.utc).date() for p in probes})
-        books, done = {}, 0
+        books = {}
         for day in days:
             books[day] = book_day(arch, fid, day)
         for day in days:
@@ -297,7 +296,6 @@ def main():
                 rows.append(dict(kind=kind, strategy=r['strategy'], symbol=sym, ts=t, direction=d, cluster=cl,
                                  month=datetime.fromtimestamp(r['ts'] / 1000, tz=timezone.utc).strftime('%Y-%m'),
                                  R=R, r_sim=r_sim, **{k: f.get(k) for k in FEATURES}))
-                done += 1
         shutil.rmtree(AGG_CACHE, ignore_errors=True)
         log.info(f"{sym}: {len(probes)} probes on {len(days)} days")
     df = pl.DataFrame(rows, infer_schema_length=None)
