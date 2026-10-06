@@ -47,6 +47,7 @@ import io
 import logging
 import os
 import random
+import re
 import urllib.request
 import zipfile
 from datetime import date, datetime, timedelta, timezone
@@ -68,6 +69,8 @@ H4 = 4 * 3_600_000
 FEATURES = ['imb1_with', 'imb2_with', 'opp_thinned', 'delta15_with', 'delta_ext_with', 'stacked', 'absorption',
             'finished_auction']
 BASE = 'https://data.binance.vision/data/futures/um/daily'
+OUT = os.path.join('research', 'book_flow_archive.md')
+SYMBOL = re.compile(r'^[A-Z0-9]{2,20}USDT$')
 
 
 def book_day(arch: Archive, fid: str, d: date):
@@ -89,6 +92,8 @@ def book_day(arch: Archive, fid: str, d: date):
 
 def agg_day(fid: str, d: date):
     """aggTrades of one day (not cached: ~5-25 MB a day per coin) -> (ts_ms, price, usd, side +1 taker buy)."""
+    if not SYMBOL.match(fid):
+        return None
     url = f"{BASE}/aggTrades/{fid}/{fid}-aggTrades-{d.isoformat()}.zip"
     for attempt in range(5):
         try:
@@ -225,7 +230,6 @@ def main():
     ap.add_argument('--start', default='2026-04-01')
     ap.add_argument('--end', default='2026-09-30')
     ap.add_argument('--placebos', type=int, default=10)
-    ap.add_argument('--out', default=os.path.join('research', 'book_flow_archive.md'))
     ap.add_argument('--rate', type=float, default=8e6)
     args = ap.parse_args()
     start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
@@ -355,7 +359,7 @@ def report(df: pl.DataFrame, args):
     for f in FEATURES:
         col = ent[f]
         lines.append(f"| {f} | {col.is_not_null().mean():.1%} | {col.drop_nulls().cast(pl.Float64).mean() or 0:.1%} |")
-    with open(args.out, 'w', encoding='utf-8') as fh:
+    with open(OUT, 'w', encoding='utf-8') as fh:
         fh.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
 
