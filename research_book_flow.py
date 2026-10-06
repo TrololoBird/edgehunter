@@ -48,6 +48,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 
@@ -67,6 +68,7 @@ DAY = 86_400_000
 H4 = 4 * 3_600_000
 FEATURES = ['imb1_with', 'imb2_with', 'opp_thinned', 'delta15_with', 'delta_ext_with', 'stacked', 'absorption',
             'finished_auction']
+AGG_CACHE = os.path.join(CONFIG.pretrain.cache_dir, 'futures', 'um', 'daily', 'aggTrades')
 RUN = os.path.join('data', 'replay', 'eng72')
 OUT = os.path.join('research', 'book_flow_archive.md')
 SYMBOL = re.compile(r'^[A-Z0-9]{2,20}USDT$')
@@ -91,14 +93,12 @@ def book_day(arch: Archive, fid: str, d: date):
 
 def agg_day(arch: Archive, fid: str, d: date):
     """aggTrades of one day -> (ts_ms, price, usd, side +1 taker buy); read through the archive's cache and deleted
-    right after (~5-25 MB a day per coin would not fit the disk)."""
+    after each coin (AGG_CACHE removed: ~5-25 MB a day per coin
+    would not fit the disk)."""
     if not SYMBOL.match(fid):
         return None
     path = f"futures/um/daily/aggTrades/{fid}/{fid}-aggTrades-{d.isoformat()}.zip"
     data = arch._fetch(path)
-    local = os.path.join(arch.cache_dir, *path.split('/'))
-    if os.path.exists(local):
-        os.remove(local)
     if data is None:
         return None
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -298,6 +298,7 @@ def main():
                                  month=datetime.fromtimestamp(r['ts'] / 1000, tz=timezone.utc).strftime('%Y-%m'),
                                  R=R, r_sim=r_sim, **{k: f.get(k) for k in FEATURES}))
                 done += 1
+        shutil.rmtree(AGG_CACHE, ignore_errors=True)
         log.info(f"{sym}: {len(probes)} probes on {len(days)} days")
     df = pl.DataFrame(rows, infer_schema_length=None)
     os.makedirs('data/book_flow', exist_ok=True)
