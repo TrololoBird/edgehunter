@@ -51,9 +51,21 @@ def _pct(x: float, price: float) -> str:
     return f"{(x / price - 1) * 100:+.1f}%"
 
 
-def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None) -> Dict:
-    up = sorted([z for z in zones if z['side'] == 1], key=lambda z: z['lo'])          # local, resistance, global
-    dn = sorted([z for z in zones if z['side'] == -1], key=lambda z: -z['hi'])        # next, key
+def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: Optional[float] = None,
+         ath_days: int = 0) -> Dict:
+    """
+    The two scenarios of the card (eng-74, the 2026-10-07 review):
+    - price INSIDE a zone: long = a 1h close above it + a retest, short = a 1h close below it + a retest;
+    - price BETWEEN zones: long = the retest of the nearest support from above with a reaction, short = the retest of
+      the nearest resistance from below with a rejection;
+    a retest / close counts within the zone's measured pierce (`tol`: Murphy - zones, not prices; Bulkowski - the
+    close beyond decides, not an exact touch); the stop beyond the WHOLE zone + `pad` (the p80 pierce, >= 1.5 1h ATR -
+    Osler: stops cluster just beyond levels; was a quarter of the zone / 0.1%: ETH's stop sat 6 dollars below the
+    edge); targets are real zones' near edges only - ATR steps only above the highest high of the history held
+    (`ath`, price discovery), labelled; percentages from the ENTRY.
+    """
+    up = sorted([z for z in zones if z['side'] == 1], key=lambda z: z['lo'])          # near -> far
+    dn = sorted([z for z in zones if z['side'] == -1], key=lambda z: -z['hi'])        # near -> far
     cur = next((z for z in zones if z['side'] == 0), None)
     names = {}
     for i, z in enumerate(up):
@@ -61,63 +73,132 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None) -> Dic
                         ('СОПРОТИВЛЕНИЕ', 'возможен отскок / ложный пробой', RED2),
                         ('ГЛОБАЛЬНОЕ СОПРОТИВЛЕНИЕ', 'здесь основная ликвидность, фиксация прибыли', RED)][min(i, 2)]
     for i, z in enumerate(dn):
-        names[id(z)] = [('СЛЕДУЮЩАЯ ПОДДЕРЖКА', 'где возможен отскок', GREEN),
-                        ('КЛЮЧЕВАЯ ПОДДЕРЖКА', 'глобальный уровень', GREEN2)][min(i, 1)]
-    # role reversal (polarity): the watched zone's role follows the price AT THE POST - inside it is a reaction zone,
-    # above it a support (its retest from above is the long), below it a resistance (its retest from below the short);
-    # the scenarios are built from that same position, so the card cannot contradict the price
-    rel = None
+        names[id(z)] = [('БЛИЖАЙШАЯ ПОДДЕРЖКА', 'первая зона для лонга', GREEN),
+                        ('ПОДДЕРЖКА', 'возможен отскок / ложный пробой', GREEN),
+                        ('КЛЮЧЕВАЯ ПОДДЕРЖКА', 'глобальный уровень', GREEN2)][min(i, 2)]
     if cur:
-        rel = 'inside' if cur['lo'] <= price <= cur['hi'] else ('above' if price > cur['hi'] else 'below')
-        names[id(cur)] = {'inside': ('ЗОНА РЕАКЦИИ', 'цена в зоне: ждём выход и закрепление', BLUE),
-                          'above': ('ЗОНА ПОДДЕРЖКИ', 'пробита вверх: ретест сверху = лонг', BLUE),
-                          'below': ('ЗОНА СОПРОТИВЛЕНИЯ', 'пробита вниз: ретест снизу = шорт', BLUE)}[rel]
-    out = {'names': names, 'cur': cur, 'rel': rel, 'up': up, 'dn': dn, 'long': None, 'short': None}
-    if not cur:
-        return out
-    tick = price * 0.0001
-    buf = max((cur['hi'] - cur['lo']) * 0.25, price * 0.001)          # beyond the zone, not on its edge
-    # LONG: acceptance above the zone (or, once above it, its retest); stop below the zone; targets the resistances
-    if rel == 'above':
-        e0, e1, cond = cur['lo'], cur['hi'], f"ретест зоны {_fmt(cur['lo'])}–{_fmt(cur['hi'])} сверху и реакция"
-    else:
-        e0, e1, cond = cur['hi'], cur['hi'] + max(price * 0.0007, tick), f"закрытие 1h выше {_fmt(cur['hi'])} и ретест"
-    stop = cur['lo'] - buf
-    tg = [z['hi'] for z in up if z['hi'] > max(e1, price)][:3]
-    discovery = len(tg) < 3 and bool(atr_1d)
-    while discovery and len(tg) < 3:
-        tg.append((tg[-1] if tg else max(e1, price)) + atr_1d)
-    if tg:
+        names[id(cur)] = ('ЗОНА РЕАКЦИИ', 'цена в зоне: ждём закрытие 1h за ней', BLUE)
+    out = {'names': names, 'cur': cur, 'up': up, 'dn': dn, 'long': None, 'short': None}
+
+    def targets(side, entry, first=None):
+        pool = up if side > 0 else dn
+        # a range trade's first target is the zone's opposite boundary (buy support, sell resistance)
+        tg = [first] if first is not None and side * (first - entry) > 0 else []
+        for z in pool:
+            # the zone's near edge; when the entry already sits inside the zone, its level price, else its far edge
+            # (ETH's short at 2 564 inside the support 2 484-2 568: the target is 2 484, not 2 397 beyond it)
+            near, far = (z['lo'], z['hi']) if side > 0 else (z['hi'], z['lo'])
+            pick = next((p for p in (near, z.get('mid', near), far) if side * (p - entry) > z.get('tol', 0.0)), None)
+            if pick is not None and (not tg or side * (pick - tg[-1]) > 0):
+                tg.append(pick)
+            if len(tg) == 3:
+                break
+        note = ''
+        if side > 0 and len(tg) < 3 and atr_1d and ath and max([entry] + tg) >= ath:
+            # price discovery: above the highest high of the history held there is no level - daily-ATR steps
+            while len(tg) < 3:
+                tg.append(max([entry] + tg) + atr_1d)
+            note = f"выше максимума за {ath_days} дн.: цели = +ATR дня"
+        elif len(tg) < 3 and tg:
+            note = 'дальше уровней в окне брифинга нет'
+        return tg, note
+
+    def push_stop(side, stop):
+        """A stop inside another zone goes beyond that zone's far edge + its pad (Osler: stops cluster just beyond a
+        level - BTC's short stop 84 087 sat inside the resistance 83 577-84 273)."""
+        for z in (up if side < 0 else dn):
+            if z['lo'] - z.get('tol', 0.0) <= stop <= z['hi'] + z.get('tol', 0.0):
+                # one zone only: chained through every stacked zone ETH's long stop fell to -3.8%
+                return (z['hi'] + z.get('pad', 0.0)) if side < 0 else (z['lo'] - z.get('pad', 0.0))
+        return stop
+
+    def scenario(side, e0, e1, stop, cond, tag, first=None):
         e = (e0 + e1) / 2
-        out['long'] = {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond,
-                       'note': 'выше зон нет: цели = +ATR дня' if discovery else '',
-                       'tag': 'закрепление выше' if rel != 'above' else 'ретест поддержки',
-                       'p': (e - stop) / ((e - stop) + (tg[0] - e))}
-    # SHORT: the zone's breakdown (or, once below it, its retest from below); stop above the zone; targets the supports
-    if rel == 'below':
-        e0, e1, cond = cur['lo'], cur['hi'], f"ретест зоны {_fmt(cur['lo'])}–{_fmt(cur['hi'])} снизу и отказ"
+        stop = push_stop(side, stop)
+        tg, note = targets(side, e, first)
+        if not tg:
+            return None
+        if abs(tg[0] - e) < abs(e - stop):
+            # TP1 closer than the stop: R:R < 1 - not a scenario (BTC 2026-10-08 09:30: a long 51 under the next
+            # resistance, a short's TP1 -0.3% for a +1.6% stop - and its 'chance' read 82%); the card says why
+            out['skip_' + ('long' if side > 0 else 'short')] = (
+                f"нет выгодного входа: первая цель {_fmt(tg[0])} ({_pct(tg[0], e)})\n"
+                f"ближе стопа {_fmt(stop)} ({_pct(stop, e)}), R:R < 1")
+            return None
+        return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag,
+                'p': abs(e - stop) / (abs(e - stop) + abs(tg[0] - e))}
+    def bounce():
+        """Long from the nearest support below: its test + a bullish 1h reaction candle."""
+        if not dn:
+            return None
+        z = dn[0]
+        return scenario(1, z['lo'], z['hi'] + z.get('tol', 0.0), z['lo'] - z.get('pad', 0.0),
+                        f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и бычья свеча 1h с закрытием выше "
+                        f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки')
+
+    def fade():
+        """Short from the nearest resistance above: its test + a bearish 1h reaction candle (the reference card)."""
+        if not up:
+            return None
+        z = up[0]
+        return scenario(-1, z['lo'] - z.get('tol', 0.0), z['hi'], z['hi'] + z.get('pad', 0.0),
+                        f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и медвежья свеча 1h с закрытием ниже "
+                        f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления')
+
+    if cur:
+        tol, pad = cur.get('tol') or 0.0, cur.get('pad', 0.0)
+
+        def best(*cands):
+            # per side the variant with the better R:R to TP1 (None = R:R < 1, the skip text stays)
+            ok = [c for c in cands if c]
+            return max(ok, key=lambda c: abs(c['targets'][0] - sum(c['entry']) / 2) /
+                       abs(sum(c['entry']) / 2 - c['stop'])) if ok else None
+        # breakout of the zone (a 1h close beyond + the retest), or - inside a range-wide zone - its edges: buy the
+        # support edge, sell the resistance edge, the target the opposite boundary, the stop beyond the edge
+        # (classic range trading: entries at the edges, not in the middle)
+        out['long'] = best(
+            scenario(1, cur['hi'], cur['hi'] + tol, cur['lo'] - pad,
+                     f"закрытие 1h выше {_fmt(cur['hi'])}, ретест и бычья свеча 1h с закрытием выше {_fmt(cur['hi'] + tol)}", 'закрепление выше'),
+            bounce(),
+            scenario(1, cur['lo'], cur['lo'] + tol, cur['lo'] - pad,
+                     f"тест низа {_fmt(cur['lo'])} (допуск {_fmt(tol)}) и бычья свеча 1h с закрытием выше {_fmt(cur['lo'] + tol)}", 'от низа зоны',
+                     first=cur['hi']))
+        out['short'] = best(
+            scenario(-1, cur['lo'] - tol, cur['lo'], cur['hi'] + pad,
+                     f"закрытие 1h ниже {_fmt(cur['lo'])}, ретест и медвежья свеча 1h с закрытием ниже {_fmt(cur['lo'] - tol)}", 'закрепление ниже'),
+            fade(),
+            scenario(-1, cur['hi'] - tol, cur['hi'], cur['hi'] + pad,
+                     f"тест верха {_fmt(cur['hi'])} (допуск {_fmt(tol)}) и медвежья свеча 1h с закрытием ниже {_fmt(cur['hi'] - tol)}", 'от верха зоны',
+                     first=cur['lo']))
     else:
-        e0, e1, cond = cur['lo'] - max(price * 0.0007, tick), cur['lo'], f"закрытие 1h ниже {_fmt(cur['lo'])} и ретест"
-    stop = cur['hi'] + buf
-    tg = [z['hi'] for z in dn if z['hi'] < min(e0, price)][:3]     # in front of the supports (their upper edge)
-    if tg:
-        e = (e0 + e1) / 2
-        out['short'] = {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': '',
-                        'tag': 'пробой поддержки' if rel != 'below' else 'ретест сопротивления',
-                        'p': (stop - e) / ((stop - e) + (e - tg[0]))}
+        if dn:
+            z = dn[0]
+            out['long'] = scenario(1, z['lo'], z['hi'] + z.get('tol', 0.0), z['lo'] - z.get('pad', 0.0),
+                                   f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и бычья свеча 1h с закрытием выше "
+                                   f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки')
+        if up:
+            z = up[0]
+            out['short'] = scenario(-1, z['lo'] - z.get('tol', 0.0), z['hi'], z['hi'] + z.get('pad', 0.0),
+                                    f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и медвежья свеча 1h с закрытием ниже "
+                                    f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления')
     return out
 
 
 def render(name: str, candles: List[List[float]], price: float, zones: List[Dict], atr_1h: Optional[float],
            bias_text: str = '', atr_1d: Optional[float] = None, source: str = 'Binance',
-           candles_1h: Optional[List[List[float]]] = None) -> bytes:
+           candles_1h: Optional[List[List[float]]] = None, ath: Optional[float] = None, ath_days: int = 0,
+           hi24: Optional[float] = None, lo24: Optional[float] = None, context_text: str = '',
+           tf_label: str = '4h') -> bytes:
     """`candles`: 4h candles drawn on the chart; `atr_1h`: the drawn timeframe's ATR (4h); `candles_1h` for the 24h
     change / high / low."""
     """PNG bytes of the card. `candles`: 1h [ts, o, h, l, c, ...], oldest first (the forming one may be last)."""
-    p = plan(price, zones, atr_1d)
+    p = plan(price, zones, atr_1d, ath, ath_days)
     c = candles[-BARS:]
     day = (candles_1h or [])[-24:] or candles[-6:]
-    hi24, lo24 = max(x[2] for x in day), min(x[3] for x in day)
+    # the 24h extremes from the caller's minute candles when it has them (the 1h candles lag a minute after the hour:
+    # XAU showed a 24h low of 4 114 with the price at 4 093)
+    hi24 = max(hi24 if hi24 is not None else max(x[2] for x in day), price)
+    lo24 = min(lo24 if lo24 is not None else min(x[3] for x in day), price)
     chg = (price / day[0][1] - 1) * 100
     W, H = 9.21, 12.7
     fig = plt.figure(figsize=(W, H), dpi=100)
@@ -125,18 +206,18 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
 
     # ---- header
     fig.text(0.037, 0.972, _fmt(price), fontsize=38, weight='bold', color=GREEN if chg >= 0 else RED, va='top')
-    fig.text(0.037, 0.912, f"{name}  ·  4h  ·  за сутки {chg:+.2f}%", fontsize=13.5, color=GREY, va='top')
+    fig.text(0.037, 0.912, f"{name}  ·  {tf_label}  ·  за сутки {chg:+.2f}%", fontsize=13.5, color=GREY, va='top')
     for k, (lab, val) in enumerate((('Макс. 24ч', _fmt(hi24)), ('Мин. 24ч', _fmt(lo24)),
-                                    ('ATR 4ч', (f"{atr_1h:,.0f}".replace(',', ' ') if atr_1h and atr_1h >= 10
+                                    (f"ATR {tf_label.replace('h', 'ч')}", (f"{atr_1h:,.0f}".replace(',', ' ') if atr_1h and atr_1h >= 10
                                                else f"{atr_1h:.3g}" if atr_1h else '—')))):
         fig.text(0.64, 0.972 - k * 0.0255, lab, fontsize=12, color=GREY, va='top')
         fig.text(0.963, 0.972 - k * 0.0255, val, fontsize=12, weight='bold', ha='right', va='top')
     for k, tf in enumerate(('1м', '15м', '1ч', '4ч', '1д')):
         x = 0.04 + k * 0.073
-        if tf == '4ч':
+        if tf == tf_label.replace('h', 'ч'):
             fig.patches.append(FancyBboxPatch((x - 0.018, 0.866), 0.05, 0.022, transform=fig.transFigure,
                                               boxstyle='round,pad=0.003', fc='#eef0f3', ec='none'))
-        fig.text(x, 0.877, tf, fontsize=12.5, color='#333' if tf == '4ч' else GREY, va='center')
+        fig.text(x, 0.877, tf, fontsize=12.5, color='#333' if tf == tf_label.replace('h', 'ч') else GREY, va='center')
     if bias_text:
         fig.text(0.42, 0.877, bias_text, fontsize=9.5, color='#555', va='center')
 
@@ -160,21 +241,30 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
     def fy(v):                                       # data y -> figure y
         return 0.245 + 0.61 * (v - y0) / (y1 - y0)
     tags: List[list] = []
+    # labels of close zones pushed apart (each takes ~5% of the chart's height: two lines of text)
+    label_y, gap = {}, (y1 - y0) * 0.075
+    for z in sorted(zones, key=lambda z: (z['lo'] + z['hi']) / 2):
+        y = (z['lo'] + z['hi']) / 2
+        if label_y:
+            y = max(y, max(label_y.values()) + gap)
+        label_y[id(z)] = y
     for z in zones:
         title, sub, col = p['names'].get(id(z), ('ЗОНА', '', GREY))
         ax.axhspan(z['lo'], z['hi'], color=col, alpha=0.17, zorder=1)
         for edge in (z['lo'], z['hi']):
             ax.axhline(edge, color=col, lw=1.0, alpha=0.9, zorder=2)
-        ym = (z['lo'] + z['hi']) / 2
+        ym = label_y.get(id(z), (z['lo'] + z['hi']) / 2)
         ax.annotate(title, (1.5, ym), xytext=(0, 1), textcoords='offset points', fontsize=13, weight='bold',
                     color=col, va='bottom', zorder=6)
-        sub = f"{sub} · {z['label']}" if z.get('label') else sub
+        sub = z.get('desc') or (f"{sub} · {z['label']}" if z.get('label') else sub)
+        sub = sub if len(sub) <= 95 else sub[:94] + '…'              # one line inside the chart
         ax.annotate(sub, (1.5, ym), xytext=(0, -10), textcoords='offset points', fontsize=8.8, color='#333',
                     va='top', zorder=6)
         ax.text(xmax * 0.455, ym, f"{_fmt(z['lo'])} – {_fmt(z['hi'])}", fontsize=12, weight='bold', va='center',
                 zorder=6)
         if z['side'] != 0:
-            tags.append([fy(z['hi']), f"{_fmt(z['hi'])}\n{_pct(z['hi'], price)}", col])
+            edge = z['lo'] if z['side'] == 1 else z['hi']           # the near edge, as the targets
+            tags.append([fy(edge), f"{_fmt(edge)}\n{_pct(edge, price)}", col])
     ax.axhline(price, color='#333', ls=(0, (5, 4)), lw=0.9, zorder=4)
     tags.append([fy(price), f"{_fmt(price)}\n{datetime.now(timezone.utc):%H:%M} UTC", DARK])
     # right-hand tags pushed apart so none covers another (the price tag keeps its place)
@@ -210,11 +300,11 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                     arrowprops=dict(arrowstyle='->', color=colr, lw=2.2, ls='--'), zorder=5)
     # scenario tags
     if p['long']:
-        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\nВероятность: {p['long']['p'] * 100:.0f}%*",
+        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\nшанс TP1 по расстоянию: {p['long']['p'] * 100:.0f}%*",
                 fontsize=9.5, weight='bold', color='white', ha='center', va='top', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=GREEN2, ec='none'))
     if p['short']:
-        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\nВероятность: {p['short']['p'] * 100:.0f}%*",
+        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\nшанс TP1 по расстоянию: {p['short']['p'] * 100:.0f}%*",
                 fontsize=9.5, weight='bold', color='white', ha='center', va='bottom', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=RED, ec='none'))
     ax.text(1.5, y0 + pad * 0.15, source, fontsize=13, weight='bold', color='#d0d0d0', zorder=5)
@@ -245,31 +335,40 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                  '(только после подтверждения)' if side == 'long' else '(при подтверждении)', fontsize=9.5,
                  color=col, va='top')
         if not s:
-            fig.text(x0 + 0.015, 0.165, 'нет уровней для сценария', fontsize=10, color=GREY)
+            fig.text(x0 + 0.015, 0.175, p.get('skip_' + side) or 'нет уровней для сценария', fontsize=10, color=GREY,
+                     va='top', linespacing=1.4)
             continue
         e = s['entry']
+        em = (e[0] + e[1]) / 2                      # percentages from the ENTRY, not from the current price
         rows = [('Вход:', f"{_fmt(e[0])} – {_fmt(e[1])} ({s['tag']})")]
         for i, t in enumerate(s['targets']):
-            rows.append(('Цели:' if i == 0 else '', f"{_fmt(t)}  ({_pct(t, price)})"))
-        rows.append(('Стоп:', f"{'ниже' if side == 'long' else 'выше'} {_fmt(s['stop'])} ({_pct(s['stop'], price)})"))
-        rows.append(('Условия:', s['cond']))
+            rows.append(('Цели:' if i == 0 else '', f"{_fmt(t)}  ({_pct(t, em)} от входа)"))
+        rows.append(('Стоп:', f"{'ниже' if side == 'long' else 'выше'} {_fmt(s['stop'])} ({_pct(s['stop'], em)} от входа)"))
+        import textwrap
+        for i, line in enumerate(textwrap.wrap(s['cond'], 38)):     # long conditions wrap inside the box
+            rows.append(('Условия:' if i == 0 else '', line))
         if s.get('note'):
             rows.append(('', s['note']))
+        step, fs = (0.0150, 10) if len(rows) <= 7 else (0.0120, 9)      # fit the box: 9 rows at most
         for i, (a, b) in enumerate(rows):
-            y = 0.181 - i * 0.0150
-            fig.text(x0 + 0.015, y, a, fontsize=10, weight='bold', va='top')
-            fig.text(x0 + 0.105, y, b, fontsize=10, va='top')
+            y = 0.181 - i * step
+            fig.text(x0 + 0.015, y, a, fontsize=fs, weight='bold', va='top')
+            fig.text(x0 + 0.105, y, b, fontsize=fs, va='top')
     cur = p['cur']
-    inside = cur and cur['lo'] <= price <= cur['hi']
-    msg = (f"СЕЙЧАС ЦЕНА ВНУТРИ ЗОНЫ {_fmt(cur['lo'])} – {_fmt(cur['hi'])}. ЖДЁМ ПОДТВЕРЖДЕНИЯ." if inside else
-           f"ЦЕНА {'НАД' if cur and price > cur['hi'] else 'ПОД'} ЗОНОЙ {_fmt(cur['lo'])} – {_fmt(cur['hi'])}. "
-           f"ЖДЁМ РЕТЕСТА." if cur else 'ЗОН РЯДОМ НЕТ.')
+    if cur:
+        where = 'В ЗОНЕ' if cur['lo'] <= price <= cur['hi'] else ('У ВЕРХА ЗОНЫ' if price > cur['hi'] else 'У НИЗА ЗОНЫ')
+        msg = f"ЦЕНА {where} {_fmt(cur['lo'])} – {_fmt(cur['hi'])}. ЖДЁМ ЗАКРЫТИЯ 1H ЗА НЕЙ."
+    else:
+        a = _fmt(p['dn'][0]['hi']) if p['dn'] else '—'
+        b = _fmt(p['up'][0]['lo']) if p['up'] else '—'
+        msg = f"ЦЕНА МЕЖДУ ЗОНАМИ {a} И {b}. ЖДЁМ РЕТЕСТА ОДНОЙ ИЗ НИХ."
+    msg_sub = context_text or 'Входить в середине диапазона не рекомендуется.'
     fig.patches.append(FancyBboxPatch((0.02, 0.018), 0.96, 0.05, transform=fig.transFigure,
                                       boxstyle='round,pad=0.006', fc='#fdeeee', ec=RED, lw=1.2))
     fig.text(0.04, 0.058, '⚠  ' + msg, fontsize=11.5, weight='bold', color=RED, va='top')
-    fig.text(0.075, 0.036, 'Входить в середине диапазона не рекомендуется.', fontsize=9.5, color=RED, va='top')
-    fig.text(0.98, 0.006, '*случайное блуждание: шанс TP1 раньше стопа по расстояниям, не прогноз · правила бота, '
-                          'не совет', fontsize=7, color=GREY, ha='right', va='bottom')
+    fig.text(0.075, 0.036, msg_sub, fontsize=9.5, color=RED, va='top')
+    fig.text(0.98, 0.006, '*шанс TP1 по расстоянию, если вход сработает · зоны = где цена разворачивалась, на архиве держат не лучше '
+                          'случайных · не совет', fontsize=7, color=GREY, ha='right', va='bottom')
     buf = io.BytesIO()
     fig.savefig(buf, format='png')
     plt.close(fig)

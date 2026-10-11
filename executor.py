@@ -42,6 +42,7 @@ class DemoExecutor:
         self.enabled = bool(cfg.enabled and cfg.api_key and cfg.api_secret)
         self.db_path = db_path
         self._band_warned: set = set()       # coins whose market close BingX rejected (102202): warned once
+        self._quotes_seen: Dict[str, tuple] = {}   # symbol -> (BingX last, since): a VST quote that stopped moving
         self.ex = None
         self.open: Dict[str, Dict] = {}          # card id -> trade
         self._lock = asyncio.Lock()
@@ -122,6 +123,14 @@ class DemoExecutor:
                 self._quote = ticker
                 return name, scale
         reason = f"BingX price {last} vs {price:.6g}" if seen else 'not listed on BingX'
+        if seen and last:
+            # a VST contract whose price stopped (PONS 2026-10-07: 0.4192 for 7h while Binance moved 0.40 -> 0.39) is
+            # a dead demo market, not a venue gap
+            prev = self._quotes_seen.get(symbol)
+            if prev and prev[0] == last and time.time() - prev[1] > 1800:
+                reason = f"stale BingX quote {last} unchanged {(time.time() - prev[1]) / 3600:.1f}h vs {price:.6g}"
+            elif not prev or prev[0] != last:
+                self._quotes_seen[symbol] = (last, time.time())
         return None, reason
 
     async def _balance(self) -> float:
@@ -669,7 +678,8 @@ class DemoExecutor:
             return
         async with self._lock:
             try:
-                await self._close(trade, s.status, s.final_r)
+                self._set_exit_ref(trade['id'], s.finish_price)
+                await self._close(trade, s.status, s.final_r, passive=True)
             except Exception as e:
                 logger.warning(f"Demo close failed for {trade['symbol']}: {e!r}")
 
@@ -680,7 +690,17 @@ class DemoExecutor:
                 return float(p['contracts'])
         return 0.0
 
-    async def _close(self, trade: Dict, reason: str, journal_r: Optional[float]) -> None:
+    def _set_exit_ref(self, trade_id: int, price: Optional[float]) -> None:
+        """The card's own exit price (Binance) next to the demo's fill: the demo lost ~0.15R a trade to the journal,
+        almost all on the card-driven market closes (eng-74) - measured, not guessed."""
+        with sqlite3.connect(self.db_path) as c:
+            try:
+                c.execute("ALTER TABLE demo_trades ADD COLUMN exit_ref REAL")
+            except sqlite3.OperationalError:
+                pass
+            c.execute("UPDATE demo_trades SET exit_ref = ? WHERE id = ?", (price, trade_id))
+
+    async def _close(self, trade: Dict, reason: str, journal_r: Optional[float], passive: bool = False) -> None:
         ex = await self._exchange()
         symbol, d = trade['symbol'], trade['direction']
         try:
@@ -688,6 +708,25 @@ class DemoExecutor:
         except Exception as e:
             errors.report('executor._close', e, f"Demo cancel {symbol}")
         left = await self._position_qty(symbol)
+        if left > 0 and passive:
+            # a card-driven exit (band / session / time / trail - no stop urgency): a reduce-only limit at the touch
+            # first (the VST spread reached 0.4-3%: a market order paid all of it), the rest at market after 15s
+            side = 'sell' if d > 0 else 'buy'
+            try:
+                t = await ex.fetch_ticker(symbol)
+                px = float((t.get('ask') if d > 0 else t.get('bid')) or t.get('last'))
+                order = await ex.create_order(symbol, 'limit', side, left, px, {'reduceOnly': True})
+                for _ in range(5):
+                    await asyncio.sleep(3)
+                    if await self._position_qty(symbol) == 0:
+                        break
+                try:
+                    await ex.cancel_order(order['id'], symbol)
+                except Exception as e:                  # filled / gone: the position check below decides
+                    errors.report('executor._close', e, f"Demo cancel passive close {symbol}")
+            except Exception as e:
+                errors.report('executor._close', e, f"Demo passive close {symbol}")
+            left = await self._position_qty(symbol)
         if left > 0:
             side = 'sell' if d > 0 else 'buy'
             try:
@@ -736,7 +775,8 @@ class DemoExecutor:
         weight = sum(f['amount'] for f in exits)
         exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight if weight else None
         if exit_avg is None or not qty or not entry:
-            logger.warning(f"Demo {reason} {trade['symbol']}: no exit fill found, result not recorded")
+            # the fills list can lag a close (or the API is unreachable): retried by reconcile_loop (_refinalize)
+            logger.warning(f"Demo {reason} {trade['symbol']}: no exit fill found yet, retried later")
             pnl = fees = None
         else:
             fees = CONFIG.journal.fee_round_trip / 2 * (entry + exit_avg) * qty
@@ -747,9 +787,38 @@ class DemoExecutor:
                       "r = ?, journal_r = ? WHERE id = ?",
                       (int(time.time() * 1000), reason, exit_avg, fees, pnl,
                        pnl / risk if risk and pnl is not None else None, journal_r, trade['id']))
+            if pnl is None and qty and entry:
+                c.execute("UPDATE demo_trades SET error = ? WHERE id = ?", (self.FILL_PENDING, trade['id']))
         self.open.pop(trade['card_id'], None)
         if pnl is not None:
             logger.info(f"Demo {reason} {trade['symbol']}: {pnl:+.2f} USD ({pnl / risk if risk else 0:+.2f}R)")
+
+    FILL_PENDING = 'exit fill pending'
+
+    async def _refinalize(self) -> None:
+        """Closed trades whose exit fill was not listed at the close (1000PEPE 2026-10-06 11:07, the link failing):
+        their result from BingX's fills, retried for 3 days."""
+        with sqlite3.connect(self.db_path) as c:
+            rows = c.execute("SELECT id, symbol, direction, opened_ms, closed_ms, qty, entry_fill, risk_usd FROM demo_trades "
+                             "WHERE error = ? AND pnl_usd IS NULL AND closed_ms > ?",
+                             (self.FILL_PENDING, int(time.time() * 1000) - 3 * 86_400_000)).fetchall()
+        if not rows:
+            return
+        ex = await self._exchange()
+        for tid, symbol, d, opened, closed, qty, entry, risk in rows:
+            side = 'sell' if d > 0 else 'buy'
+            fills = await ex.fetch_my_trades(symbol, since=opened - 5_000)
+            exits = [f for f in fills if f.get('side') == side and f.get('price') and f.get('timestamp', 0) > opened]
+            weight = sum(f['amount'] for f in exits)
+            if not weight:
+                continue
+            exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight
+            fees = CONFIG.journal.fee_round_trip / 2 * (entry + exit_avg) * qty
+            pnl = d * (exit_avg - entry) * qty - fees
+            with sqlite3.connect(self.db_path) as c:
+                c.execute("UPDATE demo_trades SET exit_avg = ?, fees_usd = ?, pnl_usd = ?, r = ?, error = NULL WHERE id = ?",
+                          (exit_avg, fees, pnl, pnl / risk if risk else None, tid))
+            logger.info(f"Demo result recovered {symbol}: {pnl:+.2f} USD ({pnl / risk if risk else 0:+.2f}R)")
 
     async def reconcile_loop(self, running) -> None:
         """Finalize demo trades the exchange closed on its own (stop / last target)."""
@@ -770,6 +839,10 @@ class DemoExecutor:
                         await self.close_untracked()
                     except Exception as e:
                         logger.warning(f"Demo untracked check: {e!r}")
+                    try:
+                        await self._refinalize()
+                    except Exception as e:
+                        logger.warning(f"Demo result recovery: {e!r}")
             if not self.open:
                 continue
             async with self._lock:

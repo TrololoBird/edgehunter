@@ -422,6 +422,7 @@ class DataFetcher:
         self.spreads: Dict[str, float] = {}
         self.baseline_ids: set = set()
         self.market_marks: Dict[str, float] = {}
+        self.market_marks_at = 0.0               # when market_marks were fetched (stale marks are no baseline)
         self.futures_exchange: Optional[ccxt.Exchange] = None
         self.venue_exchanges: Dict[str, ccxt.Exchange] = {}
         self.markets: Dict[str, MarketData] = {}
@@ -671,6 +672,7 @@ class DataFetcher:
         # Mark prices of every USDT perpetual (the market baseline of the journal: universe snapshots)
         self.market_marks = {m['symbol']: float(m.get('markPrice') or 0.0) for m in rows
                              if m.get('symbol') in self.baseline_ids and float(m.get('markPrice') or 0.0) > 0}
+        self.market_marks_at = time.time()
         for m in rows:
             key = self._binance_keys.get(('futures', m.get('symbol')))
             md = self.markets.get(key)

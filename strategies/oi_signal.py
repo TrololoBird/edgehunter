@@ -20,12 +20,26 @@ MINUTE_MS = 60_000
 
 
 def _oi_change(samples: Sequence, now_ms: int, minutes: int) -> Optional[float]:
+    """The OI change over `minutes`, None without a sample within 3 minutes of that time (eng-74: the last sample
+    before it was taken whatever its age - after a feed gap NEAR's '15m' and '1h' changes were both +4.68% against an
+    OI that Binance's own history shows flat, and the trade entered on it)."""
     if not samples:
         return None
-    old = [v for t, v in samples if t <= now_ms - minutes * MINUTE_MS]
-    if not old or not old[-1]:
+    target = now_ms - minutes * MINUTE_MS
+    old = [(t, v) for t, v in samples if t <= target]
+    if not old or not old[-1][1] or target - old[-1][0] > 3 * MINUTE_MS or now_ms - samples[-1][0] > 3 * MINUTE_MS:
         return None
-    return samples[-1][1] / old[-1] - 1
+    return samples[-1][1] / old[-1][1] - 1
+
+
+def _close_at(minutes: Sequence[Sequence[float]], ts_ms: int) -> Optional[float]:
+    """The close of the 1m candle that opened at ts_ms (a gap there -> None: no move measured across a hole)."""
+    for c in reversed(minutes):
+        if c[0] == ts_ms:
+            return c[4]
+        if c[0] < ts_ms:
+            return None
+    return None
 
 
 def oi_signal(minutes: Sequence[Sequence[float]], oi_samples: Sequence, now_ms: int) -> Optional[Dict]:
@@ -37,9 +51,15 @@ def oi_signal(minutes: Sequence[Sequence[float]], oi_samples: Sequence, now_ms: 
     if oi15 is None or oi60 is None or oi15 < cfg.oi_sig_oi_15m or oi60 <= 0:
         return None
     last = minutes[-1]
-    p15 = last[4] / minutes[-16][4] - 1
-    p60 = last[4] / minutes[-61][4] - 1
-    window = minutes[-15:]
+    # windows by TIME, not by index: after a gap minutes[-16] was far older than 15 minutes (NEAR 2026-10-07 22:07 UTC:
+    # '+5.56% in 15m' where the mark moved +1.7%); any missing minute in the last 15 = no signal
+    t0 = int(last[0])
+    c15, c60 = _close_at(minutes, t0 - 15 * MINUTE_MS), _close_at(minutes, t0 - 60 * MINUTE_MS)
+    window = [c for c in minutes if c[0] > t0 - 15 * MINUTE_MS]
+    if c15 is None or c60 is None or len(window) < 15:
+        return None
+    p15 = last[4] / c15 - 1
+    p60 = last[4] / c60 - 1
     cvd = sum(2 * c[6] - c[5] for c in window if len(c) > 6)
     if p15 >= cfg.oi_sig_price_15m and p60 > 0 and cvd > 0:
         d = 1

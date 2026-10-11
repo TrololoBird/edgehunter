@@ -34,6 +34,7 @@ Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CO
 """
 import copy
 import logging
+import time
 from strategies.ict import fvg_setup, fvg_trigger, range_position, touch_trigger
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -189,6 +190,7 @@ class TrackedSignal:
     armed: Optional[dict] = None
     # eng-59: the last trigger time of the replaced rule journaled beside the card ('weak_mss' / 'variant_shift')
     shadow_ms: int = 0
+    last_veto: list = field(default_factory=list)   # [reason, entry, sl] of the last journaled veto
     # the order-flow entry in the zone (SignalBook._flow_entry): checked once a minute, journaled once per card
     flow_checked_ms: int = 0
     flow_done: bool = False
@@ -703,6 +705,11 @@ class SignalBook:
             if s.plan is None or not s.plan['targets']:
                 self._drop(s, now, self._skip_reason.pop((s.symbol, s.group_key), 'no_leg') if s.plan is None else 'no_room')
                 return None
+            if s.plan.get('missable') and s.plan['entry'] != 'confirm' and d * (price - s.plan['targets'][0]) >= 0:
+                # eng-74: a waiting card whose TP1 is already behind the price was born MISSED (ETH FLUSH REVERSAL
+                # 2026-10-07 10:08, created after the bounce): not a card
+                self._drop(s, now, 'tp1_passed')
+                return None
             self._activate(s, s.plan, price, now)
             s.status = 'WATCH'
             if s.plan['entry'] == 'confirm' and not s.confirm_checked:
@@ -935,6 +942,12 @@ class SignalBook:
                 s.veto_notes = (s.veto_notes + [f"profile: not {', '.join(missing_flags)}"])[-5:]
         of = confirms.get('orderflow') or None
         if reason:
+            key = [reason, levels.get('entry'), levels.get('sl')]
+            if key == s.last_veto:
+                # the same trigger vetoed again on the next scan (a touch plan sitting at its line, PO3 2026-10-06:
+                # 213 rows of one SAND card in 39 min): journaled once, not once per scan
+                return None
+            s.last_veto = key
             vetoed = copy.copy(s)
             vetoed.levels, vetoed.entered_at, vetoed.vetoed = levels, entered_at, reason
             vetoed.of_confirm, vetoed.confirms = of, dict(confirms)
@@ -1155,8 +1168,16 @@ class SignalBook:
             if level is not None and d * (price - level) <= 0:
                 return self._finish(s, 'CLOSED', now, f"exit on the {days}-day {'low' if d > 0 else 'high'} "
                                                       f"{level:.6g} (Turtles)")
-        why = self._time_exit(s, now)
+        why, due = self._time_exit(s, now)
         if why:
+            if due is not None and now - due > 2 * 60 and candles_of:
+                # the exit fell due while the bot had no data (a feed / internet outage): marked at the close of the
+                # minute it was due, not at the price on reconnect hours later
+                mark = next((c[4] for c in reversed(list(candles_of(s.symbol))) if c[0] / 1000 + 60 <= due), None)
+                if mark is not None:
+                    s.last_price = mark
+                    why += f" (due {time.strftime('%H:%M', time.gmtime(due))} UTC, marked at that minute's close)"
+                    return self._finish(s, 'CLOSED', due, why)
             self._finish(s, 'CLOSED', now, why)
 
     TF_SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400}
@@ -1167,38 +1188,39 @@ class SignalBook:
                 and not (o.plan or {}).get('trail_days'))
         return n >= CONFIG.strategies.crowd_max
 
-    def _time_exit(self, s: TrackedSignal, now: float) -> Optional[str]:
-        """Why the trade ends by time now (eng-47, Strategy.time_exit), None = it runs on."""
+    def _time_exit(self, s: TrackedSignal, now: float) -> Tuple[Optional[str], Optional[float]]:
+        """Why the trade ends by time now (eng-47, Strategy.time_exit) and the time it fell due; (None, None) = it runs."""
         strategy = self.strategy(s)
         held = now - s.entered_at
         pm = (s.plan or {}).get('pm')
+
+        def by(limit: float, text: str):
+            return (text, s.entered_at + limit) if held > limit else (None, None)
         if pm and pm.get('hours'):
             # an optimized profile's time stop (research_optimize.py), replacing the method's own clock
             limit = float(pm['hours']) * 3600
-            return f"profile time stop: {_dur(limit)}: closed at market" if held > limit else None
+            return by(limit, f"profile time stop: {_dur(limit)}: closed at market")
         if strategy is None:
             ttl = CONFIG.levels.trade_ttl_sec
-            return f"trade open {_dur(ttl)}: closed at market" if held > ttl else None
+            return by(ttl, f"trade open {_dur(ttl)}: closed at market")
         cap = strategy.ttls(self._tf(s))[2]
         mode = getattr(strategy, 'time_exit', 'bars')
         if mode == 'session':
             end = strategy.session_end(s.entered_at)
-            if end is not None and now >= end:
-                return "the method's session ended: closed at market"
-            return f"trade open {_dur(cap)}: closed at market" if held > cap else None
+            if end is not None:
+                # the session's end IS the method's exit: a shorter cap closed ORB / VA80 days before it (ZEC
+                # 2026-10-06: entered 01:03 UTC, the 12h cap fired at 13:03, the session ended 00:00)
+                return ("the method's session ended: closed at market", end) if now >= end else (None, None)
+            return by(cap, f"trade open {_dur(cap)}: closed at market")
         if mode == 'fixed':
-            return f"trade open {_dur(cap)}: closed at market" if held > cap else None
+            return by(cap, f"trade open {_dur(cap)}: closed at market")
         cfg = CONFIG.strategies
         tf = self._tf(s)
         limit = max(cfg.time_stop_bars * self.TF_SEC.get(tf, 900), cfg.time_stop_min_sec)
         if not s.best_target:
-            if held > limit:
-                return f"time stop: no TP1 within {cfg.time_stop_bars} {tf} bars ({_dur(limit)}): closed at market"
-            return None
+            return by(limit, f"time stop: no TP1 within {cfg.time_stop_bars} {tf} bars ({_dur(limit)}): closed at market")
         limit *= cfg.time_after_tp1
-        if held > limit:
-            return f"time stop after TP1: open {_dur(limit)}: closed at market"
-        return None
+        return by(limit, f"time stop after TP1: open {_dur(limit)}: closed at market")
 
     # ------------------------------------------------------------------ views
 

@@ -148,8 +148,12 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         return None
     sym, tf = plan.get('symbol'), plan.get('tf', '15m')
     zones: List[Zone] = plan.get('zones') or []
-    adj = []
+    adj, on_map = [], []
     for t, s in zip(targets, sources):
+        # a target ON a map zone of any kind (eng-74: was 'a zone of a MEASURED kind' - a Hyperliquid account's
+        # liquidation price (liq_hl) has no pierce model, so NEAR's +76% / +100% TP2 / TP3 passed the reach check and
+        # made a 0.31 R:R a blended 8.9); the anchor's own objectives (extensions, measured moves) stay exempt
+        on_map.append(not is_synthetic(s) and any(z.lo - 1e-9 * abs(t) <= t <= z.hi + 1e-9 * abs(t) for z in zones))
         if not is_synthetic(s):
             kind = kind_at(zones, t) or kind_of_label(s, tf)
             p50 = overshoot(sym, kind, t, 'p50') if kind else None
@@ -160,10 +164,23 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     while len(targets) < 3:
         targets.append(targets[-1])
         sources.append(sources[-1])
+        on_map.append(on_map[-1])
     fee = cost_of(entry, plan.get('volume_24h'))
     rrs = [(abs(t - entry) - fee) / (risk + fee) for t in targets[:3]]
     beyond_map = not any(direction * ((z.lo if direction > 0 else z.hi) - entry) > 0 for z in zones)
     real = [not is_synthetic(s) or (s == 'ATR step' and beyond_map) for s in sources[:3]]
+    # a MAP zone the trade cannot reach in its lifetime is no target: 3 sd of a random walk over the time stop's bars
+    # (time_stop_bars x time_after_tp1) in the structure timeframe's ATR. FET AUCTION LONG 2026-10-07 judged a 15m POC
+    # retest by TP2 / TP3 at the 52-week high +151% / +183% (blended R:R 28). The anchor's own objectives (extensions,
+    # measured moves) are the method's targets and stay
+    tf_atr = max(plan.get('tf_atr') or 0.0, plan.get('atr') or 0.0, plan.get('leg_atr') or 0.0)
+    if tf_atr > 0:
+        cfg = CONFIG.strategies
+        reach = 3 * tf_atr * (cfg.time_stop_bars * cfg.time_after_tp1) ** 0.5
+        for k in range(3):
+            if real[k] and on_map[k] and direction * (targets[k] - entry) > reach:
+                real[k] = False
+                sources[k] = f"{sources[k]} (beyond reach)"
     blend = []
     last_real = None
     for k, (rr, ok) in enumerate(zip(rrs, real)):

@@ -56,7 +56,9 @@ class LoopDetectors:
             return []
         out = []
         cfg = CONFIG.strategies
-        if minutes[-1][4] / minutes[-16][4] - 1 >= cfg.pump_start_min_pct:
+        from strategies.oi_signal import _close_at
+        base15 = _close_at(minutes, int(minutes[-1][0]) - 15 * 60_000)     # by time (eng-74), None across a gap
+        if base15 and minutes[-1][4] / base15 - 1 >= cfg.pump_start_min_pct:
             closes = [c[4] for c in self.m15_of(symbol)[-97:]]
             rets = [b / a - 1 for a, b in zip(closes, closes[1:]) if a]
             vol = (sum(r * r for r in rets) / len(rets)) ** 0.5 if len(rets) > 20 else None

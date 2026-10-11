@@ -115,7 +115,7 @@ def _swings_with_ts(candles: Sequence[Sequence[float]], width: int, bar_ms: int)
 
 
 def liquidity_pools(h1_before: Sequence[Sequence[float]], c15_hour: Sequence[Sequence[float]], atr: float,
-                    now_ms: int, symbol: Optional[str] = None) -> List[Pool]:
+                    now_ms: int, symbol: Optional[str] = None, d1: Sequence = ()) -> List[Pool]:
     """
     Resting-stop pools as of `now_ms` from closed 1h candles plus the 15m candles of the running hour: intact 1h swings
     of the last sweep_swing_hours, equal highs / lows among them, previous day / week, the day's extremes and the last
@@ -134,7 +134,8 @@ def liquidity_pools(h1_before: Sequence[Sequence[float]], c15_hour: Sequence[Seq
     if c15_hour:
         hourly.append([c15_hour[0][0], c15_hour[0][1], max(c[2] for c in c15_hour), min(c[3] for c in c15_hour),
                        c15_hour[-1][4], 0.0, 0.0])
-    for level, formed in day_levels(hourly, now_ms, with_ts=True):
+    # the daily candles complete the previous week the 1h history may only partly hold (eng-74)
+    for level, formed in day_levels(hourly, now_ms, with_ts=True, candles_1d=[c for c in d1 if c[0] + 86_400_000 <= now_ms]):
         pools.append((level.price, level.side, level.label, formed))
     # Round numbers: their stops re-gather after price last traded through them (that candle's end = "formed")
     if hourly:
@@ -157,12 +158,12 @@ def liquidity_pools(h1_before: Sequence[Sequence[float]], c15_hour: Sequence[Seq
 
 
 def pools_before(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Sequence[float]], atr: float,
-                 at_ms: int, symbol: Optional[str] = None) -> List[Pool]:
+                 at_ms: int, symbol: Optional[str] = None, d1: Sequence = ()) -> List[Pool]:
     """The pools as they stood when the candle opening at `at_ms` started."""
     hour = at_ms // HOUR_MS * HOUR_MS
     h1_before = [c for c in candles_1h if c[0] + HOUR_MS <= hour]
     c15_hour = [c for c in candles_15m if hour <= c[0] < at_ms]
-    return liquidity_pools(h1_before, c15_hour, atr, at_ms, symbol)
+    return liquidity_pools(h1_before, c15_hour, atr, at_ms, symbol, d1)
 
 
 def merge_candles(older: Sequence[Sequence[float]], newer: Sequence[Sequence[float]], cut_ms: int,
@@ -289,13 +290,13 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
     last_open = int(candles_15m[-1][0])
     closed_1h = [c for c in candles_1h if c[0] + HOUR_MS <= cut]
     ctx = Context(atr=atr, recent_atr=recent_atr(candles_15m), cut_ms=cut, zones=zones,
-                  pools=pools_before(candles_15m, candles_1h, atr, cut, symbol), trend=coin_trend(closed_1h),
+                  pools=pools_before(candles_15m, candles_1h, atr, cut, symbol, d1), trend=coin_trend(closed_1h),
                   tail=[list(c) for c in candles_15m[-24:]])
     # Events of the candle that just closed (only while it is fresh: a rebuild after a restart or a backfill must not
     # fire an old candle again)
     if now_ms - cut <= CONFIG.strategies.close_event_max_age_sec * 1000:
         from strategies.level import sweep_at_close
-        pools = pools_before(candles_15m, candles_1h, atr, last_open, symbol)
+        pools = pools_before(candles_15m, candles_1h, atr, last_open, symbol, d1)
         sweep = sweep_at_close(candles_15m, pools, atr, ctx.trend, symbol)
         if sweep:
             # ICT's SMT divergence is a confirmation of the sweep (eng-35; was the separate 'smt' system): the

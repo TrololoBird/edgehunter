@@ -477,6 +477,11 @@ class ZonesConfig:
     liq_observed_min_usd: float = 250_000
     # Levels closer than this many ATR merge into one zone
     merge_atr: float = 0.3
+    # eng-74: a merged zone is at most this many ATR (the merge's ATR, 15m for the maps) wide, and a single level wider
+    # than that (a big daily candle's order block / breaker: BTC's 83 786-90 320) is a zone of its own that absorbs
+    # nothing - chaining through it made one zone of 86.5-93k and the briefing's trim then deleted it. A hypothesis
+    # (no classic source gives a number; Murphy: zones, not prices) - to be measured like research_level_weights.py
+    max_merge_atr: float = 6.0
     # Source weights; a zone's strength is the sum of its sources
     # liq_est 0.5 (was 1.5): the estimated liquidation model is unproven (forward test 2026-10-01: x1.37 the
     # liquidations of jittered placebo levels over 14h, within noise) - it may label a zone, not make one strong
@@ -894,7 +899,7 @@ class NotifyConfig:
 class BriefingConfig:
     """Telegram briefings / watch alerts (briefing.py) for the coins that lead the market (the owner, 2026-10-05)."""
     enabled: bool = True
-    coins: tuple = ('BTC', 'ETH', 'XAU', 'CL', 'SOL', 'XRP')
+    coins: tuple = ('BTC', 'ETH', 'XAU')          # the owner 2026-10-07: forecasts only for these three
     # (HH:MM Moscow, title): before the Tokyo (03:00 MSK), London (10:00 MSK) and New York cash (16:30 MSK) opens + recap
     schedule: tuple = (('02:30', 'Сводка перед Азией'), ('09:30', 'Сводка перед Лондоном'),
                        ('16:00', 'Сводка перед Нью-Йорком'), ('23:30', 'recap'))
@@ -920,7 +925,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-72"
+    logic_version: str = "eng-74"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

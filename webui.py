@@ -331,10 +331,14 @@ class JournalReader:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def _universe(self, conn):
+    def _universe(self, conn, since_ms: int):
+        """The baseline from `since_ms` (minus a margin for the snapshot nearest a row's time) to now: only the
+        window the page asks for, not the whole table (eng-74: the whole table was the bot's memory growth)."""
         from stats import UniverseBaseline
-        if self._baseline is None or time.time() - self._baseline_at > self.BASELINE_TTL:
-            self._baseline, self._baseline_at = UniverseBaseline(conn), time.time()
+        since_ms -= 3_600_000
+        if self._baseline is None or time.time() - self._baseline_at > self.BASELINE_TTL                 or (self._baseline.since_ms or 0) > since_ms:
+            self._baseline = None                           # free the old one before loading the new
+            self._baseline, self._baseline_at = UniverseBaseline(conn, since_ms), time.time()
         return self._baseline
 
     def _row(self, r: sqlite3.Row, base) -> Dict:
@@ -372,7 +376,7 @@ class JournalReader:
         conn = self._conn()
         try:
             rows = conn.execute(sql, args).fetchall()
-            base = self._universe(conn)
+            base = self._universe(conn, since)
             return [self._row(r, base) for r in rows]
         finally:
             conn.close()
@@ -431,6 +435,7 @@ class WebUI:
         app.router.add_get('/api/stats', self._stats)
         app.router.add_get('/api/debug', self._debug)
         app.router.add_get('/api/briefing', self._briefing)
+        app.router.add_get('/api/briefing_card', self._briefing_card)
         app.router.add_static('/static/', WEB_DIR)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
@@ -548,6 +553,18 @@ class WebUI:
         hours = float(request.query.get('hours', 24))
         symbol = request.query.get('symbol') or None
         return self._json(await asyncio.to_thread(self.reader.history, kind, hours, symbol))
+
+    async def _briefing_card(self, request):
+        """The briefing card of one coin as it would be sent now (PNG), for checking - nothing is posted."""
+        b = getattr(self.scanner, 'briefing', None)
+        if b is None:
+            return web.Response(text='briefing off', status=404)
+        base = request.query.get('symbol', 'BTC').upper()
+        cards = await asyncio.to_thread(b.cards, 'Проверка')
+        for png, cap in cards:
+            if f"<b>{base}</b>" in cap:
+                return web.Response(body=png, content_type='image/png')
+        return web.Response(text=f'no card for {base}', status=404)
 
     async def _briefing(self, request):
         """The briefing as it would be sent now (briefing.py), as text: ?send=1 also posts it to Telegram."""

@@ -261,12 +261,16 @@ def htf_swings(candles_1d: Optional[Sequence[Sequence[float]]], candles_1w: Opti
         year = d1[-365:]
         if len(year) >= 200:
             hi, lo = max(year, key=lambda c: c[2]), min(year, key=lambda c: c[3])
-            out.append(RawLevel(hi[2], 'year', '52w high', +1, body=max(hi[1], hi[4])))
-            out.append(RawLevel(lo[3], 'year', '52w low', -1, body=min(lo[1], lo[4])))
+            # a contract younger than a year (XAU since 12.2025, CL since 04.2026) has its listing's extremes, not
+            # 52-week ones: named honestly (eng-74)
+            tag = '52w' if len(d1) >= 365 else f"{len(year)}d"
+            out.append(RawLevel(hi[2], 'year', f'{tag} high', +1, body=max(hi[1], hi[4])))
+            out.append(RawLevel(lo[3], 'year', f'{tag} low', -1, body=min(lo[1], lo[4])))
     return out
 
 
-def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bool = False) -> List:
+def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bool = False,
+               candles_1d: Optional[Sequence[Sequence[float]]] = None) -> List:
     """
     Previous UTC day's and week's high / low, the current day's high / low (>= 3 candles) and the last completed
     sessions' highs / lows, from 1h candles. with_ts: also the time each level was complete [(RawLevel, formed ms)].
@@ -284,8 +288,17 @@ def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bo
             out.append((RawLevel(lo[3], 'pdhl', label_lo, -1, body=min(lo[1], lo[4])),
                         formed if formed else int(lo[0]) + HOUR_MS))
 
-    span([c for c in candles_1h if today - DAY_MS <= c[0] < today], 'PDH', 'PDL', today)
-    span([c for c in candles_1h if week - WEEK_MS <= c[0] < week], 'PWH', 'PWL', week)
+    # a period the 1h history does not cover in full takes its extremes from the daily candles (eng-74: 200 1h
+    # candles hold ~8 days, the previous week needs up to 14 - ETH's PWL read 2 645 where it was 2 634)
+    first = candles_1h[0][0] if len(candles_1h) else None
+    for start, end, hi_lb, lo_lb in ((today - DAY_MS, today, 'PDH', 'PDL'), (week - WEEK_MS, week, 'PWH', 'PWL')):
+        if first is not None and first <= start:
+            span([c for c in candles_1h if start <= c[0] < end], hi_lb, lo_lb, end)
+        elif candles_1d:
+            days = [c for c in candles_1d if start <= c[0] < end]
+            if len(days) * DAY_MS >= end - start:
+                out.append((RawLevel(max(c[2] for c in days), 'pdhl', hi_lb, +1), end))
+                out.append((RawLevel(min(c[3] for c in days), 'pdhl', lo_lb, -1), end))
     cur = [c for c in candles_1h if c[0] >= today]
     if len(cur) >= 3:
         span(cur, 'day high', 'day low', 0)
@@ -618,7 +631,11 @@ def day_poc(candles: Sequence[Sequence[float]], today_ms: int) -> List[Tuple[int
         atr = math.sqrt(3) * sum(c[2] - c[3] for c in part) / len(part)
         profile = volume_profile(part, atr, '')
         if profile:
-            out.append((day, profile[0].price))
+            # (day, POC, VAH, VAL): eng-74 - Dalton reads the PREVIOUS day's value area (the map held only the rolling
+            # 24h and 4-day profiles)
+            vah = next((l.price for l in profile if l.kind == 'va' and l.side > 0), None)
+            val = next((l.price for l in profile if l.kind == 'va' and l.side < 0), None)
+            out.append((day, profile[0].price, vah, val))
     return out
 
 
@@ -626,10 +643,19 @@ def naked_daily_pocs(day_pocs: Sequence[Tuple[int, float]], candles: Sequence[Se
     """The completed days' POCs no candle after that day has traded through (`candles`: 1h, 8 days - a touch needs
     only the range): naked / virgin POCs (Dalton), an untested value reference. Kind 'poc' like the composites."""
     out = []
-    for day, poc in day_pocs:
+    for row in day_pocs:
+        day, poc = row[0], row[1]
         end = day + DAY_MS
         if not any(c[0] >= end and c[3] <= poc <= c[2] for c in candles):
             out.append(RawLevel(poc, 'poc', f"naked POC {time.strftime('%m-%d', time.gmtime(day / 1000))}", ts=day))
+    # the previous completed day's POC / VAH / VAL (Dalton: yesterday's value area is the day's reference - an open
+    # outside it, the 80% rule, VAH resistance / VAL support from outside)
+    if day_pocs:
+        last = max(day_pocs, key=lambda r: r[0])
+        out.append(RawLevel(last[1], 'poc', 'POC PD', ts=last[0]))
+        if len(last) >= 4 and last[2] is not None and last[3] is not None:
+            out.append(RawLevel(last[2], 'va', 'VAH PD', +1, ts=last[0]))
+            out.append(RawLevel(last[3], 'va', 'VAL PD', -1, ts=last[0]))
     return out
 
 
@@ -653,7 +679,7 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     levels = s15 + s1h
     levels += equal_pools(s15 + s1h, candles_15m, atr, symbol)
     levels += htf_swings(candles_1d, candles_1w, now_ms)
-    levels += day_levels(candles_1h, now_ms)
+    levels += day_levels(candles_1h, now_ms, candles_1d=candles_1d)
     levels += volume_profile(candles_4d or candles_1h, atr, '4d')
     levels += volume_profile(candles_15m, atr, '24h')
     levels += naked_daily_pocs(day_pocs or (), candles_1h)
@@ -679,11 +705,12 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
         today = [c for c in candles_15m if c[0] >= day_open]
         if today:
             levels.append(RawLevel(today[0][1], 'open', 'day open'))
-    if candles_1w and candles_15m:
-        week_start = int(candles_1w[-1][0]) + 7 * DAY_MS
-        week = [c for c in candles_15m if c[0] >= week_start]
-        if week:
-            levels.append(RawLevel(week[0][1], 'open', 'week open'))
+    # the week's open = the open of the candle that opened AT the week's start (eng-74: the first 15m candle held -
+    # the 15m history is shorter than a week - was taken: ETH's 'week open' 2 690 where it was 2 725.71)
+    week_start = (int(now_ms) - WEEK_OFFSET_MS) // WEEK_MS * WEEK_MS + WEEK_OFFSET_MS
+    at = next((c for src in (candles_15m, candles_1h, candles_1d) for c in (src or []) if int(c[0]) == week_start), None)
+    if at is not None:
+        levels.append(RawLevel(at[1], 'open', 'week open'))
     if candles_15m:
         last = candles_15m[-1][4]
         levels += [RawLevel(p, 'round', f"round {p:g}", +1 if p > last else -1)
@@ -729,7 +756,16 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
                           sorted(per_kind, key=lambda k: -per_kind[k]), labels, strength))
 
     group_hi = float('-inf')
-    for l in sorted(levels, key=lambda l: _span(l)[0]):
+    max_w = CONFIG.zones.max_merge_atr * atr if atr and atr > 0 else float('inf')
+    levels = list(levels)
+    wide = [l for l in levels if _span(l)[1] - _span(l)[0] > max_w]
+    for l in wide:
+        # eng-74: a level wider than a zone may be stays its own zone and absorbs nothing
+        group = [l]
+        close_group()
+    group = []
+    group_lo = float('inf')
+    for l in sorted((l for l in levels if not any(l is w for w in wide)), key=lambda l: _span(l)[0]):
         lo, hi = _span(l)
         if measured:
             gap = overshoot(symbol, measured_kind([l.kind]) or 'swing_15m', l.price, 'p50') or 0.0
@@ -737,13 +773,15 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
             gap = tol
         # measured from the zone's FIRST level, not its growing edge: chaining A-B-C merged levels far apart into one
         # zone covering half the chart (live eng-27: ETH's PWL + EQL + PDL + estimates 3%+ wide)
-        if group and lo - group_hi > gap:
+        top = max([hi] + [_span(x)[1] for x in group])
+        if group and (lo - group_hi > gap or top - group_lo > max_w):
             close_group()
             group, group_hi = [], float('-inf')
         if not group:
-            group_hi = hi
+            group_hi, group_lo = hi, lo
         group.append(l)
     close_group()
+    zones.sort(key=lambda z: z.lo)
     return zones
 
 

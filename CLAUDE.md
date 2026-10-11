@@ -618,3 +618,95 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   ETH -> the day's priced move DVOL / sqrt(365); every 30 min the option OI by strike of the two nearest expiries,
   `fetcher.options`): briefing context only. The funding interval was already handled (`_funding_info` normalises every
   rate to 8h), so R needs no change there.
+- eng-73 (2026-10-07, the review of the 2026-10-06 run): session methods (ORB, VA80) exit only at the session's end
+  (the 12h cap fired first for every trade entered in the UTC day's first half); a time exit that fell due while the
+  bot had no data is marked at the close of the minute it was due (`_time_exit` returns the due time); a map zone
+  beyond 3 sd of a random walk over time_stop_bars x time_after_tp1 bars of the structure ATR is no target for R:R
+  (`finish_levels`, '(beyond reach)': FET AUCTION's 52-week-high TP2 gave blended R:R 28; the anchor's own objectives
+  stay); a vetoed trigger repeated scan after scan is journaled once (`TrackedSignal.last_veto`: 261 PO3 rows of 2
+  cards); universe snapshots only from REST marks < 2 min old (13h of frozen marks during the outage, deleted from the
+  journal); the demo recovers results whose exit fill was not listed at the close (`_refinalize`) and names a frozen
+  VST quote; Telegram falls back to plain text on an HTML parse error; `_btc_bias` 0 = known neutral.
+- eng-74 (2026-10-08, the review of the briefings, web-checked against Murphy / Bulkowski / Osler (NY Fed) / ICT
+  write-ups / Elder / Moskowitz-Ooi-Pedersen): `zones.merge` - a level wider than `zones.max_merge_atr` (6) x the
+  merge's ATR is a zone of its own that absorbs nothing, and a merged zone is at most that wide (a 6.5k daily breaker
+  chained BTC's 86.5-93k into one zone; a hypothesis to be measured); the briefing (`briefing.key_zones`) keeps whole
+  zones (no 0.3-daily-ATR trim, a zone around the price is shown - the wide ones as context), supports below the
+  price and resistances above it, each zone with `tol` (p50 pierce: retest / acceptance tolerance) and `pad` (stop
+  buffer: p80 pierce, >= 1.5 1h ATR); `briefing_chart.plan` = one source for the card, the text, the alerts and the
+  evening scoring (inside a zone: 1h close beyond + retest; between zones: the nearest support's / resistance's
+  retest), targets only real zones (ATR steps only above the history's high), percentages from the entry, 'шанс TP1
+  по расстоянию' instead of 'Вероятность', the higher timeframe labelled 'Фон (недели)', 24h extremes with the minute
+  candles, XAU's history spliced with PAXGUSDT before its listing (12.2025), year levels of younger contracts named
+  'NNNd'; the 23:30 recap scores every saved briefing scenario (fill / TP1 / stop / acceptance without a retest);
+  anomalies of a watched coin within 5 min go out as one message with the zone and the scenarios' state; a waiting
+  card whose TP1 is already behind the price is not a card (`tp1_passed`), the exhaustion's test zone narrower than
+  the p50 pierce is `no_room`; the dashboard's universe baseline loads only the page's window (the whole table, 1.2M
+  rows rebuilt every 10 min, was the memory growth); the demo closes card-driven exits with a reduce-only limit at
+  the touch first (market after 15 s) and journals the card's exit price (`exit_ref`). Not changed (the Turtles'
+  rules): units are added during liquidation cascades.
+  eng-74 also (NEAR OI SIGNAL LONG 2026-10-07 22:07 UTC, entered on data Binance's own OI history contradicts): the
+  OI signal and the pump detector measure their 15m / 1h windows by TIME (`oi_signal._close_at`: the candle that
+  opened exactly then; a missing minute = no signal) and an OI change needs a sample within 3 minutes of the window's
+  start (after a RAM-paging feed gap `minutes[-16]` and the last old OI sample were far older: '+5.56% / OI +4.68% in
+  15m' where the mark moved +1.7% and OI was flat); the reach check covers every target on a map zone of ANY kind
+  (Hyperliquid liquidation prices +76% / +100% had no pierce model and made a 0.31 R:R a blended 8.9). The briefing
+  lists the edges of a wide zone around the price as levels (targets).
+  eng-74 also (the briefing zones checked against the candles, 2026-10-08): the week's open is the open of the candle
+  that opened AT the week's start (the first 15m candle held was taken - the 15m history is shorter than a week: ETH
+  2 690 for 2 725.71); PDH / PDL / PWH / PWL come from the daily candles when the 1h history does not cover the whole
+  period (200 1h candles ~8 days: ETH's PWL read 2 645 for 2 634); `strategies.structure.liquidity_pools` still builds
+  its PW pools from the 1h candles only. The briefing's zones use only significant levels (`briefing._significant`:
+  daily / weekly swings, PDH/PDL/PWH/PWL, the completed sessions' ranges (ICT: London runs Asia's liquidity), week /
+  month open, PMH/PML, the year's extremes, 4h+ FVG / OB / breaker / BPR, naked daily POCs, the 4-day profile), each
+  at most half a daily ATR thick from its price, merged zones at most half a daily ATR wide (a convention, no source
+  for the number). Excluded as unproven / intraday: VWAP (no evidence beyond its use as an execution benchmark),
+  the rolling 24h profile, 15m / 1h swings, equal highs / lows, round numbers (Osler's FX order data supports them,
+  our crypto archive does not: research/level_weights.md, OR 0.79-0.86).
+  eng-74 also: the map holds the previous completed UTC day's POC / VAH / VAL (`zones.day_poc` now returns
+  (day, POC, VAH, VAL) from the 5m candles; `naked_daily_pocs` adds 'POC PD' / 'VAH PD' / 'VAL PD' - Dalton's
+  reference value area; the briefing shows them); the sweep's liquidity pools take the previous day / week from the
+  daily candles when the 1h history does not cover them (`structure.liquidity_pools(..., d1)`, closed days only).
+  eng-74 also (the 09:30 card of 2026-10-08): overlapping briefing zones are merged (up to a daily ATR wide - the
+  half-ATR cap had drawn BTC's 81 857-82 500 inside 81 511-82 414); a scenario whose TP1 is closer than its stop
+  (R:R < 1) is not shown - the card says why (a long 51 under the next resistance; a short's TP1 -0.3% for a +1.6%
+  stop whose 'chance' read 82%); 'у верха / у низа зоны' when the price is only within the zone's tolerance; close
+  zones' labels pushed apart.
+  eng-74 also (the cards checked against the range / break-and-retest playbooks): inside a zone the card takes per
+  side the better of the breakout (1h close beyond + retest, the stop beyond the whole zone) and the zone's edge
+  (range trading: buy the support edge / sell the resistance edge, the first target the opposite boundary, the stop
+  beyond the edge) - after the merge every coin's price sat inside a daily-ATR-wide zone and all six breakout
+  scenarios were R:R < 1; overlapping zones too wide to merge are split at the middle of their overlap. The R:R >= 1
+  floor has no source (Tharp: the needed R:R follows the win rate, (1 - p) / p + costs) - the evening scoring of the
+  saved briefings is what will measure p.
+  eng-74 also: a briefing stop that falls inside another zone moves beyond that zone's far edge + its pad (a test of
+  the next zone would take it - Osler; BTC's short stop 84 087 inside 83 577-84 273 -> 84 873); the REACTION that
+  enters every briefing scenario is defined (`Briefing.reaction`): a closed 1h candle that traded into the entry
+  range and closed back beyond its far edge, a candle of the trade's colour (the confirmation candle of the
+  break-and-retest / range playbooks) - the card's condition says so, the evening scoring enters at that candle's
+  close (was: any touch), and a live alert '✅ реакция ... сценарий включён' posts the entry, stop, targets and R:R.
+  eng-74 also - the briefing card on the 1h structure (the owner's reference card, Binance data): 1h swings, equal
+  highs / lows, 1h FVG / OB / breaker / BPR and the day's extremes join the higher levels; zones ~1 1h-ATR thick
+  (merged <= 1.5), 3 resistances / 2 supports, the 1h chart of 3 days, a 'what it is' line per zone
+  (`briefing.describe`); a level wider than a 1h ATR becomes its edges + (ICT zones) its middle (CE / mean threshold) -
+  capped from one side BTC's daily FVG vanished; tolerance <= 0.5 and stop buffer 0.5..1.0 1h ATR (the pierce model's
+  global figures put gold's stop 3 ATR away; sources: 0.3-1.0 ATR); a stop is pushed beyond ONE adjacent zone only;
+  overlapping zones inside one another are absorbed, never inverted; inside a zone the scenarios also include the
+  bounce at the nearest support / the fade at the nearest resistance; `/api/briefing_card?symbol=` renders a card
+  locally without posting it.
+  eng-74 also: only the ICT zones (FVG / OB / breaker / BPR) wider than a 1h ATR become edges + CE; a swing or a
+  previous-period extreme stays a band of a 1h ATR from its wick (was split too: 'минимум вчера (верх)'); the
+  anomaly alert names the liquidated side and its sum ('каскад: ликвидации лонгов $xM' - was 'распродажа / откуп')
+  and the zone in words, 'в зоне' / 'у зоны' by where the events were; the zone alerts carry the zone's description.
+- eng-75 (2026-10-08, the owner: "you don't understand what support and resistance are and what forms them"; web:
+  Fidelity / Investing.com / Capital.com / Dukascopy / Wealthsimple / FTMO): `sr.py` - S/R zones from where price
+  TURNED: clusters of 1h / 4h / daily fractal pivots that moved >= 1 ATR of their timeframe away, the band the
+  pivots' wicks, strength = sum of tf weight x reaction x volume x recency + 0.5 per later rejection (a candle that
+  came from outside, wicked in and closed back out; consecutive ones = one episode), flip = swing highs AND lows in
+  one cluster. The briefing's zones are these (`briefing.key_zones`); the map's constructs (PDH, FVG, VAL, opens,
+  sessions) only name a zone they coincide with ('здесь же'). `research_sr.py` (VOID - the owner, 2026-10-08: wrong method - a 15m close back within 1h at the exact edge, no +- band in the zone's own timeframe ATR, no horizon by timeframe, no reaction size, placebos landing in other zones; the same holds for research/level_weights.md; redo before any conclusion) (research/sr_zones.md,
+  40 coins x 12 months): NO class holds price better than placebo prices - all zones OR 0.94 [0.92..0.96], the
+  strongest third 0.90, >= 3 touches 0.93, with a daily pivot 0.89, the same in both halves - the stronger the level
+  the more often it breaks (Osler: stops beyond it accelerate the break). The card says so; the fade / bounce
+  scenarios have no measured edge. Open: a pre-registered break-follow-through test (after a 15m close beyond a
+  zone, a 1 ATR continuation more often than beyond a placebo?) before the breakout scenario is trusted.

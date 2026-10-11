@@ -663,7 +663,10 @@ class Scanner:
                 logger.info(f"Card {tracked.symbol} {tracked.group_key}: {tracked.status} - {tracked.finish_reason}")
                 await self.journal.arecord_card(tracked)
             # the market baseline: every USDT perpetual (REST mark prices), not only the streamed universe
-            await self.journal.asnapshot_universe(self.fetcher.market_marks or
+            # only fresh marks: during the 2026-10-06 outage the last REST marks were written every 5 min for 13h
+            # (BTC 85770 flat), a flat market baseline for every signal in that window
+            fresh = time.time() - self.fetcher.market_marks_at < 120
+            await self.journal.asnapshot_universe((self.fetcher.market_marks if fresh else None) or
                                                   {s: self._price_of(s) for s in self.market_data})
             if self.fetcher.liq_log:
                 events, self.fetcher.liq_log = self.fetcher.liq_log, []
@@ -1020,13 +1023,16 @@ class Scanner:
         md = self.market_data.get('BTC/USDT:USDT')
         if md is None:
             return None
+        seen = False
         for bars in (md.w1, md.d1):
             if len(bars) >= 2:
+                seen = True
                 prev, last = bars[-2], bars[-1]
                 bias = 1 if last[4] > prev[2] else -1 if last[4] < prev[3] else 0
                 if bias:
                     return bias
-        return None
+        # 0 = known and neutral (inside both previous candles), None = no data (journaled NULL was both)
+        return 0 if seen else None
 
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
         """Live context that is not part of the scored row."""
@@ -1678,23 +1684,80 @@ class Scanner:
             'p_drifts': success.drifts if success else 0,
         }
 
+    CONFIRM_RU = {'flow': 'поток', 'spot': 'спот', 'oi': 'OI', 'orderflow': 'ордерфлоу', 'vsa': 'VSA',
+                  'htf_zone': 'зона ст.ТФ', 'smt': 'SMT', 'killzone': 'килзона'}
+    EVENT_RU = {'ENTRY': 'вход', 'ZONE': 'в зоне', 'TP1': 'TP1', 'TP2': 'TP2', 'TP3': 'TP3', 'SL': 'стоп',
+                'CLOSED': 'закрыта', 'INVALID': 'отменена', 'RESTOP': 'стоп перенесён', 'ADD': 'добавлен юнит'}
+
+    @staticmethod
+    def _why_ru(reason: Optional[str]) -> str:
+        r = reason or ''
+        for en, ru in (("the method's session ended", 'конец сессии метода'), ('time stop', 'по времени (нет движения)'),
+                       ('trade open', 'по времени (лимит жизни сделки)'), ('opposite Bollinger band', 'дошли до противоположной полосы Боллинджера'),
+                       ('Turtles', 'выход по каналу Turtles'), ('Connors', 'выход Connors (SMA5)'),
+                       ('opposite', 'противоположный сигнал'), ('older signal logic', 'смена версии логики')):
+            if en in r:
+                return ru
+        return r or 'по правилу метода'
+
     def _notify(self):
+        """Card events for Telegram / toasts in Russian (the owner, 2026-10-07: the English one-liner with internal
+        confirmation keys and the no-target placeholders as TPs was unreadable)."""
+        def px(p):
+            return f"{p:.6g}"
         for s, event in self.book.events:
-            arrow = '▲ LONG' if s.direction > 0 else '▼ SHORT'
+            side = '🟢 ЛОНГ' if s.direction > 0 else '🔴 ШОРТ'
             name = s.symbol.replace(':USDT', '').replace('/USDT', '')
-            if event == 'ENTRY' and s.levels:
-                lv = s.levels
-                text = (f"entry {lv['entry']:.6g} | SL {lv['sl']:.6g} | TP {lv['tp1']:.6g} / {lv['tp2']:.6g} / "
-                        f"{lv['tp3']:.6g} | R:R {_rr_text(lv)}{' (LOW RR)' if lv.get('low_rr') else ''}")
-                confirms = [f"{'+' if confirm.positive(v) else '-'}{k}" for k, v in (s.confirms or {}).items()
-                            if v is not None and v != confirm.NA]
-                if confirms:
-                    text += f" | confirms {' '.join(confirms)}"
+            title = f"{side} {name} · {s.group_key} — {self.EVENT_RU.get(event, event)}"
+            lv = s.levels or {}
+            if event == 'ENTRY' and lv:
+                e = lv['entry']
+                lines = [f"Вход {px(e)} · стоп {px(lv['sl'])} ({(lv['sl'] / e - 1) * 100:+.1f}%)"]
+                if (s.plan or {}).get('no_tp') or lv.get('rr_tp1') is None:
+                    exit_ru = {'bollinger': 'выход у противоположной полосы Боллинджера',
+                               'breakout': 'выход по противоположному каналу Дончиана (Turtles)',
+                               'orb': 'выход в конце дня UTC (Crabel)',
+                               'connors': 'выход по закрытию дня за SMA5 (Connors)'}
+                    lines.append("Целей нет: " + exit_ru.get(self.book.strategy(s).name if self.book.strategy(s)
+                                                             else '', lv.get('tp1_src') or 'выход по правилу метода'))
+                else:
+                    tps = [lv[k] for k in ('tp1', 'tp2', 'tp3') if isinstance(lv.get(k), (int, float))]
+                    uniq = list(dict.fromkeys(tps))
+                    lines.append("Цели " + " · ".join(f"{px(t)} ({(t / e - 1) * 100:+.1f}%)" for t in uniq)
+                                 + f" · R:R {lv['rr_tp1']:.1f}" + (f" (средний {lv['rr_blend']:.1f})"
+                                                                   if lv.get('rr_blend') is not None else ''))
+                conf = [f"{self.CONFIRM_RU[k]} {'✓' if confirm.positive(v) else '✗'}"
+                        for k, v in (s.confirms or {}).items()
+                        if k in self.CONFIRM_RU and v is not None and v != confirm.NA]
+                if conf:
+                    lines.append("Подтверждения: " + ", ".join(conf))
+                text = "\n".join(lines)
             elif event == 'ZONE' and s.plan:
-                text = f"in zone {s.plan['zone_lo']:.6g}–{s.plan['zone_hi']:.6g}, waiting for the {s.plan['trigger_minutes']}m trigger"
+                text = f"Зона {px(s.plan['zone_lo'])}–{px(s.plan['zone_hi'])}, ждём триггер {s.plan['trigger_minutes']}m"
             else:
-                text = f"{event} at {s.last_price:.6g}" + (f" ({s.r_now:+.1f}R)" if s.r_now is not None else '')
-            self.notifier.send(event, f"{arrow} {name} {s.group_key}: {event}", text + " · rules, not advice")
+                # what happened to the trade, against its entry - the follow-up of the entry message
+                r = s.final_r if s.finished_at and s.final_r is not None else s.r_now
+                r_txt = f" · {r:+.2f}R" if r is not None else ''
+                head = f"Вход {px(lv['entry'])} → сейчас {px(s.last_price)}{r_txt}" if lv.get('entry') else \
+                    f"Цена {px(s.last_price)}{r_txt}"
+                if event.startswith('TP'):
+                    k = event[2:]
+                    rest = (f"\nСтоп теперь {px(lv['sl'])}" if lv.get('sl') else '') + \
+                        (f", следующая цель {px(lv['tp' + str(int(k) + 1)])}" if k in ('1', '2')
+                         and isinstance(lv.get('tp' + str(int(k) + 1)), (int, float)) else '')
+                    text = f"Цель {k} взята {px(lv.get('tp' + k, s.last_price))}\n{head}{rest}"
+                elif event == 'SL':
+                    text = f"Стоп {px(lv.get('sl', s.last_price))} — сделка закрыта\n{head}"
+                elif event == 'CLOSED':
+                    text = f"Сделка закрыта: {self._why_ru(s.finish_reason)}\n{head}"
+                elif event == 'RESTOP':
+                    text = f"Стоп перенесён на {px(lv['sl'])} ({lv.get('sl_src') or 'трейлинг'})\n{head}"
+                elif event == 'ADD':
+                    text = (f"Добавлен юнит {len(s.units or [])} по {px(s.units[-1][0]) if s.units else px(s.last_price)}, "
+                            f"стоп всех юнитов {px(lv['sl'])}\n{head}")
+                else:
+                    text = head
+            self.notifier.send(event, title, text + "\n<i>механические правила, не совет</i>")
 
     async def _output(self, created: List[TrackedSignal], entries: List[TrackedSignal]):
         # Sound on entries (the actionable moment), not on every new setup

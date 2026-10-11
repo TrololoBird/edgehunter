@@ -100,10 +100,14 @@ class UniverseBaseline:
 
     MAX_GAP_MS = 20 * 60_000
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, since_ms: Optional[int] = None):
         self.snapshots: Dict[int, Dict[str, float]] = {}
+        self.since_ms = since_ms
         try:
-            for ts, symbol, price in conn.execute("SELECT ts_ms, symbol, price FROM universe ORDER BY ts_ms"):
+            # since_ms: only the window a caller needs - the dashboard loaded the WHOLE table (1.2M rows, ~100 MB of
+            # dicts, rebuilt every 10 min and growing ~280k rows a day: the live bot's memory growth, eng-74)
+            q, args = ("SELECT ts_ms, symbol, price FROM universe WHERE ts_ms >= ? ORDER BY ts_ms", (since_ms,))                 if since_ms is not None else ("SELECT ts_ms, symbol, price FROM universe ORDER BY ts_ms", ())
+            for ts, symbol, price in conn.execute(q, args):
                 self.snapshots.setdefault(ts, {})[symbol] = price
         except sqlite3.OperationalError:
             pass

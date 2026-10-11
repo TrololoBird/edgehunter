@@ -50,7 +50,9 @@ class Notifier:
         if not self.wants(event):
             return
         loop = asyncio.get_running_loop()
-        for coro in (self._toast(title, text), self._telegram(f"{title}\n{text}")):
+        import re
+        plain = re.sub(r'</?[a-zA-Z][^>]*>', '', text)
+        for coro in (self._toast(title, plain), self._telegram(f"<b>{title}</b>\n{text}", html=True)):
             task = loop.create_task(coro)
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
@@ -115,7 +117,7 @@ class Notifier:
                 if resp.status != 200:
                     logger.warning(f"Telegram photo failed: HTTP {resp.status} {(await resp.text())[:200]}")
         except Exception as e:
-            logger.warning(f"Telegram photo failed: {e}")
+            logger.warning(f"Telegram photo failed: {e!r}")
 
     async def _send_chunks(self, chunks):
         for c in chunks:
@@ -135,9 +137,15 @@ class Notifier:
                                           json=payload,
                                           timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    logger.warning(f"Telegram notification failed: HTTP {resp.status} {(await resp.text())[:200]}")
+                    body = (await resp.text())[:200]
+                    if html and resp.status == 400 and "can't parse entities" in body:
+                        # a bare '<' in the text ("R:R 1.55 < 2", 2026-10-06 09:16) breaks Telegram's HTML: the
+                        # message goes out as plain text instead of not at all
+                        import re
+                        return await self._telegram(re.sub(r'</?[a-zA-Z][^>]*>', '', text), html=False)
+                    logger.warning(f"Telegram notification failed: HTTP {resp.status} {body}")
         except Exception as e:
-            logger.warning(f"Telegram notification failed: {e}")
+            logger.warning(f"Telegram notification failed: {e!r}")    # repr: a timeout's str() is empty
 
     async def close(self):
         for task in list(self._tasks):

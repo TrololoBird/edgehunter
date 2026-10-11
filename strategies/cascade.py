@@ -138,6 +138,11 @@ class ExhaustionStrategy(Strategy):
                                                  volume_24h=x.sig.get('volume_24h')))
         hi_ratio = max(0.0, min(hi_ratio, capped))
         zone = sorted((end, fib_price(leg, hi_ratio)))
+        # eng-74: the secondary test is an AREA above the climax (Wyckoff: a narrower, lower-volume retest that holds
+        # above the low), not one price: a zone the R:R cap squeezed below the typical pierce of the extreme leaves no
+        # room for the trade (ETH 2026-10-07 10:08: zone 2560.03-2560.03, TP1 already behind the price) - no card
+        if zone[1] - zone[0] < (overshoot(x.symbol, 'swing_15m', end, 'p50') or 0.1 * atr):
+            return {'skip': 'no_room'}
         anchor = {'type': 'leg', 'tf': '15m', 'start': leg['start'], 'end': end, 'start_ts': leg['start_ts'],
                   'end_ts': leg['end_ts'], 'label': 'cascade'}
         return base_plan(x, self.name, anchor, '15m', trigger_minutes=5, entry='pullback', zone_lo=zone[0], zone_hi=zone[1],
