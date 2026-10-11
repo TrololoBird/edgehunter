@@ -564,7 +564,7 @@ function onState() {
 // ------------------------------------------------------------------------------------------------ websocket
 
 function connect() {
-  const ws = new WebSocket(`ws://${location.host}/ws`);
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.onopen = () => $('#conn').className = 'dot on';
   ws.onmessage = ev => { S = JSON.parse(ev.data); onState(); if (coin && Date.now() - coinLoaded > 20000) loadCoin(); };
   ws.onclose = () => { $('#conn').className = 'dot off'; setTimeout(connect, 2000); };
