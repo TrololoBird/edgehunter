@@ -710,3 +710,14 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   the more often it breaks (Osler: stops beyond it accelerate the break). The card says so; the fade / bounce
   scenarios have no measured edge. Open: a pre-registered break-follow-through test (after a 15m close beyond a
   zone, a 1 ATR continuation more often than beyond a placebo?) before the breakout scenario is trusted.
+- eng-76 (merge 2026-10-12: the cloud session's "eng-73" of 2026-10-11, renamed - the local eng-73..75 are other changes; the cloud audit's fixes, research/talib_check.md / eng72_vs_eng59.md): indicators match TA-Lib -
+  CCI's mean deviation from the CURRENT window's mean (Lambert; cci_extreme read differently in 11% of cases), MFI
+  without flow on an unchanged typical price (Quong & Soudack), `ind_panel.ema` seeded with the SMA of its first n
+  values (EMA200 was up to 0.4% off on 499 candles; also bias' weekly EMA20 / daily EMA50), the 15m frame's ADX with
+  Wilder's / TA-Lib's seeding (`indicators.py`; on the live 99-candle frame it was up to 7% off - the Holy Grail's
+  ADX > 30). replay.py now gives the SignalBook the plans' own-timeframe ATR (`tf_atr_of`, as Scanner._tf_atrs): the
+  eng-72 replay ran without it, so eng-67 / eng-69's stop floors / zone buffers / target spacing in the 1h / 4h /
+  daily ATR were not applied there (e.g. trendline's stops at 0.66 1h ATR) - the eng-72 numbers understate the new
+  geometry and are re-measured on eng-76. deploy/install.sh: uv and Python 3.14 outside root's home (the pump user
+  could not read /root: the venv step failed).
+  Also: /api/briefing_card is local only too. research/sr_zones.md and research/level_weights.md are VOID (see eng-75).

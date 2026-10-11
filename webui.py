@@ -554,8 +554,16 @@ class WebUI:
         symbol = request.query.get('symbol') or None
         return self._json(await asyncio.to_thread(self.reader.history, kind, hours, symbol))
 
+    @staticmethod
+    def _local(request) -> bool:
+        """A request from this machine itself, not through the public proxy (deploy/web_access.sh: Caddy adds
+        X-Forwarded-For). The dashboard may be public; posting to Telegram and the internals are not."""
+        return request.remote in ('127.0.0.1', '::1') and 'X-Forwarded-For' not in request.headers
+
     async def _briefing_card(self, request):
-        """The briefing card of one coin as it would be sent now (PNG), for checking - nothing is posted."""
+        """The briefing card of one coin as it would be sent now (PNG), for checking - nothing is posted (local only)."""
+        if not self._local(request):
+            return web.Response(text='local only', status=403)
         b = getattr(self.scanner, 'briefing', None)
         if b is None:
             return web.Response(text='briefing off', status=404)
@@ -567,7 +575,10 @@ class WebUI:
         return web.Response(text=f'no card for {base}', status=404)
 
     async def _briefing(self, request):
-        """The briefing as it would be sent now (briefing.py), as text: ?send=1 also posts it to Telegram."""
+        """The briefing as it would be sent now (briefing.py), as text: ?send=1 also posts it to Telegram (local
+        requests only: a public dashboard must not let anyone post to the owner's channel or render charts on demand)."""
+        if not self._local(request):
+            return web.Response(text='local only', status=403)
         b = getattr(self.scanner, 'briefing', None)
         if b is None:
             return web.Response(text='briefing off', status=404)
@@ -582,7 +593,9 @@ class WebUI:
         return web.Response(text=text, content_type='text/plain', charset='utf-8')
 
     async def _debug(self, request):
-        """Internal state of one coin (verification against the exchanges' own REST numbers)."""
+        """Internal state of one coin (verification against the exchanges' own REST numbers); local requests only."""
+        if not self._local(request):
+            return web.Response(text='local only', status=403)
         from flow import BUY, LIQ_LONG, LIQ_SHORT, SELL
         symbol = request.query.get('symbol', '')
         f = self.scanner.fetcher

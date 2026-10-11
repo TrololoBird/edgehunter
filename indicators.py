@@ -125,11 +125,21 @@ def compute_indicators_batch(frames: Dict[str, pl.DataFrame], funding: Dict[str,
     plus_dm = pl.when((up_move > down_move) & (up_move > 0)).then(up_move).otherwise(0.0)
     minus_dm = pl.when((down_move > up_move) & (down_move > 0)).then(down_move).otherwise(0.0)
     tr = pl.max_horizontal(high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs())
-    wilder = lambda e: _over(e.ewm_mean(alpha=1 / 14, adjust=False))  # noqa: E731
-    plus_di = _safe_div(100 * wilder(plus_dm), wilder(tr))
-    minus_di = _safe_div(100 * wilder(minus_dm), wilder(tr))
+    # Wilder's smoothing seeded with the mean of its first 14 inputs (as Wilder / TA-Lib): an EMA seeded with the
+    # first value had not converged on the live 99-candle frame (ADX up to 7% off, research/talib_check.md)
+    row = _over(pl.int_range(pl.len()))
+
+    def wilder(e: pl.Expr, start: int, seed_n: int) -> pl.Expr:
+        # seed: the sum of the first seed_n inputs / 14 at their last row, then y += (x - y) / 14
+        seeded = (pl.when(row < start + seed_n - 1).then(None)
+                  .when(row == start + seed_n - 1).then(_over(e.rolling_sum(window_size=seed_n)) / 14)
+                  .otherwise(e))
+        return _over(seeded.ewm_mean(alpha=1 / 14, adjust=False, ignore_nulls=True))
+    # TA-Lib's ADX: the DM / TR sums start from 13 values (period - 1), the ADX from the mean of the first 14 DX
+    plus_di = _safe_div(100 * wilder(plus_dm, 1, 13), wilder(tr, 1, 13))
+    minus_di = _safe_div(100 * wilder(minus_dm, 1, 13), wilder(tr, 1, 13))
     dx = _safe_div(100 * (plus_di - minus_di).abs(), plus_di + minus_di)
-    df = df.with_columns(_over(dx.ewm_mean(alpha=1 / 14, adjust=False)).alias('adx'))
+    df = df.with_columns(wilder(dx, 14, 14).alias('adx'))
     # the previous candle's ADX: Raschke's Holy Grail needs ADX > 30 AND rising
     df = df.with_columns(_over(pl.col('adx').shift(1)).alias('adx_prev'))
     # Squeeze: width within a small tolerance of its lookback minimum (exact float equality with a rolling

@@ -263,6 +263,9 @@ class Replay:
         b.plan_key_of = lambda s: (self.ctx_sig.get(s), self.coins[s].live_15m(self.now_ms))
         b.map_ready_of = lambda s: s in self.raw
         b.btc_bias_of = self._btc_bias
+        # eng-67 / eng-69: the plans' own-timeframe ATR (stop floor, zone buffer, target spacing) - missing here until
+        # eng-73, so the eng-72 replay measured those plans with the 15m ATR only
+        b.tf_atr_of = self._tf_atrs
         self.cards: List[Dict] = []
         self.entries: List[Dict] = []
 
@@ -275,6 +278,19 @@ class Replay:
             if bias:
                 return bias
         return None
+
+    def _tf_atrs(self, symbol: str) -> Dict[str, float]:
+        """Scanner._tf_atrs on the archive: ATR14 (simple mean of true ranges) of the closed 1h / 4h / daily candles."""
+        c = self.coins.get(symbol) or (self.btc if self.btc is not None and symbol == self.btc.key else None)
+        out: Dict[str, float] = {}
+        if c is None:
+            return out
+        for tf, rows, period in (('1h', c.h1, HOUR_MS), ('4h', c.h4, 4 * HOUR_MS), ('1d', c.d1, DAY_MS)):
+            closed = [r for r in list(rows)[-20:] if r[0] + period <= self.now_ms]
+            if len(closed) >= 15:
+                trs = [max(k[2] - k[3], abs(k[2] - p[4]), abs(k[3] - p[4])) for p, k in zip(closed[-15:-1], closed[-14:])]
+                out[tf] = sum(trs) / len(trs)
+        return out
 
     def _band(self, symbol: str, direction: int) -> Optional[float]:
         closes = [c[4] for c in self.coins[symbol].m15(self.now_ms)[-20:]]
