@@ -26,13 +26,15 @@ chown -R "$USER_NAME":"$USER_NAME" "$APP"
 #    uv's default is root's home, which the pump user cannot read (the venv step failed with Permission denied)
 export UV_PYTHON_INSTALL_DIR=/opt/uv-python
 if ! command -v uv >/dev/null; then
-  # into /usr/local/bin: the pump user runs it below and cannot enter root's home
-  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
 fi
+# the pump user runs uv below and cannot enter root's home
+[ "$(command -v uv)" = /usr/local/bin/uv ] || install -m 755 "$(command -v uv)" /usr/local/bin/uv
 cd "$APP"
 uv python install 3.14
 chmod -R a+rX /opt/uv-python
-sudo -u "$USER_NAME" bash -c "cd $APP && UV_PYTHON_INSTALL_DIR=/opt/uv-python $(command -v uv) venv --python 3.14 .venv && .venv/bin/python -m ensurepip && .venv/bin/python -m pip install -r requirements.txt"
+sudo -u "$USER_NAME" bash -c "cd $APP && UV_PYTHON_INSTALL_DIR=/opt/uv-python /usr/local/bin/uv venv --python 3.14 .venv && .venv/bin/python -m ensurepip && .venv/bin/python -m pip install -r requirements.txt"
 
 # 5. firewall: SSH only - the dashboard listens on 127.0.0.1 and is reached through an SSH tunnel
 ufw allow OpenSSH
