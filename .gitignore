@@ -28,3 +28,9 @@ research_*.parquet
 scanner_state*.bak.json
 demo_pending.json
 models/ff_calendar.json
+
+# written by the running bot (positioning / sectors cache / pretraining): not code, not in git
+models/leverage_mix.json
+models/maintenance.json
+models/sectors.json
+pretrained.pkl
