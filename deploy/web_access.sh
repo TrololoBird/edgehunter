@@ -20,7 +20,15 @@ if ! command -v caddy >/dev/null; then
   apt-get install -y caddy
 fi
 
+# HTTP/1.1 + 2 only: HTTP/3 needs UDP 443, which a VPN on the same server (amnezia-awg2) may already hold - caddy
+# then failed to start at all
 cat > /etc/caddy/Caddyfile <<EOF
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
 $HOST {
 	encode gzip
 	reverse_proxy 127.0.0.1:8765
