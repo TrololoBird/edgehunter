@@ -1,20 +1,16 @@
-# Python 3.14 (python -m venv .venv with a 3.14 interpreter). All packages ship binary wheels for 3.14.
-ccxt>=4.5.84          # REST: Binance candles / OI / journal outcomes, instrument lists of the other venues
-polars>=1.44,<2          # batched indicator + scoring pass
-numpy>=2.4            # per-second order-flow ring buffers (flow.py)
-picows>=2.3           # WebSocket client: frames handled in the data callback (aiohttp fell behind at 800+ msg/s)
-aiohttp>=3.14         # small REST calls (bulk venue tickers, Telegram); also used by ccxt
-orjson>=3.11          # JSON parsing of every stream message
-rich>=15.0            # dashboard / stats tables
-psutil>=7.2           # CPU / memory in the health log line
-scikit-learn>=1.9     # ml.py: IsolationForest anomalies, GaussianMixture market regimes
-river>=0.26           # ml.py: online P(edge) model with drift detection
-winloop>=0.6; sys_platform == "win32"     # faster event loop on Windows (uvloop has no Windows build)
-uvloop>=0.21; sys_platform != "win32"
-# dev
-pytest>=9.1
-lightgbm>=4.7         # ml_eval.py: P(edge) benchmark (gradient boosting vs logistic)
-tzdata>=2026.1         # zoneinfo time zones on Windows (the SMT system's New York session)
-ruff>=0.14           # lint: undefined names (the `math` import lost in a docstring broke every replay for 8h)
-pylint>=4.0          # E0606 possibly-used-before-assignment (the m15 UnboundLocalError killed all worker events 5h)
-matplotlib>=3.9
+# Runtime of the bot on the VPS (Ubuntu, Python 3.14, uvloop). Dev / research tools: requirements-dev.txt.
+# Upper bounds on every package whose next major version breaks APIs; ccxt pins its own uvloop / orjson / multidict /
+# certifi versions exactly, so those follow ccxt (upgrading them alone would break its declared dependencies).
+ccxt>=4.5.85,<5          # REST of every venue, the BingX demo (executor.py)
+polars>=2.0,<3           # batched indicator + scoring pass (2.0: joins keep no row order unless maintain_order)
+numpy>=2.5,<3            # order-flow ring buffers, levels, research
+picows>=2.3,<3           # WebSocket client: frames handled in the data callback
+aiohttp>=3.14,<4         # dashboard server, Telegram, small REST calls (ccxt pins <3.15)
+orjson>=3.11,<4          # JSON of every stream message (ccxt pins the exact version)
+uvloop>=0.22,<1          # the event loop on Linux (ccxt pins the exact version)
+certifi                  # CA bundle of the shared client SSL context (venues.ssl_context, executor)
+psutil>=7.2,<8           # CPU / memory in the Health line
+scikit-learn>=1.9,<2     # IsolationForest anomalies, GaussianMixture regimes
+river>=0.26,<0.27        # online P(edge) + ADWIN (0.x: minor versions change APIs)
+matplotlib>=3.11,<4      # briefing cards (briefing_chart.py, Agg backend)
+rich>=15,<16             # stats.py tables

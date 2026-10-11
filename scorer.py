@@ -481,7 +481,7 @@ def score_closed(
         return {}
     limits = pl.DataFrame({'symbol': list(closed_until), 'closed_until': list(closed_until.values())},
                           schema={'symbol': pl.String, 'closed_until': pl.Int64})
-    closed = (scored.join(limits, on='symbol', how='inner')
+    closed = (scored.join(limits, on='symbol', how='inner', maintain_order='left')   # .last() below = the newest row
               .filter(pl.col('timestamp') <= pl.col('closed_until'))
               .group_by('symbol', maintain_order=True).last())
     return {row['symbol']: row for row in closed.to_dicts()}

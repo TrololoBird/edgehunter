@@ -1686,7 +1686,7 @@ class DataFetcher:
         oi_df = pl.DataFrame(points, schema={'timestamp': pl.Int64, 'oi_hist': pl.Float64}, orient='row')
         oi_df = oi_df.unique(subset='timestamp', keep='last')
         return (
-            df.join(oi_df, on='timestamp', how='left')
+            df.join(oi_df, on='timestamp', how='left', maintain_order='left')   # polars 2: joins keep no order by default
             .with_columns(pl.col('oi_hist').alias('open_interest'))
             .select(list(RAW_SCHEMA))
         )

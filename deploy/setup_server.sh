@@ -12,7 +12,7 @@ cd "$APP"
 
 git config --global --add safe.directory "$APP"     # the tree belongs to the pump user
 git pull --ff-only
-sudo -u pump "$APP/.venv/bin/python" -m pip install -q "polars==1.44.2"
+sudo -u pump "$APP/.venv/bin/python" -m pip install -q -r "$APP/requirements.txt"
 
 CFG="$APP/config.local.toml"
 touch "$CFG"

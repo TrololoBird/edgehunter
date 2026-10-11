@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=9.1
+ruff>=0.17               # ruff check --select F before every restart
+pylint>=4.1              # pylint --disable=all --enable=E0601,E0602,E0606
+lightgbm>=4.7            # ml_eval.py benchmark only
