@@ -156,7 +156,36 @@ The market regime changes, so nothing is fitted once on the past: models start f
 - Verify with live runs (`scanner.log` Health line, the journal, the dashboard), not by generating tests; add a test only for a concrete bug a live run exposed, and ask first.
 - Pretraining on the Binance public archive (`pretrain.py`) is wanted; judge models out of sample (purged walk-forward, `ml_eval.py`).
 - Hypotheses about levels / indicators are tested against placebo controls matched on volatility and trend before they touch signal logic (the weekly-EMA study, 2026-09-27: no level of its own, the trend it sits in is what matters).
-- The bot runs on the owner's Windows machine (winloop, local `signals.db`, `history_cache/`, ~6 GB RAM): a cloud session cannot run it or read its journal. Restart there: start `.venv\Scripts\python.exe main.py` from PowerShell (own console); stop gracefully by attaching to the child interpreter's console and sending Ctrl+C (FreeConsole → AttachConsole(pid) → SetConsoleCtrlHandler(None, True) → GenerateConsoleCtrlEvent(0, 0)); check exactly one instance listens on :8765.
+- **The bot runs on the VPS since 2026-10-12** (see "Working on the VPS" below); the owner's Windows laptop only
+  keeps old data (the pre-VPS journal, history_cache) - never start the bot there (duplicate trades / posts).
+
+## Working on the VPS (since 2026-10-12)
+- Server: Ubuntu 22.04, 2 vCPU, 4 GB RAM + 2 GB swap, Iceland. The live bot: `/opt/pump` (user `pump`, systemd
+  `pump-bot`, `journalctl -u pump-bot -f`; Telegram token / channel in `/etc/pump-bot.env`, BingX keys in
+  `/opt/pump/config.local.toml` - never print them). Development: `/opt/pump-dev` (a clone, `.venv` links to the live
+  one: do not install packages from there). Claude Code runs as service `claude-rc` (tmux session `cc`, Remote
+  Control "pump"). A VPN container holds UDP 443 - do not touch it; Caddy serves the dashboard on TCP 443
+  (https://194-247-182-162.sslip.io, h1/h2 only); `/api/briefing`, `/api/debug`, `/api/briefing_card` answer only
+  local requests.
+- Flow: edit + `ruff check --select F --exclude .claude` + `pylint --disable=all --enable=E0601,E0602,E0606 <files>` +
+  `pytest tests -q` in /opt/pump-dev -> the `reviewer` agent for signal logic / geometry / executor / journal /
+  research changes -> commit + push -> deploy ONLY after the owner's yes: `cd /opt/pump && git pull --ff-only &&
+  .venv/bin/python -m pip install -q -r requirements.txt && chown -R pump:pump . && systemctl restart pump-bot`, then
+  check the Health line and WARNINGs for a few minutes. Files the bot rewrites are not in git (.gitignore).
+- Agents (`.claude/agents/`): the main session runs on Sonnet (cheap on the Pro plan) and implements; `planner`
+  (Opus, low effort, read-only) for non-trivial changes before editing; `reviewer` (Opus, medium, read-only) on the
+  finished diff. Small edits / questions: no agents. Heavy archive work (replays, research over months of the Binance
+  archive) goes to a cloud session on GitHub, not this server (2 cores shared with the bot).
+- Autonomous: edits in /opt/pump-dev, tests, review, commits to a branch / master of docs and fixes, reports.
+  Owner's explicit yes required: deploying to /opt/pump, signal-logic / logic_version changes, any conclusion drawn
+  from research (its pass rule is agreed BEFORE the run), server security settings, anything touching the BingX
+  account beyond the demo executor, posting to the Telegram channel by hand.
+- Rules carried over from the laptop sessions' memory: implement every change first, then lint / tests / ONE restart;
+  verify live (Health line, journal), add tests only for a bug a live run exposed and ask first; never discuss or
+  suggest the owner's own trades; trade geometry (stop, buffer, ATR, targets, horizon) on the structure's timeframe,
+  analyse trades end to end; pretraining on the archive is wanted but judged out of sample (purged walk-forward);
+  research on older logic or a replay with a known bug is void (docs/PLAN_server_eng76.md section 2); the Turtles'
+  rules are not changed. The plan: docs/PLAN_server_eng76.md.
 
 ### Methods aligned with their sources, classic methods added (eng-29, 2026-10-01)
 - Continuations (trend / momentum) by ICT's optimal trade entry: the leg must show displacement (a fair value gap,
