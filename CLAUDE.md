@@ -186,6 +186,16 @@ The market regime changes, so nothing is fitted once on the past: models start f
   analyse trades end to end; pretraining on the archive is wanted but judged out of sample (purged walk-forward);
   research on older logic or a replay with a known bug is void (docs/PLAN_server_eng76.md section 2); the Turtles'
   rules are not changed. The plan: docs/PLAN_server_eng76.md.
+- Telegram channel to this session (@cryptoshka_ai_bot, plugin telegram@claude-plugins-official, only the owner's ID
+  on the allowlist, dmPolicy allowlist; not the bot that posts briefings). Answer there in Russian, short (a phone
+  screen), no secrets / tokens / keys in replies. Menu commands:
+  `/status` - pump-bot active?, last Health line, WARNING / ERROR counts of the last hour, memory / disk;
+  `/trades` - BingX demo: open positions with their stop orders on the exchange, the last 10 finished trades (R, $);
+  `/cards` - cards in trade and waiting (symbol, setup, status, entry / stop / TP1);
+  `/log` - the last hour's WARNING / ERROR lines grouped by source;
+  `/plan` - the next open items of docs/PLAN_server_eng76.md and the owner's pending decisions;
+  `/deploy` - what is committed but not live (git log /opt/pump..origin/master), the review verdict, then ASK for an
+  explicit "да" in the chat before deploying; never deploy without it.
 
 ### Methods aligned with their sources, classic methods added (eng-29, 2026-10-01)
 - Continuations (trend / momentum) by ICT's optimal trade entry: the leg must show displacement (a fair value gap,
