@@ -10,10 +10,24 @@ import numpy as np
 
 
 def ema(x: np.ndarray, n: int) -> np.ndarray:
-    out = np.empty_like(x)
+    """EMA seeded with the SMA of the first n values (TA-Lib / Appel; NaN before). Seeding with x[0] left EMA200 on the
+    panel's 499 candles up to 0.4% off (research/talib_check.md). Shorter than n: seeded with x[0] (best effort)."""
+    x = np.asarray(x, dtype=float)
     a = 2.0 / (n + 1)
-    out[0] = x[0]
-    for i in range(1, len(x)):
+    if len(x) < n:
+        out = np.empty_like(x)
+        if len(x):
+            out[0] = x[0]
+            for i in range(1, len(x)):
+                out[i] = a * x[i] + (1 - a) * out[i - 1]
+        return out
+    out = np.full_like(x, np.nan)
+    finite = np.flatnonzero(np.isfinite(x))
+    s = int(finite[0]) if len(finite) else len(x)        # leading NaNs (an EMA of an EMA, e.g. MACD's signal)
+    if len(x) - s < n:
+        return out
+    out[s + n - 1] = x[s:s + n].mean()
+    for i in range(s + n, len(x)):
         out[i] = a * x[i] + (1 - a) * out[i - 1]
     return out
 
@@ -93,12 +107,20 @@ def indicators(k: np.ndarray) -> dict:
     bbw = 4 * sd / np.maximum(mid, 1e-12)
     tp = (h + l + c) / 3
     mf = tp * v
-    tp_up = np.diff(tp, prepend=tp[0]) > 0
-    pos, neg = sma(np.where(tp_up, mf, 0.0), 14), sma(np.where(~tp_up, mf, 0.0), 14)
+    # Quong & Soudack / TA-Lib: an unchanged typical price is neither positive nor negative flow (it was negative)
+    tp_diff = np.diff(tp, prepend=tp[0])
+    tp_diff[np.abs(tp_diff) <= 1e-12 * np.abs(tp)] = 0.0      # (h + l + c) / 3 rounding noise of equal prices
+    pos, neg = sma(np.where(tp_diff > 0, mf, 0.0), 14), sma(np.where(tp_diff < 0, mf, 0.0), 14)
     mfi = 100 - 100 / (1 + pos / np.maximum(neg, 1e-12))
     obv = np.cumsum(np.sign(delta) * v)
-    dev = np.abs(tp - sma(tp, 20))
-    cci = (tp - sma(tp, 20)) / np.maximum(0.015 * sma(np.nan_to_num(dev), 20), 1e-12)   # rolling mean deviation (Lambert)
+    # Lambert: the mean deviation of the window's typical prices from the CURRENT window's mean (each deviation from
+    # its own window's mean read cci_extreme differently in 11% of cases - research/talib_check.md)
+    tp_sma = sma(tp, 20)
+    mean_dev = np.full_like(tp, np.nan)
+    if len(tp) >= 20:
+        from numpy.lib.stride_tricks import sliding_window_view
+        mean_dev[19:] = np.abs(sliding_window_view(tp, 20) - tp_sma[19:, None]).mean(axis=1)
+    cci = (tp - tp_sma) / np.maximum(0.015 * mean_dev, 1e-12)
     e20, e50, e200 = ema(c, 20), ema(c, 50), ema(c, 200)
     return dict(c=c, l=l, h=h, v=v, e20=e20, e50=e50, e200=e200, rsi=rsi, hist=hist, adx=adx, pdi=pdi, mdi=mdi,
                 stoch_k=stoch_k, stoch_d=stoch_d, pctb=pctb, bbw_rank=pct_rank(bbw, 125), mfi=mfi, obv=obv,

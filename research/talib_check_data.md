@@ -5,24 +5,24 @@ TA-Lib 0.8.1 (python `ta-lib` wheel; polars-talib bundles the same C library). 2
 | module | indicator | tf | window | n | median rel | p95 rel | max rel | share > 1e-6 | NaN on one side |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
 | bias | adx4 (_adx) | 4h | 200 | 1200 | 1.10e-06 | 3.13e-06 | 7.51e-06 | 55.2% | 0 |
-| bias | ema20 weekly (ind_panel.ema) | 1w | 60 | 200 | 1.09e-03 | 4.19e-03 | 6.39e-03 | 100.0% | 0 |
-| bias | ema50 daily (ind_panel.ema) | 1d | 370 | 600 | 7.84e-08 | 4.07e-07 | 8.64e-07 | 0.0% | 0 |
+| bias | ema20 weekly (ind_panel.ema) | 1w | 60 | 200 | 1.49e-16 | 4.04e-16 | 5.95e-16 | 0.0% | 0 |
+| bias | ema50 daily (ind_panel.ema) | 1d | 370 | 600 | 7.44e-16 | 1.26e-15 | 1.87e-15 | 0.0% | 0 |
 | ind_panel | adx | 15m | 499 | 3000 | 3.85e-16 | 1.33e-15 | 4.03e-15 | 0.0% | 0 |
 | ind_panel | adx | 1h | 499 | 3000 | 3.77e-16 | 1.33e-15 | 3.57e-15 | 0.0% | 0 |
-| ind_panel | cci | 15m | 499 | 3000 | 2.33e-01 | 6.86e-01 | 1.45e+01 | 100.0% | 0 |
-| ind_panel | cci | 1h | 499 | 3000 | 2.26e-01 | 6.71e-01 | 9.10e-01 | 100.0% | 0 |
+| ind_panel | cci | 15m | 499 | 3000 | 9.55e-13 | 1.43e-11 | 2.57e+01 | 0.0% | 0 |
+| ind_panel | cci | 1h | 499 | 3000 | 3.99e-13 | 6.12e-12 | 3.68e-10 | 0.0% | 0 |
 | ind_panel | e20 | 15m | 499 | 3000 | 1.41e-16 | 3.74e-16 | 7.82e-16 | 0.0% | 0 |
 | ind_panel | e20 | 1h | 499 | 3000 | 1.41e-16 | 3.73e-16 | 7.22e-16 | 0.0% | 0 |
-| ind_panel | e200 | 15m | 499 | 3000 | 1.29e-04 | 6.28e-04 | 2.76e-03 | 99.4% | 0 |
-| ind_panel | e200 | 1h | 499 | 3000 | 2.73e-04 | 1.30e-03 | 3.68e-03 | 99.7% | 0 |
-| ind_panel | e50 | 15m | 499 | 3000 | 2.13e-11 | 9.24e-11 | 6.77e-10 | 0.0% | 0 |
-| ind_panel | e50 | 1h | 499 | 3000 | 4.07e-11 | 1.80e-10 | 7.28e-10 | 0.0% | 0 |
-| ind_panel | hist | 15m | 499 | 3000 | 1.37e-13 | 2.42e-12 | 6.71e-09 | 0.0% | 0 |
-| ind_panel | hist | 1h | 499 | 3000 | 6.36e-14 | 8.50e-13 | 2.39e-09 | 0.0% | 0 |
+| ind_panel | e200 | 15m | 499 | 3000 | 4.30e-15 | 5.35e-15 | 7.65e-15 | 0.0% | 0 |
+| ind_panel | e200 | 1h | 499 | 3000 | 4.31e-15 | 5.32e-15 | 6.61e-15 | 0.0% | 0 |
+| ind_panel | e50 | 15m | 499 | 3000 | 7.05e-16 | 1.20e-15 | 1.79e-15 | 0.0% | 0 |
+| ind_panel | e50 | 1h | 499 | 3000 | 7.33e-16 | 1.20e-15 | 1.85e-15 | 0.0% | 0 |
+| ind_panel | hist | 15m | 499 | 3000 | 1.37e-13 | 2.39e-12 | 6.71e-09 | 0.0% | 0 |
+| ind_panel | hist | 1h | 499 | 3000 | 6.34e-14 | 8.50e-13 | 2.39e-09 | 0.0% | 0 |
 | ind_panel | mdi | 15m | 499 | 3000 | 2.05e-16 | 6.64e-16 | 1.79e-15 | 0.0% | 0 |
 | ind_panel | mdi | 1h | 499 | 3000 | 1.98e-16 | 6.82e-16 | 1.36e-15 | 0.0% | 0 |
-| ind_panel | mfi | 15m | 499 | 3000 | 3.12e-15 | 6.42e-02 | 1.48e+00 | 13.0% | 0 |
-| ind_panel | mfi | 1h | 499 | 3000 | 2.60e-15 | 4.19e-02 | 2.43e-01 | 7.8% | 0 |
+| ind_panel | mfi | 15m | 499 | 3000 | 2.48e-15 | 1.34e-14 | 4.77e-14 | 0.0% | 0 |
+| ind_panel | mfi | 1h | 499 | 3000 | 2.35e-15 | 1.17e-14 | 6.61e-14 | 0.0% | 0 |
 | ind_panel | obv_slope10 | 15m | 499 | 3000 | 0.00e+00 | 3.07e-15 | 5.39e-13 | 0.0% | 0 |
 | ind_panel | obv_slope10 | 1h | 499 | 3000 | 0.00e+00 | 2.34e-15 | 2.10e-12 | 0.0% | 0 |
 | ind_panel | pctb | 15m | 499 | 3000 | 8.88e-11 | 4.33e-09 | 1.01e+02 | 0.0% | 0 |
@@ -35,10 +35,10 @@ TA-Lib 0.8.1 (python `ta-lib` wheel; polars-talib bundles the same C library). 2
 | ind_panel | stoch_d | 1h | 499 | 3000 | 1.08e-14 | 5.30e-14 | 2.27e-13 | 0.0% | 0 |
 | ind_panel | stoch_k | 15m | 499 | 3000 | 9.32e-15 | 4.81e-14 | 2.73e-13 | 0.0% | 0 |
 | ind_panel | stoch_k | 1h | 499 | 3000 | 8.58e-15 | 4.65e-14 | 2.29e-13 | 0.0% | 0 |
-| indicators | adx | 15m | 99 | 3000 | 5.57e-03 | 1.46e-02 | 4.34e-02 | 100.0% | 0 |
-| indicators | adx | 15m | 499 | 3000 | 2.98e-15 | 8.83e-15 | 3.57e-14 | 0.0% | 0 |
-| indicators | adx | 1h | 99 | 3000 | 5.45e-03 | 1.51e-02 | 7.24e-02 | 100.0% | 0 |
-| indicators | adx | 1h | 499 | 3000 | 2.90e-15 | 8.77e-15 | 3.46e-14 | 0.0% | 0 |
+| indicators | adx | 15m | 99 | 3000 | 2.58e-16 | 8.27e-16 | 1.86e-15 | 0.0% | 0 |
+| indicators | adx | 15m | 499 | 3000 | 2.68e-16 | 8.42e-16 | 1.59e-15 | 0.0% | 0 |
+| indicators | adx | 1h | 99 | 3000 | 2.44e-16 | 8.37e-16 | 2.25e-15 | 0.0% | 0 |
+| indicators | adx | 1h | 499 | 3000 | 2.45e-16 | 8.26e-16 | 2.17e-15 | 0.0% | 0 |
 | indicators | atr (vs SMA(TRANGE,14)) | 15m | 99 | 3000 | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.0% | 0 |
 | indicators | atr (vs SMA(TRANGE,14)) | 15m | 499 | 3000 | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.0% | 0 |
 | indicators | atr (vs SMA(TRANGE,14)) | 1h | 99 | 3000 | 0.00e+00 | 0.00e+00 | 7.17e-16 | 0.0% | 0 |
@@ -56,14 +56,12 @@ TA-Lib 0.8.1 (python `ta-lib` wheel; polars-talib bundles the same C library). 2
 
 | rule | changed | of | share |
 |---|---:|---:|---:|
-| cci_extreme | 1365 | 12000 | 11.4% |
-| mfi_50 | 82 | 12000 | 0.7% |
-| ema200_side | 60 | 12000 | 0.5% |
-| ema_stack | 49 | 12000 | 0.4% |
-| mfi_extreme | 35 | 12000 | 0.3% |
 | stoch_cross | 4 | 12000 | 0.0% |
 | rsi_divergence | 2 | 12000 | 0.0% |
 | bb_outside | 1 | 12000 | 0.0% |
+| cci_extreme | 1 | 12000 | 0.0% |
+| ema200_side | 0 | 12000 | 0.0% |
+| ema_stack | 0 | 12000 | 0.0% |
 | ema50_slope | 0 | 12000 | 0.0% |
 | ema20_side | 0 | 12000 | 0.0% |
 | adx_trend | 0 | 12000 | 0.0% |
@@ -71,8 +69,10 @@ TA-Lib 0.8.1 (python `ta-lib` wheel; polars-talib bundles the same C library). 2
 | macd_turn | 0 | 12000 | 0.0% |
 | rsi_50 | 0 | 12000 | 0.0% |
 | rsi_extreme | 0 | 12000 | 0.0% |
+| mfi_extreme | 0 | 12000 | 0.0% |
 | adx_range | 0 | 12000 | 0.0% |
 | rvol_1_5 | 0 | 12000 | 0.0% |
 | obv_slope | 0 | 12000 | 0.0% |
+| mfi_50 | 0 | 12000 | 0.0% |
 | squeeze | 0 | 12000 | 0.0% |
 | atr_high | 0 | 12000 | 0.0% |
