@@ -10,14 +10,16 @@ LOGIN="${1:?usage: bash deploy/web_access.sh <login>}"
 read -r -s -p "Password for $LOGIN: " PASS; echo
 [ ${#PASS} -ge 10 ] || { echo "Use at least 10 characters"; exit 1; }
 
-IP="$(curl -s4 https://api.ipify.org)"
+IP="$(curl --proto '=https' -s4 https://api.ipify.org)"
 HOST="${IP//./-}.sslip.io"
 
 # Caddy from its official repository
 if ! command -v caddy >/dev/null; then
   apt-get install -y debian-keyring debian-archive-keyring apt-transport-https gnupg
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
+  curl --proto '=https' --tlsv1.2 -sSfL -o /tmp/caddy.gpg.key https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+  gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg /tmp/caddy.gpg.key
+  curl --proto '=https' --tlsv1.2 -sSfL -o /etc/apt/sources.list.d/caddy-stable.list \
+    https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt
   apt-get update
   apt-get install -y caddy
 fi
