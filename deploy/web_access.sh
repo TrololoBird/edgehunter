@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# The dashboard from outside, over HTTPS with a login (run as root after install.sh):
-#   bash deploy/web_access.sh <login>          (asks for the password)
+# The dashboard as a PUBLIC page over HTTPS (run as root after install.sh): bash deploy/web_access.sh
 # The bot keeps listening on 127.0.0.1:8765; Caddy terminates HTTPS in front of it with a Let's Encrypt certificate
-# for <ip>.sslip.io (a public DNS name that resolves to the IP itself - no domain needed) and asks for the login.
-# Without the login anyone could read the cards, the journal and trigger /api/briefing?send=1 (a Telegram post).
+# for <ip>.sslip.io (a public DNS name that resolves to the IP itself - no domain needed). No login: anyone with the
+# address sees the cards and the journal. Posting to Telegram (/api/briefing) and the internals (/api/debug) answer
+# local requests only (webui._local), so the public cannot post to the channel.
 set -euo pipefail
-
-LOGIN="${1:?usage: bash deploy/web_access.sh <login>}"
-read -r -s -p "Password for $LOGIN: " PASS; echo
-[ ${#PASS} -ge 10 ] || { echo "Use at least 10 characters"; exit 1; }
 
 IP="$(curl --proto '=https' -s4 https://api.ipify.org)"
 HOST="${IP//./-}.sslip.io"
@@ -24,12 +20,9 @@ if ! command -v caddy >/dev/null; then
   apt-get install -y caddy
 fi
 
-HASH="$(caddy hash-password --plaintext "$PASS")"
 cat > /etc/caddy/Caddyfile <<EOF
 $HOST {
-	basic_auth {
-		$LOGIN $HASH
-	}
+	encode gzip
 	reverse_proxy 127.0.0.1:8765
 }
 EOF
@@ -38,5 +31,4 @@ ufw allow 80/tcp      # Let's Encrypt's HTTP challenge and the redirect to HTTPS
 ufw allow 443/tcp
 systemctl enable caddy
 systemctl restart caddy
-echo
-echo "Dashboard: https://$HOST  (login $LOGIN). The certificate is issued within a minute of the first start."
+echo "Dashboard: https://$HOST"

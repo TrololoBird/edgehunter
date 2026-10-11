@@ -1,6 +1,6 @@
 # Python 3.14 (python -m venv .venv with a 3.14 interpreter). All packages ship binary wheels for 3.14.
 ccxt>=4.5.84          # REST: Binance candles / OI / journal outcomes, instrument lists of the other venues
-polars>=1.44          # batched indicator + scoring pass
+polars>=1.44,<2          # batched indicator + scoring pass
 numpy>=2.4            # per-second order-flow ring buffers (flow.py)
 picows>=2.3           # WebSocket client: frames handled in the data callback (aiohttp fell behind at 800+ msg/s)
 aiohttp>=3.14         # small REST calls (bulk venue tickers, Telegram); also used by ccxt

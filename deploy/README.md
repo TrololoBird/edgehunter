@@ -45,9 +45,10 @@ systemctl start pump-bot
 | дашборд с ноутбука | `ssh -L 8765:127.0.0.1:8765 root@SERVER`, затем открыть http://127.0.0.1:8765 |
 | статистика | `cd /opt/pump && sudo -u pump .venv/bin/python stats.py --days 7` |
 
-Бот слушает только 127.0.0.1. Доступ снаружи — через HTTPS с логином: `bash /opt/pump/deploy/web_access.sh <логин>`
-(спросит пароль, ставит Caddy, сертификат Let's Encrypt на имя `<ip>.sslip.io`, открывает порты 80 / 443). Без
-логина дашборд наружу не открывать: на нём карточки, журнал и `/api/briefing?send=1` (пост в Telegram).
+Всё после install.sh одной командой: `bash /opt/pump/deploy/setup_server.sh` (свежий код, polars 1.44.2, конфиг,
+публичный дашборд, запуск). Бот слушает только 127.0.0.1; снаружи дашборд открыт ПУБЛИЧНО (без логина) через Caddy по
+HTTPS на `https://<ip>.sslip.io` (`deploy/web_access.sh`). Пост в Telegram (`/api/briefing?send=1`) и `/api/debug`
+отвечают только локальным запросам (`webui._local`).
 
 ## Резервные копии
 
