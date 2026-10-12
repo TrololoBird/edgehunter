@@ -34,3 +34,4 @@ models/leverage_mix.json
 models/maintenance.json
 models/sectors.json
 pretrained.pkl
+.venv
