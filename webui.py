@@ -544,7 +544,7 @@ class WebUI:
                     # the recorded bands on the live grid's step (both are 0.1% of price)
                     past['snapshots'] = [[t, [[round(p / live['step']) * live['step'], v] for p, v in lv]]
                                          for t, lv in past['snapshots']]
-                detail['heatmap'] = {'step': live['step'] or past['step'],
+                detail['heatmap'] = {'step': live['step'] or past['step'], 'cov': live.get('cov'),
                                      'snapshots': past['snapshots'] + live['snapshots']}
         except Exception as e:
             logging.getLogger(__name__).warning(f"Heatmap history of {symbol}: {type(e).__name__} {e}")
