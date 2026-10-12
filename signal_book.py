@@ -1142,8 +1142,10 @@ class SignalBook:
                        if not o.finished and o.units and o.direction == d)
             if held < CONFIG.strategies.turtle_max_direction_units:
                 # the Turtles' pyramid: one more unit every 1/2 N in the trade's favour, the stop of ALL units moved
-                # to 2N from the newest one
-                add_at = s.units[-1][0] + d * CONFIG.strategies.turtle_add_n * n
+                # to 2N from the newest one. Faith: the 1/2 N interval is measured from the ACTUAL fill of the previous
+                # unit (a unit that slipped moves the next one further out) - the unit is booked at the price it was
+                # added at, not at the theoretical 1/2 N step
+                add_at = price
                 s.units.append([add_at, now])
                 lv['sl'] = add_at - d * 2 * n
                 lv['sl_src'] = f"2N from unit {len(s.units)} (Turtles)"
@@ -1165,7 +1167,9 @@ class SignalBook:
         if days and self.daily_of:
             from strategies.turtle import trail_level
             level = trail_level(self.daily_of(s.symbol) or [], days, d)
-            if level is not None and d * (price - level) <= 0:
+            # Faith: exited when the price went BEYOND the N-day low / high (a breakout against the position), not on
+            # touching it
+            if level is not None and d * (price - level) < 0:
                 return self._finish(s, 'CLOSED', now, f"exit on the {days}-day {'low' if d > 0 else 'high'} "
                                                       f"{level:.6g} (Turtles)")
         why, due = self._time_exit(s, now)

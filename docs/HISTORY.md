@@ -613,3 +613,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   rewrites out of git; the briefing no longer prints the void "zones hold no better than random" verdict; the dead
   BingX `recvWindow` option removed (ccxt's sign never sent it); CLAUDE.md cut to the core, details moved to
   docs/ARCHITECTURE.md and this file.
+- eng-77 (2026-10-12, checked against Curtis Faith's "The Original Turtle Trading Rules", PDF text): the Turtles'
+  channel exit fires when price goes BEYOND the 10 / 20-day low / high (was: on touching it); a pyramid unit is booked
+  at the price it was added at (Faith: the 1/2 N interval runs from the previous unit's actual fill - after a slipped
+  add the next one is further out; was the theoretical previous unit + 1/2 N). Checked and kept: N = (19 x PDN + TR)
+  / 20 seeded with the 20-day mean TR, stops 2N from the newest unit, exits intraday, S1 skip after a winning S1
+  breakout, 1/2 N spacing (Faith; Covel's book says 1 N). Bollinger W / M (entry on the close beyond the middle peak
+  = StockCharts / CFI, the opposite band as target), Connors (close beyond SMA5 = StockCharts), ORB / VA80 session
+  exits checked against secondary sources: unchanged.
