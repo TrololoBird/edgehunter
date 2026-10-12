@@ -77,3 +77,14 @@
 6. DuckDB добавить?
 7. `recvWindow`.
 8. Перевыпуск токена Telegram.
+
+## 8. Сделано 12.10 (после составления плана)
+- Сноска о недействительном выводе про зоны убрана из брифинга и карточки.
+- Лимиты ноутбука сняты: max_pairs 150 (прошли отбор 113), стаканы 40, Hyperliquid 150, MemoryHigh бота 3G; регистратор 60 дней; IsolationForest включён (тень; правило проверки — п. 3.5).
+- Бэкап журналов ежедневно 06:30 МСК в /var/backups/pump (7 дней); уведомление в тему «Служебное» при падении pump-bot / claude-rc / бэкапа.
+- DuckDB 1.5.6 в /opt/tools-venv (не в окружении бота).
+- recvWindow: мёртвая опция убрана (ccxt её не отправляет).
+- CLAUDE.md 122 → 14 КБ (docs/ARCHITECTURE.md, docs/HISTORY.md); ruff F чисто; pylint E0606 в turtle.py.
+- Серверный Claude: Sonnet по умолчанию, planner / reviewer (Opus), ежедневный перезапуск 05:00 МСК, окно сжатия 200k (проверить /context), Telegram-канал @cryptoshka_ai_bot (pairing), плагины project scope (security-guidance, hookify, code-simplifier, commit-commands, duckdb-skills), запреты на чтение секретов.
+- Группа «Антошка и Binance» с темами, сообщения бота по темам, служебные только в группу.
+- Осталось за владельцем: `bash /opt/pump/deploy/harden.sh` (SSH только по ключу, fail2ban, автообновления), перевыпуск токена бота-сканера, отключить группы у @cryptoshka_ai_bot в @BotFather; решения раздела 7 (кроме 5, 6, 7 — сделаны).
