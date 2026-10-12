@@ -702,10 +702,13 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     # ICT's opening prices: the day's and the week's open (the true day / week open: price above it = the premium of
     # that period)
     if candles_1d:
+        # the open of the candle that opened AT 00:00 UTC (as the week's open, eng-74): the first 15m candle held after
+        # midnight was taken - after a restart it could be a later one (INJ 2026-10-12: 'day open' 7.8028 for 7.758,
+        # beside the ORB's own correct 7.758)
         day_open = int(now_ms) // DAY_MS * DAY_MS
-        today = [c for c in candles_15m if c[0] >= day_open]
-        if today:
-            levels.append(RawLevel(today[0][1], 'open', 'day open'))
+        at = next((c for src in (candles_15m, candles_1h) for c in (src or []) if int(c[0]) == day_open), None)
+        if at is not None:
+            levels.append(RawLevel(at[1], 'open', 'day open'))
     # the week's open = the open of the candle that opened AT the week's start (eng-74: the first 15m candle held -
     # the 15m history is shorter than a week - was taken: ETH's 'week open' 2 690 where it was 2 725.71)
     week_start = (int(now_ms) - WEEK_OFFSET_MS) // WEEK_MS * WEEK_MS + WEEK_OFFSET_MS
