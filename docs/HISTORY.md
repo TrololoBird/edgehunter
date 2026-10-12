@@ -657,3 +657,14 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   ~300 -> NEAR / ETH candles off-screen); the chart draws at most 4 zones of strength >= 2 per side within the candles'
   range (+50%), «все уровни» for up to 12 incl. weak ones; the 2 largest densities per side; no automatic window
   Fibonacci grid (only the continuation card's own); box labels never overlap.
+- eng-82 (2026-10-12): ORB (Crabel: buy / sell STOP orders resting at the day's open +- Stretch - his rule
+  re-checked against secondary sources of the 1990 book) checks the touch on the live trade price each scan, not only
+  at a final minute's close: INJ entered 0.97% beyond its level on a 2.8% stop (the minute-close detection was up to a
+  minute late on an RVOL-11 impulse). The demo's resting BingX stop-entry (TRIGGER_MARKET) was verified on VST but is
+  not wired in yet (two per coin a day, the gates evaluated before the touch, adopting the fill into the card).
+  research_algo_whales.py (pre-registered; research/algo_whales.md, the laptop journal: 3.3k ALGO / 1k WHALES
+  anomalies): the coin's return from the event's price minus the mean of every coin, vs the same coin and hour on a
+  random other day - no label continues or reverses in both halves (ALGO BUY 4h -0.47% [-0.86..-0.09] overall, not in
+  the newer half); the raw "reversal after 4h" was the market's own move.
+- FREEZE (the owner, 2026-10-12): no signal-logic change and no bot restart until Wednesday 2026-10-14 13:00 MSK
+  (10:00 UTC), except a fix of a crash that loses data or demo orders; ideas go to docs/PLAN_server_eng76.md.

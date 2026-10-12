@@ -163,11 +163,25 @@ class LoopDetectors:
         once per coin and day (eng-55)."""
         if len(md.d1) < 10:
             return None
+        # eng-82: Crabel's entries are STOP orders resting at the levels - the touch is checked on the live trade price
+        # (1 sample a second) between minute closes too; waiting for the final minute entered up to a minute late,
+        # INJ 2026-10-12 0.97% beyond its level on a 2.8% stop (a third of R lost at the entry)
+        day_start = int(now_ms // 86_400_000 * 86_400_000)
+        st = self._orb_day.get(symbol)
+        samples = getattr(md, 'ticker_samples', None)
+        if (st is not None and st.get('day') == day_start and st.get('open') is not None and samples
+                and (symbol, day_start) not in self._orb_fired and now_ms - samples[-1][0] <= 5_000):
+            from strategies.classic import orb_event
+            p = samples[-1][1]
+            found = orb_event(md.d1, st['open'], p, p, st['hi'], st['lo'], now_ms)
+            if found is not None:
+                found['setup_note'] += ' (live touch)'
+                self._orb_fired.add((symbol, day_start))
+                return found
         minute = md.minute_closed_until
         if not minute or self._orb_checked.get(symbol) == minute:
             return None
         self._orb_checked[symbol] = minute
-        day_start = int(now_ms // 86_400_000 * 86_400_000)
         if (symbol, day_start) in self._orb_fired or int(md.d1[-1][0]) + 86_400_000 < day_start:
             return None                           # traded today / yesterday's daily candle not loaded yet
         minutes = self.minutes_of(symbol)
