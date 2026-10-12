@@ -1317,8 +1317,16 @@ class Scanner:
         # 1h: 4 days, so a leg of hours or days is visible whole
         # every coin has 200 closed 1h candles (md.h1); the card-only REST history was empty for the rest (no chart, no
         # events on the 1h); + the forming hour
-        candles_1h = forming(list(md.h1)[-120:] if len(md.h1) >= len(md.htf_klines) else list(md.htf_klines),
-                             3_600_000)
+        base_1h = list(md.h1)[-120:] if len(md.h1) >= len(md.htf_klines) else list(md.htf_klines)
+        if len(base_1h) < 24 and candles:
+            # the 1h history loads a few minutes after a start (all coins, 2 requests each): until then the 1h chart
+            # showed only the forming candle - the closed 15m candles grouped into complete hours stand in for it
+            hours = {}
+            for c in candles:
+                hours.setdefault(int(c[0]) // 3_600_000 * 3_600_000, []).append(c)
+            base_1h = [[t, g[0][1], max(x[2] for x in g), min(x[3] for x in g), g[-1][4], sum(x[5] for x in g)]
+                       for t, g in sorted(hours.items()) if len(g) == 4]
+        candles_1h = forming(base_1h, 3_600_000)
         # the two-sided scenario card (1h ladder; the same level code the probability model was trained with)
         btc = self.market_data.get('BTC/USDT:USDT')
         btc_closes = [c[4] for c in btc.h1] if btc and btc.h1 else None
