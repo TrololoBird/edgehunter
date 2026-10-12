@@ -516,6 +516,14 @@ class WebUI:
         symbol = request.query.get('symbol', '')
         if symbol in self.scanner.market_data:
             detail = await self.scanner.coin_detail(symbol)
+            if len(detail.get('candles_15m') or []) < 20 or len(detail.get('candles_1h') or []) < 20:
+                # right after a start the histories are still loading (15m ~1 min, 1h a few minutes): the chart takes
+                # the coin's REST candles meanwhile instead of showing one forming candle
+                rest = await self.scanner.fetcher.chart_candles(symbol)
+                if rest:
+                    for k in ('candles_15m', 'candles_5m', 'candles_1h'):
+                        if len(detail.get(k) or []) < len(rest.get(k) or []):
+                            detail[k] = rest[k]
         else:
             # A coin from the journal that left the universe: candles from REST, no level map
             detail = await self.scanner.fetcher.chart_candles(symbol)
