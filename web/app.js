@@ -579,7 +579,7 @@ function openCoin(symbol, leg) {
   coin = symbol;
   // The chart matches the card's leg: 1h candles for a 1h / 4h leg (the whole leg visible), 5m for the minute legs of
   // momentum / sweep / exhaustion / absorption / range setups, 15m otherwise
-  tf = leg === '1h' || leg === '4h' ? 60 : leg === '1m' || leg === '5m' ? 5 : 15;
+  tf = leg === '1h' || leg === '4h' || leg === '1d' || leg === '1w' ? 60 : leg === '1m' || leg === '5m' ? 5 : 15;
   document.querySelectorAll('.tf').forEach(x => x.classList.toggle('active', Number(x.dataset.tf) === tf));
   $('#drawer').classList.remove('hidden');
   $('#d-title').textContent = symbol.replace(':USDT', '').replace('/USDT', '');
@@ -674,7 +674,15 @@ function drawCoin(fit) {
   const fibAuto = $('#fib-on').checked && !fibCard && bars.length > 10;
   const fibOn = fibCard;
   // with the Fibonacci grid on, the map keeps only its strong zones: the grid is the story, the rest is noise
-  const zones = (d.zones || []).slice().filter(z => !fibOn || z.strength >= 2.5).sort((a, b) => b.strength - a.strength).slice(0, fibOn ? 10 : 28);
+  const TFR = { '5m': 0, '15m': 1, '1h': 2, '4h': 3, '1d': 4, '1w': 5 };
+  const chartRank = tf === 60 ? 2 : tf === 15 ? 1 : 0;
+  const zoneRank = z => {           // geometry._zone_rank: None (shown everywhere) when any kind has no timeframe
+    let r = -1;
+    for (const k of z.kinds || []) { const t = k.includes('_') ? k.split('_').pop() : null; if (!(t in TFR)) return null; r = Math.max(r, TFR[t]); }
+    return r < 0 ? null : r;
+  };
+  const zones = (d.zones || []).slice().filter(z => { const r = zoneRank(z); return r === null || r >= chartRank; })
+    .filter(z => !fibOn || z.strength >= 2.5).sort((a, b) => b.strength - a.strength).slice(0, fibOn ? 10 : 28);
   const usedKinds = new Set();
   for (const z of zones) {
     const kind = z.kinds[0]; usedKinds.add(kind);

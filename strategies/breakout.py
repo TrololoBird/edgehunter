@@ -111,7 +111,7 @@ class BreakoutStrategy(Strategy):
         stop = sig['anchor_level'] - d * 2 * sig['turtle_n']
         exit = {'stop': ['price', stop], 'stop_src': '2N from the breakout (Turtles)', 'tp': ['trail'],
                 'tp_src': f"none: exit on the {sig['trail_days']}-day {'low' if d > 0 else 'high'}", 'atr': x.atr}
-        plan = _confirm_plan(x, self.name, '4h', exit, f"Turtle System {sig['turtle_system']} breakout")
+        plan = _confirm_plan(x, self.name, '1d', exit, f"Turtle System {sig['turtle_system']} breakout")
         if plan is not None:
             plan['trail_days'] = sig['trail_days']
             plan['no_tp'] = True             # out on the channel: no take-profit orders

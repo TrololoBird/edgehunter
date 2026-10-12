@@ -621,3 +621,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   breakout, 1/2 N spacing (Faith; Covel's book says 1 N). Bollinger W / M (entry on the close beyond the middle peak
   = StockCharts / CFI, the opposite band as target), Connors (close beyond SMA5 = StockCharts), ORB / VA80 session
   exits checked against secondary sources: unchanged.
+- eng-78 (2026-10-12, the timeframe audit): the Turtles and Connors carry their structure timeframe '1d' (daily
+  channels / daily RSI(2) + SMA5; were '4h': their own-timeframe ATR for the stop floor was the 4h one - the 2N / 3
+  daily-ATR stops were above both, so no stop moved); the dashboard's scenario card gets the daily candles of every
+  coin (md.d1) when the card-coin history (htf_1d) is absent - 21 of 73 coins had no scenario because their 8-day 1h
+  window held no level above the price; the chart shows only zones of its own timeframe and higher (as
+  geometry.htf_zones), daily / weekly cards open on 1h candles. Checked and kept: ORB / VA80 stay '15m' (their
+  structure is the day, but a '1d' plan would floor the stop at a daily ATR - against Crabel's opposite level),
+  Bollinger W / M 15m with its 15m band exit, TTL_FACTOR has no '1d' (every daily method has its own ttl_key).

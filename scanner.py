@@ -1325,7 +1325,8 @@ class Scanner:
         try:
             scenario = await asyncio.to_thread(scenarios.build, list(md.h1), price, now * 1000, btc_closes,
                                                (), None, self.macro.features(now * 1000),
-                                               list(md.htf_1d) or None, list(md.htf_1h_30d) or None)
+                                               list(md.htf_1d) or list(md.d1) or None,
+                                               list(md.htf_1h_30d) or list(md.h1) or None)
             if scenario is not None:
                 scenario['macro'] = self.macro.snapshot(now * 1000)
         except Exception as e:

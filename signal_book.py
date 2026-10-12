@@ -126,9 +126,9 @@ def _exit_flags(s: 'TrackedSignal') -> Dict:
     g, sig = s.group_key, s.sig or {}
     plan: Dict = {}
     if g.startswith('BREAKOUT') and sig.get('trail_days'):
-        plan.update(trail_days=sig['trail_days'], no_tp=True, turtle_n=sig.get('turtle_n'), tf='4h')
+        plan.update(trail_days=sig['trail_days'], no_tp=True, turtle_n=sig.get('turtle_n'), tf='1d')
     elif g.startswith('RSI2'):
-        plan.update(connors_exit=True, no_tp=True, tf='4h')
+        plan.update(connors_exit=True, no_tp=True, tf='1d')
     elif g.startswith('ORB') and (s.logic_version or '') >= 'eng-50':
         plan.update(no_tp=True, tf='15m')
     elif g.startswith('BB ') and (s.logic_version or '') >= 'eng-55':

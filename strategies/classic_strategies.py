@@ -83,7 +83,7 @@ class ConnorsStrategy(_System):
                 'stop_src': f"catastrophic stop {CONFIG.strategies.connors_disaster_atr:g} daily ATR (our deviation: "
                             f"Connors uses none)",
                 'tp_src': 'SMA5 (Connors exit)', 'connors_exit': True}
-        plan = _confirm_plan(x, self.name, '4h', exit, 'daily RSI(2) extreme with the SMA200 trend')
+        plan = _confirm_plan(x, self.name, '1d', exit, 'daily RSI(2) extreme with the SMA200 trend')
         if plan and not plan.get('skip'):
             plan['connors_exit'] = True
             plan['no_tp'] = True              # out on the SMA5 close: no take-profit orders
