@@ -183,16 +183,16 @@ class Briefing:
                 out.append(sym)
         return out
 
-    def _post(self, text: str, key: Optional[str] = None, every_sec: float = 0.0):
+    def _post(self, text: str, key: Optional[str] = None, every_sec: float = 0.0, topic: str = 'alerts'):
         if key is not None:
             if time.time() - self._sent.get(key, 0.0) < every_sec:
                 return
             self._sent[key] = time.time()
         loop = getattr(self, '_loop', None)
         if loop is not None and threading.current_thread() is not threading.main_thread():
-            loop.call_soon_threadsafe(self.sc.notifier.post, text)     # checks reading SQLite run in a thread
+            loop.call_soon_threadsafe(self.sc.notifier.post, text, topic)     # checks reading SQLite run in a thread
         else:
-            self.sc.notifier.post(text)
+            self.sc.notifier.post(text, topic)
 
     # a contract younger than the 365-day momentum horizon gets the history of a spot proxy before its listing
     # (eng-74: XAUUSDT trades since 12.2025 - its momentum blend had only 30 / 90 days, the 12-month horizon
@@ -783,10 +783,10 @@ class Briefing:
                 rr = f" · {r['r']:+.2f}R" if r.get('r') is not None else ''
                 why = DEMO_RU.get(r['close_reason'], r['close_reason'])
                 self._post(f"💼 Демо {side} {name} {r.get('setup')}: {why}{rr}"
-                           + (f"\n{r['error']}" if r.get('entry_fill') is None and r.get('error') else ''))
+                           + (f"\n{r['error']}" if r.get('entry_fill') is None and r.get('error') else ''), topic='demo')
             elif r.get('entry_fill'):
                 self._post(f"💼 Демо {side} {name} {r.get('setup')}: открыта по {r['entry_fill']:.6g}"
-                           + (f", стоп {r['sl']:.6g}" if r.get('sl') else ''))
+                           + (f", стоп {r['sl']:.6g}" if r.get('sl') else ''), topic='demo')
         if first:
             self._demo_seen = max(self._demo_seen, int(time.time() * 1000))
 
@@ -861,10 +861,10 @@ class Briefing:
         status = self.sc.fetcher.venue_status()
         down = [v for v, st in status.items() if not st.get('connected', 1)]
         if down:
-            self._post(f"🛠 Бот: нет потока {', '.join(down)}", key='health|down|' + ','.join(sorted(down)), every_sec=3600)
+            self._post(f"🛠 Бот: нет потока {', '.join(down)}", key='health|down|' + ','.join(sorted(down)), every_sec=3600, topic='service')
         failed = errors.health_text()
         if failed:
-            self._post(f"🛠 Бот: ошибки компонентов — {failed}", key='health|errors', every_sec=3 * 3600)
+            self._post(f"🛠 Бот: ошибки компонентов — {failed}", key='health|errors', every_sec=3 * 3600, topic='service')
         ex = (self.sc.demo if self.sc.demo.enabled else None)
         if ex is not None:
             try:
@@ -873,7 +873,7 @@ class Briefing:
                 errors.report('briefing.risk', e)
                 limit = None
             if limit:
-                self._post(f"🛑 Демо остановлено на сегодня: {limit}", key='health|risk', every_sec=6 * 3600)
+                self._post(f"🛑 Демо остановлено на сегодня: {limit}", key='health|risk', every_sec=6 * 3600, topic='demo')
 
     # ------------------------------------------------------------------ loop
     async def loop(self):
@@ -907,7 +907,7 @@ class Briefing:
                     if slot not in self._done_slots and timedelta(0) <= now - t <= timedelta(minutes=10):
                         self._done_slots.add(slot)
                         if title == 'recap':
-                            self.sc.notifier.post(await asyncio.to_thread(self.recap))
+                            self.sc.notifier.post(await asyncio.to_thread(self.recap), 'briefing')
                         else:
                             for png, cap in await asyncio.to_thread(self.cards, title):
                                 self.sc.notifier.post_photo(png, cap)
@@ -916,7 +916,7 @@ class Briefing:
                     if timedelta(0) <= dt - now <= timedelta(minutes=30):
                         self._post(f"📅 Через {int((dt - now).total_seconds() // 60)} мин: {name} ({dt:%H:%M} МСК) — "
                                    f"входы бота за 30 мин до / 60 после CPI и FOMC блокируются",
-                                   key=f"macro|{dt:%Y%m%d%H%M}", every_sec=86400)
+                                   key=f"macro|{dt:%Y%m%d%H%M}", every_sec=86400, topic='briefing')
                 self.check_shock()
                 await asyncio.to_thread(self.check_demo)          # SQLite reads off the event loop
                 await asyncio.to_thread(self.check_anomalies)

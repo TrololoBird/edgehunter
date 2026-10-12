@@ -586,7 +586,7 @@ class WebUI:
         text = await asyncio.to_thread(b.recap) if kind == 'recap' else await asyncio.to_thread(b.briefing, 'Сводка')
         if request.query.get('send') == '1':
             if kind == 'recap':
-                self.scanner.notifier.post(text)
+                self.scanner.notifier.post(text, 'briefing')
             else:
                 for png, cap in await asyncio.to_thread(b.cards, 'Сводка'):
                     self.scanner.notifier.post_photo(png, cap)

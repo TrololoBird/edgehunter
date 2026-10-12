@@ -4,6 +4,8 @@ Optional notifications for a manual trader away from the screen (CONFIG.notify, 
 - Windows balloon notification through PowerShell (System.Windows.Forms, no extra packages).
 - Telegram: the bot token / chat id of config.local.toml, else the environment's TELEGRAM_BOT_TOKEN /
   TELEGRAM_CHANNEL_ID (the owner's channel). `post` sends briefings / watch alerts (briefing.py) as HTML.
+  Every message has a topic (briefing / signals / alerts / demo / service): it goes to the channel (except
+  'service') and, when notify.group_chat_id is set, to that topic's thread of the forum group.
 Sending runs in background tasks with a timeout, so a slow network never blocks the scan loop.
 """
 import asyncio
@@ -52,7 +54,7 @@ class Notifier:
         loop = asyncio.get_running_loop()
         import re
         plain = re.sub(r'</?[a-zA-Z][^>]*>', '', text)
-        for coro in (self._toast(title, plain), self._telegram(f"<b>{title}</b>\n{text}", html=True)):
+        for coro in (self._toast(title, plain), self._telegram(f"<b>{title}</b>\n{text}", html=True, topic='signals')):
             task = loop.create_task(coro)
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
@@ -75,7 +77,16 @@ class Notifier:
         return (self.cfg.telegram_token or os.environ.get('TELEGRAM_BOT_TOKEN', ''),
                 self.cfg.telegram_chat_id or os.environ.get('TELEGRAM_CHANNEL_ID', ''))
 
-    def post(self, text: str):
+    def _targets(self, topic: str):
+        """(chat id, thread id or None) of every destination of a message of this topic."""
+        _, channel = self._creds()
+        out = [(channel, None)] if channel and topic != 'service' else []
+        group = self.cfg.group_chat_id
+        if group:
+            out.append((group, getattr(self.cfg, f'topic_{topic}', 0) or None))
+        return out
+
+    def post(self, text: str, topic: str = 'alerts'):
         """A briefing / watch alert (HTML), Telegram only; long texts are split at blank lines."""
         if not self.enabled or not text:
             return
@@ -88,27 +99,33 @@ class Notifier:
             cur = f"{cur}\n\n{part}" if cur else part
         if cur:
             chunks.append(cur)
-        task = loop.create_task(self._send_chunks(chunks))
+        task = loop.create_task(self._send_chunks(chunks, topic))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    def post_photo(self, png: bytes, caption: str = ''):
+    def post_photo(self, png: bytes, caption: str = '', topic: str = 'briefing'):
         """A briefing card (PNG) with an HTML caption (<= 1024 characters), Telegram only."""
         if not self.enabled or not png:
             return
-        task = asyncio.get_running_loop().create_task(self._photo(png, caption[:1024]))
+        task = asyncio.get_running_loop().create_task(self._photo(png, caption[:1024], topic))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _photo(self, png: bytes, caption: str):
-        token, chat = self._creds()
-        if not token or not chat:
+    async def _photo(self, png: bytes, caption: str, topic: str = 'briefing'):
+        token, _ = self._creds()
+        if not token:
             return
+        for chat, thread in self._targets(topic):
+            await self._photo_to(token, chat, thread, png, caption)
+
+    async def _photo_to(self, token: str, chat, thread, png: bytes, caption: str):
         try:
             if self._session is None:
                 self._session = aiohttp.ClientSession()
             form = aiohttp.FormData()
             form.add_field('chat_id', str(chat))
+            if thread:
+                form.add_field('message_thread_id', str(thread))
             form.add_field('caption', caption)
             form.add_field('parse_mode', 'HTML')
             form.add_field('photo', png, filename='card.png', content_type='image/png')
@@ -119,18 +136,24 @@ class Notifier:
         except Exception as e:
             logger.warning(f"Telegram photo failed: {e!r}")
 
-    async def _send_chunks(self, chunks):
+    async def _send_chunks(self, chunks, topic: str = 'alerts'):
         for c in chunks:
-            await self._telegram(c, html=True)
+            await self._telegram(c, html=True, topic=topic)
 
-    async def _telegram(self, text: str, html: bool = False):
-        token, chat = self._creds()
-        if not token or not chat:
+    async def _telegram(self, text: str, html: bool = False, topic: str = 'alerts'):
+        token, _ = self._creds()
+        if not token:
             return
+        for chat, thread in self._targets(topic):
+            await self._telegram_to(token, chat, thread, text, html)
+
+    async def _telegram_to(self, token: str, chat, thread, text: str, html: bool):
         try:
             if self._session is None:
                 self._session = aiohttp.ClientSession()
             payload = {'chat_id': chat, 'text': text[:4000], 'disable_web_page_preview': True}
+            if thread:
+                payload['message_thread_id'] = thread
             if html:
                 payload['parse_mode'] = 'HTML'
             async with self._session.post(f"https://api.telegram.org/bot{token}/sendMessage",
@@ -142,7 +165,7 @@ class Notifier:
                         # a bare '<' in the text ("R:R 1.55 < 2", 2026-10-06 09:16) breaks Telegram's HTML: the
                         # message goes out as plain text instead of not at all
                         import re
-                        return await self._telegram(re.sub(r'</?[a-zA-Z][^>]*>', '', text), html=False)
+                        return await self._telegram_to(token, chat, thread, re.sub(r'</?[a-zA-Z][^>]*>', '', text), False)
                     logger.warning(f"Telegram notification failed: HTTP {resp.status} {body}")
         except Exception as e:
             logger.warning(f"Telegram notification failed: {e!r}")    # repr: a timeout's str() is empty

@@ -890,6 +890,14 @@ class NotifyConfig:
     toast: bool = False
     telegram_token: str = ""
     telegram_chat_id: str = ""
+    # A forum supergroup next to the channel (2026-10-12): every message also goes to its topic's thread there;
+    # 'service' messages (feeds down, component errors) go ONLY to the group. Empty group id = channel only.
+    group_chat_id: str = ""
+    topic_briefing: int = 0       # briefings, cards, recap, macro reminders
+    topic_signals: int = 0        # card events: ENTRY / TP / SL / CLOSED / RESTOP / ADD
+    topic_alerts: int = 0         # zone reactions / breaks, 15m shocks, bias changes, anomalies
+    topic_demo: int = 0           # BingX demo fills / exits / risk stop
+    topic_service: int = 0        # feeds down, component errors
     # the owner: no 'in the zone, waiting for the trigger' messages - only what happened to a trade
     events: tuple = ('ENTRY', 'TP', 'SL', 'CLOSED', 'RESTOP', 'ADD')
     # the owner's token / channel from the environment (TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID) when these are empty
