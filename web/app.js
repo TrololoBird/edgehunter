@@ -865,12 +865,17 @@ function drawZoneBoxes(ctx, box) {
     const color = kindColor(z.kinds[0]);
     const strong = z.strength >= 2;
     const top = Math.min(y1, y2), h = Math.max(1, Math.abs(y2 - y1));
-    ctx.fillStyle = hexA(color, strong ? 0.16 : 0.08);
-    ctx.fillRect(x0, top, plotWidth - x0, h);
+    // a wide zone (> 2 ATR of the chart's 15m ATR, or > 18% of the chart's height) is drawn as its two edges only:
+    // filled, the 4h breakers / FVGs covered half the chart and hid the candles
+    const wide = (coinData && coinData.atr && (z.hi - z.lo) > 2 * coinData.atr) || h > 0.18 * box.height;
+    if (!wide) {
+      ctx.fillStyle = hexA(color, strong ? 0.16 : 0.08);
+      ctx.fillRect(x0, top, plotWidth - x0, h);
+    }
     ctx.strokeStyle = hexA(color, strong ? 0.75 : 0.4); ctx.lineWidth = 1;
     ctx.setLineDash(strong ? [] : [4, 3]);
     ctx.strokeRect(x0 + 0.5, top + 0.5, plotWidth - x0 - 1, h - 1);
-    if (h >= 12 && !labelYs.some(y => Math.abs(y - top) < 13)) {
+    if (h >= 12 && !labelYs.some(y => Math.abs(y - top) < 16)) {
       labelYs.push(top);
       ctx.fillStyle = hexA(color, 0.95);
       ctx.fillText(z.label.split(' · ').slice(0, 2).join(' · '), x0 + 4, top + 2, plotWidth - x0 - 8);
