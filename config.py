@@ -598,7 +598,12 @@ class StrategiesConfig:
     # is unknown, a head fake comes first) and it is no Wyckoff phase - journaled, no card (eng-30, classic rule)
     # eng-55 PUMP TOP: a short against the pump at its first turn - the archive's FADE (-0.08R on 560 trades
     # Apr-Sep 2026, -0.19R on 60%+ pumps, negative in every period and split): journaled, no card
-    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP')
+    # eng-83 ORB UP / DOWN: Crabel's ORB lost net of costs on 14 months of Binance 15m / 5m (research/exit_bt):
+    # the bot's daily-open variant -0.07R on 9.4k holdout trades (43 coins), no exit rule fixed it (breakeven,
+    # chandelier 3/6 ATR, 2R target, partials, 8h); session opens (Asia / London / NY, 15-120m ranges, Stretch or wide
+    # 0.5-1 daily ATR stops) negative after 0.20% too; the only gross edge (majors, London / NY) is 0.05-0.1% a trade,
+    # below the costs: journaled, no card
+    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'ORB UP', 'ORB DOWN')
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
