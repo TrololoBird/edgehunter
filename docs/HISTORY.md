@@ -639,3 +639,13 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   stop beyond the last confirmed 1h pivot (the line's own timeframe) + 0.1 x ATR(1h); was 15m pivots + 0.1 x ATR(15m)
   (the cloud replay: median 0.66 1h ATR, 79% inside an hour's range). (3) The chart draws zones as boxes from the candle
   that made them (Zone.ts = the earliest level's candle) and hides zones below its timeframe by the same rank.
+- eng-80 (2026-10-12, the book / flow / liquidation audit against the venues' docs): the local book's sync matched
+  Binance's procedure (buffer, u < lastUpdateId dropped, U <= lastUpdateId <= u, pu chain); but the 1000-level REST
+  snapshot covers only ~+-0.07% of BTC and the book beyond it knows only levels that CHANGED since the sync, so a large
+  resting order far from the price - what walls / bands look for - never appeared: heat snapshots, walls and bands now
+  use only the snapshot's covered range (`cov_lo` .. `cov_hi`, sent to the page as heatmap.cov), and a book whose mid
+  left that range is re-synced (at most every 5 min). Liquidation sides re-checked: Binance forceOrder S = the
+  liquidation ORDER side (SELL = a long closed; the feed is the latest liquidation per symbol per second - Binance
+  undercounts), Bybit allLiquidation S = the POSITION side (Buy = a long liquidated, complete), OKX posSide long = a
+  long liquidated: all three as coded. Dashboard: the 1h chart groups closed 15m candles into hours until the 1h
+  history arrives after a start.

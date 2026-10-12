@@ -7,6 +7,12 @@ level. Within a minute of streaming the book reaches far beyond the 1000 levels 
 changes is sent): 2026-10-05 the 500-level snapshots of the old design covered BTC only +-0.07% (less than one 0.1%
 heat bucket) and ETH +-0.2%.
 
+COVERAGE (eng-80): the REST snapshot holds 1000 levels per side (BTC ~+-0.07%); beyond it the local book knows only
+the levels that CHANGED since the sync - a large order that just rests far from the price never appears, which is
+exactly what walls / bands look for. So heat snapshots, walls and bands use only the price range the last snapshot
+covered (`cov_lo` .. `cov_hi`), and a book whose mid left that range is re-synced (at most every 5 minutes)
+from a fresh snapshot (Binance's guidance: keep the book to the depth you actually hold).
+
 Every decrease of a level is split into FILLED (taker trades at that price on that side, from the aggTrade stream,
 within ATTRIBUTION_MS) and PULLED (cancelled): liquidity that disappears without trades is the spoofing signature
 (~31% of large crypto orders could spoof, arXiv 2504.15908); liquidity that is traded into and stays / refills is
@@ -42,7 +48,7 @@ class BookState:
 
     __slots__ = ('bids', 'asks', 'last_u', 'synced', 'buffer', 'ts_ms', 'recv', 'resyncs', 'executed', 'flow',
                  'heat', 'heat_step', 'heat_ts', 'walls', 'bands', 'bands_ts', 'deep_bids', 'deep_asks', 'deep_ts',
-                 'snapshot_wanted', 'pending')
+                 'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts')
 
     def __init__(self):
         self.bids: Dict[float, float] = {}
@@ -70,6 +76,10 @@ class BookState:
         self.deep_bids: List[Tuple[float, float]] = []
         self.deep_asks: List[Tuple[float, float]] = []
         self.deep_ts = 0.0
+        # the price range the last REST snapshot covered (levels outside it are known only once they change)
+        self.cov_lo = 0.0
+        self.cov_hi = 0.0
+        self.cov_ts = 0.0
 
     # best prices are recomputed on demand: dict sizes are a few thousand levels
     def best(self) -> Tuple[Optional[float], Optional[float]]:
@@ -144,6 +154,9 @@ class DepthBook:
             return
         book.bids = {float(p): float(q) for p, q in snapshot.get('bids') or [] if float(q) > 0}
         book.asks = {float(p): float(q) for p, q in snapshot.get('asks') or [] if float(q) > 0}
+        book.cov_lo = min(book.bids) if book.bids else 0.0
+        book.cov_hi = max(book.asks) if book.asks else 0.0
+        book.cov_ts = now or time.time()
         book.last_u = int(events[0].get('pu', 0))      # the first event is applied unconditionally
         book.synced, book.snapshot_wanted, book.buffer = True, False, []
         now = now or time.time()
@@ -224,7 +237,14 @@ class DepthBook:
             book.heat.clear()
             book.flow.clear()
         step = book.heat_step
+        if book.cov_hi > book.cov_lo and not (book.cov_lo <= mid <= book.cov_hi) and now - book.cov_ts >= 300:
+            # the price left the range the snapshot covered: a fresh snapshot re-centres it (at most every 5 min:
+            # a 1000-level snapshot weighs 20)
+            self._resync(book)
+            return
         lo, hi = mid * (1 - cfg.heat_range_pct), mid * (1 + cfg.heat_range_pct)
+        if book.cov_hi > book.cov_lo:
+            lo, hi = max(lo, book.cov_lo), min(hi, book.cov_hi)
         k0 = int(lo // step)
         n = int(hi // step) - k0 + 1
         values = array('d', bytes(8 * n))
@@ -239,7 +259,7 @@ class DepthBook:
         book.deep_asks = sorted(asks)
         book.deep_ts = now
         # walls: single levels near the price, persistent
-        w_lo, w_hi = mid * (1 - cfg.wall_range_pct), mid * (1 + cfg.wall_range_pct)
+        w_lo, w_hi = max(lo, mid * (1 - cfg.wall_range_pct)), min(hi, mid * (1 + cfg.wall_range_pct))
         near = [p * q for p, q in bids if p >= w_lo] + [p * q for p, q in asks if p <= w_hi]
         current = set()
         if near:
@@ -338,7 +358,7 @@ class DepthBook:
         flow = [[m, [[(k + 0.5) * step, round(c[PULLED]), round(c[FILLED]), round(c[3 + PULLED]), round(c[3 + FILLED])]
                      for k, c in cells.items() if c[PULLED] or c[FILLED] or c[3 + PULLED] or c[3 + FILLED]]]
                 for m, cells in sorted(book.flow.items())]
-        return {'step': step,
+        return {'step': step, 'cov': [book.cov_lo, book.cov_hi],
                 'snapshots': [[int(ts * 1000), [[(k0 + i + 0.5) * step, round(v)] for i, v in enumerate(values) if v]]
                               for ts, _, k0, values in book.heat],
                 'flow': flow}
