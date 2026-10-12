@@ -11,7 +11,8 @@ set -euo pipefail
 echo "Keys allowed for root:"
 awk '{print "  " $1, substr($2, 1, 16) "...", $3}' /root/.ssh/authorized_keys
 read -r -p "Every device you use is listed above? Type yes to continue: " ok
-[ "$ok" = "yes" ] || { echo "stopped"; exit 1; }
+ok=$(printf '%s' "$ok" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+case "$ok" in yes|y|да|д) ;; *) echo "stopped (answer was: '$ok')"; exit 1 ;; esac
 
 # 1. SSH keys only (a drop-in wins over sshd_config and over 50-cloud-init.conf by its name order)
 cat > /etc/ssh/sshd_config.d/00-keys-only.conf <<'EOF'
