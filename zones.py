@@ -121,6 +121,7 @@ class Zone:
     kinds: List[str] = field(default_factory=list)
     labels: List[str] = field(default_factory=list)
     strength: float = 0.0
+    ts: int = 0            # open time of the candle that made the zone's earliest level (0 = unknown): the chart's box
 
     @property
     def label(self) -> str:
@@ -128,7 +129,7 @@ class Zone:
 
     def as_dict(self) -> Dict:
         return {'price': self.price, 'lo': self.lo, 'hi': self.hi, 'kinds': self.kinds, 'label': self.label,
-                'strength': round(self.strength, 2)}
+                'strength': round(self.strength, 2), 'ts': self.ts}
 
 
 def _weights() -> Dict[str, float]:
@@ -753,7 +754,8 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
             if l.label not in labels:
                 labels.append(l.label)
         zones.append(Zone(price, min(_span(l)[0] for l in group), max(_span(l)[1] for l in group),
-                          sorted(per_kind, key=lambda k: -per_kind[k]), labels, strength))
+                          sorted(per_kind, key=lambda k: -per_kind[k]), labels, strength,
+                          min((int(l.ts) for l in group if l.ts), default=0)))
 
     group_hi = float('-inf')
     max_w = CONFIG.zones.max_merge_atr * atr if atr and atr > 0 else float('inf')

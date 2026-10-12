@@ -154,9 +154,28 @@ def structural_stop(minutes, direction: int, entry: float, pad: float, tf_min: i
     return bottom - pad if bottom < entry else None
 
 
+def _pivot_stop(bars, direction: int, entry: float, pad: float) -> Optional[float]:
+    """The last confirmed pivot (3 / 3) of `bars` beyond the entry, else the extreme of the last 40 bars, + pad."""
+    if len(bars) < 9:
+        return None
+    h = np.asarray([b[2] for b in bars])
+    l = np.asarray([b[3] for b in bars])
+    if direction < 0:
+        for i in reversed(find_pivots(h, 3, 3, 'high')):
+            if h[i] > entry:
+                return float(h[i] + pad)
+        top = float(h[-40:].max())
+        return top + pad if top > entry else None
+    for i in reversed(find_pivots(l, 3, 3, 'low')):
+        if l[i] < entry:
+            return float(l[i] - pad)
+    bottom = float(l[-40:].min())
+    return bottom - pad if bottom < entry else None
+
+
 class TrendlineStrategy(_System):
-    """trendline_bot: two 15m closes beyond a sloped line; entry at the close, stop at the 5m structure, target the
-    line's first anchor (R:R >= 1 or no trade)."""
+    """Edwards & Magee trendline break on 1h lines: two closes beyond the line, a resting limit at the broken line
+    (the retest), the stop beyond the last confirmed 1h pivot, targets the next 1h+ levels of the map."""
     name = 'trendline'
     setups = {'TRENDLINE UP': 1, 'TRENDLINE DOWN': -1}
     ttl_key = 'trendline_ttl'
@@ -166,16 +185,17 @@ class TrendlineStrategy(_System):
         sig, d = x.sig, x.direction
         if sig.get('target_price') is None or not x.minutes:
             return None
-        # the stop on the structure one step below the line's 1h timeframe: 15m pivots
-        bars = resample(x.minutes, 15, x.minutes[-1][0] + MINUTE_MS)
-        trs = [max(b[2] - b[3], abs(b[2] - p[4]), abs(b[3] - p[4])) for p, b in zip(bars, bars[1:])][-14:]
+        # eng-79: the stop beyond the last confirmed 1h pivot (the line's own timeframe), 0.1 x ATR(1h) beyond it
+        now_ms = x.minutes[-1][0] + MINUTE_MS
+        h1 = [b for b in (x.h1 or []) if b[0] + 3_600_000 <= now_ms]
+        trs = [max(b[2] - b[3], abs(b[2] - p[4]), abs(b[3] - p[4])) for p, b in zip(h1, h1[1:])][-14:]
         pad = 0.1 * (sum(trs) / len(trs)) if trs else 0.0
-        stop = structural_stop(x.minutes, d, sig['anchor_level'], pad, 15)   # beyond the line (the retest entry)
+        stop = _pivot_stop(h1[-120:], d, sig['anchor_level'], pad)          # beyond the line (the retest entry)
         if stop is None:
             return None
         # classic trendline break (Edwards & Magee): the targets are the next support / resistance levels (the map), not
         # the line's first anchor (his robot's target, kept in the setup note)
-        exit = {'stop': ['price', stop], 'stop_src': '15m structure beyond the line', 'tp': ['map', 1.0], 'atr': x.atr}
+        exit = {'stop': ['price', stop], 'stop_src': '1h structure beyond the line', 'tp': ['map', 1.0], 'atr': x.atr}
         plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
         if plan and not plan.get('skip'):
             # eng-58, practice (Edwards & Magee; break -> retest -> move): the entry is a resting limit at the broken

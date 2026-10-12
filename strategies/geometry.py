@@ -68,16 +68,27 @@ def _near(zone: Zone, direction: int) -> float:
 TF_RANK = {'5m': 0, '15m': 1, '1h': 2, '4h': 3, '1d': 4, '1w': 5}
 
 
+# untimed kinds that are references of a day or longer (valid for a plan of any timeframe)
+HTF_UNTIMED = ('pdhl', 'pmhl', 'year', 'open', 'range', 'poc', 'va')
+# untimed kinds built from intraday data: they rank as 15m (a 15m-swing zone does not become a 4h target through them)
+LTF_UNTIMED = ('vwap', 'round', 'book', 'liq_est', 'liq_hit', 'liq_hl', 'equal', 'hvn', 'lvn', 'wall')
+
+
 def _zone_rank(zone: Zone) -> Optional[int]:
-    """The timeframe rank of a zone built only from timeframe-suffixed kinds (swing_15m, fvg_1h, ob_4h ...); None when
-    any of its kinds has no timeframe (previous day / week, sessions, profile, round, VWAP: valid on every timeframe)."""
-    ranks = []
+    """The highest timeframe rank among the zone's kinds (swing_15m, fvg_1h, ob_4h ...); None = valid on every
+    timeframe (it holds a daily-or-longer untimed reference: previous day / week / month, the year, an open, a completed
+    day's profile, a range); intraday untimed kinds (VWAP, round, book, liquidations, equal highs / lows, profile nodes)
+    rank as 15m. A plan may target the zone when this rank >= its own timeframe's."""
+    best = -1
     for k in zone.kinds:
         tf = k.rsplit('_', 1)[-1] if '_' in k else None
-        if tf not in TF_RANK:
-            return None
-        ranks.append(TF_RANK[tf])
-    return max(ranks) if ranks else None
+        if tf in TF_RANK:
+            best = max(best, TF_RANK[tf])
+        elif k in LTF_UNTIMED:
+            best = max(best, TF_RANK['15m'])
+        else:
+            return None                    # HTF_UNTIMED or an unknown kind: valid everywhere (as before)
+    return best if best >= 0 else None
 
 
 def htf_zones(zones: List[Zone], tf: Optional[str]) -> List[Zone]:

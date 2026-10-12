@@ -573,6 +573,7 @@ function connect() {
 // ------------------------------------------------------------------------------------------------ coin drawer
 
 let coin = null, coinLoaded = 0, chart = null, series = null, tf = 15, coinData = null, priceLines = [], fibSeries = [];
+let shownZones = [];     // the zones drawn as boxes on the canvas (drawZoneBoxes)
 const tzShift = -new Date().getTimezoneOffset() * 60;
 
 function openCoin(symbol, leg) {
@@ -676,18 +677,28 @@ function drawCoin(fit) {
   // with the Fibonacci grid on, the map keeps only its strong zones: the grid is the story, the rest is noise
   const TFR = { '5m': 0, '15m': 1, '1h': 2, '4h': 3, '1d': 4, '1w': 5 };
   const chartRank = tf === 60 ? 2 : tf === 15 ? 1 : 0;
-  const zoneRank = z => {           // geometry._zone_rank: None (shown everywhere) when any kind has no timeframe
+  const LTF_UNTIMED = new Set(['vwap', 'round', 'book', 'liq_est', 'liq_hit', 'liq_hl', 'equal', 'hvn', 'lvn', 'wall']);
+  const zoneRank = z => {           // geometry._zone_rank: the zone's highest timeframe; null = valid on every chart
     let r = -1;
-    for (const k of z.kinds || []) { const t = k.includes('_') ? k.split('_').pop() : null; if (!(t in TFR)) return null; r = Math.max(r, TFR[t]); }
+    for (const k of z.kinds || []) {
+      const t = k.includes('_') ? k.split('_').pop() : null;
+      if (t in TFR) r = Math.max(r, TFR[t]); else if (LTF_UNTIMED.has(k)) r = Math.max(r, 1); else return null;
+    }
     return r < 0 ? null : r;
   };
   const zones = (d.zones || []).slice().filter(z => { const r = zoneRank(z); return r === null || r >= chartRank; })
     .filter(z => !fibOn || z.strength >= 2.5).sort((a, b) => b.strength - a.strength).slice(0, fibOn ? 10 : 28);
   const usedKinds = new Set();
+  shownZones = [];
   for (const z of zones) {
     const kind = z.kinds[0]; usedKinds.add(kind);
     const strong = z.strength >= 2;
-    line(z.price, kindColor(kind), strong ? z.label.split(' · ')[0] : '', strong ? 0 : 2, z.strength >= 4 ? 2 : 1, strong);
+    if (z.hi > z.lo) {
+      // a box: the price tag on the axis only (the line itself would cut through the box)
+      shownZones.push(z);
+      priceLines.push(series.createPriceLine({ price: z.price, color: kindColor(kind), lineVisible: false,
+        axisLabelVisible: strong, title: strong ? z.label.split(' · ')[0] : '' }));
+    } else line(z.price, kindColor(kind), strong ? z.label.split(' · ')[0] : '', strong ? 0 : 2, z.strength >= 4 ? 2 : 1, strong);
   }
   // order-book densities that stayed and price has not reached yet (webui.untaken_densities)
   for (const den of d.densities || []) {
@@ -806,14 +817,56 @@ function drawCoin(fit) {
 // Order-book history behind the candles: each 500-level snapshot (30s) is averaged into the bar it belongs to; the
 // brightness is the resting USD in the price bucket relative to the largest one on screen (bids green, asks red).
 
+function hexA(hex, a) {
+  const h = (hex || '#888888').replace('#', ''), f = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const n = parseInt(f.slice(0, 6), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+// Zones as boxes from the candle that made them to the chart's right edge (an older origin than the visible window
+// starts at the left edge; ts 0 = timeless levels such as the previous day's high span the whole width)
+function drawZoneBoxes(ctx, box) {
+  if (!chart || !series || !shownZones.length) return;
+  const plotWidth = box.width - chart.priceScale('right').width();
+  const ts = chart.timeScale();
+  ctx.save();
+  ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'top';
+  for (const z of shownZones) {
+    const y1 = series.priceToCoordinate(z.hi), y2 = series.priceToCoordinate(z.lo);
+    if (y1 === null || y2 === null) continue;
+    let x0 = 0;
+    if (z.ts) {
+      const t = Math.floor(z.ts / 1000 / (tf * 60)) * (tf * 60) + tzShift;
+      const x = ts.timeToCoordinate(t);
+      if (x !== null) x0 = Math.max(0, x);
+      else { const vr = ts.getVisibleRange(); if (vr && t > vr.to) continue; }
+    }
+    if (x0 >= plotWidth) continue;
+    const color = kindColor(z.kinds[0]);
+    const strong = z.strength >= 2;
+    const top = Math.min(y1, y2), h = Math.max(1, Math.abs(y2 - y1));
+    ctx.fillStyle = hexA(color, strong ? 0.16 : 0.08);
+    ctx.fillRect(x0, top, plotWidth - x0, h);
+    ctx.strokeStyle = hexA(color, strong ? 0.75 : 0.4); ctx.lineWidth = 1;
+    ctx.setLineDash(strong ? [] : [4, 3]);
+    ctx.strokeRect(x0 + 0.5, top + 0.5, plotWidth - x0 - 1, h - 1);
+    if (h >= 12) {
+      ctx.fillStyle = hexA(color, 0.95);
+      ctx.fillText(z.label.split(' · ').slice(0, 2).join(' · '), x0 + 4, top + 2, plotWidth - x0 - 8);
+    }
+  }
+  ctx.restore();
+}
+
 function drawHeat() {
   const canvas = $('#heat'); if (!canvas || !chart) return;
   const box = $('#chart').getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
   const ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, box.width, box.height);
+  drawZoneBoxes(ctx, box);
   const hm = coinData && coinData.heatmap;
-  if (!hm || !hm.snapshots.length || !$('#heat-on').checked) return;
+  if (!hm || !hm.snapshots.length || !$('#heat-on').checked) return;   // (the zone boxes are drawn above)
   const size = tf * 60, bars = new Map();
   for (const [ms, levels] of hm.snapshots) {
     const t = Math.floor(ms / 1000 / size) * size + tzShift;

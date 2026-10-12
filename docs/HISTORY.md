@@ -629,3 +629,13 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   geometry.htf_zones), daily / weekly cards open on 1h candles. Checked and kept: ORB / VA80 stay '15m' (their
   structure is the day, but a '1d' plan would floor the stop at a daily ATR - against Crabel's opposite level),
   Bollinger W / M 15m with its 15m band exit, TTL_FACTOR has no '1d' (every daily method has its own ttl_key).
+- eng-79 (2026-10-12, the timeframe audit on the laptop journal's eng-67+ entries): (1) `geometry._zone_rank` - a
+  zone qualifies for a plan of timeframe tf when ONE of its levels is of tf or higher; untimed kinds are all-timeframe
+  only when they are daily-or-longer references (pdhl, pmhl, year, open, range, poc, va); intraday untimed kinds
+  (vwap, round, book, liq_est / liq_hit / liq_hl, equal, hvn, lvn, wall) rank as 15m. Before, any untimed kind made a
+  zone valid everywhere: "FVG 15m bear · VWAP day · 15m high · OB 15m bear" was TP1 of a 4h SD DEMAND (CRV), 13 such
+  targets in 2 days (AUCTION 1h, SD 4h, SPRING 1h, DUMP BOUNCE 1h). Open: the 'poc' / 'va' kinds also carry the
+  rolling 24h profile (labels 'POC 24h' / 'VAH 24h') - one kind for daily and intraday profiles. (2) trendline: the
+  stop beyond the last confirmed 1h pivot (the line's own timeframe) + 0.1 x ATR(1h); was 15m pivots + 0.1 x ATR(15m)
+  (the cloud replay: median 0.66 1h ATR, 79% inside an hour's range). (3) The chart draws zones as boxes from the candle
+  that made them (Zone.ts = the earliest level's candle) and hides zones below its timeframe by the same rank.
