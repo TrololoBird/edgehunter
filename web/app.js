@@ -772,7 +772,12 @@ function drawCoin(fit) {
     return null;
   }).filter(m => m && barTimes.has(m.time)).sort((a, b) => a.time - b.time);
   series.setMarkers(markers);
-  if (fit) chart.timeScale().fitContent();
+  if (fit) {
+    // a drag / wheel on the price axis turns its auto-scale off for good: the next coin (TAO ~300 -> NEAR ~5.9) kept the
+    // old range and its candles sat off-screen - every new coin / timeframe starts auto-scaled again
+    chart.priceScale('right').applyOptions({ autoScale: true });
+    chart.timeScale().fitContent();
+  }
   drawHeat();
 
   $('#d-title').innerHTML = `${esc(d.symbol.replace(':USDT', '').replace('/USDT', ''))} <small>${fp(d.price)} · ATR 15m ${fp(d.atr)}${d.note ? ' · монета вне текущей вселенной: без карты уровней' : d.htf_loaded ? '' : ' · 1h история ещё грузится'}</small>`;
