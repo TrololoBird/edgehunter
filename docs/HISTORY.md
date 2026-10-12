@@ -649,3 +649,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   undercounts), Bybit allLiquidation S = the POSITION side (Buy = a long liquidated, complete), OKX posSide long = a
   long liquidated: all three as coded. Dashboard: the 1h chart groups closed 15m candles into hours until the 1h
   history arrives after a start.
+- eng-81 (2026-10-12, the VPS link: ~180 MB/s, 33 ms to Binance - the laptop's ~70 KB/s per socket had cut the
+  whole-market streams): `!markPrice@arr@1s` (mark / index / funding of every contract each second; the premium
+  history keeps its 30s spacing) and `!miniTicker@arr` (every 24h volume) are streams again (`CONFIG.ws.market_arrays`),
+  the REST premiumIndex / ticker loop runs only while they are quiet (> 15 s); order books for 60 hot coins (VPS
+  config). Dashboard: a new coin starts from an empty auto-scaled chart (the previous coin's price range stayed: TAO
+  ~300 -> NEAR / ETH candles off-screen); the chart draws at most 4 zones of strength >= 2 per side within the candles'
+  range (+50%), «все уровни» for up to 12 incl. weak ones; the 2 largest densities per side; no automatic window
+  Fibonacci grid (only the continuation card's own); box labels never overlap.

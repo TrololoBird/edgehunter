@@ -844,6 +844,8 @@ class RestConfig:
 @dataclass(frozen=True)
 class WSConfig:
     ping_interval: int = 20
+    # eng-81: Binance's whole-market arrays (!markPrice@arr@1s, !miniTicker@arr) as streams - off on a thin link
+    market_arrays: bool = True
 
 
 @dataclass(frozen=True)
@@ -933,7 +935,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-80"
+    logic_version: str = "eng-81"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

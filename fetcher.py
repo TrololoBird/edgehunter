@@ -443,6 +443,10 @@ class DataFetcher:
         self.streams_started_ms = 0               # the flow windows before it are seeded from REST klines
         # set by a Binance listing / contract status event (!contractInfo): the universe is re-selected early
         self.contract_event = asyncio.Event()
+        # eng-81: the whole-market arrays (mark / funding, 24h volumes) as streams; REST only while they are quiet
+        self.marks_stream_at = 0.0
+        self.volumes_stream_at = 0.0
+        self._vol24: Dict[str, float] = {}
         self.reference_prices: Dict[str, float] = {}
         self._htf_loading: set = set()
         self._deriv_cache: Dict[str, Tuple[float, Dict[str, float]]] = {}
@@ -655,8 +659,9 @@ class DataFetcher:
         last_volumes = 0.0
         while self._running:
             try:
-                await self._update_premium_index()
-                if time.time() - last_volumes >= 300:
+                if time.time() - self.marks_stream_at > 15:
+                    await self._update_premium_index()
+                if time.time() - last_volumes >= 300 and time.time() - self.volumes_stream_at > 15:
                     await self._update_24h_volumes()
                     last_volumes = time.time()
             except asyncio.CancelledError:
@@ -1736,6 +1741,10 @@ class DataFetcher:
             # Every taker order (CVD, sweeps, footprint, price) and all liquidations
             ('futures', 'Binance futures trades', [f"{i.lower()}@aggTrade" for i in ids['futures']] + ['!forceOrder@arr', '!contractInfo'], 40),
         ]
+        if CONFIG.ws.market_arrays:
+            # eng-81 (the VPS): mark / index / funding of every contract each second and every 24h volume, ~100 KB/s
+            # each; the REST loop stays as the fallback when a stream goes quiet (_binance_rest_tickers_loop)
+            plans.append(('futures', 'Binance market arrays', ['!markPrice@arr@1s', '!miniTicker@arr'], 2))
         for market, name, streams, per_socket in plans:
             stream = BinanceStream(self, self.symbol_map, market, streams, name)
             stream.subs_per_connection = per_socket
@@ -1771,21 +1780,38 @@ class DataFetcher:
         if isinstance(data, list):
             if stream.startswith('!miniTicker'):
                 for t in data:
-                    md = self.markets.get(self._binance_keys.get(('futures', t.get('s'))))
+                    sym = str(t.get('s', ''))
+                    if sym.endswith('USDT'):
+                        self._vol24[sym] = float(t.get('q') or 0.0)
+                    md = self.markets.get(self._binance_keys.get(('futures', sym)))
                     if md is not None:
-                        md.record_ticker({'last': float(t['c']), 'quoteVolume': float(t['q'])}, t.get('E'))
+                        # the 24h volume only: the price comes from the aggTrades (the ticker's close lags them)
+                        md.record_ticker({'quoteVolume': float(t['q'])}, recv_ms)
+                self.market_volumes = list(self._vol24.values())
+                self.volumes_stream_at = time.time()
             elif stream.startswith('!markPrice'):
+                now_s = time.time()
                 for m in data:
-                    key = self._binance_keys.get(('futures', m.get('s')))
+                    sym = m.get('s')
+                    mark = float(m.get('p') or 0.0)
+                    if sym in self.baseline_ids and mark > 0:
+                        self.market_marks[sym] = mark
+                    key = self._binance_keys.get(('futures', sym))
                     md = self.markets.get(key)
                     if md is None:
                         continue
-                    md.mark_price, md.index_price = float(m['p']), float(m.get('i') or 0.0)
+                    md.mark_price, md.index_price = mark, float(m.get('i') or 0.0)
+                    # the premium history keeps its 30s spacing (premium_z / prem_1h were measured on it)
+                    if md.mark_price and md.index_price and (not md.premium_hist or
+                                                             recv_ms - md.premium_hist[-1][0] >= 30_000):
+                        md.premium_hist.append((recv_ms, md.mark_price / md.index_price - 1))
                     # r: the live estimate of the next funding rate; settlements run every 1/4/8h -> 8h-equivalent
                     rate = float(m.get('r') or 0.0) * 8 / self.funding_interval_hours.get(key, 8)
                     md.funding_rate = md.predicted_funding = rate
                     state = self.venue_derivs.setdefault(key, {}).setdefault('binance', VenueDeriv())
                     state.funding_8h, state.mark, state.ts = rate, md.mark_price, recv_ms
+                self.market_marks_at = now_s
+                self.marks_stream_at = now_s
             return
 
         event = data.get('e')

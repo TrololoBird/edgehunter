@@ -595,6 +595,9 @@ function openCoin(symbol, leg) {
     series = chart.addCandlestickSeries({ upColor: '#2ecc71', downColor: '#ff5c5c', borderVisible: false, wickUpColor: '#2ecc71', wickDownColor: '#ff5c5c', priceFormat: { type: 'price', precision: 6, minMove: 0.000001 } });
   }
   coinData = null;
+  series.setData([]); series.setMarkers([]);
+  priceLines.forEach(l => series.removePriceLine(l)); priceLines = []; shownZones = [];
+  chart.priceScale('right').applyOptions({ autoScale: true });
   loadCoin(true);
 }
 $('#d-close').addEventListener('click', () => { coin = null; $('#drawer').classList.add('hidden'); });
@@ -672,7 +675,7 @@ function drawCoin(fit) {
   // «фибо»: the card's own grid (continuation) or, for any other chart, the visible leg - the window's high and low,
   // the later one is the leg's end (retracements 0.236..0.786 from it, extensions 1.272 / 1.618 beyond)
   const fibCard = $('#fib-on').checked && card0 && card0.fib;
-  const fibAuto = $('#fib-on').checked && !fibCard && bars.length > 10;
+  const fibAuto = false;      // the visible-window grid is gone: «фибо» = the continuation card's own grid
   const fibOn = fibCard;
   // with the Fibonacci grid on, the map keeps only its strong zones: the grid is the story, the rest is noise
   const TFR = { '5m': 0, '15m': 1, '1h': 2, '4h': 3, '1d': 4, '1w': 5 };
@@ -686,8 +689,18 @@ function drawCoin(fit) {
     }
     return r < 0 ? null : r;
   };
-  const zones = (d.zones || []).slice().filter(z => { const r = zoneRank(z); return r === null || r >= chartRank; })
-    .filter(z => !fibOn || z.strength >= 2.5).sort((a, b) => b.strength - a.strength).slice(0, fibOn ? 10 : 28);
+  const allLv = $('#lv-all') && $('#lv-all').checked;
+  let hiP = -Infinity, loP = Infinity;
+  for (const b of bars) { if (b.high > hiP) hiP = b.high; if (b.low < loP) loP = b.low; }
+  const pad = (hiP - loP) * 0.5, px = d.price || (bars.length ? bars[bars.length - 1].close : 0);
+  const perSide = allLv ? 12 : 4;
+  const cand = (d.zones || []).filter(z => { const r = zoneRank(z); return r === null || r >= chartRank; })
+    .filter(z => allLv || z.strength >= 2)
+    .filter(z => !bars.length || (z.hi >= loP - pad && z.lo <= hiP + pad));
+  const pick = side => cand.filter(z => side > 0 ? z.lo > px : z.hi < px)
+    .sort((a, b) => b.strength - a.strength).slice(0, perSide);
+  const around = cand.filter(z => z.lo <= px && z.hi >= px).sort((a, b) => b.strength - a.strength).slice(0, 1);
+  const zones = [...pick(1), ...around, ...pick(-1)];
   const usedKinds = new Set();
   shownZones = [];
   for (const z of zones) {
@@ -701,7 +714,8 @@ function drawCoin(fit) {
     } else line(z.price, kindColor(kind), strong ? z.label.split(' · ')[0] : '', strong ? 0 : 2, z.strength >= 4 ? 2 : 1, strong);
   }
   // order-book densities that stayed and price has not reached yet (webui.untaken_densities)
-  for (const den of d.densities || []) {
+  const dens = (d.densities || []).slice().sort((a, b) => b.usd - a.usd);
+  for (const den of [...dens.filter(x => x.side > 0).slice(0, 2), ...dens.filter(x => x.side < 0).slice(0, 2)]) {
     const usd = den.usd >= 1e6 ? (den.usd / 1e6).toFixed(1) + 'M' : (den.usd / 1e3).toFixed(0) + 'k';
     line(den.price, den.side > 0 ? '#2ecc71' : '#ff5c5c', `плотн. ${den.side > 0 ? 'bid' : 'ask'} $${usd}`, 1, 2);
   }
@@ -836,6 +850,7 @@ function drawZoneBoxes(ctx, box) {
   const ts = chart.timeScale();
   ctx.save();
   ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'top';
+  const labelYs = [];
   for (const z of shownZones) {
     const y1 = series.priceToCoordinate(z.hi), y2 = series.priceToCoordinate(z.lo);
     if (y1 === null || y2 === null) continue;
@@ -855,7 +870,8 @@ function drawZoneBoxes(ctx, box) {
     ctx.strokeStyle = hexA(color, strong ? 0.75 : 0.4); ctx.lineWidth = 1;
     ctx.setLineDash(strong ? [] : [4, 3]);
     ctx.strokeRect(x0 + 0.5, top + 0.5, plotWidth - x0 - 1, h - 1);
-    if (h >= 12) {
+    if (h >= 12 && !labelYs.some(y => Math.abs(y - top) < 13)) {
+      labelYs.push(top);
       ctx.fillStyle = hexA(color, 0.95);
       ctx.fillText(z.label.split(' · ').slice(0, 2).join(' · '), x0 + 4, top + 2, plotWidth - x0 - 8);
     }
@@ -922,6 +938,7 @@ function drawHeat() {
 }
 $('#heat-on').addEventListener('change', drawHeat);
 $('#heat-all').addEventListener('change', drawHeat);
+$('#lv-all').addEventListener('change', () => drawCoin(false));
 $('#fib-on').addEventListener('change', () => drawCoin(false));
 $('#ev-on').addEventListener('change', () => drawCoin(false));
 window.addEventListener('resize', () => requestAnimationFrame(drawHeat));
