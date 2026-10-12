@@ -1,0 +1,10 @@
+{
+  "enabledPlugins": {
+    "telegram@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "hookify@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "duckdb-skills@claude-plugins-official": true
+  }
+}
