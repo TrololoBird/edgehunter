@@ -99,7 +99,7 @@ def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: fl
              price_hi > hi55 and (before_hi is None or before_hi <= hi55)),
             (-1, lo20, lo55, price_lo < lo20 and (before_lo is None or before_lo >= lo20),
              price_lo < lo55 and (before_lo is None or before_lo >= lo55))):
-        system = None
+        system, level, exit_days = None, None, None     # (pylint E0606: set below whenever system is)
         if crossed20 and not skip:
             system, level, exit_days = 1, level20, 10
         elif crossed55:

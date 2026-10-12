@@ -597,7 +597,6 @@ def _lifecycle(plan, strategy, d, row, start_ms, m_ts, minutes_all, fut, fund, o
     watch_ttl, zone_ttl, trade_ttl = strategy.ttls(plan['tf'])
     fixed_invalid = plan.get('invalid') if plan.get('fix_invalid') else None
     invalid, tp1 = plan.get('invalid'), plan['targets'][0]
-    required_oi = strategy.name == 'breakout'
     interval = plan['trigger_minutes'] * MINUTE_MS
 
     def veto(levels, until_ms, extreme_ms=None) -> Optional[str]:

@@ -75,9 +75,10 @@ class DemoExecutor:
             cfg = CONFIG.executor
             self.ex = ccxt.bingx({'apiKey': cfg.api_key, 'secret': cfg.api_secret, 'enableRateLimit': True,
                                   'timeout': 30_000,   # the VST contract list (~1200 markets) took > 10s under load
-                                  # recvWindow: ccxt's bingx.sign never sends it (BingX's window stays 5s); the cause of
+                                  # no recvWindow option: ccxt's bingx.sign never sends it (checked in ccxt 4.5.85: only
+                                  # the deposit / withdraw endpoints read it); BingX's window stays 5s; the cause of
                                   # 'timestamp is invalid' was a dead VST address, see the session below
-                                  'options': {'defaultType': 'swap', 'recvWindow': 60_000}})
+                                  'options': {'defaultType': 'swap'}})
             self.ex.set_sandbox_mode(True)       # VST demo: forced, the only mode this module has
             # ccxt's own connector tries the resolved addresses with happy_eyeballs_delay=0, which here meant one at a
             # time: one of VST's four CloudFront addresses (3.173.161.114, 2026-10-05) never answers, every new

@@ -367,8 +367,7 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                                       boxstyle='round,pad=0.006', fc='#fdeeee', ec=RED, lw=1.2))
     fig.text(0.04, 0.058, '⚠  ' + msg, fontsize=11.5, weight='bold', color=RED, va='top')
     fig.text(0.075, 0.036, msg_sub, fontsize=9.5, color=RED, va='top')
-    fig.text(0.98, 0.006, '*шанс TP1 по расстоянию, если вход сработает · зоны = где цена разворачивалась, на архиве держат не лучше '
-                          'случайных · не совет', fontsize=7, color=GREY, ha='right', va='bottom')
+    fig.text(0.98, 0.006, '*шанс TP1 по расстоянию, если вход сработает · зоны = где цена разворачивалась · не совет', fontsize=7, color=GREY, ha='right', va='bottom')
     buf = io.BytesIO()
     fig.savefig(buf, format='png')
     plt.close(fig)

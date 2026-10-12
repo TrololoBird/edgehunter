@@ -1,16 +1,14 @@
 import asyncio
-import io
 import json
 import os
 import time
-from collections import Counter, deque
+from collections import deque
 
 import orjson
 import polars as pl
 import pytest
 
-from conftest import CUR15, Frames, frame
-from config import CONFIG
+from conftest import CUR15, frame
 from fetcher import DataFetcher, MarketData, VenueDeriv
 from indicators import calculate_tier0_metrics, compute_indicators, merge_live_candle
 from symbols import VenueMarket
@@ -211,7 +209,6 @@ def test_build_maps_worker_path_returns_a_context():
     """
     import time
     import numpy as np
-    import polars as pl
     from strategies.structure import PART_COLUMNS, build_maps
     rng = np.random.default_rng(1)
     n = 400

@@ -1,6 +1,5 @@
-from conftest import CHOP, CUR15, N, Frames, frame
+from conftest import CHOP, CUR15, Frames, frame
 from indicators import compute_indicators
-from strategies import STRATEGIES, PlanInput
 from signal_book import SignalBook
 
 FIVE = 5 * 60_000

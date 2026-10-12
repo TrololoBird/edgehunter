@@ -552,8 +552,8 @@ class Briefing:
                 t = None
             if t:
                 parts.append(t)
-        parts.append('<i>Зоны — места, где цена разворачивалась (1h/4h/1d). На архиве (40 монет, 12 мес.) они держат цену '
-                     'не лучше случайных уровней: это карта, а не стена. Механические правила, не совет.</i>')
+        # the archive verdict on these zones (research/sr_zones.md) was void - wrong method, redone before any claim
+        parts.append('<i>Зоны — места, где цена разворачивалась (1h/4h/1d). Механические правила, не совет.</i>')
         return '\n\n'.join(p for p in parts if p)
 
     def _save(self, slot: str, title: str) -> None:

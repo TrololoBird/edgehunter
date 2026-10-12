@@ -1,11 +1,9 @@
 import asyncio
-import os
 import sqlite3
 import time
 
 import pytest
 
-import config as config_mod
 from config import CONFIG, AppConfig, apply_overrides, load_overrides
 
 
@@ -144,7 +142,7 @@ def test_journal_outcomes_manual_fill_and_retry(tmp_path):
     entry = j.conn.execute("SELECT outcome, entry_fill, r_tp1, filled FROM signals WHERE kind='entry'").fetchone()
     assert entry[0] == 'TP1' and entry[1] > 100 and entry[3] == 1 and 0 < entry[2] < 2
     assert set(calls) == {480}
-    row = j._pending(10)
+    j._pending(10)
     j.close()
 
 

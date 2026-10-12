@@ -80,7 +80,6 @@ def replay_coin(job: tuple):
     oi_ts, oi_v = np.asarray(met['ts']), np.asarray(met['oi'])
     oi_hour = [(int(t), float(v)) for t, v in zip(oi_ts, oi_v) if int(t) % HOUR_MS == 0 and v]
     oi_hour_ts = np.asarray([t for t, _ in oi_hour]) if len(oi_hour) else np.empty(0)
-    oi5 = [(int(t), float(v)) for t, v in zip(oi_ts, oi_v) if v]
     ENGINES.pop(key, None)
     rng = random.Random(hash(key) & 0xffffffff)
 
@@ -94,8 +93,6 @@ def replay_coin(job: tuple):
 
     out: List[Dict] = []
     busy: Dict[str, float] = {}
-    oi_fired = 0.0
-    oi_ptr = 0
 
     def run_event(event, now_ms, q):
         d = event['direction']

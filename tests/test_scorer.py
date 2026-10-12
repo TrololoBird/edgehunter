@@ -1,7 +1,6 @@
 import polars as pl
 
 from conftest import CUR15, N, frame
-from config import CONFIG
 from indicators import TIER0_COLUMNS, TIMEFRAME_MS, compute_indicators, compute_indicators_batch
 from scorer import PhaseScorer, score_all_symbols, score_closed, signals_from_rows
 
