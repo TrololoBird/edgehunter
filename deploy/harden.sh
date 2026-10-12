@@ -27,6 +27,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -q fail2ban unattended-upgrade
 cat > /etc/fail2ban/jail.d/sshd.local <<'EOF'
 [sshd]
 enabled = true
+# a minimized Ubuntu has no /var/log/auth.log (rsyslog absent): read sshd from the systemd journal
+backend = systemd
 maxretry = 5
 findtime = 10m
 bantime = 1h
