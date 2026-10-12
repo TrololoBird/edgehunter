@@ -891,15 +891,32 @@ function drawHeat() {
       cells.push([x, y1, y2, usd, Math.abs(usd) / med]);
     }
   }
+  // only strong, persistent heat by default: a bucket that held >= 4x its bar's median in >= 3 bars of the window
+  // (the bot's liquidity bands use the same idea); «всё тепло» shows every bucket >= 2x as before
+  const all = $('#heat-all') && $('#heat-all').checked;
+  const strongBars = new Map();
+  if (!all) for (const [, y1, , usd, ratio] of cells) if (ratio >= 4) {
+    const k = Math.round(y1) + (usd > 0 ? 'b' : 'a'); strongBars.set(k, (strongBars.get(k) || 0) + 1);
+  }
+  // the price range the last REST snapshot covered (depth.py: levels outside it are known only once they change)
+  const cov = hm.cov || [];
+  const cy1 = cov[1] ? series.priceToCoordinate(cov[1]) : null, cy2 = cov[0] ? series.priceToCoordinate(cov[0]) : null;
   for (const [x, y1, y2, usd, ratio] of cells) {
-    if (x - spacing / 2 > plotWidth || ratio < 2) continue;
+    if (x - spacing / 2 > plotWidth || ratio < (all ? 2 : 4)) continue;
+    if (!all && (strongBars.get(Math.round(y1) + (usd > 0 ? 'b' : 'a')) || 0) < 3) continue;
     const a = Math.min(0.7, 0.18 * Math.log2(ratio));
     if (a < 0.05) continue;
     ctx.fillStyle = usd > 0 ? `rgba(46,204,113,${a})` : `rgba(255,92,92,${a})`;
     ctx.fillRect(x - spacing / 2, Math.min(y1, y2), spacing, Math.max(1, Math.abs(y2 - y1)));
   }
+  if (cy1 !== null && cy2 !== null) {
+    ctx.strokeStyle = 'rgba(160,170,190,.35)'; ctx.setLineDash([2, 4]);
+    for (const y of [cy1, cy2]) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotWidth, y); ctx.stroke(); }
+    ctx.setLineDash([]);
+  }
 }
 $('#heat-on').addEventListener('change', drawHeat);
+$('#heat-all').addEventListener('change', drawHeat);
 $('#fib-on').addEventListener('change', () => drawCoin(false));
 $('#ev-on').addEventListener('change', () => drawCoin(false));
 window.addEventListener('resize', () => requestAnimationFrame(drawHeat));
