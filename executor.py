@@ -611,6 +611,17 @@ class DemoExecutor:
                                       {'stopLossPrice': float(ex.price_to_precision(symbol, s.levels['sl'] * scale)),
                                        'reduceOnly': True, 'workingType': 'MARK_PRICE'})
                 logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
+                # eng-84: the card saw TP1 on Binance's candles, BingX may not have filled its TP1 half yet - the
+                # cancel above removed it: put it back while more than ~3/4 of the position is still open
+                qty0 = float(trade.get('qty') or 0)
+                tp1 = trade.get('tp1')
+                if tp1 and qty0 and left > 0.75 * qty0 and (getattr(s, 'plan', None) or {}).get('trail_after_tp1'):
+                    half = float(ex.amount_to_precision(symbol, min(left, qty0 / 2)))
+                    if half > 0:
+                        await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', half, None,
+                                              {'takeProfitPrice': float(ex.price_to_precision(symbol, float(tp1))),
+                                               'reduceOnly': True})
+                        logger.info(f"Demo RESTOP {symbol}: TP1 half {half} @ {float(tp1):.6g} re-placed")
             except Exception as e:
                 logger.warning(f"Demo restop {s.symbol}: {e!r}")
 

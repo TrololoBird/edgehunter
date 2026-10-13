@@ -14,7 +14,7 @@ A target is always >= zones.min_target_atr beyond its reference (and beyond the 
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
-from zones import STRUCTURE_KINDS, Zone, is_pool, stop_beyond
+from zones import POOL_KINDS, STRUCTURE_KINDS, Zone, is_pool, stop_beyond
 
 MEAN_KINDS = ('vwap', 'poc', 'va', 'hvn')
 
@@ -459,6 +459,34 @@ def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, 
     return base - direction * buffer, src
 
 
+HTF_SWINGS = ('swing_1h', 'swing_1d', 'swing_1w')
+
+
+def clear_pool(zones: List[Zone], stop: float, entry: float, direction: int, symbol: Optional[str],
+               label: str) -> Tuple[float, str]:
+    """eng-84: a system's fixed-price stop (AUCTION's test, a trendline pivot, Connors' 3 ATR) went straight to the
+    exchange, never checked against the map: SKY's sat 0.24% beyond the 1h low - inside that pool's usual pierce, and
+    the raid of the low took it (liquidated longs printed below). A resting-stop pool between the stop and the entry
+    whose usual pierce (p90) reaches the stop moves the stop beyond the pool's pierce."""
+    from pierce import measured_kind, overshoot
+    best = None
+    for z in zones:
+        # resting stops sit beyond swings of 1h and higher too (the obvious '1h low' of SKY) - zones.POOL_KINDS
+        # holds only equal levels / PDH-PDL / ranges / rounds
+        if not any((k in POOL_KINDS and k != 'liq_est') or k in HTF_SWINGS for k in z.kinds):
+            continue
+        edge = z.lo if direction > 0 else z.hi
+        if not 0 < direction * (edge - stop) < direction * (entry - stop):
+            continue                                   # not between the stop and the entry
+        reach = overshoot(symbol, measured_kind(z.kinds) or 'equal', edge, 'p90')
+        if reach is None or direction * (edge - stop) > reach:
+            continue                                   # the stop already clears this pool's usual pierce
+        new = edge - direction * reach
+        if best is None or direction * (best[0] - new) > 0:
+            best = (new, f"{label}, beyond {z.label} + its p90 pierce")
+    return best if best is not None else (stop, label)
+
+
 def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
     """
     Entry / stop / targets of the ported systems (strategies/maniac.py). Their own structural exits (beyond the sweep,
@@ -525,6 +553,8 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         stop, sl_src = base - direction * pad, f"{src} + {how} {pad / base:.2%}"
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
+        if exit['stop'][0] == 'price':
+            stop, sl_src = clear_pool(zones, stop, entry, direction, plan.get('symbol'), sl_src)
     risk = direction * (entry - stop)
     if 0 < risk < floor:                                # eng-58: with the pierce model too (stop_levels)
         stop, risk = entry - direction * floor, floor

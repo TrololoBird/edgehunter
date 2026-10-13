@@ -248,8 +248,11 @@ class DepthBook:
         k0 = int(lo // step)
         n = int(hi // step) - k0 + 1
         values = array('d', bytes(8 * n))
-        bids = [(p, q) for p, q in book.bids.items() if p >= lo]
-        asks = [(p, q) for p, q in book.asks.items() if p <= hi]
+        # eng-84: both bounds on both sides. A bid above `hi` (the price ran past the snapshot's coverage, cov_hi) raised
+        # IndexError on the whole stream handler ("array index out of range", 7x 12.10); an ask below `lo` gave a
+        # NEGATIVE index that Python wraps silently - asks written into the top buckets of the heatmap
+        bids = [(p, q) for p, q in book.bids.items() if lo <= p <= hi]
+        asks = [(p, q) for p, q in book.asks.items() if lo <= p <= hi]
         for p, q in bids:
             values[int(p // step) - k0] += p * q
         for p, q in asks:

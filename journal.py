@@ -558,6 +558,12 @@ class SignalJournal:
                                                           (tracked.plan or {}).get('trigger'),
                                                           (tracked.plan or {}).get('entry_note')) if x) or None})
         with self._lock:
+            if row['vetoed'] and self.conn.execute(
+                    "SELECT 1 FROM signals WHERE kind = 'entry' AND symbol = ? AND group_key = ? AND setup_ts_ms = ? "
+                    "LIMIT 1", (row['symbol'], row['group_key'], row['setup_ts_ms'])).fetchone():
+                # eng-84: a vetoed trigger leaves the card waiting, and each later trigger of the same card was a new
+                # row (live PO3 LONG: 27 'entries' = 3 setups, each a full replayed trade): one row per card
+                return
             self._insert([row])
             self.conn.commit()
         logger.info(f"Journal: entry {tracked.symbol} {tracked.group_key} @ {lv['entry']:.6g}"
@@ -936,6 +942,11 @@ class SignalJournal:
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
             # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
             updates.update(simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h')))
+            if row.get('tp1') is None and updates.get('outcome') in ('SL', 'OPEN'):
+                # eng-84: a method without targets (Bollinger's band, Crabel's session close, the Turtles' channel) can
+                # only read 'SL' / 'OPEN' here - its winners never showed (BB / ORB: 0 TP of 60). Its result is the
+                # card's own exit (card rows, card_r); the entry row says so instead of counting as a stop-out
+                updates['outcome'] = 'NO_TP' if updates['outcome'] == 'OPEN' else 'SL'
         sets = ', '.join(f"{col} = ?" for col in updates)
         with self._lock:
             self.conn.execute(f"UPDATE signals SET {sets} WHERE id = ?", (*updates.values(), signal_id))

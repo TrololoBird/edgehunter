@@ -824,6 +824,11 @@ def targets(zones: List[Zone], entry: float, direction: int, atr: float) -> List
     return out
 
 
+# eng-84: resting stops also sit beyond swings of 1h and higher (the obvious '1h low'): a stop pushed beyond a
+# pool considers them too (targets keep POOL_KINDS)
+STOP_SWINGS = ('swing_1h', 'swing_1d', 'swing_1w')
+
+
 def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction: int, atr: float,
                 label: str = 'beyond the swing', symbol: Optional[str] = None) -> Tuple[float, str]:
     """
@@ -839,7 +844,7 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
         # does not pay is low_rr, not moved closer)
         near = []
         for z in zones:
-            if not any(k in POOL_KINDS and k != 'liq_est' for k in z.kinds):
+            if not any((k in POOL_KINDS and k != 'liq_est') or k in STOP_SWINGS for k in z.kinds):
                 continue
             edge = z.lo if direction > 0 else z.hi
             reach = overshoot(symbol, measured_kind(z.kinds) or 'equal', invalidation, 'p90')
@@ -851,7 +856,7 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
         return invalidation, label
     # Real resting stops only: an ESTIMATED liquidation cluster is a model, not orders (live eng-6: stops pushed beyond
     # one were the widest, 3.4% median, -0.16R, and 0 of 22 stopped trades reached TP1 afterwards)
-    behind = [z for z in zones if any(k in POOL_KINDS and k != 'liq_est' for k in z.kinds)
+    behind = [z for z in zones if any((k in POOL_KINDS and k != 'liq_est') or k in STOP_SWINGS for k in z.kinds)
               and 0 <= direction * (invalidation - (z.lo if direction > 0 else z.hi)) <= cfg.stop_pool_atr * atr]
     if behind:
         far = min(behind, key=lambda z: z.lo) if direction > 0 else max(behind, key=lambda z: z.hi)

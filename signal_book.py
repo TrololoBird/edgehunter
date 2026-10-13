@@ -71,6 +71,7 @@ def ict_gated(mode: str, setup: str) -> bool:
 FINAL_STATUSES = {'TP3', 'SL', 'CLOSED', 'INVALID', 'MISSED', 'EXPIRED'}
 # A setup that never became a card (no anchor / no room left to a target): removed, not a result
 DROPPED = 'DROPPED'
+DROP_COOLDOWN_SEC = 1800          # eng-84: a dropped card's setup is not re-created for half an hour
 # How long a finished card's anchor blocks a new card on it
 FINISHED_LEG_MEMORY_SEC = 24 * 3600
 # Structure timeframes by rank: an opposite setup closes a card only from the same or a higher timeframe
@@ -264,6 +265,9 @@ class SignalBook:
         # symbol -> True once its 1h history and level map are loaded (a plan without them misses 1h / 4h legs)
         self.map_ready_of: Optional[Callable[[str], bool]] = None
         self._plan_cache: Dict[Tuple[str, str], Tuple[tuple, Optional[Dict]]] = {}
+        # eng-84: a card dropped as 'not a card' (no anchor, against_tide ...) is not re-created from the same persistent
+        # signal on every scan (live ARB BEAR D: SETUP / 'not a card' every 10-30 s for hours, a journal row each time)
+        self._dropped: Dict[Tuple[str, str], float] = {}
         self._skip_reason: Dict[Tuple[str, str], str] = {}
         # (symbol, setup) -> (plan key, gate result): a phase setup repeats on every scan of its candle
         self._gate_cache: Dict[Tuple[str, str], Tuple[tuple, Optional[str]]] = {}
@@ -343,6 +347,8 @@ class SignalBook:
                     continue
                 tracked = self.signals.get(key)
                 if tracked and now - tracked.finished_at < CONFIG.journal.cooldown_sec:
+                    continue
+                if now - self._dropped.get(key, -1e18) < DROP_COOLDOWN_SEC:
                     continue
                 reason = self._card_gate(symbol, group_key, strategy, direction, frames, sig)
                 if reason:
@@ -504,6 +510,9 @@ class SignalBook:
     def _drop(self, s: TrackedSignal, now: float, reason: str):
         """A card that turned out not to be one (no anchor / no room left): removed, shown in Forming as vetoed."""
         s.status, s.finished_at = DROPPED, now
+        self._dropped[(s.symbol, s.group_key)] = now
+        if len(self._dropped) > 5000:
+            self._dropped = {k: t for k, t in self._dropped.items() if now - t < DROP_COOLDOWN_SEC}
         s.sig['card_veto'] = reason
         logger.info(f"Card {s.symbol} {s.group_key}: not a card ({reason})")
         self.vetoed.append((s.symbol, s.group_key, reason, s.sig))
