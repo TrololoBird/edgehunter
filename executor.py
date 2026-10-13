@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # eng-84: a limit-filled trade whose card ended keeps its exchange stop / targets this long, then is closed
 ORPHAN_LIMIT_HOLD_MS = 24 * 3600_000
+# eng-86: no market entry when BingX's price already ran this share of the planned risk past the plan's entry (laptop
+# demo journal: a chase >= 0.25R cost -0.64R against the journal, n=15; < 0.25R -0.07R; live GRASS +3.6%: -2.32R)
+CHASE_MAX_R = 0.25
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS demo_trades (
@@ -300,8 +303,12 @@ class DemoExecutor:
         # the fill is BingX's own ask (a long) / bid (a short): the trade is judged at that price, not at the plan's
         fill_est = float((quote.get('ask') if d > 0 else quote.get('bid')) or bx_last)
         reject = None
+        plan_risk = abs(lv['entry'] - lv['sl'])
         if d * (fill_est - lv['sl']) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"
+        elif plan_risk and d * (fill_est - lv['entry']) > CHASE_MAX_R * plan_risk:
+            reject = (f"BingX {fill_est:.6g} chased {d * (fill_est - lv['entry']) / plan_risk:.2f}R past the plan's entry "
+                      f"{lv['entry']:.6g} (> {CHASE_MAX_R:g}R)")
         elif d * (lv['tp1'] - fill_est) <= 0 and s.levels.get('rr_tp1') is not None:
             reject = f"BingX {fill_est:.6g} already beyond TP1 {lv['tp1']:.6g}"
         elif s.levels.get('rr_tp1') is not None:

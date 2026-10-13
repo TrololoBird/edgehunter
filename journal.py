@@ -603,6 +603,13 @@ class SignalJournal:
                     'best_tp': int(tracked.best_target or 0) if tracked.entered_at else None})
         with self._lock:
             self._insert([row])
+            if tracked.entered_at and tracked.final_r is not None:
+                # eng-86: the card's own exit on its ENTRY row too - a target-less method (band / session / channel exit)
+                # left the entry row 'OPEN' / 'SL' only, and studies of entry rows saw card_r empty everywhere
+                self.conn.execute("UPDATE signals SET card_r = ?, best_tp = ? WHERE kind = 'entry' AND symbol = ? AND "
+                                  "group_key = ? AND setup_ts_ms = ?",
+                                  (tracked.final_r, row['best_tp'], tracked.symbol, f"ENTRY {tracked.group_key}",
+                                   int(tracked.created * 1000)))
             self.conn.commit()
 
     def snapshot_universe(self, prices: Dict[str, Optional[float]], now: Optional[float] = None) -> int:
