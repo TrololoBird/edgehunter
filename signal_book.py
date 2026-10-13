@@ -310,8 +310,12 @@ class SignalBook:
         # with 0 confirmations and ATR-step targets still traded beside eng-35 cards)
         # An ENTERED one keeps its trade to the end under its own levels (eng-43: closing every trade at each version
         # bump left the demo with almost no finished trades); only a WAITING card of an older logic expires
+        keep_from = CONFIG.journal.keep_waiting_from
         for old in [o for o in self.signals.values() if not o.finished and not o.entered_at
                     and o.logic_version != CONFIG.journal.logic_version]:
+            if keep_from and (old.logic_version or '') >= keep_from:
+                old.logic_version = CONFIG.journal.logic_version    # eng-87: same card rules, kept
+                continue
             reason = f"expired at start: a waiting card of the older signal logic {old.logic_version or '<eng-35'}"
             self._finish(old, 'EXPIRED', now, reason)
 

@@ -119,6 +119,9 @@ CREATE INDEX IF NOT EXISTS idx_liq_levels ON liq_levels(symbol, ts_ms);
 # Columns added after the first release; created on old databases by _migrate()
 EXTRA_COLUMNS = {
     'whale_net_5m': 'REAL',
+    # eng-87: a card that ended WITHOUT an entry (EXPIRED / MISSED): the entry / stop its plan had at the zone's line -
+    # MISSED cards had no levels at all, so what was missed could not be measured in R
+    'plan_entry': 'REAL', 'plan_sl': 'REAL',
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
@@ -601,6 +604,17 @@ class SignalJournal:
                     'card_r': tracked.final_r, 'units': float(len(getattr(tracked, 'units', None) or [])) or None,
                     # the furthest target the card reached (0 = none) - the TP1 / TP2 / TP3 hit rates of stats.py
                     'best_tp': int(tracked.best_target or 0) if tracked.entered_at else None})
+        if not tracked.entered_at and plan.get('zone_lo') is not None and plan.get('zone_hi') is not None:
+            try:
+                from strategies.geometry import entry_levels
+                line = plan['zone_hi'] if tracked.direction > 0 else plan['zone_lo']
+                est = entry_levels(plan, line, None, tracked.direction)
+                if est:
+                    row.update(plan_entry=est['entry'], plan_sl=est['sl'])
+                    if row.get('tp1') is None:
+                        row['tp1'] = est['tp1']
+            except Exception as e:
+                logger.debug(f"Card plan levels {tracked.symbol}: {e!r}")
         with self._lock:
             self._insert([row])
             if tracked.entered_at and tracked.final_r is not None:
