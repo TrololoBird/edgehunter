@@ -518,10 +518,20 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         # cost (live ETH 2026-10-03: -2.2R in the demo); target-less plans skipped finish_levels and with it the guard
         fee = cost_of(entry, plan.get('volume_24h'))
         reason = 'costs >= 1/3 of the risk' if risk < CONFIG.levels.cost_guard * fee else None
-        return {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
-                'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
-                'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,
-                'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': sl_src}
+        out = {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
+               'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
+               'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,
+               'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': sl_src}
+        tp1 = exit.get('tp1_price')
+        if tp1 is not None:
+            # eng-85: a trailing system with a real first target (Bollinger's band at the signal): half out there; it
+            # must pay the TP1 floor net of costs after the stop's padding
+            rr1 = (direction * (tp1 - entry) - fee) / (risk + fee)
+            out.update(tp1=tp1, tp1_src=exit.get('tp1_src', 'TP1'), rr_tp1=rr1)
+            floor_rr = CONFIG.levels.min_rr_tp1_floor
+            if not reason and floor_rr > 0 and rr1 < floor_rr:
+                out.update(low_rr=True, rr_reason=f"R:R to TP1 {rr1:.2f} < {floor_rr:g}")
+        return out
     floor = stop_floor(max(atr, plan['atr'], plan.get('tf_atr') or 0.0), plan.get('recent_atr'))
     zones: List[Zone] = htf_zones(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'))
     fixed_stop = exit['stop'][0] in ('pct', 'atr')

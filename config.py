@@ -438,7 +438,9 @@ class LevelsConfig:
     trade_ttl_sec: int = 8 * 3600
     # eng-48: the first third must earn at least this net R:R at TP1 (methods with a minimum R:R > 0): a blend let
     # TP1s 0.1-0.3% away pass on a TP3 13% away (BCH VA80 0.09, VIRTUAL -0.10 on 2026-10-02)
-    min_rr_tp1_floor: float = 0.0          # eng-51: off - 0.25 was fitted to one day (no source); rr_tp1 is journaled
+    # eng-85: on again at 1.0 - a plan takes HALF at TP1 (trail_after_tp1); oi_signal entered at 0.30-0.80 R:R to TP1
+    # because only the blended R:R (far TP2 / TP3) was checked (journal 11-13.10)
+    min_rr_tp1_floor: float = 1.0
     # Finished signals stay on screen this long
     finished_display_sec: int = 1800
 
@@ -940,7 +942,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-84"
+    logic_version: str = "eng-85"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

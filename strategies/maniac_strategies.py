@@ -240,12 +240,15 @@ class BollingerStrategy(_System):
             return {'skip': 'low_rr'}
         # 'pad': the retest's low is structure, the stop goes beyond it by the measured pierce / zone buffer and the
         # 1 ATR floor (eng-71: BTC's W stop sat 0.08% under the retest, then the cost guard vetoed it)
+        # eng-85: the opposite band AT THE SIGNAL is a real TP1 (half out there, the rest trailed / out on the live band):
+        # with no target at all 90 Bollinger entries of 11-13.10 booked 0 take-profits, winners went back to the stop
         exit = {'stop': ['price', sig['bb_stop']], 'stop_src': 'beyond the W / M retest', 'tp': ['trail'], 'pad': True,
-                'tp_src': 'the opposite Bollinger band, live (Bollinger)', 'atr': x.atr}
+                'tp_src': 'the opposite Bollinger band, live (Bollinger)', 'atr': x.atr,
+                'tp1_price': sig['bb_target'], 'tp1_src': 'the opposite Bollinger band at the signal (Bollinger)'}
         plan = _confirm_plan(x, self.name, sig.get('bb_tf') or '15m', exit, 'Bollinger W / M confirmed by A/D')
         if plan and not plan.get('skip'):
             plan['band_exit'] = True
-            plan['no_tp'] = True
+            plan['trail_after_tp1'] = True
         return plan
 
 

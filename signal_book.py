@@ -141,7 +141,7 @@ def _exit_flags(s: 'TrackedSignal') -> Dict:
         plan.update(connors_exit=True, no_tp=True, tf='1d')
     elif g.startswith('ORB') and (s.logic_version or '') >= 'eng-50':
         plan.update(no_tp=True, tf='15m')
-    elif g.startswith('BB ') and (s.logic_version or '') >= 'eng-55':
+    elif g.startswith('BB ') and 'eng-55' <= (s.logic_version or '') < 'eng-85':     # eng-85: a real TP1 since
         plan.update(band_exit=True, no_tp=True, tf='15m')
     elif g == 'PUMP START':
         plan.update(add_half=True, tf='15m')
@@ -494,9 +494,10 @@ class SignalBook:
             # targets - half at TP1, then the stop to break-even + costs and trailed; without targets (band / session
             # exits) - the stop to break-even + costs once price went +1R
             # (a plan that sets the flag itself, False included, keeps its own choice)
-            if plan.get('no_tp'):
-                plan.setdefault('be_after_r', 1.0)
-            else:
+            # eng-85: break-even + costs after +1R for EVERY managed plan, targets or not (the journal of 11-13.10: 19 of
+            # 26 AUCTION stops and 18 of 44 Bollinger stops had traded +1R first)
+            plan.setdefault('be_after_r', 1.0)
+            if not plan.get('no_tp'):
                 plan.setdefault('trail_after_tp1', True)
         if key is not None:
             self._plan_cache[(s.symbol, s.group_key)] = (key, plan)
@@ -585,7 +586,8 @@ class SignalBook:
                     lv['sl'] = be
                     lv['sl_src'] = f'break-even + costs after +{be_r:g}R'
                     self.events.append((s, 'RESTOP'))
-            return
+            if not plan.get('trail_after_tp1'):
+                return                       # eng-85: a plan with targets goes on to its TP1 partial + trail
         if not plan.get('trail_after_tp1') or s.best_target < 1 or not candles_of:
             return
         # eng-84: break-even INCLUDING the round trip's costs (fees + slippage), not the bare entry
@@ -651,15 +653,16 @@ class SignalBook:
         if d * (s.plan['pm_best'] - lv['entry']) < risk:
             return
         new = lv['sl']
-        if pm.get('be'):
-            new = max(new, lv['entry']) if d > 0 else min(new, lv['entry'])
+        # eng-85: break-even + costs after +1R always (a profile without 'be' / 'trail' had no management at all)
+        be = lv['entry'] * (1 + d * BE_COST)
+        new = max(new, be) if d > 0 else min(new, be)
         atr = s.plan.get('pm_atr')
         if pm.get('trail') and atr:
             chand = s.plan['pm_best'] - d * float(pm['trail']) * atr
             new = max(new, chand) if d > 0 else min(new, chand)
         if d * (new - lv['sl']) > 0.05 * risk:
             lv['sl'] = new
-            lv['sl_src'] = 'profile: ' + ' + '.join(x for x, on in (('breakeven', pm.get('be')),
+            lv['sl_src'] = 'profile: ' + ' + '.join(x for x, on in (('breakeven', True),
                                                                      ('ATR trail', pm.get('trail'))) if on)
             self.events.append((s, 'RESTOP'))
 
