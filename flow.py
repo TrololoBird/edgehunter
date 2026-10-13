@@ -702,6 +702,7 @@ class RushBook:
         self.usd: Dict[str, np.ndarray] = {}
         self.secs: Dict[str, np.ndarray] = {}      # the second each ring slot holds (stale slots are zeroed lazily)
         self._open: Dict[str, list] = {}           # symbol -> [T, side, levels, usd, last price]
+        self.started = time.time()                 # the z-score needs a full hour of history (0 before: no RUSH rows)
 
     def on_trade(self, symbol: str, ts_ms: int, side: int, usd: float, price: float):
         g = self._open.get(symbol)
@@ -755,5 +756,5 @@ class RushBook:
         hist = valid & (age >= 30)
         np.add.at(base, (age[hist] // 30).clip(0, self.RING // 30 - 1), c[hist].sum(axis=1))
         base = base[1:]
-        z = (n30 - base.mean()) / max(base.std(), 0.5)
+        z = (n30 - base.mean()) / max(base.std(), 0.5) if now_ms / 1000 - self.started >= self.RING else 0.0
         return {'rush_n_10s': n10, 'rush_n_30s': n30, 'rush_net_30s': net30, 'rush_usd_30s': usd30, 'rush_z_30s': float(z)}
