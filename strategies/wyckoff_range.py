@@ -129,8 +129,10 @@ def weis_ratio(h1: Sequence[Sequence[float]], start: int, d: int, reversal: floa
     return against[-1] / prior if prior else None
 
 
-def wyckoff_events(h1: Sequence[Sequence[float]]) -> List[Dict]:
-    """A spring / UTAD on the 1h candle that just closed (h1[-1]) inside a phase-A range, else []."""
+def wyckoff_events(h1: Sequence[Sequence[float]], period_ms: int = HOUR_MS, tf: str = '1h') -> List[Dict]:
+    """A spring / UTAD on the candle that just closed (h1[-1]) inside a phase-A range, else []. eng-84: run on 4h
+    candles (the range of a trading range is read on 4h / daily, the 1h only times the entry - the owner's review of
+    the live trades and the Wyckoff write-ups); `period_ms` / `tf` describe the candles given."""
     if len(h1) < TREND_BACK + 30:
         return []
     last = h1[-1]
@@ -145,32 +147,33 @@ def wyckoff_events(h1: Sequence[Sequence[float]]) -> List[Dict]:
         lo, hi = rng['lo'], rng['hi']
         height = hi - lo
         if d > 0 and l < lo and c > lo and (min(o, c) - l) >= 0.5 * span and (lo - l) <= MAX_PIERCE * height:
-            return [_event('SPRING', 1, lo, hi, l, h1, rng, last)]
+            return [_event('SPRING', 1, lo, hi, l, h1, rng, last, period_ms, tf)]
         if d < 0 and h > hi and c < hi and (h - max(o, c)) >= 0.5 * span and (h - hi) <= MAX_PIERCE * height:
-            return [_event('UTAD', -1, lo, hi, h, h1, rng, last)]
+            return [_event('UTAD', -1, lo, hi, h, h1, rng, last, period_ms, tf)]
     return []
 
 
-def _event(setup: str, d: int, lo: float, hi: float, extreme: float, h1, rng: Dict, last) -> Dict:
+def _event(setup: str, d: int, lo: float, hi: float, extreme: float, h1, rng: Dict, last, period_ms: int = HOUR_MS,
+           tf: str = '1h') -> Dict:
     edge = lo if d > 0 else hi
     height = hi - lo
     box = height / 10
     cols = pnf_count([x[4] for x in h1[rng['climax']:]], box)
     count = extreme + d * cols * box * 3
-    hours = len(h1) - 1 - rng['climax']
+    hours = (len(h1) - 1 - rng['climax']) * period_ms // HOUR_MS
     return {'setup': setup, 'direction': d,
-            'setup_note': f"1h {'spring below' if d > 0 else 'upthrust above'} a {hours}h trading range {lo:.6g}-{hi:.6g} "
+            'setup_note': f"{tf} {'spring below' if d > 0 else 'upthrust above'} a {hours}h trading range {lo:.6g}-{hi:.6g} "
                           f"({'SC' if d > 0 else 'BC'} -> AR -> ST) after a {'decline' if d > 0 else 'rally'}: closed "
                           f"back inside; P&F count {cols} columns -> {count:.6g}; the entry waits for the test",
             'range_lo': lo, 'range_hi': hi, 'anchor_level': edge, 'anchor_extreme': extreme,
             'anchor_label': f"{'SC low' if d > 0 else 'BC high'} (phase A range)",
-            'anchor_ts': int(h1[rng['climax']][0]), 'anchor_close': last[4], 'event_ts': int(last[0]) + HOUR_MS,
+            'anchor_ts': int(h1[rng['climax']][0]), 'anchor_close': last[4], 'event_ts': int(last[0]) + period_ms, 'wy_tf': tf,
             'pnf_target': count, 'pnf_cols': float(cols),
             # Weis wave volume into the spring vs the range's earlier waves (reversal = 3 boxes, the P&F convention)
             'weis_ratio': weis_ratio(h1, rng['climax'], d, 3 * box),
             # the spring candle's average FUTURES minute and range: Wyckoff's test trades on less volume and a narrower
             # spread (levels.pullback_volume_ok / pullback_spread_ok)
-            'fut_candle_minute_usd': float(last[5]) / 60 if len(last) > 5 else None,
+            'fut_candle_minute_usd': float(last[5]) / (period_ms / 60_000) if len(last) > 5 else None,
             'spring_range': float(last[2] - last[3])}
 
 
@@ -201,8 +204,9 @@ class WyckoffRangeStrategy(Strategy):
         targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F count')
         # the test: back toward the spring's area (the spring's extreme to a fifth into the range)
         zone = sorted((extreme, edge + d * 0.2 * (hi - lo)))
-        anchor = {'type': 'range', 'tf': '1h', 'lo': lo, 'hi': hi, 'ts': sig['anchor_ts']}
-        return base_plan(x, self.name, anchor, '1h', entry='pullback', zone_lo=zone[0], zone_hi=zone[1],
+        tf = sig.get('wy_tf') or '1h'
+        anchor = {'type': 'range', 'tf': tf, 'lo': lo, 'hi': hi, 'ts': sig['anchor_ts']}
+        return base_plan(x, self.name, anchor, tf, entry='pullback', zone_lo=zone[0], zone_hi=zone[1],
                          zone_src=f"Wyckoff test of the {'spring' if d > 0 else 'upthrust'}", invalid=extreme,
                          fix_invalid=True, missable=True, stop_ref=extreme, intent='range', fillers=(far,),
                          fill_label='range far side', targets=targets, target_src=sources, zones=zones,

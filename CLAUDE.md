@@ -76,7 +76,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
   keeps old data (the pre-VPS journal, history_cache) - never start the bot there (duplicate trades / posts).
 
 ## Working on the VPS (since 2026-10-12)
-- **FREEZE until Wednesday 2026-10-14 13:00 MSK (10:00 UTC)**: no signal-logic change and no `pump-bot` restart
+- FREEZE lifted early by the owner on 2026-10-13 (eng-84 deployed on his explicit order). Was: no signal-logic change and no `pump-bot` restart until 2026-10-14 13:00 MSK
   (only a fix of a crash that loses data or demo orders); collect ideas in docs/PLAN_server_eng76.md. Logic eng-82.
 - Server: Ubuntu 22.04, 2 vCPU, 4 GB RAM + 2 GB swap, Iceland. The live bot: `/opt/pump` (user `pump`, systemd
   `pump-bot`, `journalctl -u pump-bot -f`; Telegram token / channel in `/etc/pump-bot.env`, BingX keys in

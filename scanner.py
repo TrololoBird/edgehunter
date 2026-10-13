@@ -724,8 +724,12 @@ class Scanner:
         return out
 
     def _opposite_band(self, symbol: str, direction: int) -> Optional[float]:
-        """BB(20, 2) of the closed 15m candles: the upper band for a long, the lower for a short (Bollinger exit)."""
-        closes = [c[4] for c in part_candles(self._frame_parts.get(symbol))[0][-20:]]
+        """BB(20, 2) of the closed 4h candles (eng-84: the W / M is read on 4h; was 15m): the upper band for a long,
+        the lower for a short (Bollinger exit). The 4h candles are built from the coin's closed 1h candles."""
+        from strategies.structure import bars_4h
+        md = self.market_data.get(symbol)
+        h1 = list(getattr(md, 'h1', None) or [])
+        closes = [c[4] for c in bars_4h(h1, int(h1[-1][0]) + 3_600_000)[-20:]] if h1 else []
         if len(closes) < 20:
             return None
         mean = sum(closes) / 20

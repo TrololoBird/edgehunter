@@ -230,7 +230,7 @@ class BollingerStrategy(_System):
         # 1 ATR floor (eng-71: BTC's W stop sat 0.08% under the retest, then the cost guard vetoed it)
         exit = {'stop': ['price', sig['bb_stop']], 'stop_src': 'beyond the W / M retest', 'tp': ['trail'], 'pad': True,
                 'tp_src': 'the opposite Bollinger band, live (Bollinger)', 'atr': x.atr}
-        plan = _confirm_plan(x, self.name, '15m', exit, 'Bollinger W / M confirmed by A/D')
+        plan = _confirm_plan(x, self.name, sig.get('bb_tf') or '15m', exit, 'Bollinger W / M confirmed by A/D')
         if plan and not plan.get('skip'):
             plan['band_exit'] = True
             plan['no_tp'] = True

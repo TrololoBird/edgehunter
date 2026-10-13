@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 NY = ZoneInfo('America/New_York')
 FIVE_MS = 300_000
+FIRST_MAX_R = 3.0          # eng-84: a fixed first target farther than this many R is left to the map
 
 
 def london_window(ts_ms: int) -> Optional[tuple]:
@@ -123,8 +124,13 @@ class Po3Strategy(Strategy):
         zone = (lo, ce) if d > 0 else (ce, hi)
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         fillers = tuple(f for f in (sig.get('po3_draw'),) if f is not None and d * (f - sig['po3_target']) > 0)
+        # eng-84: the Asian range's other side as TP1 only within FIRST_MAX_R of the risk (live: TP1 4.6-22% away on a
+        # ~3% stop, MAGIC ran +16% and came back to the stop); farther, the nearest map liquidity is TP1
+        risk = abs(ce - sig['anchor_extreme'])
+        first = (sig['po3_target'], "the Asian range's other side") \
+            if risk and d * (sig['po3_target'] - ce) <= FIRST_MAX_R * risk else None
         targets, sources = select_targets(zones, ce, d, atr, 'draw_liquidity', fillers, "the day's draw (PDH / PDL)",
-                                          first=(sig['po3_target'], "the Asian range's other side"))
+                                          first=first)
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'PO3 FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,

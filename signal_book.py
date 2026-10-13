@@ -49,6 +49,12 @@ from strategies.maniac_strategies import MANIAC_STRATEGIES
 MANIAC_NAMES = frozenset(s.name for s in MANIAC_STRATEGIES)
 from strategies import PlanInput, Strategy, strategy_of
 from strategies import bias as htf_bias, confirm, profiles
+
+# eng-84: methods whose exits are their own long-horizon rule (the Turtles' channel, Connors' SMA5, O'Neil's measured
+# move): no break-even / partial management
+MANAGE_EXEMPT = ('breakout', 'connors', 'cup_handle')
+# break-even + the round trip's costs (taker 0.05% x 2 + slippage ~0.05%): a break-even stop that fills is ~0, not -costs
+BE_COST = 0.0015
 from strategies.geometry import entry_levels
 
 logger = logging.getLogger(__name__)
@@ -473,6 +479,16 @@ class SignalBook:
             # the strategy says why there is no plan ('no_level'): kept per card, the plan cache holds None
             self._skip_reason[(s.symbol, s.group_key)] = plan['skip']
             plan = None
+        if plan is not None and strategy.name not in MANAGE_EXEMPT and not plan.get('trail_days'):
+            # eng-84, trade management for every intraday method (the owner's review: W +43%, MAGIC +16%, ZEC at a 4h
+            # order block all went back to the stop; the ICT / SMC sources: half at TP1, the rest at break-even): with
+            # targets - half at TP1, then the stop to break-even + costs and trailed; without targets (band / session
+            # exits) - the stop to break-even + costs once price went +1R
+            # (a plan that sets the flag itself, False included, keeps its own choice)
+            if plan.get('no_tp'):
+                plan.setdefault('be_after_r', 1.0)
+            else:
+                plan.setdefault('trail_after_tp1', True)
         if key is not None:
             self._plan_cache[(s.symbol, s.group_key)] = (key, plan)
         return plan
@@ -539,16 +555,30 @@ class SignalBook:
         if status in ('SL', 'TP3'):
             self.events.append((s, status))
 
-    def _trail(self, s: TrackedSignal, candles_of) -> None:
+    def _trail(self, s: TrackedSignal, candles_of, hi: Optional[float] = None, lo: Optional[float] = None) -> None:
         """
         eng-58, momentum / trend trades (plan 'trail_after_tp1': continuation, pump, oi_signal): half out at TP1
         (Qullamaggie, ICT's partials), then the rest's stop to the entry and up behind the EMA20 of the entry
         timeframe (the closed bars), only ever toward the trade; a RESTOP event moves the demo's stop.
         """
-        if not (s.plan or {}).get('trail_after_tp1') or s.best_target < 1 or not candles_of:
+        plan, lv, d = s.plan or {}, s.levels, s.direction
+        be_r = plan.get('be_after_r')
+        if be_r and hi is not None and lo is not None and lv.get('entry') and lv.get('sl'):
+            # eng-84: a target-less trade - the stop to break-even + costs once price traded +be_r R its way
+            risk = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
+            fav = (hi - lv['entry']) if d > 0 else (lv['entry'] - lo)
+            if risk and fav >= be_r * risk:
+                be = lv['entry'] * (1 + d * BE_COST)
+                if d * (be - lv['sl']) > 0:
+                    lv['sl'] = be
+                    lv['sl_src'] = f'break-even + costs after +{be_r:g}R'
+                    self.events.append((s, 'RESTOP'))
             return
-        lv, d = s.levels, s.direction
-        new = max(lv['sl'], lv['entry']) if d > 0 else min(lv['sl'], lv['entry'])
+        if not plan.get('trail_after_tp1') or s.best_target < 1 or not candles_of:
+            return
+        # eng-84: break-even INCLUDING the round trip's costs (fees + slippage), not the bare entry
+        be = lv['entry'] * (1 + d * BE_COST)
+        new = max(lv['sl'], be) if d > 0 else min(lv['sl'], be)
         tf = int((s.plan or {}).get('trigger_minutes') or 5)
         minutes = list(candles_of(s.symbol))
         bars = resample(minutes, tf, minutes[-1][0] + MINUTE_MS) if minutes else []
@@ -919,6 +949,11 @@ class SignalBook:
             key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
             reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
                                    (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/'))
+        if reason is None and s.mode not in htf_bias.EXEMPT and s.mode not in htf_bias.DAILY \
+                and (hb.get('coin') or {}).get('h4') == -s.direction:
+            # eng-84, the owner's review of the live trades: longs bought inside a falling 4h trend (BB W, AUCTION) -
+            # an intraday entry also needs the 4h trend not against it (the daily bias alone updates once a day)
+            reason = 'h4_against'
         prof, regime_veto = profiles.select(s.mode, (confirms or {}).get('_regime'))
         if reason is None and regime_veto:
             reason = regime_veto
@@ -1117,7 +1152,7 @@ class SignalBook:
                     break
             if s.best_target == 3:
                 return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
-            self._trail(s, candles_of)
+            self._trail(s, candles_of, hi, lo)
             self._profile_manage(s, hi, lo)
             why = self._overlay_exit(s, c, candles_of)
             if why:

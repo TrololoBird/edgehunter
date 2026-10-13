@@ -191,6 +191,31 @@ def hours_from(candles_15m: Sequence[Sequence[float]], h1: Sequence[Sequence[flo
     return out
 
 
+def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
+    """eng-84: complete 4h candles [ts, o, h, l, c, quote_vol] built from the closed 1h candles up to `cut` (the 4h
+    REST loop lags the close; the hour's own candles are already merged in `hours_from`)."""
+    size = 4 * HOUR_MS
+    out: List[List[float]] = []
+    n = 0
+    for c in h1:
+        if int(c[0]) + HOUR_MS > cut:
+            break
+        start = int(c[0]) // size * size
+        vol = float(c[5]) if len(c) > 5 and c[5] is not None else 0.0
+        if out and out[-1][0] == start:
+            b = out[-1]
+            b[2], b[3], b[4], b[5] = max(b[2], c[2]), min(b[3], c[3]), c[4], b[5] + vol
+            n += 1
+        else:
+            if out and n != 4:
+                out.pop()                      # an incomplete 4h group (a gap): not a candle
+            out.append([start, c[1], c[2], c[3], c[4], vol])
+            n = 1
+    if out and (n != 4 or out[-1][0] + size > cut):
+        out.pop()
+    return out
+
+
 def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[float]],
                   corr: Optional[List[List[float]]], cut: int, h4: Sequence = (), d1: Sequence = ()) -> List[Dict]:
     """crypto_maniac's systems on the candle that just closed (15m), and on the hour when one closed (1h)."""
@@ -231,7 +256,12 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
                 e['curve_pos'] = (mid - lo) / (hi - lo) if hi > lo else None
             events.append({k: (v.item() if hasattr(v, 'item') and not isinstance(v, (list, dict)) else v)
                            for k, v in e.items()})
-    run('Bollinger W / M', maniac.bollinger_wm_event, m15)
+    # eng-84: Bollinger's W / M on 4h at the 4h close (was 15m: bottoms bought inside the 1h-4h downtrend - the owner's
+    # review of the live trades; crypto write-ups use 2h-5h with a daily trend filter, which the top-down bias gives)
+    if cut % (4 * HOUR_MS) == 0:
+        b4 = bars_4h(h1, cut)
+        if len(b4) >= 60:
+            run('Bollinger W / M', maniac.bollinger_wm_event, b4, 4 * HOUR_MS, '4h')
     if cut % (24 * HOUR_MS) == 0 and len(d1) >= 120:
         # O'Neil's cup with handle on DAILY candles at the UTC day's close (eng-58: his weekly / daily bases of >= 7
         # weeks; the 1h / 4h version of eng-40..57 was another pattern under his name)
@@ -307,10 +337,10 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
             ctx.events.append(sweep)
         m15 = merge_candles(m15_long, candles_15m, cut, QUARTER_MS)
         h1 = hours_from(candles_15m, list(h1_long) or list(candles_1h), cut)
-        if cut % HOUR_MS == 0:
-            # 1h events at the hour's close: the Turtles' 20-day breakout, Wyckoff's spring / UTAD of a trading range
+        if cut % (4 * HOUR_MS) == 0:
+            # eng-84: Wyckoff's spring / UTAD of a 4h trading range at the 4h close (was 1h)
             from strategies.wyckoff_range import wyckoff_events
-            ctx.events.extend(wyckoff_events(h1))     # (the breakout is the Turtles' daily system, loop-side)
+            ctx.events.extend(wyckoff_events(bars_4h(h1, cut), 4 * HOUR_MS, '4h'))
         corr15 = merge_candles(corr, [], cut, QUARTER_MS) if corr else None
         ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut, list(h4 or []), list(d1 or [])))
         # classic published methods (strategies/classic.py): Dalton's 80% rule, Crabel's ORB, Connors' RSI(2)

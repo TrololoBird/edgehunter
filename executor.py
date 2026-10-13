@@ -27,6 +27,9 @@ from config import CONFIG
 
 logger = logging.getLogger(__name__)
 
+# eng-84: a limit-filled trade whose card ended keeps its exchange stop / targets this long, then is closed
+ORPHAN_LIMIT_HOLD_MS = 24 * 3600_000
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS demo_trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT, card_id TEXT, symbol TEXT, setup TEXT, strategy TEXT, direction INTEGER,
@@ -530,6 +533,7 @@ class DemoExecutor:
                  'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * abs(fill - lv['sl'])}
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, p['scale']
+        trade['from_limit'] = True
         self._set_basis(trade['id'], p['basis'])
         return trade
 
@@ -583,7 +587,8 @@ class DemoExecutor:
         if not self.enabled or not s.entered_at:
             return
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
-        trade = self.open.get(card_id)
+        # eng-84: a trade entered by a resting limit is keyed by the waiting card (c<created>) - it was never restopped
+        trade = self.open.get(card_id) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
         if trade is None:
             return
         async with self._lock:
@@ -849,10 +854,19 @@ class DemoExecutor:
             async with self._lock:
                 for trade in list(self.open.values()):
                     try:
-                        if time.time() * 1000 - trade['opened_ms'] > 120_000 and not self.card_is_open(trade['card_id']):
-                            logger.info(f"Demo: {trade['symbol']} has no open card any more: closing the orphan")
-                            await self._close(trade, 'ORPHAN', None)
-                            continue
+                        age_ms = time.time() * 1000 - trade['opened_ms']
+                        if age_ms > 120_000 and not self.card_is_open(trade['card_id']):
+                            if (trade.get('from_limit') or str(trade.get('card_id', '')).rsplit('|', 1)[-1].startswith('c')) \
+                                    and age_ms < ORPHAN_LIMIT_HOLD_MS:
+                                # eng-84: BingX filled the resting limit, then the card's check of the touch vetoed it
+                                # (against_btc ...) and expired it: the position was closed at market at a loss while its
+                                # stop and targets already rested on BingX (live SOL / DOGE PO3: closed -0.5R, then went
+                                # to TP3). A filled limit keeps its exchange stop / targets; only a stale one is closed
+                                pass
+                            else:
+                                logger.info(f"Demo: {trade['symbol']} has no open card any more: closing the orphan")
+                                await self._close(trade, 'ORPHAN', None)
+                                continue
                         if await self._position_qty(trade['symbol']) == 0:
                             await self._exchange()
                             try:

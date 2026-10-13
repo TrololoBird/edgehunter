@@ -128,8 +128,11 @@ class SilverBulletStrategy(Strategy):
             return {'skip': 'premium' if d > 0 else 'discount'}
         zone = (lo, ce) if d > 0 else (ce, hi)
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
-        targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity',
-                                          first=(sig['sb_target'], "the day's draw on liquidity (PDH / PDL)"))
+        risk = abs(ce - sig['anchor_extreme'])
+        # eng-84: the day's draw as TP1 only on the trade's side and within 3R (a short's 'TP1' printed above its entry)
+        first = (sig['sb_target'], "the day's draw on liquidity (PDH / PDL)") \
+            if risk and 0 < d * (sig['sb_target'] - ce) <= 3.0 * risk else None
+        targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity', first=first)
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,

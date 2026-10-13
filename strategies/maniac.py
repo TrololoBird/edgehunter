@@ -340,7 +340,7 @@ def trendline_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS,
 
 # ------------------------------------------------------------------------------------------------ Bollinger W / M
 
-def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
+def bollinger_wm_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '15m') -> Optional[Dict]:
     """
     John Bollinger's reversal method ("Bollinger on Bollinger Bands", 2001, method III; W / M patterns after Arthur
     Merrill): a band tag is NOT a signal by itself. W-bottom: a low that closed BELOW the lower band (%b < 0), a rally,
@@ -404,14 +404,15 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]]) -> Optional[Dict]:
         # band because the band's R:R was low - such a W / M is skipped by the R:R check instead
         target = upper[i] if d > 0 else lower[i]
         return {'setup': 'BB W-BOTTOM' if d > 0 else 'BB M-TOP', 'direction': d,
-                'setup_note': f"15m {'W-bottom' if d > 0 else 'M-top'} on BB(20, 2): first {'low' if d > 0 else 'high'} "
+                'setup_note': f"{tf} {'W-bottom' if d > 0 else 'M-top'} on BB(20, 2): first {'low' if d > 0 else 'high'} "
                               f"closed outside the band, the retest held inside (%b {pb[b_]:.2f}), close beyond the "
                               f"middle {'peak' if d > 0 else 'trough'} {level:.6g}, A/D not confirming the retest "
                               f"(Bollinger method III; window {i - a_} candles)",
                 'bb_gap': float(i - a_),
                 'anchor_level': float(level), 'anchor_extreme': float(stop), 'anchor_label': 'Bollinger W / M',
                 'bb_stop': float(stop), 'bb_target': float(target),
-                'anchor_ts': int(c15[a_][0]), 'anchor_close': float(c[i]), 'event_ts': int(c15[-1][0]) + QUARTER_MS}
+                'anchor_ts': int(c15[a_][0]), 'anchor_close': float(c[i]), 'event_ts': int(c15[-1][0]) + period_ms,
+                'bb_tf': tf}
     return None
 
 
