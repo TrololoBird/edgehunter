@@ -598,7 +598,7 @@ class StrategiesConfig:
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
-                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'oi_signal', 'po3')
+                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'oi_signal', 'po3', 'oi_build')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
