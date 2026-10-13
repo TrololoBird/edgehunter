@@ -147,45 +147,49 @@ class DemoExecutor:
     async def on_entry(self, s) -> None:
         if not self.enabled or s.levels is None:
             return
-        card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}"
-        if card_id in self.open:
-            return
-        if self.is_limit_plan(s):
-            key = self.wait_key(s)
-            p = self.pending.get(key)
-            if key in self.open:                     # BingX filled the limit before Binance's touch: one trade
-                trade = self.open.pop(key)
-                trade['card_id'] = card_id
-                self.open[card_id] = trade
-                with sqlite3.connect(self.db_path) as c:
-                    c.execute("UPDATE demo_trades SET card_id = ? WHERE id = ?", (card_id, trade['id']))
-                return
-            if p is not None and not p.get('skip'):
-                p.update(entered=True, entered_ms=int(time.time() * 1000), card_id=card_id)
-                self._save_pending()
-                return                               # the limit stands; check_limits fills or cancels it
-        limit = self.risk_limit()
-        if limit is not None:
-            # eng-58: the day's risk rules (prop practice): not traded, recorded with the rule
-            logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {limit}")
-            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
-                          'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': limit,
-                          'closed_ms': int(time.time() * 1000),
-                          'close_reason': 'PAUSE' if limit.startswith('pause') else 'DAILY_LIMIT'})
-            return
-        busy = next((t for t in self.open.values() if t['symbol'].split('/')[0].replace('1000', '') ==
-                     s.symbol.split('/')[0].replace('1000', '')), None)
-        if busy is not None:
-            # BingX's one-way mode nets every order of a coin into ONE position: a second card on the same coin would
-            # merge with the first (one card's exit closes the other, their fills mix in both results) - recorded, not
-            # traded
-            logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {busy.get('setup') or busy['card_id']} already holds the coin")
-            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
-                          'direction': s.direction, 'opened_ms': int(time.time() * 1000),
-                          'error': f"coin held by {busy.get('setup') or busy['card_id']}", 'closed_ms': int(time.time() * 1000),
-                          'close_reason': 'OVERLAP'})
-            return
+        # eng-85: every check below reads the shared state (open trades, resting limits, the day's rows): two entries
+        # scheduled as background tasks both passed 'coin free' before either took the lock
         async with self._lock:
+            card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}"
+            if card_id in self.open:
+                return
+            if self.is_limit_plan(s):
+                key = self.wait_key(s)
+                p = self.pending.get(key)
+                if key in self.open:                     # BingX filled the limit before Binance's touch: one trade
+                    trade = self.open.pop(key)
+                    trade['card_id'] = card_id
+                    self.open[card_id] = trade
+                    with sqlite3.connect(self.db_path) as c:
+                        c.execute("UPDATE demo_trades SET card_id = ? WHERE id = ?", (card_id, trade['id']))
+                    return
+                if p is not None and not p.get('skip'):
+                    p.update(entered=True, entered_ms=int(time.time() * 1000), card_id=card_id)
+                    self._save_pending()
+                    return                               # the limit stands; check_limits fills or cancels it
+            limit = self.risk_limit()
+            if limit is not None:
+                # eng-58: the day's risk rules (prop practice): not traded, recorded with the rule
+                logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {limit}")
+                self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                              'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': limit,
+                              'closed_ms': int(time.time() * 1000),
+                              'close_reason': 'PAUSE' if limit.startswith('pause') else 'DAILY_LIMIT'})
+                return
+            coin = s.symbol.split('/')[0].replace('1000', '')
+            busy = next((t for t in self.open.values() if t['symbol'].split('/')[0].replace('1000', '') == coin), None) or \
+                next((p for p in self.pending.values() if not p.get('skip')
+                      and p.get('symbol', '').split('/')[0].replace('1000', '') == coin), None)
+            if busy is not None:
+                # BingX's one-way mode nets every order of a coin into ONE position: a second card on the same coin would
+                # merge with the first (one card's exit closes the other, their fills mix in both results) - recorded, not
+                # traded
+                logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {busy.get('setup') or busy.get('card_id')} already holds the coin")
+                self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                              'direction': s.direction, 'opened_ms': int(time.time() * 1000),
+                              'error': f"coin held by {busy.get('setup') or busy.get('card_id')}", 'closed_ms': int(time.time() * 1000),
+                              'close_reason': 'OVERLAP'})
+                return
             try:
                 await self._open(card_id, s)
             except Exception as e:
@@ -193,6 +197,44 @@ class DemoExecutor:
                 self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
                               'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': repr(e)[:300],
                               'closed_ms': int(time.time() * 1000), 'close_reason': 'ERROR'})
+
+    @staticmethod
+    def _is_stop(o: Dict) -> bool:
+        t = str((o.get('info') or {}).get('type') or o.get('type') or '').upper()
+        return 'STOP' in t and 'TAKE' not in t
+
+    async def _place_stop(self, symbol: str, d: int, qty: float, price: float) -> Dict:
+        ex = await self._exchange()
+        return await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', qty, None,
+                                     {'stopLossPrice': float(ex.price_to_precision(symbol, price)), 'reduceOnly': True,
+                                      'workingType': 'MARK_PRICE'})
+
+    async def _cancel_orders(self, symbol: str, keep: str = None, stops_only: bool = False) -> None:
+        """eng-85: cancel a coin's resting orders one by one (all but `keep`; only the stops with stops_only), never the
+        blanket cancel-all before the replacement stands: the position is never left without a stop."""
+        ex = await self._exchange()
+        for o in await ex.fetch_open_orders(symbol):
+            if o.get('id') == keep or (stops_only and not self._is_stop(o)):
+                continue
+            try:
+                await ex.cancel_order(o['id'], symbol)
+            except Exception as e:
+                errors.report('executor._cancel_orders', e, f"Demo cancel {symbol} {o.get('id')}")
+
+    async def _place_tps(self, trade: Dict, parts, min_qty: float = 0.0) -> None:
+        """The take-profits; a failure leaves the trade tracked with its stop (eng-85: an exception here used to drop
+        a stopped position out of self.open, and close_untracked then dumped it at market as UNTRACKED)."""
+        ex = await self._exchange()
+        symbol, d = trade['symbol'], trade['direction']
+        for k, amount in parts:
+            if amount <= 0 or amount < min_qty or not trade.get(f'tp{k}'):
+                continue
+            try:
+                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
+                                      {'takeProfitPrice': float(ex.price_to_precision(symbol, float(trade[f'tp{k}']))),
+                                       'reduceOnly': True})
+            except Exception as e:
+                errors.report('executor._place_tps', e, f"Demo TP{k} {symbol}: the trade keeps its stop")
 
     @staticmethod
     def tp_parts(ex, symbol: str, qty: float, trail: bool, no_tp: bool):
@@ -223,6 +265,8 @@ class DemoExecutor:
                                  (cfg.pause_losses,)).fetchall()
         except sqlite3.Error:
             return None
+        # eng-85: a resting limit holds a slot of the day (it fills without asking again)
+        opened += sum(1 for p in self.pending.values() if not p.get('skip'))
         day_r = sum(r for (r,) in closed)
         if day_r <= -cfg.daily_loss_r:
             return f"daily loss limit: {day_r:+.2f}R today"
@@ -346,15 +390,12 @@ class DemoExecutor:
             await self._close(trade, 'NO_STOP', None)
             return
         plan = getattr(s, 'plan', None) or {}
-        for k, amount in self.tp_parts(ex, symbol, qty, bool(plan.get('trail_after_tp1')), bool(plan.get('no_tp'))):
-            if amount > 0 and amount >= min_qty:
-                await ex.create_order(symbol, 'market', exit_side, amount, None,
-                                      {'takeProfitPrice': float(ex.price_to_precision(symbol, lv[f'tp{k}'])),
-                                       'reduceOnly': True})
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, scale          # in memory only (the pyramid's unit, BingX's price scale)
         self._set_basis(trade['id'], basis)
         self.open[card_id] = trade
+        await self._place_tps(trade, self.tp_parts(ex, symbol, qty, bool(plan.get('trail_after_tp1')),
+                                                   bool(plan.get('no_tp'))), min_qty)
         logger.info(f"Demo ENTRY {symbol} {s.group_key} {'long' if d > 0 else 'short'} {qty} @ {fill:.6g}, "
                     f"SL {lv['sl']:.6g}, risk ${trade['risk_usd']:.2f}")
 
@@ -517,6 +558,23 @@ class DemoExecutor:
                 errors.report('executor.check_limits', e, f"Demo limit status {p['symbol']}")
                 continue
             filled = float(o.get('filled') or 0)
+            if 0 < filled < 0.999 * p['qty'] and o.get('status') != 'closed':
+                # eng-85: a partly filled limit sat without a stop until limit_wait_min: the rest is cancelled and the
+                # filled part becomes the trade (its stop / targets for the filled size)
+                try:
+                    await ex.cancel_order(p['order_id'], p['symbol'])
+                except Exception as e:
+                    errors.report('executor.check_limits', e, f"Demo cancel partial limit {p['symbol']}")
+                try:
+                    o = await ex.fetch_order(p['order_id'], p['symbol'])
+                except Exception as e:
+                    errors.report('executor.check_limits', e, f"Demo partial limit status {p['symbol']}")
+                    continue
+                if o.get('status') not in ('canceled', 'cancelled', 'closed', 'expired', 'rejected'):
+                    continue
+                filled = float(o.get('filled') or 0)
+                await self._limit_filled(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']), filled)
+                continue
             if o.get('status') == 'closed' or (filled and filled >= 0.999 * p['qty']):
                 await self._limit_filled(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']),
                                          filled or p['qty'])
@@ -554,11 +612,8 @@ class DemoExecutor:
             await self._close(trade, 'SL', None)
             return
         self.open[trade['card_id']] = trade
-        for k, amount in self.tp_parts(ex, symbol, qty, bool(p.get('trail')), bool(p.get('no_tp'))):
-            if amount > 0:
-                await ex.create_order(symbol, 'market', exit_side, amount, None,
-                                      {'takeProfitPrice': float(ex.price_to_precision(symbol, lv[f'tp{k}'])),
-                                       'reduceOnly': True})
+        min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
+        await self._place_tps(trade, self.tp_parts(ex, symbol, qty, bool(p.get('trail')), bool(p.get('no_tp'))), min_qty)
         logger.info(f"Demo LIMIT FILLED {symbol} {p['setup']} {qty} @ {fill:.6g}, SL {lv['sl']:.6g}")
 
     async def close_untracked(self) -> None:
@@ -603,25 +658,12 @@ class DemoExecutor:
                     scale = float(trade['entry_plan']) / float(s.levels['entry'])
                     trade['scale'] = scale
                 scale = scale or 1.0
-                try:
-                    await ex.cancel_all_orders(symbol)
-                except Exception as e:
-                    logger.debug(f"Demo cancel {symbol}: {e}")
-                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None,
-                                      {'stopLossPrice': float(ex.price_to_precision(symbol, s.levels['sl'] * scale)),
-                                       'reduceOnly': True, 'workingType': 'MARK_PRICE'})
+                # eng-85: the new stop first, then the old stop(s) by id - the cancel-all first left the position naked
+                # whenever the new stop failed, and took TP2 / TP3 of the thirds plans with it for good
+                new = await self._place_stop(symbol, d, left, s.levels['sl'] * scale)
+                await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
+                trade['sl'] = s.levels['sl'] * scale
                 logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
-                # eng-84: the card saw TP1 on Binance's candles, BingX may not have filled its TP1 half yet - the
-                # cancel above removed it: put it back while more than ~3/4 of the position is still open
-                qty0 = float(trade.get('qty') or 0)
-                tp1 = trade.get('tp1')
-                if tp1 and qty0 and left > 0.75 * qty0 and (getattr(s, 'plan', None) or {}).get('trail_after_tp1'):
-                    half = float(ex.amount_to_precision(symbol, min(left, qty0 / 2)))
-                    if half > 0:
-                        await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', half, None,
-                                              {'takeProfitPrice': float(ex.price_to_precision(symbol, float(tp1))),
-                                               'reduceOnly': True})
-                        logger.info(f"Demo RESTOP {symbol}: TP1 half {half} @ {float(tp1):.6g} re-placed")
             except Exception as e:
                 logger.warning(f"Demo restop {s.symbol}: {e!r}")
 
@@ -644,10 +686,6 @@ class DemoExecutor:
                 total = float(trade['qty']) + unit
                 trade['entry_fill'] = (float(trade['entry_fill']) * float(trade['qty']) + fill * unit) / total
                 trade['qty'], trade['unit_qty'] = total, unit
-                try:
-                    await ex.cancel_all_orders(symbol)
-                except Exception as e:
-                    errors.report('executor.on_add', e, f"Demo cancel {symbol}")
                 # BingX's price ratio to Binance (contract scale x basis) lives in memory only: after a restart it is
                 # the BingX plan entry over the card's Binance entry (1.0 put a 1000-unit contract's stop 1000x off)
                 scale = float(trade.get('scale') or 0.0)
@@ -655,17 +693,23 @@ class DemoExecutor:
                     scale = float(trade['entry_plan']) / float(s.levels['entry'])
                     trade['scale'] = scale
                 scale = scale or 1.0
-                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', total, None,
-                                      {'stopLossPrice': float(ex.price_to_precision(symbol, s.levels['sl'] * scale)),
-                                       'reduceOnly': True, 'workingType': 'MARK_PRICE'})
+                # eng-85: the whole position's stop first; only then the old orders go (the cancel-all first left the
+                # grown position without any stop when the new one failed)
+                try:
+                    new = await self._place_stop(symbol, d, total, s.levels['sl'] * scale)
+                except Exception as e:
+                    logger.warning(f"Demo ADD {symbol}: stop for {total} not placed ({e!r}): closed at market")
+                    await self._close(trade, 'NO_STOP', None)
+                    return
+                await self._cancel_orders(symbol, keep=new.get('id'))
+                trade['sl'] = s.levels['sl'] * scale
                 if not ((getattr(s, 'plan', None) or {}).get('no_tp')):
                     # an averaging add (pump strategies): the three take-profits again, for the whole position
+                    for k in (1, 2, 3):
+                        trade[f'tp{k}'] = s.levels[f'tp{k}'] * scale
                     third = float(ex.amount_to_precision(symbol, total / 3))
-                    for k, amount in zip((1, 2, 3), (third, third, float(ex.amount_to_precision(symbol, total - 2 * third)))):
-                        if amount > 0:
-                            await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
-                                                  {'takeProfitPrice': float(ex.price_to_precision(symbol, s.levels[f'tp{k}'] * scale)),
-                                                   'reduceOnly': True})
+                    await self._place_tps(trade, zip((1, 2, 3), (third, third,
+                                                                 float(ex.amount_to_precision(symbol, total - 2 * third)))))
                 with sqlite3.connect(self.db_path) as c:
                     c.execute("UPDATE demo_trades SET qty = ?, entry_fill = ?, sl = ? WHERE id = ?",
                               (total, trade['entry_fill'], s.levels['sl'] * scale, trade['id']))
@@ -720,10 +764,23 @@ class DemoExecutor:
     async def _close(self, trade: Dict, reason: str, journal_r: Optional[float], passive: bool = False) -> None:
         ex = await self._exchange()
         symbol, d = trade['symbol'], trade['direction']
-        try:
-            await ex.cancel_all_orders(symbol)
-        except Exception as e:
-            errors.report('executor._close', e, f"Demo cancel {symbol}")
+        if not passive:
+            try:
+                await ex.cancel_all_orders(symbol)
+            except Exception as e:
+                errors.report('executor._close', e, f"Demo cancel {symbol}")
+        else:
+            # eng-85: the stop rests while the passive limit works (the cancel-all first left ~15s without one); only
+            # the take-profits go, the stop is cancelled right before the market remainder below
+            try:
+                for o in await ex.fetch_open_orders(symbol):
+                    if not self._is_stop(o):
+                        try:
+                            await ex.cancel_order(o['id'], symbol)
+                        except Exception as e:
+                            errors.report('executor._close', e, f"Demo cancel TP {symbol}")
+            except Exception as e:
+                errors.report('executor._close', e, f"Demo cancel {symbol}")
         left = await self._position_qty(symbol)
         if left > 0 and passive:
             # a card-driven exit (band / session / time / trail - no stop urgency): a reduce-only limit at the touch
@@ -744,6 +801,10 @@ class DemoExecutor:
             except Exception as e:
                 errors.report('executor._close', e, f"Demo passive close {symbol}")
             left = await self._position_qty(symbol)
+            try:
+                await ex.cancel_all_orders(symbol)       # the stop, now that the market remainder follows
+            except Exception as e:
+                errors.report('executor._close', e, f"Demo cancel {symbol}")
         if left > 0:
             side = 'sell' if d > 0 else 'buy'
             try:
