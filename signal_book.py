@@ -55,6 +55,9 @@ from strategies import bias as htf_bias, confirm, profiles
 MANAGE_EXEMPT = ('breakout', 'connors', 'cup_handle')
 # break-even + the round trip's costs (taker 0.05% x 2 + slippage ~0.05%): a break-even stop that fills is ~0, not -costs
 BE_COST = 0.0015
+# eng-84: the regime each method needs (ADX(14) of 4h): trend-following methods / mean-reversion methods
+REGIME_TREND = ('continuation', 'pump', 'oi_signal')
+REGIME_RANGE = ('bollinger', 'market_profile')
 from strategies.geometry import entry_levels
 
 logger = logging.getLogger(__name__)
@@ -963,6 +966,16 @@ class SignalBook:
             # eng-84, the owner's review of the live trades: longs bought inside a falling 4h trend (BB W, AUCTION) -
             # an intraday entry also needs the 4h trend not against it (the daily bias alone updates once a day)
             reason = 'h4_against'
+        adx4 = (hb.get('coin') or {}).get('adx4')
+        if reason is None and adx4 is not None:
+            # eng-84, market regime by ADX(14) of 4h (Wilder: > 25 trend, < 25 range): momentum / trend methods only in
+            # a trend, mean-reversion / range methods only in a range, Connors' pullback only below 35
+            if s.mode in REGIME_TREND and adx4 < 25:
+                reason = 'regime_flat'
+            elif s.mode in REGIME_RANGE and adx4 >= 25:
+                reason = 'regime_trend'
+            elif s.mode == 'connors' and adx4 >= 35:
+                reason = 'regime_trend'
         prof, regime_veto = profiles.select(s.mode, (confirms or {}).get('_regime'))
         if reason is None and regime_veto:
             reason = regime_veto

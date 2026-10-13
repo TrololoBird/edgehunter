@@ -99,7 +99,7 @@ class SilverBulletStrategy(Strategy):
     name = 'sweep'
     anchor_type = 'level'
     setups = {'SILVER BULLET LONG': 1, 'SILVER BULLET SHORT': -1}
-    min_rr = 1.0                     # ICT: the target is the opposite liquidity, no fixed ratio
+    min_rr = 2.0                     # eng-84: >= 1:2 to the opposite liquidity (Silver Bullet practice)
     ttl_key = 'silver_bullet_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)
     uses_minutes = True

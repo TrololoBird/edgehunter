@@ -603,7 +603,7 @@ class StrategiesConfig:
     # chandelier 3/6 ATR, 2R target, partials, 8h); session opens (Asia / London / NY, 15-120m ranges, Stretch or wide
     # 0.5-1 daily ATR stops) negative after 0.20% too; the only gross edge (majors, London / NY) is 0.05-0.1% a trade,
     # below the costs: journaled, no card
-    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'ORB UP', 'ORB DOWN')
+    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP')   # eng-84: ORB back with the practice rules
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
@@ -728,7 +728,7 @@ class StrategiesConfig:
     connors_rsi_high: float = 95.0
     # eng-55: Connors uses no stop. A perpetual with leverage needs one for the margin: a CATASTROPHIC stop this many
     # daily ATR(20) away, journaled as our deviation (it is not part of his exit)
-    connors_disaster_atr: float = 3.0
+    connors_disaster_atr: float = 2.5   # eng-84: 2.5 daily ATR (was 3)
     # eng-55 dump bounce (research/pumps*.md, positive in every period 2021-2026): a DUMP = close >= dump_min_move
     # below the 6h high on >= 3x the hour's volume of the week before; short the first 38.2-61.8% bounce on a 1h close
     # below the previous low; stop above the bounce + 0.25 ATR(1h); TP1 the dump's low, TP2 the 1.618 extension
@@ -999,7 +999,7 @@ class ExecutorConfig:
     account_usd: float = 10_000.0
     max_notional_usd: float = 4_000.0
     limit_wait_min: int = 15      # a touch plan's BingX limit kept this long after Binance's touch (eng-46)
-    max_leverage: int = 20
+    max_leverage: int = 5            # eng-84: 2-5x (the 3-5-7 rule); the risk is set by the stop, cross margin
     # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak) - ours inside
     # those ranges: -3R a day, 6 trades a day, 4 hours after 3 losses in a row
     daily_loss_r: float = 3.0

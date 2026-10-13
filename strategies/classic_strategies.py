@@ -38,6 +38,14 @@ class OrbStrategy(_System):
     min_rr = 0.0                     # Crabel: no target / ratio rule (exits by time or the opposite level)
     ttl_key = 'classic_ttl'
     time_exit = 'session'
+    uses_minutes = True              # eng-84: the day's VWAP side
+
+    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        # eng-84 (ORB practice): the break needs participation - the breakout minute's relative volume >= 1.5
+        rvol = sig.get('rvol_1m')
+        if rvol is not None and rvol < 1.5:
+            return 'low_rvol'
+        return None
 
     def session_end(self, entered_at: float) -> Optional[float]:
         # Crabel: the ORB is a day trade, closed at the session's close - the UTC day's for crypto
@@ -47,14 +55,23 @@ class OrbStrategy(_System):
         sig = x.sig
         if sig.get('orb_hi') is None:
             return None
-        other = sig['orb_lo'] if x.direction > 0 else sig['orb_hi']
-        exit = {'stop': ['price', other], 'tp': ['trail'], 'atr': x.atr,
-                'stop_src': "the opposite open +- Stretch level (Crabel)",
-                'tp_src': "none: out at the session's close (Crabel)"}
-        plan = _confirm_plan(x, self.name, '15m', exit, 'stop order at open +- Stretch (Crabel)')
-        if plan and not plan.get('skip'):
-            plan['no_tp'] = True
-        return plan
+        d = x.direction
+        # eng-84 (ORB practice): longs only above the day's VWAP, shorts only below it
+        day0 = (x.minutes[-1][0] // 86_400_000 * 86_400_000) if x.minutes else None
+        today = [m for m in (x.minutes or []) if day0 is not None and m[0] >= day0]
+        qv = sum(float(m[5]) for m in today if len(m) > 5)
+        if qv > 0:
+            vwap = sum((m[2] + m[3] + m[4]) / 3 * float(m[5]) for m in today if len(m) > 5) / qv
+            if d * (sig['anchor_close'] - vwap) < 0:
+                return {'skip': 'against_vwap'}
+        # eng-84: the stop at the range's middle (the day's open), TP1 a projection of the range's width (100%);
+        # the session close stays the time exit, the management (half at TP1, break-even) is the common one
+        width = sig['orb_hi'] - sig['orb_lo']
+        mid = (sig['orb_hi'] + sig['orb_lo']) / 2
+        exit = {'stop': ['price', mid], 'tp': ['level', sig['anchor_level'] + d * width, 0.0, None], 'atr': x.atr,
+                'stop_src': "the opening range's middle (the day's open)",
+                'tp_src': "100% projection of the opening range"}
+        return _confirm_plan(x, self.name, '15m', exit, 'stop order at open +- Stretch (Crabel)')
 
 
 class ConnorsStrategy(_System):

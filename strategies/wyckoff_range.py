@@ -201,7 +201,9 @@ class WyckoffRangeStrategy(Strategy):
         zones = merge(list(x.raw_levels or []) + [RawLevel(hi, 'range', 'range high', +1),
                                                    RawLevel(lo, 'range', 'range low', -1)], atr, symbol=x.symbol)
         fillers = (far,) + ((sig['pnf_target'],) if sig.get('pnf_target') and d * (sig['pnf_target'] - far) > 0 else ())
-        targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F count')
+        # eng-84 (Wyckoff practice): TP1 the middle of the range, then its far side / the P&F count
+        targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F count',
+                                          first=((lo + hi) / 2, 'range middle'))
         # the test: back toward the spring's area (the spring's extreme to a fifth into the range)
         zone = sorted((extreme, edge + d * 0.2 * (hi - lo)))
         tf = sig.get('wy_tf') or '1h'

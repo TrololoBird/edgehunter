@@ -189,8 +189,6 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     h1 = d1
     if len(h1) < 202:
         return None
-    if first and connors_event(h1[:-1], first=False) is not None:
-        return None
     closes = [c[4] for c in h1]
     sma200 = sum(closes[-200:]) / 200
     sma5 = sum(closes[-5:]) / 5
@@ -199,9 +197,14 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
         return None
     last = h1[-1]
     c = last[4]
-    if c > sma200 and r < cfg.connors_rsi_low and c < sma5:
+    # eng-84, the cross-back filter (practice for crypto's one-way dumps): the day RSI(2) comes BACK out of the
+    # extreme after at least one day in it - not the first day into it
+    prev = rsi(closes[-61:-1], 2)
+    if prev is None or math.isnan(prev):
+        return None
+    if c > sma200 and prev < cfg.connors_rsi_low <= r and c < sma5:
         side = 1
-    elif c < sma200 and r > cfg.connors_rsi_high and c > sma5:
+    elif c < sma200 and prev > cfg.connors_rsi_high >= r and c > sma5:
         side = -1
     else:
         return None
