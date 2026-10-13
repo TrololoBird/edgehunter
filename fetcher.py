@@ -466,6 +466,8 @@ class DataFetcher:
         # 70-coin universe held ~60 MB of empty ring buffers
         self.flow = FlowStore(capacity=CONFIG.exchange.max_pairs + 40)
         self.whales = WhaleBook()
+        from flow import RushBook
+        self.rush = RushBook()                     # eng-89: rush orders (one taker order eating several levels)
         self.sweeps = SweepTracker(self._on_sweep)
         self.footprint = Footprint()
         self.depth = DepthBook()
@@ -1825,6 +1827,7 @@ class DataFetcher:
             ts = int(data['T'])
             self.flow.trade('binance', key, ts, usd, side, recv_ms)
             self.sweeps.add('binance', key, ts, price, usd, side)
+            self.rush.on_trade(key, ts, side, usd, price)
             md = self.markets.get(key)
             if md is not None:
                 md.record_price(price, ts)

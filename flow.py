@@ -684,3 +684,76 @@ def stacked_imbalance(levels: Dict[int, List[float]], direction: int) -> int:
         run = run + 1 if hit else 0
         best = max(best, run)
     return best
+
+
+# ---------------------------------------------------------------------- rush orders (eng-89)
+
+class RushBook:
+    """
+    eng-89, "rush orders" (La Morgia et al., arXiv 2005.06610: pump detection on Binance within seconds): one taker
+    market order that ate several price levels prints as several aggTrades with the SAME trade time and side. Counted
+    per second per coin in a one-hour ring (Binance futures only: its aggTrade carries the match time T). Journaled as
+    features and as RUSH rows - data collection, no trading.
+    """
+    RING = 3600
+
+    def __init__(self):
+        self.counts: Dict[str, np.ndarray] = {}    # symbol -> [RING, 2 sides] rush orders per second
+        self.usd: Dict[str, np.ndarray] = {}
+        self.secs: Dict[str, np.ndarray] = {}      # the second each ring slot holds (stale slots are zeroed lazily)
+        self._open: Dict[str, list] = {}           # symbol -> [T, side, levels, usd, last price]
+
+    def on_trade(self, symbol: str, ts_ms: int, side: int, usd: float, price: float):
+        g = self._open.get(symbol)
+        if g is not None and g[0] == ts_ms and g[1] == side:
+            g[3] += usd
+            if price != g[4]:
+                g[2], g[4] = g[2] + 1, price
+            return
+        if g is not None:
+            self._close(symbol, g)
+        self._open[symbol] = [ts_ms, side, 1, usd, price]
+
+    def _close(self, symbol: str, g: list):
+        if g[2] < 2:
+            return                                  # one level: an ordinary fill, not a sweep
+        if symbol not in self.counts:
+            self.counts[symbol] = np.zeros((self.RING, 2))
+            self.usd[symbol] = np.zeros((self.RING, 2))
+            self.secs[symbol] = np.full(self.RING, -1, dtype=np.int64)
+        sec = int(g[0] // 1000)
+        k = sec % self.RING
+        if self.secs[symbol][k] != sec:
+            self.counts[symbol][k] = 0
+            self.usd[symbol][k] = 0
+            self.secs[symbol][k] = sec
+        j = 0 if g[1] > 0 else 1
+        self.counts[symbol][k, j] += 1
+        self.usd[symbol][k, j] += g[3]
+
+    def stats(self, symbol: str, now_ms: float) -> Dict[str, float]:
+        """Rush orders in the last 10 / 30 s (count, net buy - sell count, USD) and the 30 s count's z-score against
+        the coin's own previous hour (120 buckets of 30 s, zeros included)."""
+        g = self._open.get(symbol)
+        if g is not None and now_ms - g[0] > 1000:
+            self._close(symbol, g)
+            self._open.pop(symbol, None)
+        counts = self.counts.get(symbol)
+        if counts is None:
+            return {'rush_n_10s': 0.0, 'rush_n_30s': 0.0, 'rush_net_30s': 0.0, 'rush_usd_30s': 0.0, 'rush_z_30s': 0.0}
+        now = int(now_ms // 1000)
+        age = now - self.secs[symbol]
+        valid = (age >= 0) & (age < self.RING)
+        c = np.where(valid[:, None], counts, 0.0)
+        u = np.where(valid[:, None], self.usd[symbol], 0.0)
+        last10, last30 = valid & (age < 10), valid & (age < 30)
+        n10 = float(c[last10].sum())
+        n30 = float(c[last30].sum())
+        net30 = float(c[last30, 0].sum() - c[last30, 1].sum())
+        usd30 = float(u[last30].sum())
+        base = np.zeros(self.RING // 30)
+        hist = valid & (age >= 30)
+        np.add.at(base, (age[hist] // 30).clip(0, self.RING // 30 - 1), c[hist].sum(axis=1))
+        base = base[1:]
+        z = (n30 - base.mean()) / max(base.std(), 0.5)
+        return {'rush_n_10s': n10, 'rush_n_30s': n30, 'rush_net_30s': net30, 'rush_usd_30s': usd30, 'rush_z_30s': float(z)}

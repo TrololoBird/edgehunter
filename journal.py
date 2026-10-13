@@ -125,6 +125,10 @@ EXTRA_COLUMNS = {
     # eng-88: OI over 15 / 60 minutes; the 5m taker flow as a share of the 24h volume (futures net, spot net) - the
     # whale-alert channels' normalisation ("order size 5.49% of the 24h volume")
     'oi_chg_15m': 'REAL', 'oi_chg_60m': 'REAL', 'flow_pct_5m': 'REAL', 'spot_flow_pct_5m': 'REAL',
+    # eng-89: rush orders (one taker order over several levels) in the last 10 / 30 s, net count, USD, z vs the last hour;
+    # the 5m futures flow over the book's depth within 1% (signed)
+    'rush_n_10s': 'REAL', 'rush_n_30s': 'REAL', 'rush_net_30s': 'REAL', 'rush_usd_30s': 'REAL', 'rush_z_30s': 'REAL',
+    'flow_depth_5m': 'REAL',
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
@@ -422,7 +426,8 @@ def _features(sig: Dict) -> Dict:
     out['agg_ready'] = int(bool(sig.get('agg_ready')))
     out['cluster'] = int(sig.get('cluster') or 0)
     out['sec_into_candle'] = int(sig.get('sec_into_quarter') or 0)
-    for col in ('oi_chg_15m', 'oi_chg_60m'):
+    for col in ('oi_chg_15m', 'oi_chg_60m', 'rush_n_10s', 'rush_n_30s', 'rush_net_30s', 'rush_usd_30s', 'rush_z_30s',
+                'flow_depth_5m'):
         v = sig.get(col)
         out[col] = None if v is None or v != v else float(v)
     vol = sig.get('volume_24h') or 0
@@ -634,6 +639,14 @@ class SignalJournal:
                                   "group_key = ? AND setup_ts_ms = ?",
                                   (tracked.final_r, row['best_tp'], tracked.symbol, f"ENTRY {tracked.group_key}",
                                    int(tracked.created * 1000)))
+            self.conn.commit()
+
+    def record_rush(self, symbol: str, direction: int, price: float, sig: Dict) -> None:
+        """eng-89: a RUSH BUY / RUSH SELL row (kind 'rush'): data collection, evaluated by the ret_* horizons."""
+        row = self._base_row(int(time.time() * 1000), symbol, 'rush', 'RUSH BUY' if direction > 0 else 'RUSH SELL',
+                             direction, price, sig)
+        with self._lock:
+            self._insert([row])
             self.conn.commit()
 
     def snapshot_universe(self, prices: Dict[str, Optional[float]], now: Optional[float] = None) -> int:
@@ -982,7 +995,7 @@ class SignalJournal:
         with self._lock:
             self.conn.execute(f"UPDATE signals SET {sets} WHERE id = ?", (*updates.values(), signal_id))
             self.conn.commit()
-        if label == '4h' and self.success is not None and row.get('direction') and row.get('kind') not in ('entry', 'card'):
+        if label == '4h' and self.success is not None and row.get('direction') and row.get('kind') not in ('entry', 'card', 'rush'):
             self._learn(signal_id)
 
     def _learn(self, signal_id: int):

@@ -192,6 +192,11 @@ class Tier0Config:
     # Algos fire at :00/:15/:30/:45 (quarter-hour bursts, +30% volume): an RVOL-only trigger is ignored this long
     # after each quarter-hour boundary
     quarter_boundary_ignore_sec: int = 45
+    # eng-89: RUSH rows (journal only): a 30 s burst of rush orders of at least rush_min_n and z >= rush_z against the
+    # coin's previous hour, once per coin / side per rush_cooldown_sec
+    rush_min_n: int = 5
+    rush_z: float = 6.0
+    rush_cooldown_sec: int = 600
 
 
 @dataclass(frozen=True)

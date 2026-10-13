@@ -201,6 +201,7 @@ TIER0_COLUMNS = (
     'price_z', 'oi_z', 'avg_minute_usd', 'liq_long_5m', 'liq_short_5m', 'cluster', 'sec_into_quarter',
     'agg_cvd_5m', 'agg_oi_change_5m', 'top_venue_share', 'top_venue_net', 'venues_active', 'spot_cvd_5m',
     'futures_cvd_5m', 'oi_chg_15m', 'oi_chg_60m',
+    'rush_n_10s', 'rush_n_30s', 'rush_net_30s', 'rush_usd_30s', 'rush_z_30s', 'flow_depth_5m',
     # ml.AnomalyModel: IsolationForest score (lower = more unusual), its flag, and whether it is fitted
     'ml_score', 'ml_anomaly', 'ml_ready',
 )

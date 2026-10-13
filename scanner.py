@@ -342,9 +342,41 @@ class Scanner:
             for label, minutes in (('oi_chg_15m', 15), ('oi_chg_60m', 60)):
                 v = _oi_change(samples, now_ms, minutes)
                 m[label] = float('nan') if v is None else float(v)
+            # eng-89: rush orders of the last 10 / 30 s; the 5m futures flow against the visible book within 1% on its
+            # side (Cont-Kukanov-Stoikov: short-horizon impact scales with the order-flow imbalance over the depth)
+            m.update(self.fetcher.rush.stats(symbol, now_ms))
+            cvd = m.get('agg_cvd_5m') or m.get('futures_cvd_5m') or 0.0
+            ratio = self.fetcher.depth.sweep_vs_depth(symbol, abs(cvd), 1 if cvd > 0 else -1, band=0.01) if cvd else None
+            m['flow_depth_5m'] = float('nan') if ratio is None else float(ratio) * (1 if cvd > 0 else -1)
             m['top_venue'] = flow.get('top_venue', '')
             out[symbol] = m
+            self._journal_rush(symbol, md, m, now_ms)
         return out
+
+    def _journal_rush(self, symbol: str, md, m: Dict, now_ms: float) -> None:
+        """eng-89: a burst of rush orders (30 s count >= rush_min_n and z >= rush_z against the coin's last hour) is
+        journaled as a RUSH BUY / RUSH SELL row (kind 'rush': data only, never a card or an alert) - the journal's ret_*
+        then show what followed the first seconds of an event."""
+        cfg = CONFIG.tier0
+        if not self.journal or m.get('rush_n_30s', 0) < cfg.rush_min_n or m.get('rush_z_30s', 0) < cfg.rush_z:
+            return
+        net = m.get('rush_net_30s', 0.0)
+        if not net:
+            return
+        d = 1 if net > 0 else -1
+        last = getattr(self, '_rush_logged', None)
+        if last is None:
+            last = self._rush_logged = {}
+        if now_ms - last.get((symbol, d), 0) < cfg.rush_cooldown_sec * 1000:
+            return
+        price = md.last_price
+        if not price:
+            return
+        last[(symbol, d)] = now_ms
+        try:
+            self.journal.record_rush(symbol, d, price, dict(m, volume_24h=md.quote_volume_24h or None))
+        except Exception as e:
+            logger.debug(f"Rush journal {symbol}: {e!r}")
 
     async def _check_tier0(self):
         if not self.market_data:
