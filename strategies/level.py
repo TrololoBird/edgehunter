@@ -49,6 +49,13 @@ def pool_rank(label: str) -> int:
     return 1
 
 
+def sweep_tf(label: str) -> str:
+    """eng-84: the plan timeframe of a sweep by the swept pool: a 1h swing -> 15m (5m trigger), sessions / equal
+    levels / rounds / the day -> 1h (15m trigger), the previous day / week -> 4h (1h trigger)."""
+    rank = pool_rank(label or '')
+    return '4h' if rank >= 4 else '1h' if rank == 3 else '15m'
+
+
 def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], atr: float, trend: int,
                    symbol: Optional[str] = None) -> Optional[Dict]:
     """The candle that just closed took a pool and closed back beyond it on volume -> the sweep event."""
@@ -98,6 +105,13 @@ class SweepStrategy(Strategy):
     setups = {'SWEEP LOW': 1, 'SWEEP HIGH': -1}
     ttl_key = 'sweep_ttl'
 
+    def ttls(self, tf: str):
+        # eng-84: a sweep of a daily / weekly pool is a 1h / 4h trade - its waiting and its trade last as many times
+        # longer as its timeframe (levels.TTL_FACTOR: 15m x1, 1h x2, 4h x4)
+        from levels import TTL_FACTOR
+        k = TTL_FACTOR.get(tf, 1)
+        return tuple(v * k for v in super().ttls(tf))
+
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), x.sig.get('anchor_level')) if x.sig.get('anchor_level') is not None else None
 
@@ -141,7 +155,11 @@ class SweepStrategy(Strategy):
         zone = sorted((extreme, edge))
         # ICT: after the sweep, displacement with a fair value gap and a structure shift; the entry is the retrace into
         # that gap (5m), not the shift's close
-        return base_plan(x, self.name, _level_anchor(sig, '15m'), '15m', entry='pullback', trigger='fvg', zone_lo=zone[0],
+        # eng-84: the structure shift is read on the timeframe that matches the swept pool (the sweep write-ups: 1h
+        # levels -> 5m, 4h / session / daily levels -> 15m, daily / weekly levels -> 1h; below 30m most sweeps are
+        # false): the plan's timeframe sets the trigger's (levels.TRIGGER_MINUTES 15m -> 5, 1h -> 15, 4h -> 60)
+        tf = sweep_tf(sig.get('anchor_label', ''))
+        return base_plan(x, self.name, _level_anchor(sig, tf), tf, entry='pullback', trigger='fvg', zone_lo=zone[0],
                          zone_hi=zone[1], zone_src=f"sweep of {sig.get('anchor_label', 'the level')} (5m FVG retrace)",
                          invalid=invalid,
                          fix_invalid=True, missable=True, stop_ref=extreme, intent='draw_liquidity',

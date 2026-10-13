@@ -126,7 +126,15 @@ class AuctionStrategy(_System):
                 # no 'x R' fallback target (eng-41): the next POC, else no trade
                 'tp': ['level', target, cfg.auction_min_rr, None],
                 'tp_src': tp_src, 'atr': sig.get('atr_1h') or x.atr}
-        return _confirm_plan(x, self.name, '1h', exit, f"POC {sig['anchor_level']:.6g} retest reaction ({sig.get('auction_kind')})")
+        plan = _confirm_plan(x, self.name, '1h', exit, f"POC {sig['anchor_level']:.6g} retest reaction ({sig.get('auction_kind')})")
+        if plan and not plan.get('skip'):
+            # eng-84 (volume-profile write-ups, the owner's review: ZEC / SKY bought at the 1h close in empty space): the
+            # 1h reaction only arms the trade; the entry is a 15m structure shift with agreeing taker flow inside the
+            # area between the POC and the reaction's close (a rejection on the lower timeframe), not the 1h close
+            lo, hi = sorted((sig['anchor_level'], sig['anchor_close']))
+            plan.update(entry='pullback', confirm_only=False, trigger='shift', missable=True, zone_lo=lo, zone_hi=hi,
+                        zone_src='POC area: 15m rejection with taker flow')
+        return plan
 
 
 # ------------------------------------------------------------------------------------------------ SMT
@@ -201,8 +209,12 @@ class TrendlineStrategy(_System):
             # eng-58, practice (Edwards & Magee; break -> retest -> move): the entry is a resting limit at the broken
             # line, retested from the other side, not the second close's price; first touch only
             line = sig['anchor_level']
-            plan.update(entry='pullback', confirm_only=False, trigger='touch', single_touch=True, missable=True,
-                        zone_lo=line, zone_hi=line, zone_src='the broken trendline, retest from the other side')
+            # eng-84 (breakout-retest write-ups: retest + a confirming candle, not a resting limit; the owner's review):
+            # the retest area is the line to half an hour-ATR beyond it on the broken side; the entry is a 15m
+            # structure shift with agreeing taker flow there
+            area = sorted((line, line + d * 5 * pad)) if pad else (line, line)   # pad = 0.1 ATR(1h)
+            plan.update(entry='pullback', confirm_only=False, trigger='shift', missable=True,
+                        zone_lo=area[0], zone_hi=area[1], zone_src='the broken trendline: retest + 15m confirmation')
         return plan
 
 
