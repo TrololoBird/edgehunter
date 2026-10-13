@@ -52,7 +52,7 @@ from strategies import bias as htf_bias, confirm, profiles
 
 # eng-84: methods whose exits are their own long-horizon rule (the Turtles' channel, Connors' SMA5, O'Neil's measured
 # move): no break-even / partial management
-MANAGE_EXEMPT = ('breakout', 'connors', 'cup_handle')
+MANAGE_EXEMPT = ('breakout', 'connors', 'cup_handle', 'oi_build')
 # break-even + the round trip's costs (taker 0.05% x 2 + slippage ~0.05%): a break-even stop that fills is ~0, not -costs
 BE_COST = 0.0015
 # eng-84: the regime each method needs (ADX(14) of 4h): trend-following methods / mean-reversion methods
@@ -579,6 +579,19 @@ class SignalBook:
         timeframe (the closed bars), only ever toward the trade; a RESTOP event moves the demo's stop.
         """
         plan, lv, d = s.plan or {}, s.levels, s.direction
+        pct = plan.get('trail_pct')
+        if pct and hi is not None and lo is not None and lv.get('sl'):
+            # eng-88: a percentage trailing stop behind the best price since the entry (OI build), only toward the
+            # trade; moved in steps of >= 0.25% of the price so the demo's stop is not re-placed every minute
+            best = hi if d > 0 else lo
+            prev = plan.get('trail_best')
+            plan['trail_best'] = best if prev is None else (max(prev, best) if d > 0 else min(prev, best))
+            new = plan['trail_best'] * (1 - d * pct)
+            if d * (new - lv['sl']) > 0.0025 * plan['trail_best']:
+                lv['sl'] = new
+                lv['sl_src'] = f'trailing {pct:.0%} behind the best price'
+                self.events.append((s, 'RESTOP'))
+            return
         be_r = plan.get('be_after_r')
         if be_r and hi is not None and lo is not None and lv.get('entry') and lv.get('sl'):
             # eng-84: a target-less trade - the stop to break-even + costs once price traded +be_r R its way

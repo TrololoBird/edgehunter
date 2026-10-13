@@ -122,6 +122,9 @@ EXTRA_COLUMNS = {
     # eng-87: a card that ended WITHOUT an entry (EXPIRED / MISSED): the entry / stop its plan had at the zone's line -
     # MISSED cards had no levels at all, so what was missed could not be measured in R
     'plan_entry': 'REAL', 'plan_sl': 'REAL',
+    # eng-88: OI over 15 / 60 minutes; the 5m taker flow as a share of the 24h volume (futures net, spot net) - the
+    # whale-alert channels' normalisation ("order size 5.49% of the 24h volume")
+    'oi_chg_15m': 'REAL', 'oi_chg_60m': 'REAL', 'flow_pct_5m': 'REAL', 'spot_flow_pct_5m': 'REAL',
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
@@ -419,6 +422,13 @@ def _features(sig: Dict) -> Dict:
     out['agg_ready'] = int(bool(sig.get('agg_ready')))
     out['cluster'] = int(sig.get('cluster') or 0)
     out['sec_into_candle'] = int(sig.get('sec_into_quarter') or 0)
+    for col in ('oi_chg_15m', 'oi_chg_60m'):
+        v = sig.get(col)
+        out[col] = None if v is None or v != v else float(v)
+    vol = sig.get('volume_24h') or 0
+    fut = sig.get('agg_cvd_5m') or sig.get('futures_cvd_5m')
+    out['flow_pct_5m'] = float(fut) / vol if vol and fut is not None else None
+    out['spot_flow_pct_5m'] = float(sig['spot_cvd_5m']) / vol if vol and sig.get('spot_cvd_5m') is not None else None
     return out
 
 

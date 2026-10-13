@@ -605,7 +605,9 @@ class StrategiesConfig:
     # chandelier 3/6 ATR, 2R target, partials, 8h); session opens (Asia / London / NY, 15-120m ranges, Stretch or wide
     # 0.5-1 daily ATR stops) negative after 0.20% too; the only gross edge (majors, London / NY) is 0.05-0.1% a trade,
     # below the costs: journaled, no card
-    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP')   # eng-84: ORB back with the practice rules
+    # eng-88: OI SIGNAL LONG and PUMP START off - after the signal the coin lagged the market by 0.8% at 15 minutes and
+    # 1.5-2.4% at 1-2h, in rising and falling markets alike (minute marks 11-13.10), and lost on the demo
+    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'OI SIGNAL LONG', 'PUMP START')
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
@@ -741,6 +743,11 @@ class StrategiesConfig:
     # eng-56 OI signal (strategies/oi_signal.py, a live test of cryptomillion's OI [15m] alerts): our thresholds
     oi_sig_oi_15m: float = 0.03
     oi_sig_price_15m: float = 0.02
+    # eng-88: OI build (strategies/oi_build.py), a live test: OI 1h / price 1h floors, the trailing stop, 4h at most
+    oi_build_oi_1h: float = 0.05
+    oi_build_price_1h: float = 0.02
+    oi_build_trail: float = 0.02
+    oi_build_ttl: tuple = (900, 900, 4 * 3600)
     # ICT optimal trade entry for the continuations (trend / momentum): the pullback into 0.62-0.79 of a leg that left
     # a fair value gap (displacement); invalid beyond the leg's start (ICT: "past the 100% level")
     require_displacement: bool = True
@@ -942,7 +949,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-86"
+    logic_version: str = "eng-88"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

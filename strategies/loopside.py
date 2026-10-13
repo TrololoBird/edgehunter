@@ -24,6 +24,8 @@ class LoopDetectors:
         self._orb_day: Dict[str, Dict] = {}          # symbol -> the UTC day's open and extremes so far (ORB)
         self._oi_sig_checked: Dict[str, int] = {}    # symbol -> the last final minute the OI signal was checked on
         self._oi_sig_fired: set = set()              # (symbol, direction, 15m bucket) OI signals already fired
+        self._oi_build_checked: Dict[str, int] = {}  # eng-88: symbol -> the last final minute the OI build was checked on
+        self._oi_build_fired: set = set()            # (symbol, hour) OI builds already fired
         self._dump_checked: Dict[str, int] = {}      # symbol -> the last closed 1h candle the dump bounce was checked on
         self._dump_fired: set = set()                # (symbol, dump hour) bounces already fired
         self._sb_checked: Dict[str, int] = {}        # symbol -> the last final minute the Silver Bullet was checked on
@@ -37,7 +39,7 @@ class LoopDetectors:
         """Every loop-side setup of the coin this scan (in the scanner's order)."""
         out: List[Dict] = []
         for fn in (self._connors_daily, self._turtle_breakout, self._orb_touch, self._dump_bounce, self._oi_signal,
-                   self._po3, self._silver_bullet):
+                   self._oi_build, self._po3, self._silver_bullet):
             found = fn(symbol, md, now_ms)
             if found:
                 out.append(found)
@@ -238,6 +240,22 @@ class LoopDetectors:
         if key in self._oi_sig_fired:
             return None
         self._oi_sig_fired.add(key)
+        return found
+
+    def _oi_build(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
+        """eng-88, the OI build live test (strategies.oi_build): each final minute, once per coin per hour."""
+        minute = md.minute_closed_until
+        if not minute or self._oi_build_checked.get(symbol) == minute:
+            return None
+        self._oi_build_checked[symbol] = minute
+        from strategies.oi_build import oi_build
+        found = oi_build(self.minutes_of(symbol), list(md.oi_samples), now_ms)
+        if found is None:
+            return None
+        key = (symbol, now_ms // 3_600_000)
+        if key in self._oi_build_fired:
+            return None
+        self._oi_build_fired.add(key)
         return found
 
     def _dump_bounce(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
