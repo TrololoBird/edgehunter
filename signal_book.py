@@ -992,7 +992,7 @@ class SignalBook:
         if reason is None and ict_gated(s.mode, s.group_key)                 and not in_session(trigger['time'], tuple(CONFIG.strategies.smt_session)):
             reason = shadow_veto(s.sig, 'killzone')   # eng-58 rule; eng-107: shadow (unproven filter)
         if reason is None:
-            reason = self._against_day(s, trigger['time'])
+            reason = shadow_veto(s.sig, self._against_day(s, trigger['time']))   # eng-112: no source - shadow
         if reason is None and s.plan.get('session') and not in_session(trigger['time'], tuple(s.plan['session'])):
             reason = 'off_session'
         if reason is None and CONFIG.levels.veto_low_rr and levels.get('low_rr'):

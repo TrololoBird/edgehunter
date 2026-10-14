@@ -45,13 +45,13 @@ class ExchangeConfig:
     smallcap_max: int = 60
     smallcap_max_spread: float = 0.003
     smallcap_strategies: tuple = ('oi_build',)
-    smallcap_risk_mult: float = 0.5
+    smallcap_risk_mult: float = 1.0       # eng-112: no source for halving - removed
     # eng-100: the market regime is BTC's 7-day return over its closed daily candles (time-series momentum is strongest
     # at the daily / weekly horizon in crypto - Liu & Tsyvinski, RFS 2021; altcoins carry beta > 1 to BTC): a trade
     # against the regime risks regime_against_mult of the usual risk. Replaces the 'btc_bias' / 'against_btc' vetoes.
     # The TradFi contracts (gold, silver, oil) are not BTC's market: exempt
     regime_days: int = 7
-    regime_against_mult: float = 0.5
+    regime_against_mult: float = 1.0      # eng-112: the sources size by volatility (Moskowitz-Ooi-Pedersen), not x0.5 against BTC - removed
     regime_exempt_bases: tuple = ('XAU', 'XAG', 'XPT', 'XPD', 'CL', 'BZ', 'COPPER')
     max_spread: float = 0.001            # bid-ask spread / mid at the selection (10 bp)
     # Binance exchangeInfo `underlyingType` values to skip: tokenized stocks (US/HK/KR/CN) and pre-IPO shares.
@@ -404,8 +404,10 @@ class LevelsConfig:
     continuation_zone: tuple = (0.62, 0.79)        # ICT OTE (was Raschke / Fibonacci 0.382-0.618)
     # a continuation card is INVALID once the pullback retraces deeper than this share of the leg (was the leg's start)
     continuation_invalid: float = 1.0              # ICT: beyond the impulse's start (was 0.786)
-    macro_before_min: int = 30          # macro_calendar.py: no entry 30 min before .. 60 min after CPI / FOMC
-    macro_after_min: int = 60
+    # eng-112: the event-study window (10 min before .. 45 min after; Lund University FOMC study; Volmex 2024: BTC
+    # volatility rises into CPI / FOMC and falls after) - was an invented 30 / 60
+    macro_before_min: int = 10
+    macro_after_min: int = 45
     # eng-100 (the owner): this many minutes before a high-impact US release an open intraday trade in profit has its
     # stop at break-even + costs, one flat / in loss is closed at market (stops are run both ways in the first minutes);
     # the multi-day systems (Turtles, Connors) keep theirs
@@ -434,11 +436,13 @@ class LevelsConfig:
     # eng-108: removed (0 = off) - an invented 10%; the size is set by the stop, so a stop-out loses 1 R whatever its width
     max_stop_pct: float = 0.0
     # eng-69: the stop sits beyond its structure by max(measured pierce, this x ATR of the structure timeframe)
-    zone_buffer_atr: float = 1.5
+    zone_buffer_atr: float = 0.0          # eng-112: invented 1.5 ATR removed - the stop pad is the measured pierce
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
     # (vetoed='low_rr') and the card keeps waiting, so the screen only shows entries worth taking by hand
     # 2:1, the practitioners' minimum for intraday trades (breakeven win rate 33% before costs); was 1.0
-    min_rr_tp1: float = 2.0
+    # eng-112: the formula, not the practitioners' 2: a positive expectancy p x R:R - (1 - p) > 0; with no measured p
+    # (geometry.HIT_RATE) p = 0.5 -> R:R > 1 net of costs. A method's own minimum from its source stays (Strategy.min_rr)
+    min_rr_tp1: float = 1.0
     veto_low_rr: bool = True
     # Manual execution: the journal replays entries filled this long after the trigger, plus slippage
     fill_delay_sec: int = 30
@@ -647,7 +651,7 @@ class StrategiesConfig:
     shadow_vetoes: tuple = ('against_bias', 'against_trend', 'not_in_pool', 'h4_against', 'regime_flat',
                             'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation', 'no_*',
                             'htf_bias', 'htf_conflict', 'rg_breakout_in_range', 'rg_countertrend',
-                            'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf')
+                            'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day')
     disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'OI SIGNAL LONG', 'PUMP START',
                              # eng-103: the Turtles (exit on the 20-day low: weeks-long trades giving back the run;
                              # live 5 of 5 closed lost, -1.28R) do not fit a bot of hour-long trades
@@ -1019,7 +1023,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-111"
+    logic_version: str = "eng-112"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
