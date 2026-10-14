@@ -271,6 +271,10 @@ class DepthConfig:
     wall_multiple: float = 5.0
     wall_range_pct: float = 0.02
     wall_min_age_sec: float = 30.0
+    # eng-105: a wall is no market maker's quote at the touch (2026-10-14: BTC's 'bid wall' sat $12 under the mid, the
+    # top levels are always the largest) - at least wall_min_dist_pct from the mid and outside the best wall_skip_levels
+    wall_min_dist_pct: float = 0.0015
+    wall_skip_levels: int = 10
     # Diff streams push on change: a book is stale after this long without an event
     stale_sec: int = 60
     # Heatmap: the whole local book within +-heat_range_pct, bucketed by heat_bucket_pct of price, every

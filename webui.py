@@ -679,7 +679,7 @@ class WebUI:
             'whale_flow_5m': f.whales.flow(symbol, 300), 'cluster': f.whales.cluster(symbol),
             'sweeps_seen_total': f.whales.sweeps_seen,
             'liq_events': [list(e) for e in list(md.liq_events)[-25:]],
-            'depth': f.depth.metrics(symbol), 'book_levels': (len(f.depth.books[symbol].bids), len(f.depth.books[symbol].asks))
+            'depth': f.depth.metrics(symbol), 'walls_ended': f.depth.wall_history(symbol), 'book_levels': (len(f.depth.books[symbol].bids), len(f.depth.books[symbol].asks))
             if symbol in f.depth.books else None,
             'funding_rate': md.funding_rate, 'mark': md.mark_price, 'index': md.index_price,
         })

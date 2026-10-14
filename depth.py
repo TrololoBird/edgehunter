@@ -48,7 +48,7 @@ class BookState:
 
     __slots__ = ('bids', 'asks', 'last_u', 'synced', 'buffer', 'ts_ms', 'recv', 'resyncs', 'executed', 'flow',
                  'heat', 'heat_step', 'heat_ts', 'walls', 'bands', 'bands_ts', 'deep_bids', 'deep_asks', 'deep_ts',
-                 'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts')
+                 'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts', 'wall_info', 'wall_log')
 
     def __init__(self):
         self.bids: Dict[float, float] = {}
@@ -80,6 +80,10 @@ class BookState:
         self.cov_lo = 0.0
         self.cov_hi = 0.0
         self.cov_ts = 0.0
+        # eng-105: each live wall's life: (side, price) -> [first seen, peak USD, multiple of the median, filled USD,
+        # pulled USD]; walls that ended: (ended, side, price, peak USD, multiple, life s, filled USD, pulled USD, why)
+        self.wall_info: Dict[Tuple[int, float], List[float]] = {}
+        self.wall_log: Deque[Tuple] = deque(maxlen=200)
 
     # best prices are recomputed on demand: dict sizes are a few thousand levels
     def best(self) -> Tuple[Optional[float], Optional[float]]:
@@ -212,6 +216,10 @@ class DepthBook:
                     ex[0] -= filled
                 cell[off + FILLED] += filled * price
                 cell[off + PULLED] += (drop - filled) * price
+                w = book.wall_info.get((side, price))
+                if w is not None:
+                    w[3] += filled * price
+                    w[4] += (drop - filled) * price
         book.last_u = int(event.get('u', book.last_u))
         book.ts_ms, book.recv = ts, now
         if count and len(book.flow) > FLOW_MINUTES:
@@ -265,10 +273,37 @@ class DepthBook:
         w_lo, w_hi = max(lo, mid * (1 - cfg.wall_range_pct)), min(hi, mid * (1 + cfg.wall_range_pct))
         near = [p * q for p, q in bids if p >= w_lo] + [p * q for p, q in asks if p <= w_hi]
         current = set()
+        sizes: Dict[Tuple[int, float], float] = {}
+        median = statistics.median(near) if near else 0.0
         if near:
-            threshold = cfg.wall_multiple * statistics.median(near)
-            current = {(1, p) for p, q in bids if p >= w_lo and p * q >= threshold} | \
-                      {(-1, p) for p, q in asks if p <= w_hi and p * q >= threshold}
+            threshold = cfg.wall_multiple * median
+            # eng-105: not at the touch - beyond the best wall_skip_levels and wall_min_dist_pct from the mid
+            bid_cut = min(mid * (1 - cfg.wall_min_dist_pct), book.deep_bids[cfg.wall_skip_levels][0]
+                          if len(book.deep_bids) > cfg.wall_skip_levels else 0.0)
+            ask_cut = max(mid * (1 + cfg.wall_min_dist_pct), book.deep_asks[cfg.wall_skip_levels][0]
+                          if len(book.deep_asks) > cfg.wall_skip_levels else float('inf'))
+            for p, q in bids:
+                if w_lo <= p <= bid_cut and p * q >= threshold:
+                    current.add((1, p))
+                    sizes[(1, p)] = p * q
+            for p, q in asks:
+                if ask_cut <= p <= w_hi and p * q >= threshold:
+                    current.add((-1, p))
+                    sizes[(-1, p)] = p * q
+        for w in current:
+            info = book.wall_info.setdefault(w, [now, 0.0, 0.0, 0.0, 0.0])
+            if sizes[w] > info[1]:
+                info[1], info[2] = sizes[w], sizes[w] / median if median else 0.0
+        for w in [w for w in book.wall_info if w not in current]:
+            first, peak, mult, filled, pulled = book.wall_info.pop(w)
+            side, price = w
+            crossed = (best_bid < price) if side > 0 else (best_ask > price)
+            # why it ended: traded through (price crossed it), eaten (fills >= half its peak), pulled (cancelled), or it
+            # only shrank under the threshold / left the window
+            why = ('broken' if crossed else 'eaten' if filled >= 0.5 * peak else
+                   'pulled' if pulled >= 0.5 * peak else 'faded')
+            if now - first >= cfg.wall_min_age_sec:
+                book.wall_log.append((now, side, price, peak, mult, now - first, filled, pulled, why))
         book.walls = {w: book.walls.get(w, now) for w in current}
         book.bands = self._bands(book)
         book.bands_ts = now
@@ -392,6 +427,11 @@ class DepthBook:
         ask_walls = sorted(p for s, p in persistent if s < 0 and p in book.asks)
         out['bid_wall'] = bid_walls[0] if bid_walls else 0.0
         out['ask_wall'] = ask_walls[0] if ask_walls else 0.0
+        for tag, walls, side in (('bid', bid_walls, 1), ('ask', ask_walls, -1)):
+            info = book.wall_info.get((side, walls[0])) if walls else None
+            out[f'{tag}_wall_usd'] = info[1] if info else 0.0
+            out[f'{tag}_wall_x'] = info[2] if info else 0.0
+            out[f'{tag}_wall_age'] = now - info[0] if info else 0.0
         if book.heat_step:
             since = int(now * 1000) // 60_000 * 60_000 - 4 * 60_000
             k_lo, k_hi = int(mid * 0.99 // book.heat_step), int(mid * 1.01 // book.heat_step)
@@ -405,6 +445,15 @@ class DepthBook:
             out.update(bid_pulled_5m=sums[PULLED], bid_filled_5m=sums[FILLED],
                        ask_pulled_5m=sums[3 + PULLED], ask_filled_5m=sums[3 + FILLED])
         return out
+
+    def wall_history(self, symbol: str) -> List[Dict]:
+        """eng-105: the walls that ended recently and how: broken / eaten (filled) / pulled (cancelled) / faded."""
+        book = self.books.get(symbol)
+        if book is None:
+            return []
+        return [{'ended': e[0], 'side': 'bid' if e[1] > 0 else 'ask', 'price': e[2], 'peak_usd': round(e[3]),
+                 'x_median': round(e[4], 1), 'life_sec': round(e[5]), 'filled_usd': round(e[6]),
+                 'pulled_usd': round(e[7]), 'end': e[8]} for e in book.wall_log]
 
     def sweep_vs_depth(self, symbol: str, usd: float, side: int, band: float = 0.005) -> Optional[float]:
         """A taker sweep's size relative to the visible liquidity it hits within `band` (> 1 = it ate the book)."""
