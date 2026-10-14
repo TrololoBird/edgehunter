@@ -27,6 +27,9 @@ from config import CONFIG
 
 logger = logging.getLogger(__name__)
 
+BINGX_ALIAS = {'XAU': 'NCCOGOLD2USD/USDT:USDT', 'XAG': 'NCCOXAG2USD/USDT:USDT',
+               'CL': 'NCCO1OILWTI2USD/USDT:USDT', 'BZ': 'NCCO1OILBRENT2USD/USDT:USDT'}
+
 # eng-84: a limit-filled trade whose card ended keeps its exchange stop / targets this long, then is closed
 ORPHAN_LIMIT_HOLD_MS = 24 * 3600_000
 # eng-86: no market entry when BingX's price already ran this share of the planned risk past the plan's entry (laptop
@@ -119,6 +122,11 @@ class DemoExecutor:
         bare = base[4:] if base.startswith('1000') else base
         candidates = [(symbol, 1.0), (f"{bare}/{rest}", 1e-3 if bare != base else 1.0),
                       (f"1000{bare}/{rest}", 1e3 if bare == base else 1.0)]
+        # eng-93: Binance's TradFi perpetuals are BingX's NCCO* contracts (the session ORB trades gold, silver and oil;
+        # the price check below still decides - VST silver sat 7.7% off Binance's XAG on 14.10)
+        alias = BINGX_ALIAS.get(base)
+        if alias:
+            candidates.insert(0, (alias, 1.0))
         seen, last = set(), None
         for name, scale in candidates:
             if name in seen or name not in ex.markets:
