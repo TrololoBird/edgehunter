@@ -195,7 +195,7 @@ class Tier0Config:
     # eng-89: RUSH rows (journal only): a 30 s burst of rush orders of at least rush_min_n and z >= rush_z against the
     # coin's previous hour, once per coin / side per rush_cooldown_sec
     rush_min_n: int = 5
-    rush_z: float = 6.0
+    rush_z: float = 10.0          # eng-98: 6 logged ~90 rows an hour, 81% of them z 6-10 (the liquid coins' background)
     rush_cooldown_sec: int = 600
 
 
