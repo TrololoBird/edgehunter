@@ -436,7 +436,9 @@ class LevelsConfig:
     # eng-108: removed (0 = off) - an invented 10%; the size is set by the stop, so a stop-out loses 1 R whatever its width
     max_stop_pct: float = 0.0
     # eng-69: the stop sits beyond its structure by max(measured pierce, this x ATR of the structure timeframe)
-    zone_buffer_atr: float = 0.0          # eng-112: invented 1.5 ATR removed - the stop pad is the measured pierce
+    # eng-113, the owner's rule (eng-69: "beyond the zone with a 3-5% margin" - on altcoins' 4h zones ~1.5 ATR of the
+    # zone's timeframe): the stop sits beyond its structure by max(measured pierce, this x the structure tf's ATR)
+    zone_buffer_atr: float = 1.5
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
     # (vetoed='low_rr') and the card keeps waiting, so the screen only shows entries worth taking by hand
     # 2:1, the practitioners' minimum for intraday trades (breakeven win rate 33% before costs); was 1.0
@@ -1023,7 +1025,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-112"
+    logic_version: str = "eng-113"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

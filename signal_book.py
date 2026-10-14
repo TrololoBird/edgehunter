@@ -872,6 +872,13 @@ class SignalBook:
         if plan.get('reset') is not None and s.status == 'ZONE' and d * (price - plan['reset']) > 0:
             s.status, s.zone_since_ms = 'WATCH', None       # the leg extended without a trigger: re-measure it
             return None
+        if plan.get('trigger') == 'fvg' and not s.armed and s.status != 'ZONE' and (s.sig or {}).get('anchor_ts'):
+            # eng-113, the order of the sources (sweep -> displacement AWAY with an FVG and a structure shift -> the
+            # retrace into that FVG): the FVG is searched from the sweep candle on. It was searched only after price
+            # first came BACK into the sweep candle's own range - which a real reversal never does: sweeps 12-14.10
+            # had 75 MISSED ('price never came back to the zone'), 0 entries
+            s.status, s.zone_since_ms = 'ZONE', int(s.sig['anchor_ts'])
+            self.events.append((s, 'ZONE'))
         near_edge = plan['zone_hi'] if d > 0 else plan['zone_lo']
         in_zone = d * (price - near_edge) <= 0
         since_ms = now_ms // 60_000 * 60_000
