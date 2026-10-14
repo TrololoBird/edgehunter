@@ -550,7 +550,7 @@ class ZonesConfig:
     round_span_atr: float = 3.0
     # Targets: a zone must be at least this strong to be an obstacle (TP1/TP2); TP3 prefers pools / liquidations
     min_strength: float = 2.5
-    min_target_atr: float = 1.0
+    min_target_atr: float = 0.0      # eng-121: no 1-ATR spacing of ours - the R:R formula judges a near target
     # Stop: beyond an equal-high/low pool or liquidation cluster within this many ATR behind the invalidation
     stop_pool_atr: float = 0.6
     max_stop_atr: float = 3.0
@@ -694,14 +694,14 @@ class StrategiesConfig:
     trend_w_ema: int = 20
     # Stop floor = levels.min_stop_atr x max(ATR14, ATR of the last recent_atr_candles 15m candles): ATR14 lags a
     # waking market (live: the last hour's ATR was 26% above ATR14 when the stops were hit)
-    recent_atr_candles: int = 4
+    recent_atr_candles: int = 14     # eng-121: = Wilder's ATR14 (the 4-candle 'recent ATR' was ours)
     # Liquidity sweep (ICT / SMC: pools of the higher timeframes, swept by a 15m candle, entry on 5m). Pools: intact
     # 1h swings of the last sweep_swing_hours, equal highs / lows, previous day / week high-low, the day's high-low
     # and the last completed sessions (UTC hours), each at least sweep_pool_min_age_sec old and not traded through
     # since it formed. The sweep: a closed 15m candle pierces a pool by sweep_min_depth_atr-sweep_max_depth_atr and
     # closes back beyond it on >= sweep_min_rvol x the average 15m volume. Against the coin's 1h trend it is vetoed
     # ('against_trend'): live, sweeps of highs in a rising market lost -0.35R a trade, sweeps of lows +0.36R
-    sweep_swing_hours: int = 72
+    sweep_swing_hours: int = 100_000  # eng-121: every intact swing of the 1h history (a pool lives until traded through; 72h was ours)
     sweep_pool_min_age_sec: int = 0          # eng-108: removed (invented 1h); the pool only has to exist before the sweep
     sweep_min_depth_atr: float = 0.1
     sweep_max_depth_atr: float = 1.0
@@ -1025,7 +1025,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-120"
+    logic_version: str = "eng-121"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

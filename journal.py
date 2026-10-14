@@ -351,7 +351,7 @@ def classify(sig: Dict) -> Tuple[str, str, int]:
         # OI rising in the coin's own terms (z of its 5m OI change) above a small floor; the fixed threshold only
         # while its OI volatility is unknown
         oi_z = sig.get('oi_z', 0.0) or 0.0
-        oi_confirms = (oi >= t0.impulse_oi_floor and oi_z >= t0.impulse_oi_z) if oi_z else oi >= t0.impulse_oi_min
+        oi_confirms = oi > 0        # eng-121: the price / OI matrix (OI rising = new positions); our floors / z removed
         flow_confirms = bool(cvd) and (cvd > 0) == up
         if oi_confirms and flow_confirms:
             return 'anomaly', 'IMPULSE UP' if up else 'IMPULSE DOWN', 1 if up else -1

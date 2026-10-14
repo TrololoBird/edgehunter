@@ -111,31 +111,10 @@ class LegContinuation(Strategy):
         zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None), atr, symbol=x.symbol)
         lo_ratio, hi_ratio = cfg.continuation_zone
         fib_lo, fib_hi = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
-        support = support_in(zones, fib_lo, fib_hi, d)
-        # no +-ATR padding: a map zone already spans its candles (body to wick); a point level (EMA20) gets the
-        # typical pierce of a swing (p50, pierce.py) around it - the ATR rule only without the pierce model
-        from pierce import overshoot
-        half = 0.0
+        # eng-121: the zone is ICT's OTE band itself (a map level inside it / Raschke's EMA20 + ADX were ours / another
+        # method mixed in)
+        level_lo, level_hi, zone_src, half = fib_lo, fib_hi, f"OTE {lo_ratio:g}-{hi_ratio:g}", 0.0
         stop_ref = stop_ref_src = None
-        if support is not None:
-            level_lo, level_hi, zone_src = support.lo, support.hi, support.label
-            if is_structural(support):
-                # the trade's structure is this zone (its edge drawn by wicks): the stop goes beyond all of it, not
-                # beyond the entry trigger's 5m low inside it
-                stop_ref, stop_ref_src = (support.lo if d > 0 else support.hi), f"beyond the zone ({support.label})"
-        else:
-            ema = _ema_of_tf(x, impulse['tf'], 20)
-            if ema is None or not fib_lo <= ema <= fib_hi:
-                return {'skip': 'no_level'}
-            # Linda Raschke's Holy Grail, where the EMA20 pullback comes from: only in a strong trend, ADX(14) > 30 and
-            # rising (Street Smarts; the 'rising' part was missing until eng-57)
-            adx, adx_prev = x.sig.get('adx'), x.sig.get('adx_prev')
-            if adx is not None and (adx <= CONFIG.strategies.holy_grail_adx or
-                                    (adx_prev is not None and adx <= adx_prev)):
-                return {'skip': 'weak_trend'}
-            level_lo = level_hi = ema
-            half = overshoot(x.symbol, 'swing_1h' if impulse['tf'] != '15m' else 'swing_15m', ema, 'p50')                 or CONFIG.zones.zone_half_atr * impulse['atr']
-            zone_src = f"EMA20 {impulse['tf']}"
         near, far = (level_hi + half, level_lo - half) if d > 0 else (level_lo - half, level_hi + half)
         lo_ratio = max(0.0, retracement_of(impulse, near))
         hi_ratio = min(1.0, retracement_of(impulse, far))

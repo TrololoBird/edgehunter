@@ -78,7 +78,9 @@ def test_classification_and_families():
     from journal import classify, veto_reason
     assert classify(_sig(price_change_5m=-0.03))[1] == 'IMPULSE UNCONFIRMED'
     assert classify(_sig(price_change_5m=-0.03, oi_change_5m=0.01, futures_cvd_5m=-2e5))[1:] == ('IMPULSE DOWN', -1)
-    assert classify(_sig(price_change_5m=0.03, oi_change_5m=0.001, futures_cvd_5m=2e5))[1] == 'IMPULSE UNCONFIRMED'
+    # eng-121: the price / OI matrix - any OI rise is new positions (our 0.15% floor / z removed)
+    assert classify(_sig(price_change_5m=0.03, oi_change_5m=0.001, futures_cvd_5m=2e5))[1] == 'IMPULSE UP'
+    assert classify(_sig(price_change_5m=0.03, oi_change_5m=0.0, futures_cvd_5m=2e5))[1] == 'IMPULSE UNCONFIRMED'
     assert classify(_sig(price_change_5m=0.03, oi_change_5m=-0.01))[1] == 'SHORT SQUEEZE'
     # observed liquidations decide squeeze / flush even when OI did not fall
     assert classify(_sig(price_change_5m=0.03, oi_change_5m=0.01, liq_cascade=True, liq_short_5m=9e4, liq_long_5m=1e3,

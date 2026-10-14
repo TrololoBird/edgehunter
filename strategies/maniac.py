@@ -473,7 +473,7 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_
         acc += (((c[k] - l[k]) - (h[k] - c[k])) / rng * vol[k]) if rng > 0 else 0.0
         ad.append(acc)
     i = n - 1
-    start = n - 30                     # our search window (Bollinger / Merrill set none): journaled as such
+    start = 20                         # eng-121: the whole history with bands (the 30-candle window was ours)
     for d in (1, -1):
         # first test: closed outside the band
         firsts = [k for k in range(start, i - 3) if (pb[k] < 0 if d > 0 else pb[k] > 1)]

@@ -51,7 +51,7 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int) -> O
             before = l[max(0, left - 2 * cup_len):left]
             if not before or h[left] / min(before) - 1 < 0.30:
                 continue                             # no prior advance
-            if not 5 <= len(handle) <= max(5, cup_len // 4):
+            if not 5 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks (longer = stalling)
                 break
             h_lo = min(l[i] for i in handle)
             pivot = max(h[i] for i in [r] + handle)
