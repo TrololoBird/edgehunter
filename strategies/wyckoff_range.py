@@ -27,56 +27,71 @@ from strategies.geometry import select_targets
 from zones import RawLevel, merge
 
 HOUR_MS = 3_600_000
-SEARCH = 168          # HOURS: the SC / BC within the last week
-TREND_BACK = 48       # HOURS: the climax's new 2-day extreme / the decline it stopped
 # eng-97: both are hours, converted to the candles given (eng-84 moved the detector to 4h candles and left them as bar
 # counts: a '2-day' low meant 8 days, the 'week' 4 weeks)
-MAX_PIERCE = 0.30
-CLIMAX_VOL = 2.0      # our quantification of a climax (Wyckoff gives none): volume and spread vs the 20 candles before
-CLIMAX_SPREAD = 1.5
+# eng-120: CLIMAX_VOL / CLIMAX_SPREAD / MAX_PIERCE (ours) replaced by formulas (_phase_a, wyckoff_events)
 
 
 def _phase_a(h1: Sequence[Sequence[float]], d: int, period_ms: int = HOUR_MS) -> Optional[Dict]:
-    """The latest SC -> AR -> ST (d = +1; BC -> AR -> ST for d = -1) before the last candle, with the range intact."""
-    per_hour = HOUR_MS / period_ms
-    search, trend_back = max(10, round(SEARCH * per_hour)), max(6, round(TREND_BACK * per_hour))
+    """
+    The latest SC -> AR -> ST (d = +1; BC -> AR -> ST for d = -1) before the last candle, with the range intact.
+    eng-120, formulas from Wyckoff's definitions (no thresholds of ours):
+    - the decline (rally) into the climax: from the last 2/2 swing high (low) that stands above (below) every price
+      after it, down to the climax;
+    - the selling climax (SC): the candle with the HIGHEST volume and the LOWEST low of that decline;
+    - the automatic rally (AR): the highest high after the SC;
+    - the secondary test (ST): the lowest low after the AR that holds above the SC's low on LESS volume than the SC;
+    - the prior trend: the decline started above the AR (price came from above the range);
+    searched over the whole history given (was: a week, a '2-day' low, a test within half the range - ours).
+    """
     n = len(h1)
     hi = [x[2] for x in h1]
     lo = [x[3] for x in h1]
     cl = [x[4] for x in h1]
     vol = [x[5] for x in h1]
     last = n - 1
-    for i in range(last - 4, max(trend_back + 20, last - search) - 1, -1):
-        prev = range(i - 20, i)
-        avg_v = sum(vol[k] for k in prev) / 20
-        avg_r = sum(hi[k] - lo[k] for k in prev) / 20
-        if not avg_v or not avg_r or vol[i] < CLIMAX_VOL * avg_v or hi[i] - lo[i] < CLIMAX_SPREAD * avg_r:
-            continue
-        extreme = lo[i] if d > 0 else hi[i]
-        window = range(i - trend_back, i)
-        if (d > 0 and extreme > min(lo[k] for k in window)) or (d < 0 and extreme < max(hi[k] for k in window)):
-            continue                                  # the climax makes a new 2-day extreme
-        # the automatic rally (reaction) and the secondary test after it
-        for k in range(i + 3, last):
-            seg = range(i + 1, k)
-            p = max(seg, key=lambda j: hi[j]) if d > 0 else min(seg, key=lambda j: lo[j])
-            ar = hi[p] if d > 0 else lo[p]
-            height = abs(ar - extreme)
-            if p < i + 1 or not height:
-                continue
-            near = (lo[k] <= extreme + 0.5 * height and lo[k] >= extreme) if d > 0 else \
-                   (hi[k] >= extreme - 0.5 * height and hi[k] <= extreme)
-            if k <= p or not near or vol[k] >= vol[i]:
-                continue
-            before = cl[i - trend_back]
-            if (d > 0 and before <= ar) or (d < 0 and before >= ar):
-                return None                           # no prior trend into the range
-            # the range intact from the ST to the candle before the spring: no close beyond either edge
-            lo_e, hi_e = (extreme, ar) if d > 0 else (ar, extreme)
-            if any(cl[j] < lo_e or cl[j] > hi_e for j in range(k, last)):
-                return None
-            return {'climax': i, 'ar': p, 'st': k, 'lo': lo_e, 'hi': hi_e}
+    if n < 10:
         return None
+    for i in range(last - 3, 4, -1):
+        # the top of the decline into i: the last 2/2 swing that stands beyond every price after it
+        top = None
+        for k in range(i - 2, 1, -1):
+            if k + 2 >= n:
+                continue
+            w = range(k - 2, k + 3)
+            if d > 0 and hi[k] == max(hi[j] for j in w) and hi[k] >= max(hi[k:i + 1]):
+                top = k
+                break
+            if d < 0 and lo[k] == min(lo[j] for j in w) and lo[k] <= min(lo[k:i + 1]):
+                top = k
+                break
+        if top is None or i - top < 2:
+            continue
+        seg = range(top, i + 1)
+        if vol[i] < max(vol[j] for j in seg):
+            continue                                  # not the decline's highest volume
+        extreme = lo[i] if d > 0 else hi[i]
+        if (d > 0 and extreme > min(lo[j] for j in seg)) or (d < 0 and extreme < max(hi[j] for j in seg)):
+            continue                                  # not the decline's extreme
+        after = list(range(i + 1, last))
+        if len(after) < 2:
+            continue
+        p = max(after, key=lambda j: hi[j]) if d > 0 else min(after, key=lambda j: lo[j])
+        ar = hi[p] if d > 0 else lo[p]
+        if (d > 0 and hi[top] <= ar) or (d < 0 and lo[top] >= ar):
+            return None                               # no prior trend into the range
+        tests = list(range(p + 1, last))
+        if not tests:
+            continue
+        k = min(tests, key=lambda j: lo[j]) if d > 0 else max(tests, key=lambda j: hi[j])
+        holds = lo[k] >= extreme if d > 0 else hi[k] <= extreme
+        if not holds or vol[k] >= vol[i]:
+            continue
+        lo_e, hi_e = (extreme, ar) if d > 0 else (ar, extreme)
+        # the range intact from the ST to the candle before the spring: no close beyond either edge
+        if any(cl[j] < lo_e or cl[j] > hi_e for j in range(k, last)):
+            return None
+        return {'climax': i, 'ar': p, 'st': k, 'lo': lo_e, 'hi': hi_e}
     return None
 
 
@@ -137,7 +152,7 @@ def wyckoff_events(h1: Sequence[Sequence[float]], period_ms: int = HOUR_MS, tf: 
     """A spring / UTAD on the candle that just closed (h1[-1]) inside a phase-A range, else []. eng-84: run on 4h
     candles (the range of a trading range is read on 4h / daily, the 1h only times the entry - the owner's review of
     the live trades and the Wyckoff write-ups); `period_ms` / `tf` describe the candles given."""
-    if len(h1) < max(6, round(TREND_BACK * HOUR_MS / period_ms)) + 30:
+    if len(h1) < 10:
         return []
     last = h1[-1]
     o, h, l, c = last[1], last[2], last[3], last[4]
