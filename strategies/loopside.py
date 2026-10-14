@@ -182,7 +182,7 @@ class LoopDetectors:
         if samples and now_ms - samples[-1][0] <= 5_000:
             hi, lo = max(hi, samples[-1][1]), min(lo, samples[-1][1])
         from strategies.classic import session_orb
-        return session_orb(base, minutes, now_ms, hi, lo, self._orb_fired, symbol)
+        return session_orb(base, minutes, now_ms, hi, lo, self._orb_fired, symbol, list(getattr(md, 'd1', None) or []))
 
     def _oi_signal(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
         """The OI [15m] live test (strategies.oi_signal): each final minute, once per coin / direction / 15m."""

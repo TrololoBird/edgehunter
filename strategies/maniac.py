@@ -296,11 +296,11 @@ def _trendline(h, l, c, atr: float, kind: str) -> Optional[Dict]:
 
 
 def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_000, tf: str = '1h',
-                       pct: float = 0.015) -> Optional[Dict]:
+                       pct: float = 0.03) -> Optional[Dict]:
     """
     eng-107, the trendline break as Edwards & Magee define a DECISIVE penetration ("Technical Analysis of Stock Trends",
-    via Peter Brandt): a CLOSE beyond the line by about 3% of the price (Brandt: 1-2% for commodities / forex - `pct`
-    1.5% here, ours within his range), confirmed by time (two closes beyond) and by volume (the breaking bar's volume
+    via Peter Brandt): a CLOSE beyond the line by about 3% of the price (eng-109: their 3%; Brandt's 1-2% is his own
+    suggestion for commodities / forex), confirmed by time (two closes beyond) and by volume (the breaking bar's volume
     above the 20-bar average - their volume test; the exact wording of the book was not found). The same line as
     trendline_event. Journaled in shadow ('tl_em_shadow') beside the ATR version.
     """
@@ -325,12 +325,14 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
         if d * (c[n - 3] - value(n - 3)) >= pct * c[n - 3]:
             continue                                   # the decisive break happened earlier: the first one only
         avg_v = v[n - 22:n - 2].mean() if n >= 22 else 0.0
-        if not avg_v or v[n - 2] <= avg_v:
+        # Edwards & Magee: "activity should always be expected to rise notably on a genuine UP-side breakout" - the
+        # volume test is theirs for the up side only
+        if d > 0 and (not avg_v or v[n - 2] <= avg_v):
             continue
         i = n - 1
         return {'setup': 'TL EM UP' if d > 0 else 'TL EM DOWN', 'direction': d,
                 'setup_note': f"{tf} closed twice >= {pct:.1%} {'above a falling resistance' if d > 0 else 'below a rising support'}"
-                              f" on {v[n - 2] / avg_v:.1f}x volume (Edwards & Magee)",
+                              f" on {(v[n - 2] / avg_v) if avg_v else 0:.1f}x volume (Edwards & Magee)",
                 'line_p1': line['p1'], 'line_slope': line['slope'], 'line_ts1': int(window[line['i1']][0]),
                 'line_value': value(i), 'atr_line': atr,
                 'anchor_level': value(i), 'anchor_extreme': l[i] if d > 0 else h[i],

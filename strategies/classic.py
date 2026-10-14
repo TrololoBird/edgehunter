@@ -261,18 +261,22 @@ def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Opt
 
 
 def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, price_hi: float, price_lo: float,
-                fired: set, symbol: str) -> Optional[Dict]:
-    """The first break of a running session's opening range (its first orb_range_min 1m candles), once per session.
-    `minutes`: final 1m candles; price_hi / price_lo: the last final minute's extremes and the live trade price."""
-    n = CONFIG.strategies.orb_range_min
+                fired: set, symbol: str, d1: Sequence[Sequence[float]] = ()) -> Optional[Dict]:
+    """Crabel's ORB on a running session (eng-109): the first 5m close beyond the session's open +- the Stretch, once
+    per session. `minutes`: final 1m candles (price_hi / price_lo: unused since eng-105's close confirmation)."""
+    n = 0                                          # eng-109: no opening-range wait - Crabel's levels exist at the open
     for name, open_ms, close_ms in orb_sessions(base, now_ms):
-        if (symbol, open_ms) in fired or now_ms < open_ms + n * 60_000:
+        if (symbol, open_ms) in fired:
             continue
-        rng = [c for c in minutes if open_ms <= c[0] < open_ms + n * 60_000]
-        if len(rng) < 0.8 * n:
-            fired.add((symbol, open_ms))           # the range is not known (a restart inside it): no ORB this session
-            continue
-        hi, lo = max(c[2] for c in rng), min(c[3] for c in rng)
+        # eng-109, Crabel's own levels (the 30-minute range was community practice, not his): the session's OPEN +-
+        # the Stretch (the 10-day SMA of min(High - Open, Open - Low) of the daily candles); the first one closed
+        # beyond is the trade, the other level its stop
+        s = stretch(list(d1), CONFIG.strategies.orb_stretch_days) if d1 else None
+        first = next((c for c in minutes if c[0] >= open_ms), None)
+        if s and first is not None and first[0] < open_ms + 60_000:
+            hi, lo = first[1] + s, first[1] - s
+        else:
+            continue                                   # no stretch / no session open: no Crabel ORB
         # eng-105, the owner: a break is a CLOSED 5m candle beyond the range, not a wick / tick through it (Crabel's
         # resting stop orders took every 1m poke through the level that came back: demo 6 trades, 1 winner, -4.0R)
         from levels import resample
@@ -289,7 +293,7 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
         level, other = (hi, lo) if side > 0 else (lo, hi)
         fired.add((symbol, open_ms))
         return {'setup': 'ORB UP' if side > 0 else 'ORB DOWN', 'direction': side,
-                'setup_note': f"{name} session: a 5m close {b[4]:.6g} beyond its {n}m opening range {lo:.6g}-{hi:.6g} "
+                'setup_note': f"{name} session: a 5m close {b[4]:.6g} beyond its open +- Crabel's Stretch {lo:.6g}-{hi:.6g} "
                               f"{'up' if side > 0 else 'down'}, out at the session's close",
                 'anchor_level': level, 'anchor_extreme': other, 'anchor_label': f'{name} opening range',
                 'anchor_ts': open_ms, 'anchor_close': level, 'orb_hi': hi, 'orb_lo': lo, 'orb_session': name,
