@@ -85,6 +85,7 @@ def test_continuation_lifecycle_with_orderflow_confirm(rally_frame, monkeypatch)
     # eng-85: TP1 lay beyond +1R, so the stop went to break-even + costs first: the rest is out there
     assert s.levels['sl'] > e
     gross = ((tp1 - e) + 2 * (s.levels['sl'] - e)) / 3 / risk   # a third at TP1, the rest at the moved stop
+    gross = 0.5 * 1.0 + 0.5 * gross                              # eng-105: half out at +1R first
     assert s.final_r is not None and 0 < gross - s.final_r < 0.5   # net of the round trip's costs (eng-58)
 
 

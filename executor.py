@@ -277,6 +277,24 @@ class DemoExecutor:
         third = float(ex.amount_to_precision(symbol, qty / 3))
         return [(1, third), (2, third), (3, float(ex.amount_to_precision(symbol, qty - 2 * third)))]
 
+    def exit_parts(self, ex, trade: Dict, qty: float, trail: bool, no_tp: bool):
+        """eng-105: partial_share of the position at +partial_r R (trade['tp0']), the rest by tp_parts; the plain
+        tp_parts when the plan's TP1 is already nearer than that (TP1 is the partial then)."""
+        cfg = CONFIG.executor
+        d, fill, sl = trade['direction'], trade.get('entry_fill'), trade.get('sl')
+        if not cfg.partial_share or not fill or not sl or trade.get('units'):
+            return self.tp_parts(ex, trade['symbol'], qty, trail, no_tp)
+        p1r = fill + d * cfg.partial_r * abs(fill - sl)
+        tp1 = trade.get('tp1')
+        if not no_tp and tp1 and d * (tp1 - p1r) <= 0:
+            return self.tp_parts(ex, trade['symbol'], qty, trail, no_tp)
+        half = float(ex.amount_to_precision(trade['symbol'], qty * cfg.partial_share))
+        if half <= 0:
+            return self.tp_parts(ex, trade['symbol'], qty, trail, no_tp)
+        trade['tp0'] = p1r
+        rest = float(ex.amount_to_precision(trade['symbol'], qty - half))
+        return [(0, half)] + list(self.tp_parts(ex, trade['symbol'], rest, trail, no_tp))
+
     def risk_limit(self) -> Optional[str]:
         """
         eng-58, the account's day (prop firms: a daily loss limit of 1-5%, 2-3 trades a day, a pause after a losing
@@ -436,8 +454,8 @@ class DemoExecutor:
         trade['unit_qty'], trade['scale'] = qty, scale          # in memory only (the pyramid's unit, BingX's price scale)
         self._set_basis(trade['id'], basis)
         self.open[card_id] = trade
-        await self._place_tps(trade, self.tp_parts(ex, symbol, qty, bool(plan.get('trail_after_tp1')),
-                                                   bool(plan.get('no_tp'))), min_qty)
+        await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(plan.get('trail_after_tp1')),
+                                                     bool(plan.get('no_tp'))), min_qty)
         logger.info(f"Demo ENTRY {symbol} {s.group_key} {'long' if d > 0 else 'short'} {qty} @ {fill:.6g}, "
                     f"SL {lv['sl']:.6g}, risk ${trade['risk_usd']:.2f}")
 
@@ -660,7 +678,7 @@ class DemoExecutor:
             return
         self.open[trade['card_id']] = trade
         min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
-        await self._place_tps(trade, self.tp_parts(ex, symbol, qty, bool(p.get('trail')), bool(p.get('no_tp'))), min_qty)
+        await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(p.get('trail')), bool(p.get('no_tp'))), min_qty)
         logger.info(f"Demo LIMIT FILLED {symbol} {p['setup']} {qty} @ {fill:.6g}, SL {lv['sl']:.6g}")
 
     async def close_untracked(self) -> None:

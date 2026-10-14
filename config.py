@@ -994,7 +994,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-104"
+    logic_version: str = "eng-105"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
@@ -1058,6 +1058,11 @@ class ExecutorConfig:
     account_usd: float = 10_000.0
     max_notional_usd: float = 4_000.0
     limit_wait_min: int = 15      # a touch plan's BingX limit kept this long after Binance's touch (eng-46)
+    # eng-105, the owner: partial profit at +1R for every trade - partial_share of the position out at +partial_r R
+    # (an exchange take-profit order, it fills between scans too); the rest keeps its stop (break-even + costs after
+    # +1R) and the method's exit. Skipped where the plan's TP1 is already nearer than +1R (TP1 is the partial then).
+    partial_r: float = 1.0
+    partial_share: float = 0.5
     max_leverage: int = 5            # eng-84: 2-5x (the 3-5-7 rule); the risk is set by the stop, cross margin
     # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak) - ours inside
     # those ranges: -3R a day, 6 trades a day, 4 hours after 3 losses in a row

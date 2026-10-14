@@ -624,6 +624,11 @@ class SignalBook:
             # eng-84: a target-less trade - the stop to break-even + costs once price traded +be_r R its way
             risk = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
             fav = (hi - lv['entry']) if d > 0 else (lv['entry'] - lo)
+            if risk and fav >= CONFIG.executor.partial_r * risk and CONFIG.executor.partial_share \
+                    and not plan.get('p1r_done') and not s.units and (plan.get('no_tp') or not lv.get('tp1') or
+                                                                      d * (lv['tp1'] - lv['entry']) > risk * CONFIG.executor.partial_r):
+                # eng-105: the partial at +1R (the demo's tp0 order): the card's result counts it (_exit_r)
+                plan['p1r_done'] = True
             if risk and fav >= be_r * risk:
                 be = lv['entry'] * (1 + d * BE_COST)
                 if d * (be - lv['sl']) > 0:
@@ -736,6 +741,9 @@ class SignalBook:
             gross = s.r_now
             if status == 'SL' and s.exit_fill is not None and risk and not s.units:
                 gross = s.direction * (s.exit_fill - lv['entry']) / risk
+            if gross is not None and (s.plan or {}).get('p1r_done'):
+                share = CONFIG.executor.partial_share
+                gross = share * CONFIG.executor.partial_r + (1 - share) * gross   # eng-105: the partial at +1R
             return None if gross is None else gross - SignalBook._cost_r(s, risk, exit_ms) * max(1, len(s.units or []))
         if not risk:
             return s.r_now
@@ -747,6 +755,9 @@ class SignalBook:
         else:
             parts = [lv[f'tp{k}'] for k in range(1, reached + 1)] + [rest] * (3 - reached)
             gross = sum(s.direction * (p - lv['entry']) for p in parts) / 3 / risk
+        if (s.plan or {}).get('p1r_done'):
+            share = CONFIG.executor.partial_share
+            gross = share * CONFIG.executor.partial_r + (1 - share) * gross     # eng-105: the partial at +1R
         return gross - SignalBook._cost_r(s, risk, exit_ms)
 
     def _invalid_reason(self, s: TrackedSignal, price: float, invalid: float) -> str:
