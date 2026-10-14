@@ -63,6 +63,10 @@ def all_strategies_enabled(monkeypatch):
     from strategies import STRATEGIES
     monkeypatch.setattr(config_mod.CONFIG, 'strategies', dataclasses.replace(
         config_mod.CONFIG.strategies, enabled=tuple(STRATEGIES), disabled_setups=(), require_displacement=False))
+    # the fixtures' impulses carry no z-score (unknown volatility): the logic is tested with the 1% floor they were built
+    # for (eng-123 deploys z >= 6 alone; test_unknown_z_is_no_impulse covers that)
+    monkeypatch.setattr(config_mod.CONFIG, 'tier0', dataclasses.replace(config_mod.CONFIG.tier0,
+                                                                        price_change_5m_threshold=0.01))
     # the lifecycle fixtures were built for R:R 1, no confirmation minimum and the 0.382-0.618 pullback zone (the
     # deployment's thresholds are policy: eng-29 uses ICT's 0.62-0.79 with displacement)
     monkeypatch.setattr(config_mod.CONFIG, 'levels', dataclasses.replace(

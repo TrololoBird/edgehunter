@@ -137,7 +137,8 @@ def find_impulse(df: Optional[pl.DataFrame], leg_direction: int,
         return None
     # no candle beyond the end in the history (a new high / low): the origin is the extreme of the whole history
     duration = end_ts - start_ts
-    tf = '15m' if duration <= 12 * 3_600_000 else '1h' if duration <= 48 * 3_600_000 else '4h'
+    # eng-123, Elder's factor of five: the leg's timeframe is the largest of 15m / 1h / 4h holding >= 5 of its candles
+    tf = '4h' if duration >= 5 * TF_MS['4h'] else '1h' if duration >= 5 * TF_MS['1h'] else '15m'
     htf_list = [list(c[:5]) for c in (htf or [])]
     atr = atr_15m if tf == '15m' else atr_of(htf_list if tf == '1h' else resample_htf(htf_list, 4))
     if not atr:

@@ -151,7 +151,8 @@ class PhaseScorer:
         # z-scores are 0 while a coin's volatility is unknown (short history): then the absolute floor x2 decides
         price = (pl.col('price_change_5m').abs() > t0.price_change_5m_threshold) & (
             (pl.col('price_z').abs() >= t0.price_z_threshold) |
-            ((pl.col('price_z') == 0) & (pl.col('price_change_5m').abs() > 2 * t0.price_change_5m_threshold)))
+            ((pl.col('price_z') == 0) & (t0.price_change_5m_threshold > 0) &
+             (pl.col('price_change_5m').abs() > 2 * t0.price_change_5m_threshold)))   # eng-123: unknown z, no floor -> no
         oi = (pl.col('oi_change_5m').abs() > t0.oi_change_5m_threshold) & (
             (pl.col('oi_z').abs() >= t0.oi_z_threshold) |
             ((pl.col('oi_z') == 0) & (pl.col('oi_change_5m').abs() > 2 * t0.oi_change_5m_threshold)))

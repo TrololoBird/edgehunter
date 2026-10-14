@@ -263,7 +263,8 @@ def price_anomaly(sig: Dict) -> bool:
     px, z = sig.get('price_change_5m', 0.0) or 0.0, sig.get('price_z', 0.0) or 0.0
     if abs(px) <= t0.price_change_5m_threshold:
         return False
-    return abs(z) >= t0.price_z_threshold or (z == 0 and abs(px) > 2 * t0.price_change_5m_threshold)
+    return abs(z) >= t0.price_z_threshold or (z == 0 and t0.price_change_5m_threshold > 0
+                                              and abs(px) > 2 * t0.price_change_5m_threshold)
 
 
 def oi_anomaly(sig: Dict) -> bool:

@@ -175,7 +175,7 @@ class Tier0Config:
     # 5m price / OI moves: an anomaly needs BOTH the absolute floor and a z-score of the coin's own typical 5m move
     # (std of 15m changes over ~24h / sqrt(3)); 2% in 5m is noise for a memecoin and an event for BTC
     oi_change_5m_threshold: float = 0.008
-    price_change_5m_threshold: float = 0.01
+    price_change_5m_threshold: float = 0.0   # eng-123: the 1% floor was ours - the measured z >= 6 alone
     # measured on the live journal (research/tier0_thresholds.md): an effect beyond the coin's usual 4h move only from
     # |z| >= 6 (was 4)
     price_z_threshold: float = 6.0
@@ -411,7 +411,7 @@ class LevelsConfig:
     # eng-100 (the owner): this many minutes before a high-impact US release an open intraday trade in profit has its
     # stop at break-even + costs, one flat / in loss is closed at market (stops are run both ways in the first minutes);
     # the multi-day systems (Turtles, Connors) keep theirs
-    macro_guard_min: int = 10
+    macro_guard_min: int = 0         # eng-123: the open-trade guard has no source - off (the entry window stays)
     # trend-based Fibonacci extension (3 points: the impulse A-B projected from the pullback's extreme C; Carney /
     # Pesavento's ABC, TradingView's Trend-Based Fib Extension): 1.0 / 1.2 / 1.272 / 1.618
     continuation_targets: tuple = (1.0, 1.2, 1.272, 1.618)
@@ -438,7 +438,7 @@ class LevelsConfig:
     # eng-69: the stop sits beyond its structure by max(measured pierce, this x ATR of the structure timeframe)
     # eng-113, the owner's rule (eng-69: "beyond the zone with a 3-5% margin" - on altcoins' 4h zones ~1.5 ATR of the
     # zone's timeframe): the stop sits beyond its structure by max(measured pierce, this x the structure tf's ATR)
-    zone_buffer_atr: float = 1.5
+    zone_buffer_atr: float = 0.0     # eng-123: the sources: 'slightly beyond the distal line', no size - the measured pierce
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
     # (vetoed='low_rr') and the card keeps waiting, so the screen only shows entries worth taking by hand
     # 2:1, the practitioners' minimum for intraday trades (breakeven win rate 33% before costs); was 1.0
@@ -496,7 +496,7 @@ class ZonesConfig:
     htf_refresh_sec: int = 3600
     htf_candles: int = 99
     # Swing points: a high/low with this many lower highs / higher lows on each side
-    swing_width_15m: int = 3
+    swing_width_15m: int = 2         # eng-123: Bill Williams' 2/2 fractal (3 was ours)
     swing_width_1h: int = 2
     # Equal highs / lows (stop pools): >= 2 swings within this many ATR of each other
     equal_tolerance_atr: float = 0.15
@@ -1025,7 +1025,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-122"
+    logic_version: str = "eng-123"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
@@ -1096,7 +1096,7 @@ class ExecutorConfig:
     # the trigger-timeframe candle that touched the zone and closed back on the trade's side of its line
     touch_confirm_close: bool = True
     partial_r: float = 1.0
-    partial_share: float = 0.5
+    partial_share: float = 0.0       # eng-123: no study for half at +1R (practitioners' advice only) - off
     max_leverage: int = 5            # eng-84: 2-5x (the 3-5-7 rule); the risk is set by the stop, cross margin
     # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak) - ours inside
     # those ranges: -3R a day, 6 trades a day, 4 hours after 3 losses in a row

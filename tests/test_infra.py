@@ -194,3 +194,14 @@ def test_main_ctrl_c_and_logging_setup():
     loop.run_until_complete(asyncio.sleep(0.01))
     assert ge.shutdown_event.is_set()
     loop.close()
+
+
+def test_unknown_z_is_no_impulse(monkeypatch):
+    """eng-123: without the 1% floor a 5m move is an anomaly only by the coin's own z (unknown z: none)."""
+    import dataclasses
+    import config as config_mod
+    from journal import price_anomaly
+    monkeypatch.setattr(config_mod.CONFIG, 'tier0', dataclasses.replace(config_mod.CONFIG.tier0,
+                                                                        price_change_5m_threshold=0.0))
+    assert not price_anomaly({'price_change_5m': 0.05, 'price_z': 0.0})
+    assert price_anomaly({'price_change_5m': 0.004, 'price_z': 7.0})

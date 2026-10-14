@@ -1388,7 +1388,8 @@ class SignalBook:
         gets its stop at break-even + costs, one flat or in loss is closed at market (True). Multi-day systems keep
         their exits."""
         plan = s.plan or {}
-        if plan.get('trail_days') or plan.get('connors_exit') or not s.levels or not price:
+        if plan.get('trail_days') or plan.get('connors_exit') or not s.levels or not price \
+                or not CONFIG.levels.macro_guard_min:
             return False
         from macro_calendar import upcoming
         ev = upcoming(now * 1000, CONFIG.levels.macro_guard_min * 60_000)
