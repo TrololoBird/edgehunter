@@ -106,8 +106,11 @@ def _bands(levels, mid: float, side: int) -> List[float]:
     return out
 
 
-def write_minute(root: str, minute_start_sec: int, flow: Optional[Dict], depth: List[Dict], deriv: List[tuple]) -> int:
-    """Worker process: one minute of each kind to its own file. Returns the rows written."""
+def write_minute(root: str, minute_start_sec: int, flow: Optional[Dict], depth: List[Dict], deriv: List[tuple],
+                 deriv_ts_ms: Optional[int] = None) -> int:
+    """Worker process: one minute of each kind to its own file. Returns the rows written. `deriv_ts_ms`: when the
+    derivatives were sampled (eng-102: they were stamped with the minute's START, ~90 s before the sample - an analysis
+    joining marks / OI to signals by time saw 1.5 min of the future)."""
     import polars as pl
     written = 0
     if flow:
@@ -146,7 +149,7 @@ def write_minute(root: str, minute_start_sec: int, flow: Optional[Dict], depth: 
         df = pl.DataFrame(deriv, schema=[('symbol', pl.Utf8), ('venue', pl.Utf8), ('oi_usd', pl.Float64),
                                          ('oi_coins', pl.Float64), ('mark', pl.Float64), ('funding_8h', pl.Float64)],
                           orient='row').with_columns(
-            pl.lit(minute_start_sec * 1000).cast(pl.Datetime('ms', 'UTC')).alias('ts'),
+            pl.lit(int(deriv_ts_ms or minute_start_sec * 1000)).cast(pl.Datetime('ms', 'UTC')).alias('ts'),
             pl.col('symbol').cast(pl.Categorical), pl.col('venue').cast(pl.Categorical))
         df.write_parquet(_path(root, 'deriv', minute_start_sec), compression='zstd')
         written += df.height
@@ -234,7 +237,8 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
             for i, (m, flow) in enumerate(flows):
                 last = i == len(flows) - 1
                 pending = loop.run_in_executor(pool, write_minute, root, m * 60, flow,
-                                               depth if last else [], deriv if last else [])
+                                               depth if last else [], deriv if last else [],
+                                               int(now * 1000) if last else None)
                 pending.add_done_callback(_log_failure)
             if now - last_compact > 600:
                 last_compact = now

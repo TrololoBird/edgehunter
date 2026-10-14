@@ -803,6 +803,7 @@ function drawCoin(fit) {
     body += `<h3>${dirPill(c.direction)} ${esc(c.setup)} <small>${esc((FAMILY[c.strategy] || [''])[0])}</small> ${statusPill(c.status)} <small>${c.finished ? esc(reasonRu(c.finish_reason)) : 'создан ' + ago(nowSec() - c.created) + ' назад'}</small></h3>
       <div class="hint">опора: ${anchorText(c)}</div>
       <div class="hint">${esc((c.why || []).join(' · '))}</div>
+      ${c.shadow_veto ? `<div class="hint">тень: запретили бы ${esc(c.shadow_veto)}</div>` : ''}
       <div class="kv">${c.zone && c.zone[0] ? `<span>зона</span><span>${fp(c.zone[0])} – ${fp(c.zone[1])} <span class="src">${esc(c.zone_src || '')}</span></span>` : ''}
       ${c.levels ? `<span>вход / стоп</span><span>${fp(c.levels.entry)} / ${fp(c.levels.sl)} <span class="src">${esc(c.levels.sl_src || '')}</span></span>` : ''}
       ${c.sizing ? `<span>позиция</span><span>${sizingText(c.sizing)}</span>` : ''}

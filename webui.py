@@ -261,6 +261,8 @@ def card_view(s, now: float) -> Dict:
         'vetoed_triggers': s.vetoed_triggers, 'veto_log': list(s.veto_log), 'veto_notes': list(s.veto_notes), 'of_confirm': s.of_confirm,
         'confirms': s.confirms, 'required': list(confirm.required(s.mode)), 'crowd': s.sig.get('market_crowd'),
         'why': explain(s.group_key, s.sig), 'sig': _sig_view(s.sig),
+        # eng-101: the shadowed rules that would have vetoed this card / entry (they no longer block)
+        'shadow_veto': s.sig.get('shadow_veto'),
     }
 
 
@@ -508,6 +510,18 @@ class WebUI:
         return ws
 
     @staticmethod
+    def _hours(request, key: str, default: Optional[float], cap: float) -> Optional[float]:
+        """A query number within (0, cap] (eng-102: 'hours=abc' was a 500, 'days=1e9' a full-journal report on the
+        public dashboard)."""
+        try:
+            v = float(request.query.get(key, default)) if request.query.get(key, default) is not None else None
+        except (TypeError, ValueError):
+            return default
+        if v is None or not math.isfinite(v) or v <= 0:
+            return default
+        return min(v, cap)
+
+    @staticmethod
     def _json(data) -> web.Response:
         return web.Response(body=orjson.dumps(data, default=str, option=orjson.OPT_SERIALIZE_NUMPY),
                             content_type='application/json')
@@ -525,7 +539,11 @@ class WebUI:
                         if len(detail.get(k) or []) < len(rest.get(k) or []):
                             detail[k] = rest[k]
         else:
-            # A coin from the journal that left the universe: candles from REST, no level map
+            # A coin from the journal that left the universe: candles from REST, no level map. eng-102: only a
+            # well-formed perp symbol (the dashboard is public: any string went to Binance REST, on the bot's limits)
+            import re
+            if not re.fullmatch(r'[A-Z0-9]{1,20}/USDT:USDT', symbol):
+                return self._json({'error': f'bad symbol {symbol[:40]}'})
             detail = await self.scanner.fetcher.chart_candles(symbol)
             if detail is None:
                 return self._json({'error': f'no data for {symbol}'})
@@ -558,7 +576,7 @@ class WebUI:
         kind = request.query.get('kind', 'card')
         if kind not in ('card', 'anomaly', 'entry', 'structured', 'setup', 'all'):
             kind = 'card'
-        hours = float(request.query.get('hours', 24))
+        hours = self._hours(request, 'hours', 24.0, 24.0 * 31)
         symbol = request.query.get('symbol') or None
         return self._json(await asyncio.to_thread(self.reader.history, kind, hours, symbol))
 
@@ -667,10 +685,10 @@ class WebUI:
         })
 
     async def _anomaly_stats(self, request):
-        hours = float(request.query.get('hours', 24))
+        hours = self._hours(request, 'hours', 24.0, 24.0 * 31)
         return self._json(await asyncio.to_thread(self.reader.anomaly_stats, hours))
 
     async def _stats(self, request):
-        days = request.query.get('days')
-        html = await asyncio.to_thread(self.reader.stats_html, float(days) if days else None)
+        days = self._hours(request, 'days', None, 90.0)
+        html = await asyncio.to_thread(self.reader.stats_html, days)
         return web.Response(text=html, content_type='text/html')
