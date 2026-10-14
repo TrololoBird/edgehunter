@@ -46,6 +46,13 @@ class ExchangeConfig:
     smallcap_max_spread: float = 0.003
     smallcap_strategies: tuple = ('oi_build',)
     smallcap_risk_mult: float = 0.5
+    # eng-100: the market regime is BTC's 7-day return over its closed daily candles (time-series momentum is strongest
+    # at the daily / weekly horizon in crypto - Liu & Tsyvinski, RFS 2021; altcoins carry beta > 1 to BTC): a trade
+    # against the regime risks regime_against_mult of the usual risk. Replaces the 'btc_bias' / 'against_btc' vetoes.
+    # The TradFi contracts (gold, silver, oil) are not BTC's market: exempt
+    regime_days: int = 7
+    regime_against_mult: float = 0.5
+    regime_exempt_bases: tuple = ('XAU', 'XAG', 'XPT', 'XPD', 'CL', 'BZ', 'COPPER')
     max_spread: float = 0.001            # bid-ask spread / mid at the selection (10 bp)
     # Binance exchangeInfo `underlyingType` values to skip: tokenized stocks (US/HK/KR/CN) and pre-IPO shares.
     # They sit flat outside their exchange's trading hours and trip squeeze/flat-price phases.
@@ -393,6 +400,10 @@ class LevelsConfig:
     continuation_invalid: float = 1.0              # ICT: beyond the impulse's start (was 0.786)
     macro_before_min: int = 30          # macro_calendar.py: no entry 30 min before .. 60 min after CPI / FOMC
     macro_after_min: int = 60
+    # eng-100 (the owner): this many minutes before a high-impact US release an open intraday trade in profit has its
+    # stop at break-even + costs, one flat / in loss is closed at market (stops are run both ways in the first minutes);
+    # the multi-day systems (Turtles, Connors) keep theirs
+    macro_guard_min: int = 10
     # trend-based Fibonacci extension (3 points: the impulse A-B projected from the pullback's extreme C; Carney /
     # Pesavento's ABC, TradingView's Trend-Based Fib Extension): 1.0 / 1.2 / 1.272 / 1.618
     continuation_targets: tuple = (1.0, 1.2, 1.272, 1.618)
@@ -973,7 +984,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-99"
+    logic_version: str = "eng-100"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

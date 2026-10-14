@@ -113,8 +113,8 @@ def gate(strategy: str, direction: int, coin_bias: Optional[str], btc_bias: Opti
         return None
     side = 'bull' if direction > 0 else 'bear'
     other = 'bear' if direction > 0 else 'bull'
-    if not is_btc and btc_bias == other:
-        return 'btc_bias'                                  # the market first: no altcoin trade against BTC's bias
+    # eng-100: the 'btc_bias' veto removed - BTC's direction now scales the risk (the 7-day momentum regime in the
+    # executor) instead of blocking the trade
     if coin_bias == 'conflict':
         return 'htf_conflict'
     if strategy in TREND or strategy in WITH_BIAS:

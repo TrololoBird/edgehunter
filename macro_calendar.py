@@ -56,3 +56,9 @@ def blackout(now_ms: float):
         if t - cfg.macro_before_min * 60_000 <= now_ms <= t + cfg.macro_after_min * 60_000:
             return name
     return None
+
+
+def upcoming(now_ms: float, within_ms: float):
+    """eng-100: (time, name) of the next high-impact release within `within_ms` from now, else None."""
+    soon = [(t, n) for t, n in list(TIMES) + [(t, n) for t, n, imp in LIVE if imp == 'High'] if now_ms < t <= now_ms + within_ms]
+    return min(soon) if soon else None

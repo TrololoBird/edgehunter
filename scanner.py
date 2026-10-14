@@ -1058,6 +1058,18 @@ class Scanner:
                 out['rs_btc_z'] = r24 / (sd * 24 ** 0.5) if sd > 0 else None
         return out
 
+    def _btc_momentum(self) -> Optional[float]:
+        """eng-100: BTC's return over the last regime_days CLOSED daily candles (the market regime), None without them."""
+        md = self.market_data.get('BTC/USDT:USDT')
+        n = CONFIG.exchange.regime_days
+        if md is None or len(md.d1) <= n:
+            return None
+        now_ms = time.time() * 1000
+        closed = [c for c in md.d1 if c[0] + 86_400_000 <= now_ms]
+        if len(closed) <= n or not closed[-1 - n][4]:
+            return None
+        return float(closed[-1][4] / closed[-1 - n][4] - 1)
+
     def _btc_bias(self) -> Optional[int]:
         """
         eng-59: BTC's ICT bias (weekly, else daily: the close beyond the previous candle's high / low), the direction
@@ -1080,6 +1092,7 @@ class Scanner:
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
         """Live context that is not part of the scored row."""
         sig['small_cap'] = symbol in self.fetcher.small_caps      # eng-99: the demo risks less on them
+        sig['btc_mom_7d'] = self._btc_momentum()                  # eng-100: the market regime (executor risk)
         sig.update(self.market_state)
         sig.update(self.ext.market)
         sig.update(self.ext.of(symbol))

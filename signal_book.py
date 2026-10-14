@@ -1176,10 +1176,8 @@ class SignalBook:
         if d is not None and d != s.direction:
             return 'against_day'
         # eng-59, ICT: altcoins' ICT models trade with BTC's bias (weekly, else daily) - the market's draw
-        if s.mode in ('sweep', 'continuation', 'po3') and not s.symbol.startswith('BTC/') and self.btc_bias_of:
-            btc = self.btc_bias_of()
-            if btc and btc == -s.direction:
-                return 'against_btc'
+        # eng-100: 'against_btc' removed - BTC's direction now sets the trade's risk (the 7-day momentum regime,
+        # executor), not a veto
         return None
 
     def _manage_trade(self, s: TrackedSignal, price: float, now: float, candles_of=None):
@@ -1263,6 +1261,8 @@ class SignalBook:
             if level is not None and d * (price - level) < 0:
                 return self._finish(s, 'CLOSED', now, f"exit on the {days}-day {'low' if d > 0 else 'high'} "
                                                       f"{level:.6g} (Turtles)")
+        if self._macro_guard(s, price, now):
+            return
         why, due = self._time_exit(s, now)
         if why:
             if due is not None and now - due > 2 * 60 and candles_of:
@@ -1276,6 +1276,30 @@ class SignalBook:
             self._finish(s, 'CLOSED', now, why)
 
     TF_SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400}
+
+    def _macro_guard(self, s: TrackedSignal, price: float, now: float) -> bool:
+        """eng-100: macro_guard_min before a high-impact US release (macro_calendar.upcoming) an intraday trade in profit
+        gets its stop at break-even + costs, one flat or in loss is closed at market (True). Multi-day systems keep
+        their exits."""
+        plan = s.plan or {}
+        if plan.get('trail_days') or plan.get('connors_exit') or not s.levels or not price:
+            return False
+        from macro_calendar import upcoming
+        ev = upcoming(now * 1000, CONFIG.levels.macro_guard_min * 60_000)
+        if ev is None or plan.get('macro_guarded') == ev[0]:
+            return False
+        plan['macro_guarded'] = ev[0]
+        s.plan = plan
+        lv, d = s.levels, s.direction
+        be = lv['entry'] * (1 + d * BE_COST)
+        name = ev[1]
+        if d * (price - be) > 0:
+            if d * (be - lv['sl']) > 0:
+                lv['sl'], lv['sl_src'] = be, f'break-even + costs before {name}'
+                self.events.append((s, 'RESTOP'))
+            return False
+        self._finish(s, 'CLOSED', now, f"closed at market before {name} (in loss / flat): macro_guard")
+        return True
 
     def crowded(self, mode: str, direction: int, now: float) -> bool:
         """eng-51: crowd_max open trades in this direction across all strategies (Turtles' correlated-markets limit)."""

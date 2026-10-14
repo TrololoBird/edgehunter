@@ -219,6 +219,16 @@ class DemoExecutor:
                               'closed_ms': int(time.time() * 1000), 'close_reason': 'ERROR'})
 
     @staticmethod
+    def regime_mult(s) -> float:
+        """eng-100: regime_against_mult when the trade runs against BTC's 7-day momentum (the market regime), else 1;
+        the TradFi contracts (gold, silver, oil) are exempt."""
+        cfg = CONFIG.exchange
+        mom = (getattr(s, 'sig', None) or {}).get('btc_mom_7d')
+        if mom is None or not mom or s.symbol.split('/')[0] in cfg.regime_exempt_bases:
+            return 1.0
+        return cfg.regime_against_mult if s.direction * mom < 0 else 1.0
+
+    @staticmethod
     def _is_stop(o: Dict) -> bool:
         t = str((o.get('info') or {}).get('type') or o.get('type') or '').upper()
         return 'STOP' in t and 'TAKE' not in t
@@ -359,6 +369,7 @@ class DemoExecutor:
             # eng-99: a small cap ($1-10M a day): wider spread and slippage, the demo's thin book (1000PEPE's stop
             # filled 1.6% beyond its price) - a fraction of the usual risk
             risk_usd *= CONFIG.exchange.smallcap_risk_mult
+        risk_usd *= self.regime_mult(s)
         n = (getattr(s, 'plan', None) or {}).get('turtle_n')
         # eng-91: a Turtle unit risks risk_pct at its 2N stop like every other trade (the Turtles' 1% per N made the 2N
         # stop cost 2%: twice any other card, and 5-7 correlated breakouts at once were 10%+ of the account)
@@ -521,6 +532,7 @@ class DemoExecutor:
         risk_usd = balance * cfg.risk_pct / 100 / float(levels.get('risk_units') or 1.0)
         if (s.sig or {}).get('small_cap'):
             risk_usd *= CONFIG.exchange.smallcap_risk_mult          # eng-99
+        risk_usd *= self.regime_mult(s)                             # eng-100
         from strategies.geometry import cost_of
         fee = cost_of(lv['entry'], (s.sig or {}).get('volume_24h'))         # eng-91: costs inside the sized distance
         qty = min(risk_usd / (stop_dist + fee), balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])

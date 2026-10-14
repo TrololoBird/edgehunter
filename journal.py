@@ -129,6 +129,8 @@ EXTRA_COLUMNS = {
     # the 5m futures flow over the book's depth within 1% (signed)
     'rush_n_10s': 'REAL', 'rush_n_30s': 'REAL', 'rush_net_30s': 'REAL', 'rush_usd_30s': 'REAL', 'rush_z_30s': 'REAL',
     'flow_depth_5m': 'REAL',
+    # eng-100: the market regime at the signal - BTC's 7-day return over closed daily candles
+    'btc_mom_7d': 'REAL',
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
@@ -426,6 +428,7 @@ def _features(sig: Dict) -> Dict:
     out['agg_ready'] = int(bool(sig.get('agg_ready')))
     out['cluster'] = int(sig.get('cluster') or 0)
     out['sec_into_candle'] = int(sig.get('sec_into_quarter') or 0)
+    out['btc_mom_7d'] = sig.get('btc_mom_7d')
     for col in ('oi_chg_15m', 'oi_chg_60m', 'rush_n_10s', 'rush_n_30s', 'rush_net_30s', 'rush_usd_30s', 'rush_z_30s',
                 'flow_depth_5m'):
         v = sig.get(col)
