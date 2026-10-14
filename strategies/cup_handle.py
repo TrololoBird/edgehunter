@@ -98,7 +98,7 @@ class CupHandleStrategy(_System):
         exit = {'stop': ['price', stop], 'stop_src': src,
                 'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': 'half the cup height (Bulkowski, met 76%)',
                 'tp2': ['level', sig.get('ch_target_full') or sig['ch_target'], 0.0, None],
-                'atr': x.atr}
+                'atr': x.atr, 'own_targets': True}
         return _confirm_plan(x, self.name, sig.get('ch_tf', '1d'), exit, 'close above the handle pivot on volume')
 
 

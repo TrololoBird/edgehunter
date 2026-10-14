@@ -24,7 +24,7 @@ class ValueAreaStrategy(_System):
         sig = x.sig
         if sig.get('va_far') is None:
             return None
-        exit = {'stop': ['ref', 0.0], 'tp': ['level', sig['va_far'], 1.0, None], 'atr': x.atr,
+        exit = {'stop': ['ref', 0.0], 'tp': ['level', sig['va_far'], 1.0, None], 'atr': x.atr, 'own_targets': True,
                 'stop_src': 'beyond the value area edge', 'tp_src': "value area far edge (Dalton's 80% rule)"}
         # eng-94: the stop beyond the edge price re-entered through (Dalton: back outside value = the rule failed), not
         # beyond the whole excursion outside it - the system stop took the farther of the two (the day's low / high)

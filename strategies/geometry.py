@@ -269,6 +269,9 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     beyond.sort(key=lambda z: direction * (_near(z, direction) - ref))
     strong = [z for z in beyond if z.strength >= cfg.min_strength]
     liquidity = intent in ('draw_liquidity', 'opposite_liquidity')
+    # eng-115: Wyckoff's range ('range': the far side, the P&F count) and the continuation's trend-based extensions
+    # ('extension': Carney / Pesavento) are the methods' own objectives - no map zone in between
+    own = intent in ('range', 'extension')
     if liquidity:
         # eng-114, the sources (ICT / Turtle Soup: "target buy-side liquidity in the higher timeframe"): the targets are
         # the opposite LIQUIDITY only - old highs / lows (1h and higher swings), equal highs / lows, the previous day /
@@ -286,7 +289,9 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     if first is not None and direction * (first[0] - ref) >= gap:
         candidates.append((first[0], first[1], 0))
     candidates += [(_near(z, direction), z.label, 0) for z in primary]
-    if not liquidity:
+    if own:
+        candidates = [c for c in candidates if c[2] != 0 or (first is not None and c[0] == first[0])]
+    elif not liquidity:
         candidates += [(_near(z, direction), z.label, 1) for z in strong if z not in primary]
     candidates += [(f, fill_label, 2) for f in fillers if direction * (f - ref) >= gap]
     candidates.sort(key=lambda c: direction * (c[0] - ref))
@@ -316,7 +321,12 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
             prices.append(f)
             labels.append(fill_label)
             last = f
-    if liquidity:
+    if own:
+        for f in sorted(fillers, key=lambda x: direction * (x - ref)):
+            if len(prices) < 3 and (not prices or direction * (f - prices[-1]) > 0) and f not in prices:
+                prices.append(f)
+                labels.append(fill_label)
+    if liquidity or own:
         # no liquidity ahead = no target (no setup); fewer than three pools: the last one repeats (all out there)
         while prices and len(prices) < 3:
             prices.append(prices[-1])
@@ -611,10 +621,17 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         if tp2 is not None and direction * (tp2 - tp1) > 0:
             prices.append(tp2)
             labels.append(src2)
-    map_fill(zones, prices, labels, entry, direction, gap)
-    while len(prices) < 3:
-        prices.append(prices[-1] + direction * gap)
-        labels.append('ATR step')
+    if exit.get('own_targets'):
+        # eng-115: the method's own targets only (Dalton's far edge, Bulkowski's cup heights) - the map / ATR steps
+        # added TP2 / TP3 no source names; the last one repeats
+        while len(prices) < 3:
+            prices.append(prices[-1])
+            labels.append(labels[-1])
+    else:
+        map_fill(zones, prices, labels, entry, direction, gap)
+        while len(prices) < 3:
+            prices.append(prices[-1] + direction * gap)
+            labels.append('ATR step')
     # the R:R decision is finish_levels' alone (the blended R:R / expectancy against the method's min_rr); the exit
     # spec's own per-target minimum vetoed W-bottoms whose blended R:R passed (live QNT: TP1 0.71, blended 1.37)
     return finish_levels(plan, entry, stop, prices[:3], labels[:3], direction, sl_src)
@@ -678,7 +695,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
             if direction * (f - (targets[-1] if targets else entry)) >= gap:
                 targets.append(f)
                 sources.append(plan.get('fill_label', 'fib'))
-        if plan.get('intent') in ('draw_liquidity', 'opposite_liquidity'):
+        if plan.get('intent') in ('draw_liquidity', 'opposite_liquidity', 'range', 'extension'):
             # eng-114: liquidity targets only (the plan's pools ahead of the real entry); the last repeats
             while targets and len(targets) < 3:
                 targets.append(targets[-1])
