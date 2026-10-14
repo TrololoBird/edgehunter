@@ -39,6 +39,45 @@ class Notifier:
         self.cfg = CONFIG.notify
         self._tasks: Set[asyncio.Task] = set()
         self._session: Optional[aiohttp.ClientSession] = None
+        # eng-102: one request at a time (parallel tasks of a briefing burst hit Telegram's per-chat limit, 429)
+        self._send_lock: Optional[asyncio.Lock] = None
+
+    def _lock(self) -> asyncio.Lock:
+        if self._send_lock is None:
+            self._send_lock = asyncio.Lock()
+        return self._send_lock
+
+    def _redact(self, e: BaseException) -> str:
+        """An error's repr without the bot token (aiohttp errors can carry the request URL /bot<token>/...)."""
+        text, (token, _) = repr(e), self._creds()
+        return text.replace(token, '<token>') if token else text
+
+    async def _post(self, method: str, timeout: float, **kw):
+        """POST to the Bot API under the send lock; a 429 waits its retry_after (<= 60 s) and retries twice.
+        Returns (status, body text)."""
+        token, _ = self._creds()
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+        async with self._lock():
+            for attempt in range(3):
+                data = kw.get('data')
+                if callable(data):
+                    kw = dict(kw, data=data())          # a FormData is single-use: rebuilt per attempt
+                async with self._session.post(f"https://api.telegram.org/bot{token}/{method}",
+                                              timeout=aiohttp.ClientTimeout(total=timeout),
+                                              **{k: v for k, v in kw.items()}) as resp:
+                    body = await resp.text()
+                    if resp.status != 429 or attempt == 2:
+                        return resp.status, body
+                    try:
+                        import json
+                        wait = float(json.loads(body).get('parameters', {}).get('retry_after', 5))
+                    except (ValueError, AttributeError):
+                        wait = 5.0
+                    await asyncio.sleep(min(wait, 60.0) + 0.5)
+                if callable(data):
+                    kw = dict(kw, data=data)
+        return 429, ''
 
     @property
     def enabled(self) -> bool:
@@ -92,7 +131,16 @@ class Notifier:
             return
         loop = asyncio.get_running_loop()
         chunks, cur = [], ''
+        parts = []
         for part in text.split('\n\n'):
+            # eng-102: a single part over the limit (no blank lines) is split by lines, then hard
+            while len(part) > 3800:
+                cut = part.rfind('\n', 0, 3800)
+                cut = cut if cut > 0 else 3800
+                parts.append(part[:cut])
+                part = part[cut:].lstrip('\n')
+            parts.append(part)
+        for part in parts:
             if cur and len(cur) + len(part) > 3800:
                 chunks.append(cur)
                 cur = ''
@@ -119,22 +167,28 @@ class Notifier:
             await self._photo_to(token, chat, thread, png, caption)
 
     async def _photo_to(self, token: str, chat, thread, png: bytes, caption: str):
-        try:
-            if self._session is None:
-                self._session = aiohttp.ClientSession()
-            form = aiohttp.FormData()
-            form.add_field('chat_id', str(chat))
+        import re
+
+        def form(html: bool = True, cap: str = caption):
+            f = aiohttp.FormData()
+            f.add_field('chat_id', str(chat))
             if thread:
-                form.add_field('message_thread_id', str(thread))
-            form.add_field('caption', caption)
-            form.add_field('parse_mode', 'HTML')
-            form.add_field('photo', png, filename='card.png', content_type='image/png')
-            async with self._session.post(f"https://api.telegram.org/bot{token}/sendPhoto", data=form,
-                                          timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    logger.warning(f"Telegram photo failed: HTTP {resp.status} {(await resp.text())[:200]}")
+                f.add_field('message_thread_id', str(thread))
+            f.add_field('caption', cap)
+            if html:
+                f.add_field('parse_mode', 'HTML')
+            f.add_field('photo', png, filename='card.png', content_type='image/png')
+            return f
+        try:
+            status, body = await self._post('sendPhoto', 30, data=form)
+            if status == 400 and "can't parse entities" in body:
+                # eng-102: the caption cut at 1024 characters inside a tag - the card goes out with a plain caption
+                plain = re.sub(r'</?[a-zA-Z][^>]*>', '', caption)
+                status, body = await self._post('sendPhoto', 30, data=lambda: form(False, plain))
+            if status != 200:
+                logger.warning(f"Telegram photo failed: HTTP {status} {body[:200]}")
         except Exception as e:
-            logger.warning(f"Telegram photo failed: {e!r}")
+            logger.warning(f"Telegram photo failed: {self._redact(e)}")
 
     async def _send_chunks(self, chunks, topic: str = 'alerts'):
         for c in chunks:
@@ -149,26 +203,22 @@ class Notifier:
 
     async def _telegram_to(self, token: str, chat, thread, text: str, html: bool):
         try:
-            if self._session is None:
-                self._session = aiohttp.ClientSession()
             payload = {'chat_id': chat, 'text': text[:4000], 'disable_web_page_preview': True}
             if thread:
                 payload['message_thread_id'] = thread
             if html:
                 payload['parse_mode'] = 'HTML'
-            async with self._session.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                                          json=payload,
-                                          timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    body = (await resp.text())[:200]
-                    if html and resp.status == 400 and "can't parse entities" in body:
-                        # a bare '<' in the text ("R:R 1.55 < 2", 2026-10-06 09:16) breaks Telegram's HTML: the
-                        # message goes out as plain text instead of not at all
-                        import re
-                        return await self._telegram_to(token, chat, thread, re.sub(r'</?[a-zA-Z][^>]*>', '', text), False)
-                    logger.warning(f"Telegram notification failed: HTTP {resp.status} {body}")
+            status, body = await self._post('sendMessage', 10, json=payload)
+            if status != 200:
+                body = body[:200]
+                if html and status == 400 and "can't parse entities" in body:
+                    # a bare '<' in the text ("R:R 1.55 < 2", 2026-10-06 09:16) breaks Telegram's HTML: the
+                    # message goes out as plain text instead of not at all
+                    import re
+                    return await self._telegram_to(token, chat, thread, re.sub(r'</?[a-zA-Z][^>]*>', '', text), False)
+                logger.warning(f"Telegram notification failed: HTTP {status} {body}")
         except Exception as e:
-            logger.warning(f"Telegram notification failed: {e!r}")    # repr: a timeout's str() is empty
+            logger.warning(f"Telegram notification failed: {self._redact(e)}")    # repr: a timeout's str() is empty
 
     async def close(self):
         for task in list(self._tasks):
