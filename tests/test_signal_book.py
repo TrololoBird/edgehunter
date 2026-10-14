@@ -119,7 +119,12 @@ def test_shadow_veto_enters_and_journals_the_reason(rally_frame, monkeypatch):
     assert len(entries) == 1 and entries[0].vetoed != 'no_orderflow' and 'no_orderflow' in s.sig['shadow_veto']
 
 
-def test_perp_led_impulse_is_vetoed(rally_frame):
+def test_perp_led_impulse_is_vetoed(rally_frame, monkeypatch):
+    import dataclasses
+    import config as config_mod
+    # eng-108: perp_led is a shadow veto; with the shadow list empty it blocks as before
+    monkeypatch.setattr(config_mod.CONFIG, 'strategies',
+                        dataclasses.replace(config_mod.CONFIG.strategies, shadow_vetoes=()))
     book = SignalBook()
     perp_led = dict(IMPULSE_UP, spot_cvd_5m=-1e5, agg_funding_8h=0.0005, agg_oi_change_1h=0.01)   # crowded
     created, _ = book.update([('X', perp_led)], Frames(rally_frame), lambda s: 119.5, lambda s: [], T_ZONE)

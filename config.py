@@ -393,7 +393,9 @@ class LevelsConfig:
     impulse_min_move: float = 0.0
     # the risk must be at least this many round-trip costs (geometry; was a literal 3 in two places). Ours, eng-44:
     # 5x vetoed ordinary 2% stops; a source-less rule - the costs eat 1/3 of 1 R at the limit
-    cost_guard: float = 3.0
+    # eng-108 (the owner: no invented numbers): 1 = the break-even formula - the risk must at least cover one round trip of
+    # costs (below it the costs exceed the risk); the 3 was source-less
+    cost_guard: float = 1.0
     # Continuation: look for the trigger once the pullback reaches this retracement zone of the impulse
     # The pullback band of a continuation: 0.382-0.618 of the leg (a deeper retrace is a trend failure, not an entry);
     # the zone is a real map level inside it, else the EMA20 of the leg's timeframe (Raschke's "Holy Grail"
@@ -429,7 +431,8 @@ class LevelsConfig:
     # were hit on 8 of 10 entries while their paper R:R read 9-23
     min_stop_atr: float = 1.0
     # eng-91: no trade whose stop is farther than this from the entry (the Turtles / Connors exempt; geometry.stop_too_far)
-    max_stop_pct: float = 0.10
+    # eng-108: removed (0 = off) - an invented 10%; the size is set by the stop, so a stop-out loses 1 R whatever its width
+    max_stop_pct: float = 0.0
     # eng-69: the stop sits beyond its structure by max(measured pierce, this x ATR of the structure timeframe)
     zone_buffer_atr: float = 1.5
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
@@ -644,7 +647,7 @@ class StrategiesConfig:
     shadow_vetoes: tuple = ('against_bias', 'against_trend', 'not_in_pool', 'h4_against', 'regime_flat',
                             'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation', 'no_*',
                             'htf_bias', 'htf_conflict', 'rg_breakout_in_range', 'rg_countertrend',
-                            'killzone', 'no_htf_poi', 'premium', 'discount')
+                            'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led')
     disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'OI SIGNAL LONG', 'PUMP START',
                              # eng-103: the Turtles (exit on the 20-day low: weeks-long trades giving back the run;
                              # live 5 of 5 closed lost, -1.28R) do not fit a bot of hour-long trades
@@ -683,10 +686,10 @@ class StrategiesConfig:
     # closes back beyond it on >= sweep_min_rvol x the average 15m volume. Against the coin's 1h trend it is vetoed
     # ('against_trend'): live, sweeps of highs in a rising market lost -0.35R a trade, sweeps of lows +0.36R
     sweep_swing_hours: int = 72
-    sweep_pool_min_age_sec: int = 3600
+    sweep_pool_min_age_sec: int = 0          # eng-108: removed (invented 1h); the pool only has to exist before the sweep
     sweep_min_depth_atr: float = 0.1
     sweep_max_depth_atr: float = 1.0
-    sweep_min_rvol: float = 1.0
+    sweep_min_rvol: float = 0.0              # eng-108: removed (invented; the sources' sweep has no volume rule) - journaled
     # the exchanges' local hours, daylight saving included (forex session tables; eng-57: were fixed UTC 0-8 / 7-16 / 13-21)
     sweep_sessions: tuple = (('Asia', 'Asia/Tokyo', 9, 18), ('London', 'Europe/London', 8, 17),
                              ('New York', 'America/New_York', 8, 17))
@@ -999,7 +1002,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-107"
+    logic_version: str = "eng-108"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

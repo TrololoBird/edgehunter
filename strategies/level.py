@@ -69,7 +69,7 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
     lo_depth, hi_depth = cfg.sweep_min_depth_atr * atr, cfg.sweep_max_depth_atr * atr
     best = None
     for price, side, label, formed in pools:
-        if c[0] - formed < cfg.sweep_pool_min_age_sec * 1000:
+        if c[0] - formed < cfg.sweep_pool_min_age_sec * 1000 or formed > c[0]:
             continue
         if side > 0:
             depth, back = c[2] - price, c[4] < price
@@ -96,7 +96,10 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
             'setup_note': f"15m swept {label} {price:.6g} by {depth / atr:.2f} ATR on {c[5] / avg_volume:.1f}x volume, "
                           f"closed back {'above' if direction > 0 else 'below'}",
             'anchor_level': price, 'anchor_label': label, 'anchor_extreme': extreme, 'anchor_ts': int(c[0]),
-            'anchor_close': c[4], 'pool_formed_ms': int(formed), 'event_ts': int(c[0]) + QUARTER_MS}
+            'anchor_close': c[4], 'pool_formed_ms': int(formed), 'event_ts': int(c[0]) + QUARTER_MS,
+            # eng-108: the values the removed thresholds read, journaled for a later look at them
+            'sweep_rvol': c[5] / avg_volume if avg_volume else None, 'sweep_depth_atr': depth / atr,
+            'pool_age_h': (c[0] - formed) / 3_600_000}
 
 
 class SweepStrategy(Strategy):

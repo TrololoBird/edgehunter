@@ -135,6 +135,8 @@ EXTRA_COLUMNS = {
     'shadow_veto': 'TEXT',
     # eng-104: the one regime (strategies/regime.py) at the entry: 'range pos 0.40 adx 23.6 h1 -1 h4 -1'
     'regime2': 'TEXT',
+    # eng-108: the values of removed thresholds (sweep volume / depth / pool age), journaled to look at them later
+    'sweep_rvol': 'REAL', 'sweep_depth_atr': 'REAL', 'pool_age_h': 'REAL',
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
@@ -435,6 +437,8 @@ def _features(sig: Dict) -> Dict:
     out['btc_mom_7d'] = sig.get('btc_mom_7d')
     out['shadow_veto'] = sig.get('shadow_veto')
     out['regime2'] = sig.get('regime2')
+    for k in ('sweep_rvol', 'sweep_depth_atr', 'pool_age_h'):
+        out[k] = sig.get(k)
     for col in ('oi_chg_15m', 'oi_chg_60m', 'rush_n_10s', 'rush_n_30s', 'rush_net_30s', 'rush_usd_30s', 'rush_z_30s',
                 'flow_depth_5m'):
         v = sig.get(col)
