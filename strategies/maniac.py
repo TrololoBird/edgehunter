@@ -295,6 +295,36 @@ def _trendline(h, l, c, atr: float, kind: str) -> Optional[Dict]:
     return best
 
 
+def _em_line(h, l, c, kind: str) -> Optional[Dict]:
+    """
+    eng-122, Edwards & Magee's trendline: drawn through the two LAST reaction points (2/2 swings) - a down trendline
+    (resistance) through two falling tops, an up trendline (support) through two rising bottoms - and valid while no
+    close went beyond it between them and since (no parameters of a bot).
+    """
+    n = len(c)
+    if kind == 'resistance':
+        piv = [k for k in range(2, n - 2) if h[k] == max(h[k - 2:k + 3])]
+        if len(piv) < 2:
+            return None
+        i1, i2 = piv[-2], piv[-1]
+        if not h[i2] < h[i1]:
+            return None
+        p1, slope = h[i1], (h[i2] - h[i1]) / (i2 - i1)
+        if any(c[j] > p1 + slope * (j - i1) for j in range(i1 + 1, n)):
+            return None
+    else:
+        piv = [k for k in range(2, n - 2) if l[k] == min(l[k - 2:k + 3])]
+        if len(piv) < 2:
+            return None
+        i1, i2 = piv[-2], piv[-1]
+        if not l[i2] > l[i1]:
+            return None
+        p1, slope = l[i1], (l[i2] - l[i1]) / (i2 - i1)
+        if any(c[j] < p1 + slope * (j - i1) for j in range(i1 + 1, n)):
+            return None
+    return {'p1': float(p1), 'slope': float(slope), 'i1': i1}
+
+
 def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_000, tf: str = '1h',
                        pct: float = 0.03) -> Optional[Dict]:
     """
@@ -315,7 +345,7 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
     if not atr > 0:
         return None
     for kind in ('resistance', 'support'):
-        line = _trendline(h[:-2], l[:-2], c[:-2], atr, kind)
+        line = _em_line(h[:-2], l[:-2], c[:-2], kind)
         if line is None:
             continue
         value = lambda j: line['p1'] + line['slope'] * (j - line['i1'])
@@ -332,7 +362,8 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
         i = n - 1
         return {'setup': 'TL EM UP' if d > 0 else 'TL EM DOWN', 'direction': d,
                 'setup_note': f"{tf} closed twice >= {pct:.1%} {'above a falling resistance' if d > 0 else 'below a rising support'}"
-                              f" on {(v[n - 2] / avg_v) if avg_v else 0:.1f}x volume (Edwards & Magee)",
+                              f" on {(v[n - 2] / avg_v) if avg_v else 0:.1f}x volume (Edwards & Magee, a line through"
+                              f" the last two reaction points)",
                 'line_p1': line['p1'], 'line_slope': line['slope'], 'line_ts1': int(window[line['i1']][0]),
                 'line_value': value(i), 'atr_line': atr,
                 'anchor_level': value(i), 'anchor_extreme': l[i] if d > 0 else h[i],

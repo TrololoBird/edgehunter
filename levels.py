@@ -93,54 +93,60 @@ def _qualifies(size: float, start: float, atr: Optional[float], candles: int) ->
 def find_impulse(df: Optional[pl.DataFrame], leg_direction: int,
                  htf: Optional[Sequence[Sequence[float]]] = None) -> Optional[Dict]:
     """
-    The leg in `leg_direction` (+1 up, -1 down): see the module docstring. `df` = 15m frame with 'atr', `htf` = 1h
-    candles [ts, o, h, l, c, ...] of the coin (optional). Returns {'start', 'end', 'size', 'candles', 'atr' (of the
-    leg's timeframe), 'atr_15m', 'tf', 'trigger_minutes', 'start_ts', 'end_ts'} or None.
+    eng-122, the leg from STRUCTURE (no windows of ours): its END is the last confirmed 2/2 swing high (low for a
+    down leg) of the 15m frame; its START is the most extreme opposite price between that end and the last candle
+    (15m, then the older 1h history) that traded beyond the end - the move began after it. Its timeframe by duration
+    (15m up to 12h, 1h up to 2 days, else 4h) and its ATR in that timeframe; it qualifies by the derived minimum leg
+    (levels.min_leg_atr / min_leg_move). Returns {'start', 'end', 'size', 'candles', 'atr', 'atr_15m', 'tf',
+    'trigger_minutes', 'start_ts', 'end_ts'} or None.
     """
-    cfg = CONFIG.levels
     if df is None or df.height < 20 or 'atr' not in df.columns:
         return None
     rows = df.select(['timestamp', 'open', 'high', 'low', 'close']).rows()
-    window = rows[-cfg.htf_lookback_candles:]
     atr_15m = df['atr'][-1]
     if not atr_15m:
         return None
-    highs = [c[2] for c in window]
-    lows = [c[3] for c in window]
-    if leg_direction > 0:
-        start_idx = min(range(len(lows)), key=lows.__getitem__)
-        end_idx = max(range(start_idx, len(highs)), key=highs.__getitem__)
-        start, end = lows[start_idx], highs[end_idx]
-    else:
-        start_idx = max(range(len(highs)), key=highs.__getitem__)
-        end_idx = min(range(start_idx, len(lows)), key=lows.__getitem__)
-        start, end = highs[start_idx], lows[end_idx]
-    start_ts, end_ts = int(window[start_idx][0]), int(window[end_idx][0])
-    base = {'start': start, 'end': end, 'size': abs(end - start), 'candles': end_idx - start_idx, 'atr': atr_15m,
-            'atr_15m': atr_15m, 'tf': '15m', 'trigger_minutes': TRIGGER_MINUTES['15m'],
-            'start_ts': start_ts, 'end_ts': end_ts}
-
-    # Extend the start backwards: older 15m candles of the frame, then 1h candles before the frame
-    first_15m = int(rows[0][0])
-    older_15m = [c for c in rows if c[0] < start_ts][::-1]
-    older_1h = [c for c in (htf or []) if c[0] + 3_600_000 <= first_15m
-                and c[0] >= end_ts - cfg.leg_lookback_hours * 3_600_000][::-1]
-    x_start, x_start_ts = _extend_start(leg_direction, end, start, start_ts, older_15m + older_1h)
-    duration = end_ts - x_start_ts
-    if x_start_ts != start_ts and duration > cfg.htf_lookback_candles * 900_000:
-        tf = '1h' if duration <= 48 * 3_600_000 else '4h'
-        htf_list = [list(c[:5]) for c in (htf or [])]
-        leg_atr = atr_of(htf_list if tf == '1h' else resample_htf(htf_list, 4))
-        size = abs(end - x_start)
-        if _qualifies(size, x_start, leg_atr, duration // TF_MS[tf]):
-            return dict(base, start=x_start, start_ts=x_start_ts, size=size, candles=duration // TF_MS[tf],
-                        atr=leg_atr, tf=tf, trigger_minutes=TRIGGER_MINUTES[tf])
-    if x_start_ts != start_ts and duration <= cfg.htf_lookback_candles * 900_000:
-        # Extended within the 15m frame only: still a 15m leg
-        base.update(start=x_start, start_ts=x_start_ts, size=abs(end - x_start), candles=duration // 900_000)
-    if not _qualifies(base['size'], base['start'], atr_15m, base['candles']):
+    n = len(rows)
+    hi = [c[2] for c in rows]
+    lo = [c[3] for c in rows]
+    end_idx = None
+    for k in range(n - 3, 1, -1):
+        w = range(k - 2, k + 3)
+        # strictly beyond the two candles before, not exceeded by the two after (a tie after = the same top)
+        if leg_direction > 0 and hi[k] == max(hi[j] for j in w) and hi[k] > max(hi[k - 2:k]):
+            end_idx = k
+            break
+        if leg_direction < 0 and lo[k] == min(lo[j] for j in w) and lo[k] < min(lo[k - 2:k]):
+            end_idx = k
+            break
+    if end_idx is None:
         return None
-    return base
+    end = hi[end_idx] if leg_direction > 0 else lo[end_idx]
+    end_ts = int(rows[end_idx][0])
+    first_15m = int(rows[0][0])
+    older = [list(r) for r in rows[:end_idx]][::-1] + \
+        [list(c) for c in (htf or []) if c[0] + 3_600_000 <= first_15m][::-1]
+    start, start_ts, broke = None, None, False
+    for c in older:
+        if (c[2] > end) if leg_direction > 0 else (c[3] < end):
+            broke = True
+            break
+        if start is None or (c[3] < start if leg_direction > 0 else c[2] > start):
+            start, start_ts = (c[3] if leg_direction > 0 else c[2]), int(c[0])
+    if start is None:
+        return None
+    # no candle beyond the end in the history (a new high / low): the origin is the extreme of the whole history
+    duration = end_ts - start_ts
+    tf = '15m' if duration <= 12 * 3_600_000 else '1h' if duration <= 48 * 3_600_000 else '4h'
+    htf_list = [list(c[:5]) for c in (htf or [])]
+    atr = atr_15m if tf == '15m' else atr_of(htf_list if tf == '1h' else resample_htf(htf_list, 4))
+    if not atr:
+        tf, atr = '15m', atr_15m          # no 1h history loaded yet: the leg measured in the 15m ATR
+    size = abs(end - start)
+    if not atr or size < min_leg_atr() * atr or size < min_leg_move() * start:
+        return None
+    return {'start': start, 'end': end, 'size': size, 'candles': duration // TF_MS[tf], 'atr': atr,
+            'atr_15m': atr_15m, 'tf': tf, 'trigger_minutes': TRIGGER_MINUTES[tf], 'start_ts': start_ts, 'end_ts': end_ts}
 
 
 def retracement_of(impulse: Dict[str, float], price: float) -> float:
