@@ -847,9 +847,14 @@ class DemoExecutor:
                 try:
                     await ex.cancel_order(order['id'], symbol)
                 except Exception as e:                  # filled / gone: the position check below decides
-                    errors.report('executor._close', e, f"Demo cancel passive close {symbol}")
+                    logger.debug(f"Demo cancel passive close {symbol}: {e!r}")
             except Exception as e:
-                errors.report('executor._close', e, f"Demo passive close {symbol}")
+                # eng-98: 109400 'order not exist' / 101290 'reduce only': BingX's own stop closed the position first
+                # (the card saw the stop on Binance at the same time) - the position check below records it
+                if '109400' in str(e) or '101290' in str(e):
+                    logger.debug(f"Demo passive close {symbol}: {e!r}")
+                else:
+                    errors.report('executor._close', e, f"Demo passive close {symbol}")
             left = await self._position_qty(symbol)
             try:
                 await ex.cancel_all_orders(symbol)       # the stop, now that the market remainder follows
