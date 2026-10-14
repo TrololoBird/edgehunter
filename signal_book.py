@@ -130,7 +130,7 @@ def _jsonable(v) -> bool:
     return False
 
 
-_REAL_NO = ('no_data', 'no_leg', 'no_room', 'no_bias', 'no_anchor')
+_REAL_NO = ('no_data', 'no_leg', 'no_room', 'no_anchor')      # eng-104: no_bias is a filter (shadow)
 
 
 def shadow_veto(sig: Dict, reason: Optional[str]) -> Optional[str]:
