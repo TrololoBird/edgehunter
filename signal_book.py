@@ -877,6 +877,9 @@ class SignalBook:
             if in_session(int(s.zone_since_ms), kz) and not in_session(now_ms, kz):
                 self._finish(s, 'EXPIRED', now, "session_end: the kill zone ended without an entry")
                 return None
+        reclaim = self._reclaim_entry(s, price, now_ms)
+        if reclaim is not None:
+            return reclaim
         if s.status == 'ZONE':
             entry = self._try_entry(s, price, now_ms, candles_of, confirm_of)
             if entry is not None:
@@ -1196,6 +1199,36 @@ class SignalBook:
         shadow = copy.copy(s)
         shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, 'flow_entry'
         shadow.of_confirm, shadow.confirms = c.get('orderflow'), dict(c)
+        return shadow
+
+    def _reclaim_entry(self, s: TrackedSignal, price: float, now_ms: int) -> Optional[TrackedSignal]:
+        """
+        eng-104, the reclaim entry of a liquidity sweep (the owner's comparison with a signal channel 2026-10-14: BTC /
+        ETH sweeps of the day high found by the bot at 08:15 UTC were sold there at once, while our card waited for a
+        lower-timeframe shift and expired with the kill zone): an entry at the price right after the sweep candle closed
+        back inside, the stop beyond the sweep's extreme + the coin's measured pierce (the plan's own stop), the targets
+        of the plan. Journaled beside the method's trigger as vetoed 'reclaim_entry' (never traded), once per card,
+        only while the price is still within half the way from the swept level to the stop.
+        """
+        if s.mode != 'sweep' or not s.group_key.startswith('SWEEP') or s.sig.get('_reclaim_done') or not s.plan:
+            return None
+        level, extreme = s.sig.get('anchor_level'), s.sig.get('anchor_extreme')
+        if level is None or extreme is None:
+            return None
+        s.sig['_reclaim_done'] = True
+        d = s.direction
+        # inside the sweep's extreme (a price back at / above the swept high is a better short, not a miss) and not
+        # run away from the level by more than half the sweep's depth (ETH 2026-10-14: 2522.06 vs the level 2521.89)
+        if d * (price - extreme) <= 0 or d * (price - level) > 0.5 * abs(level - extreme) + 1e-12 * price:
+            return None
+        levels = entry_levels(s.plan, price, extreme, d)
+        if not levels or d * (price - levels['sl']) <= 0 or d * (levels['tp1'] - price) <= 0:
+            return None
+        levels['zone_src'] = 'reclaim of the swept level'
+        levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], d)
+        shadow = copy.copy(s)
+        shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, 'reclaim_entry'
+        shadow.of_confirm, shadow.confirms = None, {}
         return shadow
 
     def _against_day(self, s: TrackedSignal, at_ms: int) -> Optional[str]:
