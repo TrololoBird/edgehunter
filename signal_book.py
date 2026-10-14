@@ -1029,6 +1029,8 @@ class SignalBook:
             from macro_calendar import blackout
             if blackout(now_ms):
                 reason = 'macro_event'
+        if reason is None and s.group_key.startswith('RSI2X '):
+            reason = 'rsi2x_shadow'      # eng-106: Connors' original entry, measured beside ours
         if reason is None and s.group_key.startswith('BB3 '):
             reason = 'bb3_shadow'        # eng-106: Bollinger's Method III as his manual states it, measured beside the W / M
         if reason is None and not (s.plan or {}).get('trail_days') and self.crowded(s.mode, s.direction, entered_at):

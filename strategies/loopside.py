@@ -41,7 +41,9 @@ class LoopDetectors:
         for fn in (self._connors_daily, self._turtle_breakout, self._orb_touch, self._dump_bounce, self._oi_signal,
                    self._oi_build, self._po3, self._silver_bullet):
             found = fn(symbol, md, now_ms)
-            if found:
+            if isinstance(found, list):
+                out.extend(found)
+            elif found:
                 out.append(found)
         out.extend(self._pumps(symbol, md, now_ms))
         return out
@@ -88,8 +90,12 @@ class LoopDetectors:
         if self._sb_checked.get(symbol) == minute:
             return None
         self._sb_checked[symbol] = minute
-        bars = resample([c for c in self.minutes_of(symbol) if c[0] >= start - 2 * 3_600_000], 5,
+        # eng-106: from 20:00 NY the evening before (the Asian / London session pools), the 1m history holds 10h
+        bars = resample([c for c in self.minutes_of(symbol) if c[0] >= start - 10 * 3_600_000], 5,
                         minute + 60_000)
+        # the session pools older than the 1m history (Asia ends 10h before the 10:00 NY window): closed 15m candles
+        first = bars[0][0] if bars else minute
+        bars = [list(c) for c in self.m15_of(symbol) if start - 16 * 3_600_000 <= c[0] and c[0] + 900_000 <= first] + bars
         # ICT's draw: the previous day's high / low (the last closed daily candle)
         pd = md.d1[-1] if md.d1 else None
         found = silver_bullet(bars, now_ms, pdh=pd[2] if pd else None, pdl=pd[3] if pd else None)
@@ -249,5 +255,6 @@ class LoopDetectors:
             return None
         self._connors_checked[symbol] = day_close
         from strategies.classic import connors_event
-        return connors_event(md.d1)
+        found = [e for e in (connors_event(md.d1), connors_event(md.d1, first='orig')) if e]
+        return found or None
 

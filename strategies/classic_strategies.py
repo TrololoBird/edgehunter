@@ -81,7 +81,7 @@ class OrbStrategy(_System):
 class ConnorsStrategy(_System):
     """Connors' RSI(2): out at the SMA5 (the target), stop from the structure (he uses none)."""
     name = 'connors'
-    setups = {'RSI2 LONG': 1, 'RSI2 SHORT': -1}
+    setups = {'RSI2 LONG': 1, 'RSI2 SHORT': -1, 'RSI2X LONG': 1, 'RSI2X SHORT': -1}   # RSI2X: Connors' own entry, shadow
     min_rr = 0.0                     # Connors: no stop, no ratio - out at the SMA5; the R is only measured
     ttl_key = 'connors_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)

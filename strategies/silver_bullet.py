@@ -41,8 +41,31 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
     inside = [b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms]
     if len(before) < 10 or len(inside) < 3:
         return None
-    ref_hi, ref_lo = max(b[2] for b in before), min(b[3] for b in before)
+    hour_hi, hour_lo = max(b[2] for b in before), min(b[3] for b in before)
+    # eng-106, the sources (LuxAlgo, ChartingLens, TradingView on ICT): the liquidity a Silver Bullet raids is the
+    # session highs / lows (Asia 20:00-00:00 NY, London 02:00-05:00 NY) besides the hour before the window - the nearest
+    # one beyond the window's open is the pool; was the hour before the window only
+    local = datetime.fromtimestamp(start / 1000, tz=timezone.utc).astimezone(NY)
+    day0 = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    sessions = [(day0.timestamp() * 1000 - 4 * 3_600_000, day0.timestamp() * 1000),          # Asia
+                (day0.timestamp() * 1000 + 2 * 3_600_000, day0.timestamp() * 1000 + 5 * 3_600_000)]  # London
+    pools_hi, pools_lo = [(hour_hi, 'the hour before')], [(hour_lo, 'the hour before')]
+    for (a, b), tag in zip(sessions, ('Asia', 'London')):
+        if b > start:
+            continue                                # a session still running at the window's start is no pool yet
+        part = [x for x in bars5 if a <= x[0] < b and x[0] + FIVE_MS <= start]
+        if len(part) >= 6:
+            pools_hi.append((max(x[2] for x in part), tag))
+            pools_lo.append((min(x[3] for x in part), tag))
+    open_px = inside[0][1]
+    above = sorted(p for p in pools_hi if p[0] > open_px)
+    below = sorted((p for p in pools_lo if p[0] < open_px), reverse=True)
     for d in (1, -1):
+        pool = (below[0] if below else None) if d > 0 else (above[0] if above else None)
+        if pool is None:
+            continue
+        ref_hi = pool[0] if d < 0 else hour_hi
+        ref_lo = pool[0] if d > 0 else hour_lo
         raid = next((k for k, b in enumerate(inside) if (b[3] < ref_lo if d > 0 else b[2] > ref_hi)), None)
         if raid is None:
             continue
@@ -77,9 +100,8 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
             if d * (target - (lo + hi) / 2) <= 0:
                 continue
             ce = (lo + hi) / 2
-            local = datetime.fromtimestamp(start / 1000, tz=timezone.utc).astimezone(NY)
             return {'setup': 'SILVER BULLET LONG' if d > 0 else 'SILVER BULLET SHORT', 'direction': d,
-                    'setup_note': f"ICT Silver Bullet {local:%H}:00-{local.hour + 1:02d}:00 NY: took the hour's "
+                    'setup_note': f"ICT Silver Bullet {local:%H}:00-{local.hour + 1:02d}:00 NY: took {pool[1]}'s "
                                   f"{'low' if d > 0 else 'high'} {ref_lo if d > 0 else ref_hi:.6g}, displaced, 5m FVG "
                                   f"{lo:.6g}-{hi:.6g} (CE {ce:.6g}) after a structure shift; target {target:.6g}",
                     'anchor_level': ce, 'anchor_extreme': extreme, 'anchor_label': 'Silver Bullet FVG',

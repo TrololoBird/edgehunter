@@ -339,7 +339,16 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     prev = rsi(closes[-61:-1], 2)
     if prev is None or math.isnan(prev):
         return None
-    if c > sma200 and prev < cfg.connors_rsi_low <= r and c < sma5:
+    if first == 'orig':
+        # eng-106, Connors' own entry (shadow 'RSI2X'): the FIRST close with RSI(2) beyond the extreme, above (below)
+        # the SMA200 - no waiting for the cross back out (our eng-84 rule)
+        if c > sma200 and r < cfg.connors_rsi_low <= prev:
+            side = 1
+        elif c < sma200 and r > cfg.connors_rsi_high >= prev:
+            side = -1
+        else:
+            return None
+    elif c > sma200 and prev < cfg.connors_rsi_low <= r and c < sma5:
         side = 1
     elif c < sma200 and prev > cfg.connors_rsi_high >= r and c > sma5:
         side = -1
@@ -348,7 +357,8 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     extreme = min(x[3] for x in h1[-3:]) if side > 0 else max(x[2] for x in h1[-3:])
     trs = [max(x[2], p[4]) - min(x[3], p[4]) for p, x in zip(h1[-21:-1], h1[-20:])]
     atr = sum(trs) / len(trs) if trs else None
-    return {'setup': 'RSI2 LONG' if side > 0 else 'RSI2 SHORT', 'direction': side, 'connors_atr': atr,
+    tag = 'RSI2X' if first == 'orig' else 'RSI2'
+    return {'setup': f'{tag} LONG' if side > 0 else f'{tag} SHORT', 'direction': side, 'connors_atr': atr,
             'setup_note': f"daily RSI(2) {r:.0f} {'below ' + format(cfg.connors_rsi_low, 'g') + ' above' if side > 0 else 'above ' + format(cfg.connors_rsi_high, 'g') + ' below'} the SMA200 "
                           f"{sma200:.6g} (Connors); exit at the SMA5 {sma5:.6g}",
             'anchor_level': c, 'anchor_extreme': extreme, 'anchor_label': 'RSI(2) extreme',
