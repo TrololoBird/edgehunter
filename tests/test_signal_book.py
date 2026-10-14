@@ -25,7 +25,9 @@ def minutes_for_bars(bars):
 def bull_bars(t0, final_q=8e3):
     def bar(i, o, h, l, c, q=1e4, Q=5e3):
         return [t0 + i * FIVE, o, h, l, c, q, Q]
-    return [bar(-3, 111, 111.2, 110.6, 110.8), bar(-2, 110.8, 110.9, 110.2, 110.3), bar(-1, 110.3, 110.4, 109.9, 110.0),
+    # eng-119: two candles before the 111.2 high make it a real 2/2 swing (no swing, no structure shift)
+    return [bar(-5, 110.5, 110.9, 110.4, 110.7), bar(-4, 110.7, 111.0, 110.6, 110.9),
+            bar(-3, 111, 111.2, 110.6, 110.8), bar(-2, 110.8, 110.9, 110.2, 110.3), bar(-1, 110.3, 110.4, 109.9, 110.0),
             bar(0, 110.0, 110.1, 109.4, 109.6, Q=4e3), bar(1, 109.6, 109.8, 109.2, 109.3, Q=4e3),
             bar(2, 109.3, 110.2, 109.3, 110.1, Q=6e3), bar(3, 110.1, 111.5, 110.0, 111.4, Q=final_q)]
 

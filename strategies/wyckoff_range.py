@@ -150,9 +150,11 @@ def wyckoff_events(h1: Sequence[Sequence[float]], period_ms: int = HOUR_MS, tf: 
             continue
         lo, hi = rng['lo'], rng['hi']
         height = hi - lo
-        if d > 0 and l < lo and c > lo and (min(o, c) - l) >= 0.5 * span and (lo - l) <= MAX_PIERCE * height:
+        # eng-119: the spring as the sources define it - below the SC low, closed back inside (the half-wick and the 30%
+        # pierce limits were ours)
+        if d > 0 and l < lo and c > lo:
             return [_event('SPRING', 1, lo, hi, l, h1, rng, last, period_ms, tf)]
-        if d < 0 and h > hi and c < hi and (h - max(o, c)) >= 0.5 * span and (h - hi) <= MAX_PIERCE * height:
+        if d < 0 and h > hi and c < hi:
             return [_event('UTAD', -1, lo, hi, h, h1, rng, last, period_ms, tf)]
     return []
 

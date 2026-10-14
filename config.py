@@ -465,7 +465,7 @@ class LevelsConfig:
     # THROUGH it: a touch fills only part of the queue (backtests that fill limits on a touch overstate the result)
     target_through_bps: float = 2.0
     # Spring "test": average 1m volume of the pullback <= this share of the spring candle's average minute
-    spring_test_volume_ratio: float = 0.6
+    spring_test_volume_ratio: float = 1.0    # eng-119: the source's 'lower volume' (the 0.6 was ours)
     # eng-55 Wyckoff's test also NARROWS the spread (StockCharts Wyckoff tutorial, tradingwyckoff: ranges 40-70%
     # smaller than the spring's): the pullback's average 15m range <= this x the spring candle's range scaled to 15m
     spring_test_spread_ratio: float = 0.6
@@ -1025,7 +1025,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-118"
+    logic_version: str = "eng-119"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

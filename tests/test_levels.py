@@ -12,7 +12,9 @@ def bull_ltf(t0=CUR15, interval=FIVE, final_q=8e3):
     """Pullback into the zone, extreme 109.2, then a close above the structure high 111.2 on net buying."""
     def bar(i, o, h, l, c, q=1e4, Q=5e3):
         return [t0 + i * interval, o, h, l, c, q, Q]
-    return [bar(-3, 111, 111.2, 110.6, 110.8), bar(-2, 110.8, 110.9, 110.2, 110.3), bar(-1, 110.3, 110.4, 109.9, 110.0),
+    # eng-119: two candles before the 111.2 high make it a real 2/2 swing (no swing, no structure shift)
+    return [bar(-5, 110.5, 110.9, 110.4, 110.7), bar(-4, 110.7, 111.0, 110.6, 110.9),
+            bar(-3, 111, 111.2, 110.6, 110.8), bar(-2, 110.8, 110.9, 110.2, 110.3), bar(-1, 110.3, 110.4, 109.9, 110.0),
             bar(0, 110.0, 110.1, 109.4, 109.6, Q=4e3), bar(1, 109.6, 109.8, 109.2, 109.3, Q=4e3),
             bar(2, 109.3, 110.2, 109.3, 110.1, Q=6e3), bar(3, 110.1, 111.5, 110.0, 111.4, Q=final_q)]
 
@@ -45,7 +47,8 @@ def test_ltf_trigger_bull_bear_and_flow():
     trig = ltf_trigger(bull_ltf(), +1, CUR15, FIVE)
     assert trig and trig['entry'] == 111.4 and trig['extreme'] == 109.2 and trig['time'] == CUR15 + 4 * FIVE
     assert ltf_trigger(bull_ltf()[:-1], +1, CUR15, FIVE) is None
-    assert ltf_trigger(bull_ltf(final_q=1e3), +1, CUR15, FIVE) is None     # break on net selling
+    sell = ltf_trigger(bull_ltf(final_q=1e3), +1, CUR15, FIVE)     # eng-119: flow journaled, not required
+    assert sell and sell['shift_flow'] < 0
     bear = [[c[0], 220 - c[1], 220 - c[3], 220 - c[2], 220 - c[4], c[5], c[5] - c[6]] for c in bull_ltf()]
     tb = ltf_trigger(bear, -1, CUR15, FIVE)
     assert tb and abs(tb['entry'] - (220 - 111.4)) < 1e-9 and abs(tb['extreme'] - (220 - 109.2)) < 1e-9

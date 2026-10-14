@@ -214,7 +214,7 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
     """
     cfg = CONFIG.levels
     # 4 x the lookback before the zone: room for the swing the shift breaks (the zone's own candles decide the extreme)
-    usable = [c for c in candles if c[0] + interval_ms > since_ms - 4 * cfg.ltf_break_lookback * interval_ms]
+    usable = list(candles)          # eng-119: the whole history given (the 4 x 5-candle window was ours)
     zone_idx = [i for i, c in enumerate(usable) if c[0] + interval_ms > since_ms]
     if len(zone_idx) < 2:
         return None
@@ -229,7 +229,7 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
     # ICT's market structure shift: the break of the LAST swing (a 2/2 fractal) the move made before the extreme - the
     # lower high a long breaks; without one in the lookback, the high / low of the ltf_break_lookback candles up to it
     level = None
-    for j in range(extreme_idx - 2, max(1, extreme_idx - 4 * cfg.ltf_break_lookback) - 1, -1):
+    for j in range(extreme_idx - 2, 1, -1):
         if j + 2 >= len(usable) or j - 2 < 0:
             continue
         w = usable[j - 2:j + 3]
@@ -240,19 +240,18 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
             level = usable[j][3]
             break
     if level is None:
-        structure = usable[max(0, extreme_idx - cfg.ltf_break_lookback):extreme_idx + 1]
-        level = max(c[2] for c in structure) if direction > 0 else min(c[3] for c in structure)
+        return None                 # eng-119: no swing, no structure shift (the 5-candle fallback was ours)
 
     for i in range(extreme_idx + 1, len(usable)):
         close = usable[i][4]
         if direction * (close - level) <= 0:
             continue
         # The flow of the shift itself: candles after the extreme (the selling INTO a low is what was absorbed there)
+        # eng-119: the taker-flow requirement was ours (ICT's shift is the close beyond the swing) - journaled only
         recent = usable[max(extreme_idx + 1, i - cfg.ltf_flow_candles + 1):i + 1]
         flow = sum(2 * c[6] - c[5] for c in recent)
-        if direction * flow > 0:
-            return {'entry': close, 'extreme': extreme, 'time': usable[i][0] + interval_ms,
-                    'extreme_time': usable[extreme_idx][0]}
+        return {'entry': close, 'extreme': extreme, 'time': usable[i][0] + interval_ms,
+                'extreme_time': usable[extreme_idx][0], 'shift_flow': flow}
     return None
 
 
