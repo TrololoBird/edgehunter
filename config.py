@@ -752,6 +752,9 @@ class StrategiesConfig:
     oi_build_oi_1h: float = 0.05
     oi_build_price_1h: float = 0.02
     oi_build_trail: float = 0.02
+    # eng-90: not extended (<= this many ATR(15m) above the day's VWAP); the trail / stop in ATR(5m), >= oi_build_trail
+    oi_build_max_vwap_atr: float = 2.0
+    oi_build_trail_atr: float = 3.0
     oi_build_ttl: tuple = (900, 900, 4 * 3600)
     # ICT optimal trade entry for the continuations (trend / momentum): the pullback into 0.62-0.79 of a leg that left
     # a fair value gap (displacement); invalid beyond the leg's start (ICT: "past the 100% level")
@@ -954,7 +957,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-88"
+    logic_version: str = "eng-90"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

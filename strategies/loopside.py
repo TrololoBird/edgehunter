@@ -249,7 +249,12 @@ class LoopDetectors:
             return None
         self._oi_build_checked[symbol] = minute
         from strategies.oi_build import oi_build
-        found = oi_build(self.minutes_of(symbol), list(md.oi_samples), now_ms)
+        # eng-90: the closed 15m candles (ATR, the PDH close) and the previous day's high (the last closed daily
+        # candle, only when it is yesterday's)
+        day_start = int(now_ms // 86_400_000 * 86_400_000)
+        pd = md.d1[-1] if getattr(md, 'd1', None) else None
+        pdh = pd[2] if pd and int(pd[0]) + 86_400_000 == day_start else None
+        found = oi_build(self.minutes_of(symbol), list(md.oi_samples), now_ms, self.m15_of(symbol), pdh)
         if found is None:
             return None
         key = (symbol, now_ms // 3_600_000)
