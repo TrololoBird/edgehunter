@@ -633,6 +633,12 @@ class StrategiesConfig:
     # below the costs: journaled, no card
     # eng-88: OI SIGNAL LONG and PUMP START off - after the signal the coin lagged the market by 0.8% at 15 minutes and
     # 1.5-2.4% at 1-2h, in rising and falling markets alike (minute marks 11-13.10), and lost on the demo
+    # eng-101, shadow mode: filters / detector confirmations with no proven effect on either journal (server
+    # 11-14.10, laptop 30.09-11.10) no longer block - the entry is taken and journaled with shadow_veto = the
+    # reasons that WOULD have vetoed it, so card_r of shadowed vs clean entries measures each rule on live trades.
+    # Kept blocking: crowded, same_leg, low_rr, macro_event, event_risk, perp_led, killzone / session, disabled.
+    shadow_vetoes: tuple = ('against_bias', 'against_trend', 'not_in_pool', 'h4_against', 'regime_flat',
+                            'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation', 'no_*')
     disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'OI SIGNAL LONG', 'PUMP START')
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
@@ -984,7 +990,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-100"
+    logic_version: str = "eng-101"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

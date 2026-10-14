@@ -130,6 +130,22 @@ def _jsonable(v) -> bool:
     return False
 
 
+_REAL_NO = ('no_data', 'no_leg', 'no_room', 'no_bias', 'no_anchor')
+
+
+def shadow_veto(sig: Dict, reason: Optional[str]) -> Optional[str]:
+    """eng-101: a reason in strategies.shadow_vetoes does not block - it is added to sig['shadow_veto'] and None is
+    returned ('no_*' covers the detectors' required confirmations, not the structural no_data / no_leg ...)."""
+    if not reason:
+        return reason
+    names = CONFIG.strategies.shadow_vetoes
+    if reason in names or ('no_*' in names and reason.startswith('no_') and reason not in _REAL_NO):
+        have = set(filter(None, (sig.get('shadow_veto') or '').split(',')))
+        sig['shadow_veto'] = ','.join(sorted(have | {reason}))
+        return None
+    return reason
+
+
 def version_no(v: Optional[str]) -> int:
     """'eng-57' -> 57 (0 for anything else): logic versions compare by number, never as strings."""
     try:
@@ -337,7 +353,9 @@ class SignalBook:
             if strategy is not None:
                 self._recent_setups[(symbol, direction)] = now
                 directional.append((direction, sig))
-                reason = veto_reason(group_key, sig) or strategy.context_veto(sig, direction)
+                sig.pop('shadow_veto', None)
+                sig['card_veto'] = None
+                reason = shadow_veto(sig, veto_reason(group_key, sig)) or shadow_veto(sig, strategy.context_veto(sig, direction))
                 if reason is None and direction > 0 and sig.get('event_risk'):
                     # eng-53: no longs on a coin Binance tagged for monitoring / is delisting (documented -4..-34%)
                     reason = 'event_risk'
@@ -347,7 +365,7 @@ class SignalBook:
                     reason = 'disabled'
                 pool_of = getattr(self, 'pool_of', None)
                 if reason is None and pool_of is not None and not pool_of(strategy.name, symbol):
-                    reason = 'not_in_pool'
+                    reason = shadow_veto(sig, 'not_in_pool')
                 if reason:
                     sig['card_veto'] = reason
                     self.vetoed.append((symbol, group_key, reason, sig))
@@ -930,7 +948,7 @@ class SignalBook:
             if CONFIG.strategies.smt_session:
                 confirms['killzone'] = in_session(trigger['time'], tuple(CONFIG.strategies.smt_session))
         if reason is None:
-            reason = confirm.missing(s.mode, confirms)
+            reason = shadow_veto(s.sig, confirm.missing(s.mode, confirms))
         if reason is None and ict_gated(s.mode, s.group_key)                 and not in_session(trigger['time'], tuple(CONFIG.strategies.smt_session)):
             reason = 'killzone'            # eng-58: ICT trades its models inside the London / New York kill zones only
         if reason is None:
@@ -974,7 +992,7 @@ class SignalBook:
         # a reversal's confirmation follows the reversed leg's end: that is its extreme
         extreme_ms = int(anchor['end_ts']) if anchor.get('end_ts') and s.mode in confirm.REVERSALS else None
         confirms = confirm_of(s.symbol, s.mode, s.direction, since, now_ms, extreme_ms) if confirm_of else {}
-        reason = confirm.missing(s.mode, confirms)
+        reason = shadow_veto(s.sig, confirm.missing(s.mode, confirms))
         if reason is None and CONFIG.levels.veto_low_rr and levels.get('low_rr'):
             reason = 'low_rr'
         return self._enter(s, levels, now_ms, reason, confirms)
@@ -999,7 +1017,7 @@ class SignalBook:
                 and (hb.get('coin') or {}).get('h4') == -s.direction:
             # eng-84, the owner's review of the live trades: longs bought inside a falling 4h trend (BB W, AUCTION) -
             # an intraday entry also needs the 4h trend not against it (the daily bias alone updates once a day)
-            reason = 'h4_against'
+            reason = shadow_veto(s.sig, 'h4_against')
         adx4 = (hb.get('coin') or {}).get('adx4')
         if reason is None and adx4 is not None:
             # eng-84, market regime by ADX(14) of 4h (Wilder: > 25 trend, < 25 range): momentum / trend methods only in
@@ -1010,15 +1028,16 @@ class SignalBook:
                 reason = 'regime_trend'
             elif s.mode == 'connors' and adx4 >= 35:
                 reason = 'regime_trend'
+            reason = shadow_veto(s.sig, reason)
         prof, regime_veto = profiles.select(s.mode, (confirms or {}).get('_regime'))
         if reason is None and regime_veto:
-            reason = regime_veto
+            reason = shadow_veto(s.sig, regime_veto)
         if reason is None and not prof:
             for f in profiles.overlay_filters(s.mode, 'plan'):
                 if f == 'alts_with':
                     mkt, btc = s.sig.get('mkt_4h'), s.sig.get('btc_4h')
                     if mkt is not None and btc is not None and s.direction * (mkt - btc) <= 0:
-                        reason = 'alts_vs_btc'
+                        reason = shadow_veto(s.sig, 'alts_vs_btc')
         if reason is None and prof and confirms is not None and not confirms.get('_ind') and prof.get('filters'):
             # no indicator panel (a REST failure / no history): missing data is no veto (the project's rule)
             logger.warning(f"Profile filters of {s.symbol} {s.group_key} skipped: no indicator panel")
@@ -1029,7 +1048,7 @@ class SignalBook:
                                    None, (ind.get('1h') or {}).get('atr_high'))
             missing_flags = [f for f in prof.get('filters') or [] if not flags.get(f)]
             if missing_flags:
-                reason = 'profile'
+                reason = shadow_veto(s.sig, 'profile')
                 s.veto_notes = (s.veto_notes + [f"profile: not {', '.join(missing_flags)}"])[-5:]
         of = confirms.get('orderflow') or None
         if reason:

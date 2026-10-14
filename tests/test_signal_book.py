@@ -93,6 +93,8 @@ def test_trigger_without_orderflow_is_vetoed_and_card_keeps_waiting(rally_frame,
     import config as config_mod
     monkeypatch.setattr(config_mod.CONFIG, 'orderflow',
                         dataclasses.replace(config_mod.CONFIG.orderflow, require_orderflow_confirm=True))
+    monkeypatch.setattr(config_mod.CONFIG, 'strategies',
+                        dataclasses.replace(config_mod.CONFIG.strategies, shadow_vetoes=()))
     _shift_entry(monkeypatch)
     none = lambda sym, strategy, d, since, until, extreme: {'flow': True, 'oi': True, 'orderflow': False}
     book, s, price, candles, pf, cf = _book_in_zone(rally_frame, none)
@@ -100,6 +102,20 @@ def test_trigger_without_orderflow_is_vetoed_and_card_keeps_waiting(rally_frame,
     _, entries = book.update([], Frames(rally_frame), pf, cf, now, confirm_of=none)
     assert len(entries) == 1 and entries[0].vetoed == 'no_orderflow' and entries[0] is not s
     assert s.status == 'ZONE' and s.entered_at is None and s.zone_since_ms == CUR15 + 4 * FIVE and s.vetoed_triggers == 1
+
+
+def test_shadow_veto_enters_and_journals_the_reason(rally_frame, monkeypatch):
+    import dataclasses
+    import config as config_mod
+    monkeypatch.setattr(config_mod.CONFIG, 'orderflow',
+                        dataclasses.replace(config_mod.CONFIG.orderflow, require_orderflow_confirm=True))
+    _shift_entry(monkeypatch)
+    none = lambda sym, strategy, d, since, until, extreme: {'flow': True, 'oi': True, 'orderflow': False}
+    book, s, price, candles, pf, cf = _book_in_zone(rally_frame, none)
+    now = CUR15 / 1000 + 4 * 300 + 5
+    _, entries = book.update([], Frames(rally_frame), pf, cf, now, confirm_of=none)
+    # the confirmation no longer blocks (the next real rule, the fixture's low_rr, decides)
+    assert len(entries) == 1 and entries[0].vetoed != 'no_orderflow' and 'no_orderflow' in s.sig['shadow_veto']
 
 
 def test_perp_led_impulse_is_vetoed(rally_frame):

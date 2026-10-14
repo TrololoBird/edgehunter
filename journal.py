@@ -131,6 +131,8 @@ EXTRA_COLUMNS = {
     'flow_depth_5m': 'REAL',
     # eng-100: the market regime at the signal - BTC's 7-day return over closed daily candles
     'btc_mom_7d': 'REAL',
+    # eng-101: the shadowed vetoes (strategies.shadow_vetoes) that would have blocked this row's setup / entry
+    'shadow_veto': 'TEXT',
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
@@ -429,6 +431,7 @@ def _features(sig: Dict) -> Dict:
     out['cluster'] = int(sig.get('cluster') or 0)
     out['sec_into_candle'] = int(sig.get('sec_into_quarter') or 0)
     out['btc_mom_7d'] = sig.get('btc_mom_7d')
+    out['shadow_veto'] = sig.get('shadow_veto')
     for col in ('oi_chg_15m', 'oi_chg_60m', 'rush_n_10s', 'rush_n_30s', 'rush_net_30s', 'rush_usd_30s', 'rush_z_30s',
                 'flow_depth_5m'):
         v = sig.get(col)
@@ -531,7 +534,7 @@ class SignalJournal:
                 self._last_logged[(symbol, family)] = (now_ms, rank)
                 row = self._base_row(now_ms, symbol, kind, group_key, direction, price, sig)
                 # card_veto: the setup did not become a card (no qualifying leg, its leg already played)
-                row['vetoed'] = veto_reason(group_key, sig) or sig.get('card_veto')
+                row['vetoed'] = sig.get('card_veto') if 'card_veto' in sig else veto_reason(group_key, sig)
                 row['strategy'] = _strategy_of(group_key)
                 if kind == 'setup':
                     row['reason'] = sig.get('setup_note')
