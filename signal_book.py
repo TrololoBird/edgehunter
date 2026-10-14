@@ -1020,8 +1020,8 @@ class SignalBook:
         if reason is None:
             # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py)
             key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
-            reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
-                                   (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/'))
+            reason = shadow_veto(s.sig, htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
+                                                      (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/')))
         if reason is None and s.mode not in htf_bias.EXEMPT and s.mode not in htf_bias.DAILY \
                 and (hb.get('coin') or {}).get('h4') == -s.direction:
             # eng-84, the owner's review of the live trades: longs bought inside a falling 4h trend (BB W, AUCTION) -

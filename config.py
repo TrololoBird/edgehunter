@@ -638,7 +638,8 @@ class StrategiesConfig:
     # reasons that WOULD have vetoed it, so card_r of shadowed vs clean entries measures each rule on live trades.
     # Kept blocking: crowded, same_leg, low_rr, macro_event, event_risk, perp_led, killzone / session, disabled.
     shadow_vetoes: tuple = ('against_bias', 'against_trend', 'not_in_pool', 'h4_against', 'regime_flat',
-                            'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation', 'no_*')
+                            'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation', 'no_*',
+                            'htf_bias', 'htf_conflict')
     disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'OI SIGNAL LONG', 'PUMP START',
                              # eng-103: the Turtles (exit on the 20-day low: weeks-long trades giving back the run;
                              # live 5 of 5 closed lost, -1.28R) do not fit a bot of hour-long trades
