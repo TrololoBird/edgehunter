@@ -850,8 +850,17 @@ class SignalBook:
             return None
         near_edge = plan['zone_hi'] if d > 0 else plan['zone_lo']
         in_zone = d * (price - near_edge) <= 0
+        since_ms = now_ms // 60_000 * 60_000
+        if s.status != 'ZONE' and not in_zone and plan.get('trigger') == 'touch' and candles_of:
+            # eng-102: a resting limit (the demo's on BingX too) fills on a WICK into the line between two scans: the
+            # final 1m candles since the card's plan decide, not only the price at the scan
+            start = int((s.pending_since or s.created) * 1000)
+            hit = next((c for c in candles_of(s.symbol)
+                        if c[0] + MINUTE_MS > start and (c[3] <= near_edge if d > 0 else c[2] >= near_edge)), None)
+            if hit is not None:
+                in_zone, since_ms = True, int(hit[0])
         if s.status != 'ZONE' and in_zone:
-            s.status, s.zone_since_ms = 'ZONE', now_ms // 60_000 * 60_000
+            s.status, s.zone_since_ms = 'ZONE', since_ms
             self.events.append((s, 'ZONE'))
         elif s.status != 'ZONE':
             s.status = 'WATCH'

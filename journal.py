@@ -845,10 +845,20 @@ class SignalJournal:
         since = int((time.time() - 30 * 86400) * 1000)
         with self._lock:
             rows = self.conn.execute(
-                "SELECT strategy, outcome FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND outcome IN "
-                "('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL", (since,)).fetchall()
+                "SELECT strategy, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
+                "outcome IN ('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL AND tp1 IS NOT NULL AND "
+                "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss')",
+                (since,)).fetchall()
+        # eng-102: only entries WITH a TP1 (a target-less system - Bollinger / ORB / breakout rows with tp1 NULL - only
+        # ever ends 'SL' here: Bollinger measured p 0% and every entry was vetoed 'expectancy -1.00R') and of the
+        # current logic (keep_waiting_from on: the older versions had other targets / stops); the shadow ALTERNATIVE
+        # entries (flow_entry / weak_mss: never traded, TP1 at 0.03-0.4 R) made sweep's p 97%
+        from signal_book import version_no
+        floor = version_no(CONFIG.journal.keep_waiting_from)
         counts: Dict[str, List[int]] = {}
-        for strategy, outcome in rows:
+        for strategy, outcome, lv in rows:
+            if version_no(lv) < floor:
+                continue
             c = counts.setdefault(strategy, [0, 0])
             c[0 if outcome == 'SL' else 1] += 1
         rates = {s: (hit / (hit + sl), hit + sl) for s, (sl, hit) in counts.items() if hit + sl >= 30}
