@@ -56,6 +56,17 @@ def kind_of_label(label: str, tf: str) -> str:
     return 'swing_1h' if tf in ('1h', '4h') or '1h' in s else 'swing_15m'
 
 
+def stop_too_far(plan: Dict, entry: float, stop: float) -> Optional[str]:
+    """eng-91: a stop farther than levels.max_stop_pct from the entry is no trade (the 1.5 ATR(4h) pad of a coin whose 4h
+    ATR a pump inflated put W's stop 48% away, PONS' 18% - live). Systems whose wide stop IS the method (the Turtles' 2N,
+    Connors) are exempt."""
+    cap = CONFIG.levels.max_stop_pct
+    if not cap or not entry or plan.get('strategy') in ('breakout', 'connors'):
+        return None
+    dist = abs(entry - stop) / entry
+    return f"stop {dist:.1%} > {cap:.0%} from the entry" if dist > cap else None
+
+
 def stop_floor(atr: float, recent_atr: Optional[float]) -> float:
     """Minimum stop distance: min_stop_atr x the larger of ATR14 and the last hour's ATR (ATR14 lags a waking market)."""
     return CONFIG.levels.min_stop_atr * max(atr, recent_atr or 0.0)
@@ -209,6 +220,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     blended = sum(b for b in blend if b is not None) / 3 if any(b is not None for b in blend) else None
     if risk < CONFIG.levels.cost_guard * fee:
         reason = reason or 'costs >= 1/3 of the risk'
+    reason = reason or stop_too_far(plan, entry, stop)
     hit = HIT_RATE.get(plan.get('strategy'))
     if reason is None:
         if hit and real[0]:
@@ -518,6 +530,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         # cost (live ETH 2026-10-03: -2.2R in the demo); target-less plans skipped finish_levels and with it the guard
         fee = cost_of(entry, plan.get('volume_24h'))
         reason = 'costs >= 1/3 of the risk' if risk < CONFIG.levels.cost_guard * fee else None
+        reason = reason or stop_too_far(plan, entry, stop)
         out = {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
                'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
                'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,

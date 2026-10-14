@@ -405,6 +405,8 @@ class LevelsConfig:
     # ... and never closer than this many 15m ATRs to the entry: live, stops < 1 ATR (the low of 2-3 5m candles)
     # were hit on 8 of 10 entries while their paper R:R read 9-23
     min_stop_atr: float = 1.0
+    # eng-91: no trade whose stop is farther than this from the entry (the Turtles / Connors exempt; geometry.stop_too_far)
+    max_stop_pct: float = 0.10
     # eng-69: the stop sits beyond its structure by max(measured pierce, this x ATR of the structure timeframe)
     zone_buffer_atr: float = 1.5
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
@@ -959,7 +961,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-91"
+    logic_version: str = "eng-92"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
