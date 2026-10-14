@@ -1326,7 +1326,11 @@ class Scanner:
 
     def _levels_of(self, symbol: str) -> Optional[List[RawLevel]]:
         # The full map of a card coin (1h history, liquidation estimates), else the quick map of its 15m candles
-        levels = (self._level_raw.get(symbol) or self._quick_raw.get(symbol, [])) + self._live_levels(symbol)
+        # eng-105: without order-book WALLS - of ~1000 walls tracked on BTC / ETH / SOL / XRP / BNB in 10 minutes ~800
+        # were pulled, ~170 shrank, 2 were traded through and NONE was filled (30-60 s lives): no target / level for a
+        # plan (the chart still draws them)
+        levels = (self._level_raw.get(symbol) or self._quick_raw.get(symbol, [])) + \
+            [l for l in self._live_levels(symbol) if l.kind != 'wall']
         return levels or None
 
     async def coin_detail(self, symbol: str) -> Dict:
