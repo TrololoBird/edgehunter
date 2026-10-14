@@ -1468,6 +1468,11 @@ class DataFetcher:
                                htf.closed(list(m.w1), 7 * 86_400_000, now_ms))
                 out[tag] = htf.describe(st, htf.bias_of(st))
                 out[tag]['bias_daily'] = htf.bias_of(st, daily_method=True)     # the tide of daily methods
+                # eng-104: the one regime on the trades' horizon (strategies/regime.py)
+                from strategies import regime as rg
+                out[tag]['rg'] = rg.state(htf.closed(list(m.h1), 3_600_000, now_ms),
+                                          htf.closed(list(m.h4), 14_400_000, now_ms),
+                                          htf.closed(list(m.d1), 86_400_000, now_ms), m.last_price)
                 if tag == 'coin':
                     out['range_mid'] = htf.range_mid(st)
             return out

@@ -1022,6 +1022,12 @@ class SignalBook:
             key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
             reason = shadow_veto(s.sig, htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
                                                       (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/')))
+        rg_state = (hb.get('coin') or {}).get('rg')
+        if rg_state:
+            from strategies import regime as rg
+            s.sig['regime2'] = rg.label(rg_state)
+            if reason is None:
+                reason = shadow_veto(s.sig, rg.verdict(rg_state, s.mode, s.direction))
         if reason is None and s.mode not in htf_bias.EXEMPT and s.mode not in htf_bias.DAILY \
                 and (hb.get('coin') or {}).get('h4') == -s.direction:
             # eng-84, the owner's review of the live trades: longs bought inside a falling 4h trend (BB W, AUCTION) -
