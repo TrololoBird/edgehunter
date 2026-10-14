@@ -139,7 +139,11 @@ class SilverBulletStrategy(Strategy):
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
-                         exit={'stop': ['ref', 0.0], 'tp': ['level', sig['sb_target'], 1.0, None], 'atr': atr,
-                               'stop_src': "beyond the raid's extreme", 'tp_src': "the day's draw on liquidity (PDH / PDL)"},
+                         # eng-96: the eng-84 3R cap did not reach the trade (system_levels takes TP1 from exit['tp'],
+                         # the same as po3's): beyond 3R / on the wrong side the map's TP1 is the first target
+                         exit={'stop': ['ref', 0.0], 'atr': atr, 'stop_src': "beyond the raid's extreme",
+                               'tp': ['level', sig['sb_target'], 1.0, None] if first is not None else ['map', 1.0],
+                               'tp_src': "the day's draw on liquidity (PDH / PDL)" if first is not None
+                               else 'the nearest opposite liquidity'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
                          key=(sig['anchor_ts'], d))
