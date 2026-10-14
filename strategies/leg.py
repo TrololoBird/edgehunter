@@ -148,9 +148,10 @@ class LegContinuation(Strategy):
         # targets spaced in the ATR of the leg's own timeframe (15m ATR steps put TP1 inside a 1h / 4h leg's noise)
         targets, sources = select_targets(zones, worst_entry, d, impulse['atr'], 'extension', extensions, 'fib ext')
         zone = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
-        if stop_ref is None:
-            # the limit's stop must be known when it rests (the demo places both): beyond the zone's deep edge
-            stop_ref, stop_ref_src = (zone[0] if d > 0 else zone[1]), 'beyond the OTE zone'
+        # eng-117, the sources on ICT's OTE (LuxAlgo, ChartingLens: "stop beyond the swing that anchors the measurement"
+        # = the 100% level, the impulse's start): the stop is beyond the leg's start, not the OTE zone's deep edge /
+        # a structural zone inside it (ours, tighter)
+        stop_ref, stop_ref_src = impulse['start'], "beyond the impulse's start (the 100% level, ICT OTE)"
         tf = impulse['tf']
         return base_plan(x, self.name, _leg_anchor(impulse), tf, trigger_minutes=TRIGGER_MINUTES.get(tf, 5),
                          leg_atr=impulse['atr'], entry='pullback', zone_lo=zone[0], zone_hi=zone[1], zone_src=zone_src,
