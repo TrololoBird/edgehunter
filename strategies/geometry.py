@@ -630,8 +630,13 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     else:
         map_fill(zones, prices, labels, entry, direction, gap)
         while len(prices) < 3:
-            prices.append(prices[-1] + direction * gap)
-            labels.append('ATR step')
+            if exit.get('no_atr_steps'):
+                # eng-116: no level beyond = no further target (an ATR step has no source): the last one repeats
+                prices.append(prices[-1])
+                labels.append(labels[-1])
+            else:
+                prices.append(prices[-1] + direction * gap)
+                labels.append('ATR step')
     # the R:R decision is finish_levels' alone (the blended R:R / expectancy against the method's min_rr); the exit
     # spec's own per-target minimum vetoed W-bottoms whose blended R:R passed (live QNT: TP1 0.71, blended 1.37)
     return finish_levels(plan, entry, stop, prices[:3], labels[:3], direction, sl_src)

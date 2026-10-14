@@ -200,14 +200,17 @@ class TrendlineStrategy(_System):
         # eng-79: the stop beyond the last confirmed 1h pivot (the line's own timeframe), 0.1 x ATR(1h) beyond it
         now_ms = x.minutes[-1][0] + MINUTE_MS
         h1 = [b for b in (x.h1 or []) if b[0] + 3_600_000 <= now_ms]
-        trs = [max(b[2] - b[3], abs(b[2] - p[4]), abs(b[3] - p[4])) for p, b in zip(h1, h1[1:])][-14:]
-        pad = 0.1 * (sum(trs) / len(trs)) if trs else 0.0
+        # eng-116: beyond the pivot by the coin's measured pierce of a 1h swing (pierce.py, p80 as the other structural
+        # stops) - the 0.1 x ATR(1h) was ours
+        from pierce import overshoot
+        pad = overshoot(x.symbol, 'swing_1h', sig['anchor_level']) or 0.0
         stop = _pivot_stop(h1[-120:], d, sig['anchor_level'], pad)          # beyond the line (the retest entry)
         if stop is None:
             return None
         # classic trendline break (Edwards & Magee): the targets are the next support / resistance levels (the map), not
         # the line's first anchor (his robot's target, kept in the setup note)
-        exit = {'stop': ['price', stop], 'stop_src': '1h structure beyond the line', 'tp': ['map', 1.0], 'atr': x.atr}
+        exit = {'stop': ['price', stop], 'stop_src': '1h structure beyond the line + measured pierce', 'tp': ['map', 1.0],
+                'atr': x.atr, 'no_atr_steps': True}
         plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
         if plan and not plan.get('skip'):
             # eng-58, practice (Edwards & Magee; break -> retest -> move): the entry is a resting limit at the broken
