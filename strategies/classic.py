@@ -273,20 +273,23 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
             fired.add((symbol, open_ms))           # the range is not known (a restart inside it): no ORB this session
             continue
         hi, lo = max(c[2] for c in rng), min(c[3] for c in rng)
-        last_ts = minutes[-1][0] if minutes else 0
-        after = [c for c in minutes if open_ms + n * 60_000 <= c[0] < last_ts]
-        if any(c[2] > hi or c[3] < lo for c in after):
-            fired.add((symbol, open_ms))           # the range already broke earlier: the first break only
+        # eng-105, the owner: a break is a CLOSED 5m candle beyond the range, not a wick / tick through it (Crabel's
+        # resting stop orders took every 1m poke through the level that came back: demo 6 trades, 1 winner, -4.0R)
+        from levels import resample
+        last_end = int(minutes[-1][0]) + 60_000 if minutes else now_ms
+        bars = [b for b in resample([c for c in minutes if c[0] >= open_ms + n * 60_000], 5, last_end)]
+        closes = [(b, 1 if b[4] > hi else -1 if b[4] < lo else 0) for b in bars]
+        broke = [(b, s) for b, s in closes if s]
+        if not broke:
             continue
-        if price_hi > hi:
-            side, level, other = 1, hi, lo
-        elif price_lo < lo:
-            side, level, other = -1, lo, hi
-        else:
+        b, side = broke[0]
+        if b is not bars[-1] or bars[-1][0] + 300_000 < last_end - 60_000:
+            fired.add((symbol, open_ms))           # the first 5m close beyond was earlier: the first break only
             continue
+        level, other = (hi, lo) if side > 0 else (lo, hi)
         fired.add((symbol, open_ms))
         return {'setup': 'ORB UP' if side > 0 else 'ORB DOWN', 'direction': side,
-                'setup_note': f"{name} session: broke its {n}m opening range {lo:.6g}-{hi:.6g} "
+                'setup_note': f"{name} session: a 5m close {b[4]:.6g} beyond its {n}m opening range {lo:.6g}-{hi:.6g} "
                               f"{'up' if side > 0 else 'down'}, out at the session's close",
                 'anchor_level': level, 'anchor_extreme': other, 'anchor_label': f'{name} opening range',
                 'anchor_ts': open_ms, 'anchor_close': level, 'orb_hi': hi, 'orb_lo': lo, 'orb_session': name,
