@@ -298,7 +298,9 @@ class FlowStore:
         row = self.rows.get(symbol)
         if row is None:
             return out
-        now_sec = int(now_sec or time.time())
+        # eng-102: the window ends on a minute boundary - the 1m candles are keyed by their open minute, and an
+        # unaligned start found no close at all (lead_venue was set on 101 of 7867 rows)
+        now_sec = int(now_sec or time.time()) // 60 * 60
         start = now_sec - window
         buy = np.zeros(window)
         sell = np.zeros(window)
@@ -345,7 +347,9 @@ class FlowStore:
         best = None
         for venue, net in per_venue.items():
             f = net[:window // 60 * 60].reshape(-1, 60).sum(axis=1)
-            x, y = f[:-1], rets[1:]
+            # flow of minute k vs the return of minute k + 1 (rets[k] is already the minute after t's candle: rets[1:]
+            # compared it with the return two minutes later)
+            x, y = f[:-1], rets[:-1]
             ok = ~np.isnan(y) & (x != 0)
             if ok.sum() < 20 or x[ok].std() == 0 or y[ok].std() == 0:
                 continue
