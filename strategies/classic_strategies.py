@@ -26,8 +26,10 @@ class ValueAreaStrategy(_System):
             return None
         exit = {'stop': ['ref', 0.0], 'tp': ['level', sig['va_far'], 1.0, None], 'atr': x.atr,
                 'stop_src': 'beyond the value area edge', 'tp_src': "value area far edge (Dalton's 80% rule)"}
+        # eng-94: the stop beyond the edge price re-entered through (Dalton: back outside value = the rule failed), not
+        # beyond the whole excursion outside it - the system stop took the farther of the two (the day's low / high)
         return _confirm_plan(x, self.name, '15m', exit, "back inside yesterday's value area for two 30m periods",
-                             stop_ref=sig['anchor_level'])
+                             stop_ref=sig['anchor_level'], stop_ref_only=True)
 
 
 class OrbStrategy(_System):

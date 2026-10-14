@@ -389,7 +389,7 @@ def exit_stop(exit: Dict, plan: Dict, entry: float, extreme: Optional[float], di
         return entry - direction * value * atr, f"{value:g} ATR from the entry"
     if kind == 'price':
         return value, exit.get('stop_src', 'the system stop')
-    refs = [r for r in (plan.get('stop_ref'), extreme) if r is not None]
+    refs = [r for r in (plan.get('stop_ref'), None if plan.get('stop_ref_only') else extreme) if r is not None]
     ref = (min(refs) if direction > 0 else max(refs)) if refs else entry
     return ref - direction * value * atr, exit.get('stop_src', 'beyond the extreme') + (f" + {value:g} ATR" if value else '')
 
@@ -567,7 +567,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     elif exit['stop'][0] == 'ref' and overshoot(plan.get('symbol'), 'swing_15m', entry) is not None:
         # the system's own structural reference (beyond the sweep / the zone / the test), but the buffer beyond it is
         # the measured pierce of this coin (live: GRT's demand stop sat 0.35% under the zone, inside the usual pierce)
-        refs = [r for r in (plan.get('stop_ref'), extreme) if r is not None]
+        refs = [r for r in (plan.get('stop_ref'), None if plan.get('stop_ref_only') else extreme) if r is not None]
         ref = (min(refs) if direction > 0 else max(refs)) if refs else entry
         base, src = stop_beyond(zones, ref, entry, direction, atr, exit.get('stop_src', 'beyond the extreme'),
                                 plan.get('symbol'))

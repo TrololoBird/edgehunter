@@ -137,8 +137,12 @@ class Po3Strategy(Strategy):
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='PO3 FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
-                         exit={'stop': ['ref', 0.0], 'tp': ['level', sig['po3_target'], 1.0, None], 'atr': atr,
+                         # eng-94: the eng-84 cap did not reach the trade - with an exit spec system_levels takes TP1
+                         # from exit['tp'], so the Asian range's far side stayed TP1 however far; beyond FIRST_MAX_R
+                         # the map's TP1 (the nearest draw on liquidity, `targets` above) is the first target
+                         exit={'stop': ['ref', 0.0], 'atr': atr,
+                               'tp': ['level', sig['po3_target'], 1.0, None] if first is not None else ['map', 1.0],
                                'stop_src': "beyond the Judas swing's extreme",
-                               'tp_src': "the Asian range's other side"},
+                               'tp_src': "the Asian range's other side" if first is not None else 'the nearest liquidity'},
                          intent='draw_liquidity', targets=targets, target_src=sources, zones=zones,
                          key=(sig['anchor_ts'], d))
