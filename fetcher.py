@@ -862,7 +862,7 @@ class DataFetcher:
 
     async def fetch_top_symbols(self) -> List[str]:
         """The universe: the candidates' data-complete subset (fetch_candidates -> select_universe)."""
-        return self.select_universe(await self.fetch_candidates())
+        return self.select_universe(await self.fetch_candidates(), current=set(self.markets))
 
     async def fetch_candidates(self) -> List[str]:
         """
@@ -926,7 +926,7 @@ class DataFetcher:
                     f"24h volume (excluded {excluded} stock / pre-IPO contracts)")
         return [s for s, _ in usdt_pairs]
 
-    def select_universe(self, candidates: List[str]) -> List[str]:
+    def select_universe(self, candidates: List[str], current: Optional[set] = None) -> List[str]:
         """
         The most liquid candidates with complete data (CONFIG.exchange): a Binance spot pair, enough other futures
         venues, enough history, a tradable spread; at most max_pairs. Venue coverage comes from every venue's
@@ -940,6 +940,12 @@ class DataFetcher:
         selected: List[str] = []
         volume = getattr(self, 'candidate_volume', {})
         small_pool: List[str] = []
+        # eng-102, hysteresis: a coin already in the universe stays while it passes the rules and ranks within 125% of
+        # the limit - coins at the edge (WIF, SYRUP, NIL) swapped in and out every hour and each swap restarted EVERY
+        # stream (21 restarts a day: flow gaps, incomplete 15m candles, a backfill of the whole universe)
+        current = current or set()
+        spare = int(cfg.max_pairs * 1.25)
+        reserve: List[str] = []
         for s in candidates:
             if s not in markets:
                 continue
@@ -964,15 +970,20 @@ class DataFetcher:
             if reason:
                 excluded[reason] = excluded.get(reason, 0) + 1
                 continue
-            selected.append(s)
-            if len(selected) >= cfg.max_pairs:
+            if len(selected) < cfg.max_pairs:
+                selected.append(s)
+            elif s in current:
+                reserve.append(s)
+            if len(selected) + len(reserve) >= spare:
                 break
+        selected += reserve
         # eng-99: the small caps ($1-10M): listed long enough and a tradable spread, no complete-data rule; only the
         # small-cap strategies trade them (pools.allows)
         small: List[str] = []
+        small_spare = int(cfg.smallcap_max * 1.25)
         for s in small_pool:
-            if len(small) >= cfg.smallcap_max:
-                break
+            if len(small) >= small_spare or (len(small) >= cfg.smallcap_max and s not in current):
+                continue
             listed = int((markets[s].get('info') or {}).get('onboardDate') or 0)
             spread = self.spreads.get(s)
             if listed and now_ms - listed < cfg.min_listing_days * 86_400_000:
