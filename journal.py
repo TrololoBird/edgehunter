@@ -641,8 +641,10 @@ class SignalJournal:
             if tracked.entered_at and tracked.final_r is not None:
                 # eng-86: the card's own exit on its ENTRY row too - a target-less method (band / session / channel exit)
                 # left the entry row 'OPEN' / 'SL' only, and studies of entry rows saw card_r empty everywhere
+                # eng-102: only the entry actually taken - the card's vetoed / shadow triggers (same setup_ts_ms) got
+                # the trade's result and the veto studies read a later trade as the vetoed one's
                 self.conn.execute("UPDATE signals SET card_r = ?, best_tp = ? WHERE kind = 'entry' AND symbol = ? AND "
-                                  "group_key = ? AND setup_ts_ms = ?",
+                                  "group_key = ? AND setup_ts_ms = ? AND vetoed IS NULL",
                                   (tracked.final_r, row['best_tp'], tracked.symbol, f"ENTRY {tracked.group_key}",
                                    int(tracked.created * 1000)))
             self.conn.commit()
@@ -944,7 +946,10 @@ class SignalJournal:
         pending = ' OR '.join(f"(ret_{label} IS NULL AND ts_ms <= ?)" for label in HORIZONS)
         with self._lock:
             cursor = self.conn.execute(
-                f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h FROM signals "
+                # eng-102: simulate reads limit_entry / volume_24h - without them every resting-limit entry was
+                # replayed as a market fill (next minute's open + slippage) at the default liquidity's slippage
+                f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h, "
+                f"limit_entry, volume_24h FROM signals "
                 f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
                 (*[due[label] for label in HORIZONS], limit),
             )
