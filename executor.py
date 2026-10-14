@@ -170,6 +170,15 @@ class DemoExecutor:
                     p.update(entered=True, entered_ms=int(time.time() * 1000), card_id=card_id)
                     self._save_pending()
                     return                               # the limit stands; check_limits fills or cancels it
+                if p is not None and p.get('skip'):
+                    # eng-91: the plan enters with a resting limit and its limit was refused ('low R:R at the line',
+                    # the coin held, no market...): the touch does not turn it into a market order
+                    logger.info(f"Demo: {s.symbol} {s.group_key} skipped: its limit was not placed ({p.get('reason')})")
+                    self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                                  'direction': s.direction, 'opened_ms': int(time.time() * 1000),
+                                  'error': f"limit not placed: {p.get('reason')}"[:300],
+                                  'closed_ms': int(time.time() * 1000), 'close_reason': 'NO_LIMIT'})
+                    return
             limit = self.risk_limit()
             if limit is not None:
                 # eng-58: the day's risk rules (prop practice): not traded, recorded with the rule
@@ -339,20 +348,23 @@ class DemoExecutor:
             return
         risk_usd = balance * cfg.risk_pct / 100
         n = (getattr(s, 'plan', None) or {}).get('turtle_n')
-        if n:
-            # the Turtles' unit: 1% of the account per N (their "dollar volatility"), so the 2N stop risks 2%
-            risk_usd = balance * CONFIG.strategies.turtle_unit_risk * stop_dist / (n * scale)
+        # eng-91: a Turtle unit risks risk_pct at its 2N stop like every other trade (the Turtles' 1% per N made the 2N
+        # stop cost 2%: twice any other card, and 5-7 correlated breakouts at once were 10%+ of the account)
         # an averaging plan (one more unit at half the way to the stop) risks 1.5 units: each unit is sized so the
         # whole position risks risk_pct
         risk_usd /= float(s.levels.get('risk_units') or 1.0)
-        qty = min(risk_usd / stop_dist, balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
+        # eng-91: the round trip's costs (fees + slippage by the coin's liquidity) inside the sized distance - sized on the
+        # bare stop distance a stop-out cost -1.2..-1.5R (live HBAR, ACE, TIA)
+        from strategies.geometry import cost_of
+        fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'))
+        qty = min(risk_usd / (stop_dist + fee), balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         if n:
             # eng-55: the full pyramid (turtle_max_units units) must fit the notional cap - a smaller unit (a lower risk
             # per N, the same for every unit) instead of a first unit of full size and the rest cut off
             fit = cfg.max_notional_usd / (lv['entry'] * CONFIG.strategies.turtle_max_units)
             if qty > fit:
                 logger.info(f"Demo: {symbol} Turtle unit {qty:.6g} -> {fit:.6g} so {CONFIG.strategies.turtle_max_units} "
-                            f"units fit ${cfg.max_notional_usd:,.0f} (risk per N {CONFIG.strategies.turtle_unit_risk * fit / qty:.2%})")
+                            f"units fit ${cfg.max_notional_usd:,.0f} (risk at the stop {cfg.risk_pct * fit / qty:.2f}%)")
                 qty = fit
         qty = float(ex.amount_to_precision(symbol, qty))
         min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
@@ -495,7 +507,9 @@ class DemoExecutor:
             self.pending[key] = {'skip': True, 'reason': 'no balance / stop'}
             return
         risk_usd = balance * cfg.risk_pct / 100 / float(levels.get('risk_units') or 1.0)
-        qty = min(risk_usd / stop_dist, balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
+        from strategies.geometry import cost_of
+        fee = cost_of(lv['entry'], (s.sig or {}).get('volume_24h'))         # eng-91: costs inside the sized distance
+        qty = min(risk_usd / (stop_dist + fee), balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         qty = float(ex.amount_to_precision(symbol, qty))
         min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
         if qty <= 0 or qty < min_qty:
@@ -852,7 +866,10 @@ class DemoExecutor:
         exits = []
         for attempt in range(4):
             fills = await ex.fetch_my_trades(trade['symbol'], since=trade['opened_ms'] - 5_000)
-            exits = [f for f in fills if f.get('side') == exit_side and f.get('price')]
+            # eng-91: only fills after this trade's entry - the 5s margin let the previous trade's exit on the same
+            # coin into this one's average (_refinalize already filtered it)
+            exits = [f for f in fills if f.get('side') == exit_side and f.get('price')
+                     and (f.get('timestamp') or 0) > trade['opened_ms'] - 1_000]
             if exits:
                 break
             await asyncio.sleep(5)

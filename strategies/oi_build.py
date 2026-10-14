@@ -13,8 +13,8 @@ eng-90, after the live S trade of 13.10 (entered 12:10 at the top of a +11% hour
 day's high, stopped in 30 s by a 2% stop inside one 15m candle of 5%, the high was a sweep):
 - not extended: price at most oi_build_max_vwap_atr x ATR(15m) above the day's VWAP (breakout scorers rank a break far
   from VWAP in ATR units lower; an ADR% beyond 100% is 'overextended');
-- the previous day's high: above it only after a CLOSED 15m candle above it (PDH sweep vs breakout: a sweep closes
-  back inside; the PDH/PDL 15m-confirmed-close rule);
+- the previous day's high: above it only after a CLOSED 5m candle above it (PDH sweep vs breakout: a sweep closes
+  back inside; eng-91: 5m instead of the scripts' 15m - see oi_build());
 - stop and trail: oi_build_trail_atr x ATR(5m) behind the best price, at least oi_build_trail (a chandelier exit: a
   volatility-scaled trail instead of one percentage in a calm market and a storm alike).
 """
@@ -59,6 +59,14 @@ def oi_build(minutes: Sequence[Sequence[float]], oi_samples: Sequence, now_ms: i
     if p60 < cfg.oi_build_price_1h:
         return None
     price = last[4]
+    # eng-91: a directional start, not a pump-and-dump chop (+-5-10% back and forth, live S 13.10: 0.0562 -> 0.0635 ->
+    # 0.0604 within the hour): Kaufman's efficiency ratio of the last 60 one-minute closes (net move / the sum of the
+    # minute moves; a trend reads >= ~0.3, a chop near 0) at least oi_build_min_er
+    closes = [c[4] for c in minutes if c[0] > t0 - 61 * MINUTE_MS]
+    path = sum(abs(b - a) for a, b in zip(closes, closes[1:]))
+    er = abs(closes[-1] - closes[0]) / path if path else 0.0
+    if er < cfg.oi_build_min_er:
+        return None
     # eng-90: not extended - at most oi_build_max_vwap_atr ATR(15m) above the day's VWAP
     atr15 = _atr(list(m15)[-15:])
     vwap = _day_vwap(minutes, now_ms)
@@ -67,21 +75,29 @@ def oi_build(minutes: Sequence[Sequence[float]], oi_samples: Sequence, now_ms: i
     ext = (price - vwap) / atr15
     if ext > cfg.oi_build_max_vwap_atr:
         return None
-    # eng-90: above the previous day's high only after a closed 15m candle above it
-    if pdh and price > pdh and (not m15 or m15[-1][4] <= pdh):
-        return None
-    # eng-90: the trail / stop distance in the coin's own 5m volatility (a chandelier), at least oi_build_trail
     from levels import resample
     bars5 = resample([c for c in minutes if c[0] > t0 - 75 * MINUTE_MS], 5, t0 + MINUTE_MS)
+    # eng-91: above the previous day's high only after a CLOSED 5m candle above it. eng-90 waited for a 15m close (the
+    # intraday PDH scripts' default, made for trades held for hours): up to 15 minutes of a move that fades within
+    # 15-60 minutes. The 15m state is journaled beside it (pdh15) so the live data can tell which one was right
+    pdh5 = pdh15 = None
+    if pdh and price > pdh:
+        pdh5 = bool(bars5) and bars5[-1][4] > pdh
+        pdh15 = bool(m15) and m15[-1][4] > pdh
+        if not pdh5:
+            return None
+    # eng-90: the trail / stop distance in the coin's own 5m volatility (a chandelier), at least oi_build_trail
     atr5 = _atr(bars5)
     trail = max(cfg.oi_build_trail, cfg.oi_build_trail_atr * atr5 / price) if atr5 else cfg.oi_build_trail
     return {'setup': 'OI BUILD LONG', 'direction': 1,
             'setup_note': f"OI 1h {oi60:+.2%} / 15m {oi15:+.2%}, price 1h {p60:+.2%} / 15m {p15:+.2%}, "
-                          f"{ext:+.1f} ATR(15m) from the day's VWAP (OI build, momentum with a {trail:.1%} trailing "
+                          f"{ext:+.1f} ATR(15m) from the day's VWAP, ER(60m) {er:.2f}"
+                          f"{'' if pdh5 is None else f', above PDH: 5m close yes, 15m close {"yes" if pdh15 else "no"}'}"
+                          f" (OI build, momentum with a {trail:.1%} trailing "
                           f"stop, live test)",
             'anchor_level': last[4], 'anchor_extreme': last[4] * (1 - trail), 'anchor_label': 'OI build',
             'anchor_ts': t0, 'anchor_close': last[4], 'oi_build_oi60': oi60, 'oi_build_p60': p60,
-            'oi_build_trail': trail, 'oi_build_ext': ext,
+            'oi_build_trail': trail, 'oi_build_ext': ext, 'oi_build_pdh15': pdh15, 'oi_build_er': er,
             'event_ts': t0 + MINUTE_MS}
 
 

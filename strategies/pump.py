@@ -219,7 +219,7 @@ class PumpStartStrategy(Strategy):
                          intent='extension', fillers=fillers, fill_label='measured move', targets=targets,
                          target_src=sources, zones=zones, key=(sig['anchor_ts'], 'start'))
         plan['target_tf'] = '1h'                     # eng-69: targets from 1h+ zones (see above)
-        plan['add_half'] = True                      # averaging 1:1 at half the way to the stop
+        # eng-91: no averaging into a loser (was add_half: one more unit at half the way to the stop)
         return plan
 
 
@@ -251,5 +251,5 @@ class PumpTopStrategy(Strategy):
                          zone_src='buying climax (5m shift down)', invalid=hi, fix_invalid=False, missable=True,
                          stop_ref=hi, intent='mean', fillers=retraces, fill_label='retrace', targets=targets,
                          target_src=sources, zones=zones, key=(sig['anchor_ts'], 'top'))
-        plan['add_half'] = True
+        # eng-91: no averaging into a loser (was add_half)
         return plan
