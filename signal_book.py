@@ -1452,8 +1452,10 @@ class SignalBook:
                 continue
             # The strategy's longest lifetimes (a leg strategy's card may have had a 4h leg)
             watch_ttl, _, trade_ttl = strategy.ttls('4h')
-            if now - (s.entered_at or s.created) > (trade_ttl if s.entered_at else watch_ttl):
+            if not s.entered_at and now - s.created > watch_ttl:
                 continue
+            # eng-103: an OPEN trade is always restored - dropped here it vanished without a card row or a result (BAT
+            # Turtles 2026-10-13); past its lifetime the next scan closes it through _manage_trade and journals it
             s.mode = strategy.name
             if s.status == 'ZONE' and strategy.frozen_in_zone:
                 s.status = 'WATCH'  # the frozen plan was not saved: re-measure
