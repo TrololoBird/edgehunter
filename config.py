@@ -651,7 +651,14 @@ class StrategiesConfig:
     disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'OI SIGNAL LONG', 'PUMP START',
                              # eng-103: the Turtles (exit on the 20-day low: weeks-long trades giving back the run;
                              # live 5 of 5 closed lost, -1.28R) do not fit a bot of hour-long trades
-                             'BREAKOUT UP', 'BREAKOUT DOWN')
+                             'BREAKOUT UP', 'BREAKOUT DOWN',
+                             # eng-109 (the owner: a formula or a primary source, else off): invented thresholds -
+                             # the OI robots (Telegram-channel hypotheses), crypto_maniac's supply / demand, AUCTION and
+                             # ATR trendline bots (their authors' numbers), the liquidation cascades, the phase D / F
+                             # delta / OI floors. The trendline trades Edwards & Magee's decisive break instead (TL EM)
+                             'OI SIGNAL SHORT', 'OI BUILD LONG', 'SD DEMAND', 'SD SUPPLY', 'AUCTION LONG',
+                             'AUCTION SHORT', 'TRENDLINE UP', 'TRENDLINE DOWN', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL',
+                             'BULL F', 'BEAR D')
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
@@ -1006,7 +1013,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-108"
+    logic_version: str = "eng-109"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

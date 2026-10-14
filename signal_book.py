@@ -1037,8 +1037,6 @@ class SignalBook:
             from macro_calendar import blackout
             if blackout(now_ms):
                 reason = 'macro_event'
-        if reason is None and s.group_key.startswith('TL EM '):
-            reason = 'tl_em_shadow'      # eng-107: Edwards & Magee's decisive break, measured beside ours
         if reason is None and s.group_key.startswith('RSI2X '):
             reason = 'rsi2x_shadow'      # eng-106: Connors' original entry, measured beside ours
         if reason is None and s.group_key.startswith('BB3 '):
