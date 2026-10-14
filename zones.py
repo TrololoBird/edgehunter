@@ -164,8 +164,11 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
 
 
 def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr: float,
-                symbol: Optional[str] = None) -> List[RawLevel]:
-    """Equal highs / lows: >= 2 swings within the tolerance, not traded through since the latest of them."""
+                symbol: Optional[str] = None,
+                history: Optional[Sequence[Sequence[float]]] = None) -> List[RawLevel]:
+    """Equal highs / lows: >= 2 swings within the tolerance, not traded through since the latest of them.
+    `history` (1h candles): the sweep check of pools older than the 15m window (eng-102: a pair of 1h swings from 5 days
+    ago, wicked through 3 days ago, read as an untouched EQH - the 15m candles hold ~2 days)."""
     tol = equal_tolerance(symbol, candles[-1][4], atr) if candles else CONFIG.zones.equal_tolerance_atr * atr
     out: List[RawLevel] = []
     for side in (+1, -1):
@@ -181,6 +184,9 @@ def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr:
                 # when the swings carry no time)
                 latest = max(l.ts for l in group)
                 after = [c for c in candles if c[0] > latest] if latest else candles[-12:]
+                if latest and history:
+                    start = candles[0][0] if candles else float('inf')
+                    after = [c for c in history if latest < c[0] < start] + after
                 swept = any(c[2] > edge + tol for c in after) if side > 0 else any(c[3] < edge - tol for c in after)
                 if not swept:
                     # where the touches were accepted: the body closest to the wicks among them
@@ -678,7 +684,7 @@ def build_raw(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[Seque
     s1h = swings(candles_1h, cfg.swing_width_1h, 'swing_1h', '1h')
     today = int(now_ms) // DAY_MS * DAY_MS
     levels = s15 + s1h
-    levels += equal_pools(s15 + s1h, candles_15m, atr, symbol)
+    levels += equal_pools(s15 + s1h, candles_15m, atr, symbol, history=candles_1h)
     levels += htf_swings(candles_1d, candles_1w, now_ms)
     levels += day_levels(candles_1h, now_ms, candles_1d=candles_1d)
     levels += volume_profile(candles_4d or candles_1h, atr, '4d')
