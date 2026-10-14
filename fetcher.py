@@ -466,6 +466,7 @@ class DataFetcher:
         # 70-coin universe held ~60 MB of empty ring buffers
         self.flow = FlowStore(capacity=CONFIG.exchange.max_pairs + 40)
         self.whales = WhaleBook()
+        self.small_caps: set = set()               # eng-99: the small-cap tier of the universe (select_universe)
         from flow import RushBook
         self.rush = RushBook()                     # eng-89: rush orders (one taker order eating several levels)
         self.sweeps = SweepTracker(self._on_sweep)
@@ -895,7 +896,8 @@ class DataFetcher:
             except (TypeError, ValueError):
                 quote_vol = 0.0
             is_active = t.get('active', info.get('active', True))
-            if (pinned or quote_vol >= CONFIG.exchange.min_24h_quote_volume_usd) and is_active:
+            floor = min(CONFIG.exchange.min_24h_quote_volume_usd, CONFIG.exchange.smallcap_min_volume_usd or 1e18)
+            if (pinned or quote_vol >= floor) and is_active:      # eng-99: small caps are candidates too
                 # pinned coins first (CONFIG.exchange.pinned_bases), then by volume
                 usdt_pairs.append((s, float('inf') if pinned else quote_vol))
 
@@ -919,7 +921,8 @@ class DataFetcher:
             raise
         except Exception as e:
             logger.warning(f"Spreads unavailable for the universe selection ({type(e).__name__} {e}); previous kept")
-        logger.info(f"Universe candidates: {len(usdt_pairs)} perpetuals >= ${CONFIG.exchange.min_24h_quote_volume_usd:,.0f} "
+        self.candidate_volume = {s: v for s, v in usdt_pairs}
+        logger.info(f"Universe candidates: {len(usdt_pairs)} perpetuals >= ${floor:,.0f} "
                     f"24h volume (excluded {excluded} stock / pre-IPO contracts)")
         return [s for s, _ in usdt_pairs]
 
@@ -935,11 +938,16 @@ class DataFetcher:
         now_ms = time.time() * 1000
         excluded: Dict[str, int] = {}
         selected: List[str] = []
+        volume = getattr(self, 'candidate_volume', {})
+        small_pool: List[str] = []
         for s in candidates:
             if s not in markets:
                 continue
             if markets[s].get('base') in cfg.pinned_bases:
                 selected.append(s)               # pinned: in the universe whatever its data coverage
+                continue
+            if volume.get(s, float('inf')) < cfg.min_24h_quote_volume_usd:
+                small_pool.append(s)             # eng-99: the small-cap tier, selected below
                 continue
             futures_venues = [v for v in coverage.get(s, []) if v not in SPOT_VENUES]
             listed = int((markets[s].get('info') or {}).get('onboardDate') or 0)
@@ -959,10 +967,25 @@ class DataFetcher:
             selected.append(s)
             if len(selected) >= cfg.max_pairs:
                 break
-        self.whales.set_ranks(selected)
+        # eng-99: the small caps ($1-10M): listed long enough and a tradable spread, no complete-data rule; only the
+        # small-cap strategies trade them (pools.allows)
+        small: List[str] = []
+        for s in small_pool:
+            if len(small) >= cfg.smallcap_max:
+                break
+            listed = int((markets[s].get('info') or {}).get('onboardDate') or 0)
+            spread = self.spreads.get(s)
+            if listed and now_ms - listed < cfg.min_listing_days * 86_400_000:
+                continue
+            if spread is None or spread > cfg.smallcap_max_spread:
+                continue
+            small.append(s)
+        self.small_caps = set(small)
+        self.whales.set_ranks(selected + small)
         logger.info(f"Universe: {len(selected)} coins with complete data of {len(candidates)} candidates; "
-                    f"excluded {excluded}")
-        return selected
+                    f"excluded {excluded}; + {len(small)} small caps (${cfg.smallcap_min_volume_usd / 1e6:g}-"
+                    f"{cfg.min_24h_quote_volume_usd / 1e6:g}M, {', '.join(cfg.smallcap_strategies)} only)")
+        return selected + small
 
     def _to_spot_symbol(self, futures_symbol: str) -> str:
         """Convert futures symbol (BTC/USDT:USDT) to spot symbol (BTC/USDT)."""

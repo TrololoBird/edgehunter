@@ -38,6 +38,14 @@ class ExchangeConfig:
     require_spot: bool = True
     min_futures_venues: int = 2          # of Bybit, OKX, Bitget, Hyperliquid
     min_listing_days: int = 9
+    # eng-99 (the owner): small caps - $1-10M 24h volume, the most liquid smallcap_max of them, outside the complete-data
+    # rule (no spot / other venues needed; listed >= min_listing_days, spread <= smallcap_max_spread). Only the
+    # smallcap_strategies trade them (pools.allows); the demo risks smallcap_risk_mult of the usual risk on them
+    smallcap_min_volume_usd: float = 1_000_000
+    smallcap_max: int = 60
+    smallcap_max_spread: float = 0.003
+    smallcap_strategies: tuple = ('oi_build',)
+    smallcap_risk_mult: float = 0.5
     max_spread: float = 0.001            # bid-ask spread / mid at the selection (10 bp)
     # Binance exchangeInfo `underlyingType` values to skip: tokenized stocks (US/HK/KR/CN) and pre-IPO shares.
     # They sit flat outside their exchange's trading hours and trip squeeze/flat-price phases.
@@ -965,7 +973,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-97"
+    logic_version: str = "eng-99"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

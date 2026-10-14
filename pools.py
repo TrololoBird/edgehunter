@@ -33,9 +33,13 @@ class Pools:
         self.excluded: Dict[str, Dict[str, Tuple[int, float]]] = {}
         self.info: Dict[str, Dict] = {}
         self.updated = 0.0
+        self.small_of = lambda: set()               # eng-99: the scanner points it at fetcher.small_caps
 
     def allows(self, strategy: str, symbol: str) -> bool:
         """True when pools are off, not built yet, or the coin is in the strategy's pool."""
+        if symbol in self.small_of():
+            # eng-99: the small-cap tier trades only the small-cap strategies
+            return strategy in CONFIG.exchange.smallcap_strategies
         if not CONFIG.pools.enabled or not self.updated:
             return True
         if symbol.split('/')[0] in CONFIG.exchange.pinned_bases:

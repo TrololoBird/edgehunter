@@ -161,6 +161,7 @@ class Scanner:
         self.wide_h1: Dict[str, list] = {}
         self._wide_fired: set = set()
         self.pools = Pools()      # pumps.monitor: symbol -> (last 1h candle ts, scan result)
+        self.pools.small_of = lambda: self.fetcher.small_caps    # eng-99: the small-cap tier trades its own strategies
         self._level_raw: Dict[str, List[RawLevel]] = {}
         self._level_sig: Dict[str, tuple] = {}
         self.book.levels_of = self._levels_of
@@ -1078,6 +1079,7 @@ class Scanner:
 
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
         """Live context that is not part of the scored row."""
+        sig['small_cap'] = symbol in self.fetcher.small_caps      # eng-99: the demo risks less on them
         sig.update(self.market_state)
         sig.update(self.ext.market)
         sig.update(self.ext.of(symbol))
