@@ -472,6 +472,8 @@ class DemoExecutor:
         limits (sweep CE, continuation OTE) rest only inside the London / New York kill zones - outside them the card
         would veto the fill ('killzone'), so the limit is cancelled there (the setup lives within its session).
         """
+        if CONFIG.executor.touch_confirm_close:
+            return False                 # eng-105: touch plans enter at a confirming close (market), no resting limit
         if not (bool(s.plan) and s.plan.get('trigger') == 'touch'):
             return False
         from signal_book import ict_gated

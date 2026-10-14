@@ -35,7 +35,7 @@ Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CO
 import copy
 import logging
 import time
-from strategies.ict import fvg_setup, fvg_trigger, range_position, touch_trigger
+from strategies.ict import fvg_setup, fvg_trigger, range_position, touch_confirm, touch_trigger
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -932,7 +932,8 @@ class SignalBook:
                 s.zone_since_ms = setup['time']
             return shadow
         elif kind == 'touch':
-            trigger = touch_trigger(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
+            touch = touch_confirm if CONFIG.executor.touch_confirm_close else touch_trigger
+            trigger = touch(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
         else:
             trigger = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms)
         if not trigger:

@@ -576,7 +576,8 @@ class SignalJournal:
                     'tp1_src': lv.get('tp1_src'), 'tp2_src': lv.get('tp2_src'), 'tp3_src': lv.get('tp3_src'),
                     'range_pos': lv.get('range_pos'),
                     # eng-58: a resting limit (Seiden's line, ICT's CE / OTE): the replay fills it at the entry price
-                    'limit_entry': int((tracked.plan or {}).get('trigger') == 'touch'),
+                    'limit_entry': int((tracked.plan or {}).get('trigger') == 'touch'
+                                       and not CONFIG.executor.touch_confirm_close),
                     'sl_src': lv.get('sl_src'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
                     'anchor': _anchor_json(tracked.plan),

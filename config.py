@@ -1065,6 +1065,9 @@ class ExecutorConfig:
     # eng-105, the owner: partial profit at +1R for every trade - partial_share of the position out at +partial_r R
     # (an exchange take-profit order, it fills between scans too); the rest keeps its stop (break-even + costs after
     # +1R) and the method's exit. Skipped where the plan's TP1 is already nearer than +1R (TP1 is the partial then).
+    # eng-105, the owner: no resting limits - a touch of the zone only arms the entry; the trade opens at the CLOSE of
+    # the trigger-timeframe candle that touched the zone and closed back on the trade's side of its line
+    touch_confirm_close: bool = True
     partial_r: float = 1.0
     partial_share: float = 0.5
     max_leverage: int = 5            # eng-84: 2-5x (the 3-5-7 rule); the risk is set by the stop, cross margin

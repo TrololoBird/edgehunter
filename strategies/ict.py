@@ -186,3 +186,25 @@ def touch_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int,
         if direction < 0 and hi >= zone_lo:
             return {'entry': max(o, zone_lo), 'extreme': hi, 'time': int(x[0]) + interval_ms, 'extreme_time': int(x[0])}
     return None
+
+
+def touch_confirm(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int,
+                  zone_lo: float, zone_hi: float) -> Optional[dict]:
+    """
+    eng-105, the owner: the touch confirmed by a CLOSE - the first closed trigger candle (since the zone was reached)
+    that traded into the zone and closed back beyond its proximal line on the trade's side (a long: low <= zone_hi and
+    close > zone_hi; a 'zone' of one price - a CE - the same with that price). The entry is that close; the extreme
+    is the lowest low (highest high) since the zone was reached. A close through the zone's far side is no entry.
+    """
+    seen = [x for x in ltf if x[0] + interval_ms > since_ms]
+    for k, x in enumerate(seen):
+        hi, lo, close = x[2], x[3], x[4]
+        if direction > 0:
+            touched, back = lo <= zone_hi, close > zone_hi
+        else:
+            touched, back = hi >= zone_lo, close < zone_lo
+        if touched and back:
+            part = seen[:k + 1]
+            extreme = min(c[3] for c in part) if direction > 0 else max(c[2] for c in part)
+            return {'entry': close, 'extreme': extreme, 'time': int(x[0]) + interval_ms, 'extreme_time': int(x[0])}
+    return None
