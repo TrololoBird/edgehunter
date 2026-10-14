@@ -527,9 +527,17 @@ class SignalBook:
             # (a plan that sets the flag itself, False included, keeps its own choice)
             # eng-85: break-even + costs after +1R for EVERY managed plan, targets or not (the journal of 11-13.10: 19 of
             # 26 AUCTION stops and 18 of 44 Bollinger stops had traded +1R first)
-            plan.setdefault('be_after_r', 1.0)
-            if not plan.get('no_tp'):
+            # eng-111 (the owner: a source or out): no source for break-even after +1R (the evidence leans against it:
+            # Quantified Strategies / LuxAlgo MAE-MFE) nor for the EMA20 trail after TP1 (Qullamaggie's is a DAILY
+            # 10/20 MA close, secondhand) - both off; the rest of a trade goes to TP2 / TP3. Bollinger keeps its own
+            # exit (the live opposite band: band_exit)
+            if CONFIG.strategies.be_after_1r:
+                plan.setdefault('be_after_r', 1.0)
+            if not plan.get('no_tp') and CONFIG.strategies.ema_trail_after_tp1:
                 plan.setdefault('trail_after_tp1', True)
+        if plan is not None and not CONFIG.strategies.ema_trail_after_tp1 and plan.get('trail_after_tp1') \
+                and not plan.get('band_exit'):
+            plan['trail_after_tp1'] = False
         if key is not None:
             self._plan_cache[(s.symbol, s.group_key)] = (key, plan)
         return plan
@@ -620,23 +628,23 @@ class SignalBook:
                 self.events.append((s, 'RESTOP'))
             return
         be_r = plan.get('be_after_r')
-        if be_r and hi is not None and lo is not None and lv.get('entry') and lv.get('sl'):
-            # eng-84: a target-less trade - the stop to break-even + costs once price traded +be_r R its way
+        if hi is not None and lo is not None and lv.get('entry') and lv.get('sl'):
             risk = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
             fav = (hi - lv['entry']) if d > 0 else (lv['entry'] - lo)
+            # eng-105 (the owner's rule, independent of break-even since eng-111): the partial at +1R (the demo's tp0)
             if risk and fav >= CONFIG.executor.partial_r * risk and CONFIG.executor.partial_share \
                     and not plan.get('p1r_done') and not s.units and (plan.get('no_tp') or not lv.get('tp1') or
                                                                       d * (lv['tp1'] - lv['entry']) > risk * CONFIG.executor.partial_r):
-                # eng-105: the partial at +1R (the demo's tp0 order): the card's result counts it (_exit_r)
                 plan['p1r_done'] = True
-            if risk and fav >= be_r * risk:
+            if be_r and risk and fav >= be_r * risk:
+                # eng-84: the stop to break-even + costs once price traded +be_r R its way (off by default, eng-111)
                 be = lv['entry'] * (1 + d * BE_COST)
                 if d * (be - lv['sl']) > 0:
                     lv['sl'] = be
                     lv['sl_src'] = f'break-even + costs after +{be_r:g}R'
                     self.events.append((s, 'RESTOP'))
             if not plan.get('trail_after_tp1'):
-                return                       # eng-85: a plan with targets goes on to its TP1 partial + trail
+                return
         if not plan.get('trail_after_tp1') or s.best_target < 1 or not candles_of:
             return
         # eng-84: break-even INCLUDING the round trip's costs (fees + slippage), not the bare entry

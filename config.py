@@ -658,7 +658,10 @@ class StrategiesConfig:
                              # delta / OI floors. The trendline trades Edwards & Magee's decisive break instead (TL EM)
                              'OI SIGNAL SHORT', 'OI BUILD LONG', 'SD DEMAND', 'SD SUPPLY', 'AUCTION LONG',
                              'AUCTION SHORT', 'TRENDLINE UP', 'TRENDLINE DOWN', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL',
-                             'BULL F', 'BEAR D')
+                             'BULL F', 'BEAR D',
+                             # eng-111: Connors uses no stop and a leveraged perpetual cannot run without one - his
+                             # system cannot be traded as he defines it (the catastrophic stop was ours)
+                             'RSI2 LONG', 'RSI2 SHORT', 'RSI2X LONG', 'RSI2X SHORT')
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
@@ -762,6 +765,9 @@ class StrategiesConfig:
     # TP1 traded before an entry, its session / kill zone end or no plan; a trade by its stop, targets, break-even /
     # trail and the method's exit. The watch / zone / trade clocks and the time stop below are then unused
     structural_lifetimes: bool = True
+    # eng-111: no source -> off (break-even after +1R; the EMA20 trail after TP1)
+    be_after_1r: bool = False
+    ema_trail_after_tp1: bool = False
     time_stop_bars: int = 24
     # eng-51: at most crowd_max OPEN trades in one direction across all strategies (the rest journaled vetoed
     # 'crowded'). The Turtles allowed 6 units in closely correlated markets (Faith, Original Turtle Rules); alts move
@@ -1013,7 +1019,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-110"
+    logic_version: str = "eng-111"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
