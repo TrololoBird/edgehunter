@@ -130,6 +130,14 @@ def _jsonable(v) -> bool:
     return False
 
 
+def version_no(v: Optional[str]) -> int:
+    """'eng-57' -> 57 (0 for anything else): logic versions compare by number, never as strings."""
+    try:
+        return int(str(v).split('-')[1])
+    except (IndexError, ValueError):
+        return 0
+
+
 def _exit_flags(s: 'TrackedSignal') -> Dict:
     """The exit-relevant plan fields of a trade saved without its plan (before eng-55), rebuilt from its signal and
     setup as the strategies set them at the entry."""
@@ -139,9 +147,9 @@ def _exit_flags(s: 'TrackedSignal') -> Dict:
         plan.update(trail_days=sig['trail_days'], no_tp=True, turtle_n=sig.get('turtle_n'), tf='1d')
     elif g.startswith('RSI2'):
         plan.update(connors_exit=True, no_tp=True, tf='1d')
-    elif g.startswith('ORB') and (s.logic_version or '') >= 'eng-50':
+    elif g.startswith('ORB') and version_no(s.logic_version) >= 50:
         plan.update(no_tp=True, tf='15m')
-    elif g.startswith('BB ') and 'eng-55' <= (s.logic_version or '') < 'eng-85':     # eng-85: a real TP1 since
+    elif g.startswith('BB ') and 55 <= version_no(s.logic_version) < 85:     # eng-85: a real TP1 since
         plan.update(band_exit=True, no_tp=True, tf='15m')
     elif g == 'PUMP START':
         plan.update(add_half=True, tf='15m')
@@ -313,7 +321,8 @@ class SignalBook:
         keep_from = CONFIG.journal.keep_waiting_from
         for old in [o for o in self.signals.values() if not o.finished and not o.entered_at
                     and o.logic_version != CONFIG.journal.logic_version]:
-            if keep_from and (old.logic_version or '') >= keep_from:
+            # eng-97: versions compare by NUMBER ('eng-100' < 'eng-96' and 'eng-7' > 'eng-55' as strings)
+            if keep_from and version_no(old.logic_version) >= version_no(keep_from):
                 old.logic_version = CONFIG.journal.logic_version    # eng-87: same card rules, kept
                 continue
             reason = f"expired at start: a waiting card of the older signal logic {old.logic_version or '<eng-35'}"

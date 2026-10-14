@@ -27,29 +27,33 @@ from strategies.geometry import select_targets
 from zones import RawLevel, merge
 
 HOUR_MS = 3_600_000
-SEARCH = 168          # the SC / BC within the last week of 1h candles
-TREND_BACK = 48
+SEARCH = 168          # HOURS: the SC / BC within the last week
+TREND_BACK = 48       # HOURS: the climax's new 2-day extreme / the decline it stopped
+# eng-97: both are hours, converted to the candles given (eng-84 moved the detector to 4h candles and left them as bar
+# counts: a '2-day' low meant 8 days, the 'week' 4 weeks)
 MAX_PIERCE = 0.30
 CLIMAX_VOL = 2.0      # our quantification of a climax (Wyckoff gives none): volume and spread vs the 20 candles before
 CLIMAX_SPREAD = 1.5
 
 
-def _phase_a(h1: Sequence[Sequence[float]], d: int) -> Optional[Dict]:
+def _phase_a(h1: Sequence[Sequence[float]], d: int, period_ms: int = HOUR_MS) -> Optional[Dict]:
     """The latest SC -> AR -> ST (d = +1; BC -> AR -> ST for d = -1) before the last candle, with the range intact."""
+    per_hour = HOUR_MS / period_ms
+    search, trend_back = max(10, round(SEARCH * per_hour)), max(6, round(TREND_BACK * per_hour))
     n = len(h1)
     hi = [x[2] for x in h1]
     lo = [x[3] for x in h1]
     cl = [x[4] for x in h1]
     vol = [x[5] for x in h1]
     last = n - 1
-    for i in range(last - 4, max(TREND_BACK + 20, last - SEARCH) - 1, -1):
+    for i in range(last - 4, max(trend_back + 20, last - search) - 1, -1):
         prev = range(i - 20, i)
         avg_v = sum(vol[k] for k in prev) / 20
         avg_r = sum(hi[k] - lo[k] for k in prev) / 20
         if not avg_v or not avg_r or vol[i] < CLIMAX_VOL * avg_v or hi[i] - lo[i] < CLIMAX_SPREAD * avg_r:
             continue
         extreme = lo[i] if d > 0 else hi[i]
-        window = range(i - TREND_BACK, i)
+        window = range(i - trend_back, i)
         if (d > 0 and extreme > min(lo[k] for k in window)) or (d < 0 and extreme < max(hi[k] for k in window)):
             continue                                  # the climax makes a new 2-day extreme
         # the automatic rally (reaction) and the secondary test after it
@@ -64,7 +68,7 @@ def _phase_a(h1: Sequence[Sequence[float]], d: int) -> Optional[Dict]:
                    (hi[k] >= extreme - 0.5 * height and hi[k] <= extreme)
             if k <= p or not near or vol[k] >= vol[i]:
                 continue
-            before = cl[i - TREND_BACK]
+            before = cl[i - trend_back]
             if (d > 0 and before <= ar) or (d < 0 and before >= ar):
                 return None                           # no prior trend into the range
             # the range intact from the ST to the candle before the spring: no close beyond either edge
@@ -133,7 +137,7 @@ def wyckoff_events(h1: Sequence[Sequence[float]], period_ms: int = HOUR_MS, tf: 
     """A spring / UTAD on the candle that just closed (h1[-1]) inside a phase-A range, else []. eng-84: run on 4h
     candles (the range of a trading range is read on 4h / daily, the 1h only times the entry - the owner's review of
     the live trades and the Wyckoff write-ups); `period_ms` / `tf` describe the candles given."""
-    if len(h1) < TREND_BACK + 30:
+    if len(h1) < max(6, round(TREND_BACK * HOUR_MS / period_ms)) + 30:
         return []
     last = h1[-1]
     o, h, l, c = last[1], last[2], last[3], last[4]
@@ -141,7 +145,7 @@ def wyckoff_events(h1: Sequence[Sequence[float]], period_ms: int = HOUR_MS, tf: 
     if span <= 0:
         return []
     for d in (1, -1):
-        rng = _phase_a(h1, d)
+        rng = _phase_a(h1, d, period_ms)
         if rng is None:
             continue
         lo, hi = rng['lo'], rng['hi']

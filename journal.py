@@ -881,11 +881,18 @@ class SignalJournal:
         return len(promoted)
 
     def coin_results(self, since_ms: int) -> List[Tuple[str, str, int, int, float]]:
-        """(strategy, symbol, ts_ms, direction, net R to TP1) of every replayed, non-vetoed entry since `since_ms`."""
+        """(strategy, symbol, ts_ms, direction, net R) of every non-vetoed entry since `since_ms` of the logic family
+        judged now (CONFIG.journal.verdict_since on). eng-97: the trade's own result (card_r, on the entry row since
+        eng-86) where known, else the replay's R to TP1 - target-less methods' r_tp1 could only read a stop-out; and
+        no coin is excluded on the results of a logic that no longer runs."""
+        from stats import version_no
+        floor = version_no(CONFIG.journal.verdict_since)
         with self._lock:
-            return self.conn.execute(
-                "SELECT strategy, symbol, ts_ms, direction, r_tp1 FROM signals WHERE kind = 'entry' AND r_tp1 IS NOT NULL "
+            rows = self.conn.execute(
+                "SELECT strategy, symbol, ts_ms, direction, COALESCE(card_r, r_tp1), logic_version FROM signals "
+                "WHERE kind = 'entry' AND COALESCE(card_r, r_tp1) IS NOT NULL "
                 "AND (vetoed IS NULL OR vetoed = '') AND strategy IS NOT NULL AND ts_ms >= ?", (since_ms,)).fetchall()
+        return [r[:5] for r in rows if version_no(r[5]) >= floor]
 
     def summary(self) -> Tuple[int, int]:
         """(signals logged, signals with a 4h outcome)."""
