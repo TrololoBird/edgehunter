@@ -340,6 +340,62 @@ def trendline_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS,
 
 # ------------------------------------------------------------------------------------------------ Bollinger W / M
 
+def bb_method3_event(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '4h') -> Optional[Dict]:
+    """
+    eng-106, Bollinger Method III exactly as John Bollinger's Method III manual (bollingerbands.com, 2021) states it:
+    "A tag of the lower Bollinger Band while Intraday Intensity is positive will create a buy alert ... a tag of the
+    upper Bollinger Band while Intraday Intensity is negative will generate a sell/short alert. These are alerts rather
+    than signals ... wait for a strong up bar after a buy alert, or a strong down bar following a short alert".
+    - BB(20, 2); Intraday Intensity (Bostian) normalized over 21 bars: sum((2C - H - L) / (H - L) x V) / sum(V);
+    - the alert: a bar whose low tagged the lower band (high the upper) with II% > 0 (< 0), within the last 5 bars;
+    - the confirmation, on the bar that just closed (the first after the alert): a strong bar in the trade's way -
+      body >= half its range, close in the outer third, range >= the median range of the last 20 bars (ours: the
+      manual gives no number);
+    - stop beyond the extreme since the alert, the first target the opposite band (the manual names neither: ours, as
+      the W / M). Journaled in shadow (SignalBook: 'bb3_shadow') beside the W / M.
+    """
+    n = len(bars)
+    if n < 45:
+        return None
+    o, h, l, c = _arr(bars, 1), _arr(bars, 2), _arr(bars, 3), _arr(bars, 4)
+    v = np.asarray([float(b[5]) if len(b) > 5 and b[5] is not None else 0.0 for b in bars])
+    ma, sd = rolling_mean(c, 20), rolling_std(c, 20)
+    upper, lower = ma + 2 * sd, ma - 2 * sd
+    rng = h - l
+    clv = np.where(rng > 0, (2 * c - h - l) / np.where(rng > 0, rng, 1), 0.0)
+    i = n - 1
+    med = float(np.median(rng[i - 20:i]))
+    for d in (1, -1):
+        alerts = []
+        for k in range(i - 5, i):
+            s_v = v[k - 20:k + 1].sum()
+            ii = (clv[k - 20:k + 1] * v[k - 20:k + 1]).sum() / s_v if s_v > 0 else 0.0
+            tag = l[k] <= lower[k] if d > 0 else h[k] >= upper[k]
+            if tag and (ii > 0 if d > 0 else ii < 0):
+                alerts.append((k, ii))
+        if not alerts:
+            continue
+        k, ii = alerts[-1]
+
+        def strong(j):
+            body, r = c[j] - o[j], rng[j]
+            return r > 0 and d * body >= 0.5 * r and r >= med and \
+                ((c[j] - l[j]) / r >= 2 / 3 if d > 0 else (h[j] - c[j]) / r >= 2 / 3)
+        if not strong(i) or any(strong(j) for j in range(k + 1, i)):
+            continue
+        stop = float(l[k:i + 1].min() if d > 0 else h[k:i + 1].max())
+        target = float(upper[i] if d > 0 else lower[i])
+        return {'setup': 'BB3 BUY' if d > 0 else 'BB3 SELL', 'direction': d,
+                'setup_note': f"{tf} Bollinger Method III: {'lower' if d > 0 else 'upper'} band tag with Intraday "
+                              f"Intensity {ii:+.2f} (alert), then a strong {'up' if d > 0 else 'down'} bar closed "
+                              f"{c[i]:.6g} (the manual's confirmation)",
+                'anchor_level': float(c[i]), 'anchor_extreme': stop, 'anchor_label': 'Bollinger Method III',
+                'bb_stop': stop, 'bb_target': target, 'bb_ii': float(ii),
+                'anchor_ts': int(bars[k][0]), 'anchor_close': float(c[i]), 'event_ts': int(bars[-1][0]) + period_ms,
+                'bb_tf': tf}
+    return None
+
+
 def bollinger_wm_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '15m') -> Optional[Dict]:
     """
     John Bollinger's reversal method ("Bollinger on Bollinger Bands", 2001, method III; W / M patterns after Arthur

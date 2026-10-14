@@ -228,7 +228,7 @@ class BollingerStrategy(_System):
     """Bollinger's W-bottom / M-top (method III): entry at the close beyond the middle peak, the stop beyond the retest,
     the first target the opposite band (then the map)."""
     name = 'bollinger'
-    setups = {'BB W-BOTTOM': 1, 'BB M-TOP': -1}
+    setups = {'BB W-BOTTOM': 1, 'BB M-TOP': -1, 'BB3 BUY': 1, 'BB3 SELL': -1}   # BB3: eng-106 Method III, shadow
     min_rr = 1.0                     # Bollinger: the target is the opposite band, no ratio rule - only paying > risk
     ttl_key = 'bollinger_ttl'
 

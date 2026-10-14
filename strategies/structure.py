@@ -262,6 +262,7 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
         b4 = bars_4h(h1, cut)
         if len(b4) >= 60:
             run('Bollinger W / M', maniac.bollinger_wm_event, b4, 4 * HOUR_MS, '4h')
+            run('Bollinger Method III', maniac.bb_method3_event, b4, 4 * HOUR_MS, '4h')   # eng-106, shadow
     if cut % (24 * HOUR_MS) == 0 and len(d1) >= 120:
         # O'Neil's cup with handle on DAILY candles at the UTC day's close (eng-58: his weekly / daily bases of >= 7
         # weeks; the 1h / 4h version of eng-40..57 was another pattern under his name)
