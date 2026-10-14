@@ -253,6 +253,9 @@ def _min_rr(plan: Dict) -> float:
     return CONFIG.levels.min_rr_tp1 if v is None else v
 
 
+LIQUIDITY_KINDS = ('pdhl', 'equal', 'swing_1h', 'swing_1d', 'swing_1w', 'pmhl', 'year', 'htf')
+
+
 def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, intent: str,
                    fillers: Sequence[float] = (), fill_label: str = 'fib',
                    first: Optional[Tuple[float, str]] = None) -> Tuple[List[float], List[str]]:
@@ -265,12 +268,13 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     beyond = [z for z in zones if direction * (_near(z, direction) - ref) >= gap]
     beyond.sort(key=lambda z: direction * (_near(z, direction) - ref))
     strong = [z for z in beyond if z.strength >= cfg.min_strength]
-    if intent == 'draw_liquidity':
-        # ICT's draw on liquidity: the higher-timeframe pools (previous day / week / sessions, equal highs / lows,
-        # daily swings), not every round number or estimated liquidation
-        primary = [z for z in beyond if any(k in ('pdhl', 'equal', 'swing_1d', 'htf') for k in z.kinds)]
-    elif intent == 'opposite_liquidity':
-        primary = [z for z in beyond if is_pool(z)]
+    liquidity = intent in ('draw_liquidity', 'opposite_liquidity')
+    if liquidity:
+        # eng-114, the sources (ICT / Turtle Soup: "target buy-side liquidity in the higher timeframe"): the targets are
+        # the opposite LIQUIDITY only - old highs / lows (1h and higher swings), equal highs / lows, the previous day /
+        # week / month / year and the sessions. Not any strong zone of the map (OB, FVG, VAL, VWAP) and no ATR step:
+        # sweeps of 12-14.10 took TP1 0.2-0.8 R away from such zones and 'ATR steps'
+        primary = [z for z in beyond if any(k in LIQUIDITY_KINDS for k in z.kinds)]
     elif intent == 'mean':
         primary = [z for z in beyond if any(k in MEAN_KINDS for k in z.kinds)]
     else:
@@ -282,7 +286,8 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     if first is not None and direction * (first[0] - ref) >= gap:
         candidates.append((first[0], first[1], 0))
     candidates += [(_near(z, direction), z.label, 0) for z in primary]
-    candidates += [(_near(z, direction), z.label, 1) for z in strong if z not in primary]
+    if not liquidity:
+        candidates += [(_near(z, direction), z.label, 1) for z in strong if z not in primary]
     candidates += [(f, fill_label, 2) for f in fillers if direction * (f - ref) >= gap]
     candidates.sort(key=lambda c: direction * (c[0] - ref))
     prices: List[float] = []
@@ -311,6 +316,12 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
             prices.append(f)
             labels.append(fill_label)
             last = f
+    if liquidity:
+        # no liquidity ahead = no target (no setup); fewer than three pools: the last one repeats (all out there)
+        while prices and len(prices) < 3:
+            prices.append(prices[-1])
+            labels.append(labels[-1])
+        return prices, labels
     map_fill(zones, prices, labels, ref, direction, gap)
     last = prices[-1] if prices else ref
     while prices and len(prices) < 3:
@@ -667,10 +678,16 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
             if direction * (f - (targets[-1] if targets else entry)) >= gap:
                 targets.append(f)
                 sources.append(plan.get('fill_label', 'fib'))
-        map_fill(tf_zones, targets, sources, entry, direction, gap)
-        while targets and len(targets) < 3:
-            targets.append(targets[-1] + direction * gap)
-            sources.append('ATR step')
+        if plan.get('intent') in ('draw_liquidity', 'opposite_liquidity'):
+            # eng-114: liquidity targets only (the plan's pools ahead of the real entry); the last repeats
+            while targets and len(targets) < 3:
+                targets.append(targets[-1])
+                sources.append(sources[-1])
+        else:
+            map_fill(tf_zones, targets, sources, entry, direction, gap)
+            while targets and len(targets) < 3:
+                targets.append(targets[-1] + direction * gap)
+                sources.append('ATR step')
     if not targets:
         return None
     out = finish_levels(plan, entry, stop, list(targets[:3]), list(sources[:3]), direction, sl_src)
