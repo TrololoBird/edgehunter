@@ -181,7 +181,9 @@ class LoopDetectors:
     def _oi_signal(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
         """The OI [15m] live test (strategies.oi_signal): each final minute, once per coin / direction / 15m."""
         minute = md.minute_closed_until
-        if not minute or self._oi_sig_checked.get(symbol) == minute:
+        # eng-105, the owner: no entry on a 1m spike - the conditions are read at a 5m candle's CLOSE (the last
+        # final minute ends a 5m bar, so its close is the 5m close)
+        if not minute or self._oi_sig_checked.get(symbol) == minute or (minute + 60_000) % 300_000:
             return None
         self._oi_sig_checked[symbol] = minute
         oi5 = (md.tier0 or {}).get('oi_change_5m')
@@ -200,7 +202,9 @@ class LoopDetectors:
     def _oi_build(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
         """eng-88, the OI build live test (strategies.oi_build): each final minute, once per coin per hour."""
         minute = md.minute_closed_until
-        if not minute or self._oi_build_checked.get(symbol) == minute:
+        # eng-105, the owner: no entry on a 1m spike - the conditions are read at a 5m candle's CLOSE (the last
+        # final minute ends a 5m bar, so its close is the 5m close)
+        if not minute or self._oi_build_checked.get(symbol) == minute or (minute + 60_000) % 300_000:
             return None
         self._oi_build_checked[symbol] = minute
         from strategies.oi_build import oi_build
