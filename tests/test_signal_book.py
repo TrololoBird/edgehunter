@@ -169,5 +169,6 @@ def test_state_roundtrip(rally_frame):
     restored.load_state(state, T_ZONE + 60)
     assert list(restored.signals) == list(book.signals) and restored.session_results['TP1'] == 2
     expired = SignalBook()
-    expired.load_state(state, T_ZONE + 25 * 3600)   # older than the longest (4h-leg) watch_ttl: dropped
-    assert not expired.signals
+    expired.load_state(state, T_ZONE + 25 * 3600)
+    # eng-108: no invented waiting clock - the card is restored and ends structurally (invalid / TP1 / no plan)
+    assert list(expired.signals) == list(book.signals)

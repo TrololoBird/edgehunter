@@ -832,7 +832,10 @@ class SignalBook:
         plan = s.plan
         if plan is None or not plan['targets']:
             s.status = 'BIAS'
-            if age > watch_ttl:
+            if CONFIG.strategies.structural_lifetimes:
+                # eng-108: no plan = no setup (was: waiting an invented watch_ttl for the leg to come back)
+                self._finish(s, 'EXPIRED', now, "the setup stopped qualifying (no plan)")
+            elif age > watch_ttl:
                 self._finish(s, 'EXPIRED', now, f"the leg stopped qualifying and did not return for {_dur(watch_ttl)}")
             return None
 
@@ -845,7 +848,9 @@ class SignalBook:
             self._finish(s, 'INVALID', now, self._invalid_reason(s, price, invalid))
             return None
         tp1 = plan['targets'][0]
-        if plan.get('missable') and d * (price - tp1) >= 0:
+        # eng-108: with structural lifetimes EVERY waiting card ends once TP1 traded before an entry (its structural end;
+        # the invented waiting clocks are gone)
+        if (plan.get('missable') or CONFIG.strategies.structural_lifetimes) and d * (price - tp1) >= 0:
             reasons = ', '.join(sorted(set(s.veto_log)))
             # two different failures: price never came back to the zone (the zone is too far from where the move
             # turns) vs it did and no trigger fired (the trigger is too strict)
@@ -902,10 +907,10 @@ class SignalBook:
             flow = self._flow_entry(s, list(candles_of(s.symbol)), now_ms, price, confirm_of)
             if flow is not None:
                 return flow
-            if now_ms - s.zone_since_ms > zone_ttl * 1000:
+            if not CONFIG.strategies.structural_lifetimes and now_ms - s.zone_since_ms > zone_ttl * 1000:
                 self._finish(s, 'EXPIRED', now, f"no valid {plan['trigger_minutes']}m trigger in the zone "
                              f"for {_dur(zone_ttl)}" + (f" ({s.vetoed_triggers} vetoed)" if s.vetoed_triggers else ''))
-        elif age > watch_ttl:
+        elif age > watch_ttl and not CONFIG.strategies.structural_lifetimes:
             self._finish(s, 'EXPIRED', now, f"price did not reach the zone in {_dur(watch_ttl)}")
         return None
 
@@ -1403,6 +1408,11 @@ class SignalBook:
 
         def by(limit: float, text: str):
             return (text, s.entered_at + limit) if held > limit else (None, None)
+        if CONFIG.strategies.structural_lifetimes and not (pm and pm.get('hours')) and \
+                getattr(strategy, 'time_exit', 'bars') != 'session':
+            # eng-108: no invented clock - the trade ends by its stop, targets, break-even / trail and the method's own
+            # exit (band, SMA5, session, channel); a measured profile's time stop and a session's close stay
+            return None, None
         if pm and pm.get('hours'):
             # an optimized profile's time stop (research_optimize.py), replacing the method's own clock
             limit = float(pm['hours']) * 3600
@@ -1512,7 +1522,7 @@ class SignalBook:
                 continue
             # The strategy's longest lifetimes (a leg strategy's card may have had a 4h leg)
             watch_ttl, _, trade_ttl = strategy.ttls('4h')
-            if not s.entered_at and now - s.created > watch_ttl:
+            if not s.entered_at and now - s.created > watch_ttl and not CONFIG.strategies.structural_lifetimes:
                 continue
             # eng-103: an OPEN trade is always restored - dropped here it vanished without a card row or a result (BAT
             # Turtles 2026-10-13); past its lifetime the next scan closes it through _manage_trade and journals it

@@ -751,6 +751,10 @@ class StrategiesConfig:
     # structure timeframe failed to work (Kaufman / Le Beau's time stop: 15m 6h, 1h 24h, 4h 4 days, at least
     # time_stop_min_sec); once TP1 traded the rest may run time_after_tp1 x as long. A flat 12h clock closed working
     # trades on the way to TP2 / TP3 (ALICE, MOVE 2026-10-02) and kept dead ones open for hours.
+    # eng-108 (the owner: no invented numbers): cards and trades end STRUCTURALLY - a waiting card by its invalidation,
+    # TP1 traded before an entry, its session / kill zone end or no plan; a trade by its stop, targets, break-even /
+    # trail and the method's exit. The watch / zone / trade clocks and the time stop below are then unused
+    structural_lifetimes: bool = True
     time_stop_bars: int = 24
     # eng-51: at most crowd_max OPEN trades in one direction across all strategies (the rest journaled vetoed
     # 'crowded'). The Turtles allowed 6 units in closely correlated markets (Faith, Original Turtle Rules); alts move
