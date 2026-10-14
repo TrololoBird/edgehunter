@@ -160,6 +160,72 @@ def orb_event(d1: Sequence[Sequence[float]], day_open: float, price_hi: float, p
             'event_ts': int(now_ms // 60_000 * 60_000) + 60_000}
 
 
+# ------------------------------------------------------------------------------------------------ session ORB (eng-93)
+
+# eng-93 (the owner: ORB on the majors, gold, silver and oil, by session): the opening range of each session's first
+# orb_range_min minutes, the first break of its high / low is the trade, out at that session's close. Local hours (DST
+# by zoneinfo), Monday-Friday. New York per asset class: the US equity open for crypto, COMEX's for metals (08:20 ET),
+# NYMEX's for energy (09:00 ET).
+ORB_SESSIONS = (('Asia', 'Asia/Tokyo', (9, 0), (15, 0)),
+                ('London', 'Europe/London', (8, 0), (16, 30)),
+                ('New York', 'America/New_York', (9, 30), (16, 0)))
+ORB_NY_BY_CLASS = {'XAU': ((8, 20), (13, 30)), 'XAG': ((8, 20), (13, 30)),
+                   'CL': ((9, 0), (14, 30)), 'BZ': ((9, 0), (14, 30))}
+
+
+def orb_sessions(base: str, now_ms: int) -> List[tuple]:
+    """(name, open_ms, close_ms) of the sessions running at now_ms for the coin (weekdays only)."""
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    out = []
+    now = dt.datetime.fromtimestamp(now_ms / 1000, dt.timezone.utc)
+    for name, tz, start, end in ORB_SESSIONS:
+        if name == 'New York' and base in ORB_NY_BY_CLASS:
+            start, end = ORB_NY_BY_CLASS[base]
+        local = now.astimezone(ZoneInfo(tz))
+        if local.weekday() >= 5:
+            continue
+        o = local.replace(hour=start[0], minute=start[1], second=0, microsecond=0)
+        c = local.replace(hour=end[0], minute=end[1], second=0, microsecond=0)
+        if o <= local < c:
+            out.append((name, int(o.timestamp() * 1000), int(c.timestamp() * 1000)))
+    return out
+
+
+def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, price_hi: float, price_lo: float,
+                fired: set, symbol: str) -> Optional[Dict]:
+    """The first break of a running session's opening range (its first orb_range_min 1m candles), once per session.
+    `minutes`: final 1m candles; price_hi / price_lo: the last final minute's extremes and the live trade price."""
+    n = CONFIG.strategies.orb_range_min
+    for name, open_ms, close_ms in orb_sessions(base, now_ms):
+        if (symbol, open_ms) in fired or now_ms < open_ms + n * 60_000:
+            continue
+        rng = [c for c in minutes if open_ms <= c[0] < open_ms + n * 60_000]
+        if len(rng) < 0.8 * n:
+            fired.add((symbol, open_ms))           # the range is not known (a restart inside it): no ORB this session
+            continue
+        hi, lo = max(c[2] for c in rng), min(c[3] for c in rng)
+        last_ts = minutes[-1][0] if minutes else 0
+        after = [c for c in minutes if open_ms + n * 60_000 <= c[0] < last_ts]
+        if any(c[2] > hi or c[3] < lo for c in after):
+            fired.add((symbol, open_ms))           # the range already broke earlier: the first break only
+            continue
+        if price_hi > hi:
+            side, level, other = 1, hi, lo
+        elif price_lo < lo:
+            side, level, other = -1, lo, hi
+        else:
+            continue
+        fired.add((symbol, open_ms))
+        return {'setup': 'ORB UP' if side > 0 else 'ORB DOWN', 'direction': side,
+                'setup_note': f"{name} session: broke its {n}m opening range {lo:.6g}-{hi:.6g} "
+                              f"{'up' if side > 0 else 'down'}, out at the session's close",
+                'anchor_level': level, 'anchor_extreme': other, 'anchor_label': f'{name} opening range',
+                'anchor_ts': open_ms, 'anchor_close': level, 'orb_hi': hi, 'orb_lo': lo, 'orb_session': name,
+                'session_end_ms': close_ms, 'event_ts': int(now_ms // 60_000 * 60_000) + 60_000}
+    return None
+
+
 # ------------------------------------------------------------------------------------------------ Connors RSI(2)
 
 def rsi(closes: Sequence[float], period: int) -> Optional[float]:

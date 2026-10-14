@@ -31,8 +31,9 @@ class ValueAreaStrategy(_System):
 
 
 class OrbStrategy(_System):
-    """Crabel's opening range breakout (eng-55): the stop order at open +- Stretch, the other level the stop, out at
-    the session's (UTC day's) close, no profit target."""
+    """eng-93: the session opening range breakout (strategies.classic.session_orb) on the majors, gold, silver and
+    oil: the first break of the Asia / London / New York session's first 30 minutes, the stop at the range's middle,
+    TP1 the range's width projected, out at that session's close (was Crabel's open +- Stretch on the UTC day)."""
     name = 'orb'
     setups = {'ORB UP': 1, 'ORB DOWN': -1}
     min_rr = 0.0                     # Crabel: no target / ratio rule (exits by time or the opposite level)
@@ -48,7 +49,8 @@ class OrbStrategy(_System):
         return None
 
     def session_end(self, entered_at: float) -> Optional[float]:
-        # Crabel: the ORB is a day trade, closed at the session's close - the UTC day's for crypto
+        # eng-93: the card's own session close is in its signal (session_end_ms, SignalBook._time_exit); this is
+        # only the fallback of a card restored without it
         return (int(entered_at) // 86400 + 1) * 86400
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
@@ -69,9 +71,9 @@ class OrbStrategy(_System):
         width = sig['orb_hi'] - sig['orb_lo']
         mid = (sig['orb_hi'] + sig['orb_lo']) / 2
         exit = {'stop': ['price', mid], 'tp': ['level', sig['anchor_level'] + d * width, 0.0, None], 'atr': x.atr,
-                'stop_src': "the opening range's middle (the day's open)",
+                'stop_src': "the opening range's middle",
                 'tp_src': "100% projection of the opening range"}
-        return _confirm_plan(x, self.name, '15m', exit, 'stop order at open +- Stretch (Crabel)')
+        return _confirm_plan(x, self.name, '15m', exit, f"{sig.get('orb_session', 'session')} opening range break")
 
 
 class ConnorsStrategy(_System):

@@ -47,7 +47,7 @@ class ExchangeConfig:
     # Pinned coins (the owner's, 2026-10-01): always in the universe and in EVERY strategy's pool, whatever the volume,
     # spot pair, venue count or the exclusions above say (XAU = Binance's gold TradFi perpetual: no spot pair, so the
     # strategies that require spot veto it 'no_data'). BNB / DOGE / HYPE added: the largest perpetual volumes after them
-    pinned_bases: tuple = ('BTC', 'ETH', 'XAU', 'CL', 'XRP', 'SOL', 'SUI', 'BNB', 'DOGE', 'HYPE')
+    pinned_bases: tuple = ('BTC', 'ETH', 'XAU', 'CL', 'XRP', 'SOL', 'SUI', 'BNB', 'DOGE', 'HYPE', 'XAG', 'BZ')
     # The universe (top max_pairs by 24h volume) is re-selected this often: new listings join, dropped coins leave
     universe_refresh_sec: int = 3600
 
@@ -734,6 +734,10 @@ class StrategiesConfig:
     # open +- the Stretch (the 10-day SMA of min(High - Open, Open - Low) of the daily candles); the first one hit is
     # the trade, the other its stop; out at the session's (UTC day's) close. Crypto's daily candle opens 00:00 UTC.
     orb_stretch_days: int = 10
+    # eng-93 (the owner): the session ORB trades only these (the majors, gold, silver, WTI and Brent oil) and the
+    # opening range is the session's first orb_range_min minutes (strategies.classic.ORB_SESSIONS)
+    orb_bases: tuple = ('BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'XAU', 'XAG', 'CL', 'BZ')
+    orb_range_min: int = 30
     # Connors' RSI(2) levels (eng-58: 5 / 95, his original rule; 10 / 90 is a later variant)
     connors_rsi_low: float = 5.0
     connors_rsi_high: float = 95.0
@@ -961,7 +965,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-92"
+    logic_version: str = "eng-93"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

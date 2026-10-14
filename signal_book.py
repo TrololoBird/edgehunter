@@ -1287,7 +1287,9 @@ class SignalBook:
         cap = strategy.ttls(self._tf(s))[2]
         mode = getattr(strategy, 'time_exit', 'bars')
         if mode == 'session':
-            end = strategy.session_end(s.entered_at)
+            # eng-93: a card that knows its own session's close (the session ORB) ends there
+            end_ms = (s.sig or {}).get('session_end_ms')
+            end = end_ms / 1000 if end_ms else strategy.session_end(s.entered_at)
             if end is not None:
                 # the session's end IS the method's exit: a shorter cap closed ORB / VA80 days before it (ZEC
                 # 2026-10-06: entered 01:03 UTC, the 12h cap fired at 13:03, the session ended 00:00)

@@ -161,67 +161,22 @@ class LoopDetectors:
         return found
 
     def _orb_touch(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
-        """Crabel's ORB (strategies.classic.orb_event): the day's open +- Stretch touched by the last final minute,
-        once per coin and day (eng-55)."""
-        if len(md.d1) < 10:
+        """eng-93: the session ORB (strategies.classic.session_orb) on the majors, gold, silver and oil only: the first
+        break of the Asia / London / New York opening range, on the final minute or the live trade price (Crabel's
+        entries are stop orders resting at the levels - eng-82)."""
+        base = symbol.split('/')[0]
+        if base not in CONFIG.strategies.orb_bases:
             return None
-        # eng-82: Crabel's entries are STOP orders resting at the levels - the touch is checked on the live trade price
-        # (1 sample a second) between minute closes too; waiting for the final minute entered up to a minute late,
-        # INJ 2026-10-12 0.97% beyond its level on a 2.8% stop (a third of R lost at the entry)
-        day_start = int(now_ms // 86_400_000 * 86_400_000)
-        st = self._orb_day.get(symbol)
-        samples = getattr(md, 'ticker_samples', None)
-        if (st is not None and st.get('day') == day_start and st.get('open') is not None and samples
-                and (symbol, day_start) not in self._orb_fired and now_ms - samples[-1][0] <= 5_000):
-            from strategies.classic import orb_event
-            p = samples[-1][1]
-            found = orb_event(md.d1, st['open'], p, p, st['hi'], st['lo'], now_ms)
-            if found is not None:
-                found['setup_note'] += ' (live touch)'
-                self._orb_fired.add((symbol, day_start))
-                return found
-        minute = md.minute_closed_until
-        if not minute or self._orb_checked.get(symbol) == minute:
-            return None
-        self._orb_checked[symbol] = minute
-        if (symbol, day_start) in self._orb_fired or int(md.d1[-1][0]) + 86_400_000 < day_start:
-            return None                           # traded today / yesterday's daily candle not loaded yet
         minutes = self.minutes_of(symbol)
-        if not minutes or minutes[-1][0] < day_start:
+        if not minutes:
             return None
         last = minutes[-1]
-        # the day's open and extremes before this minute: built ONCE a day from the 15m frame + the minutes (building
-        # the 15m candles of every coin each minute stalled the loop), then extended minute by minute
-        st = self._orb_day.get(symbol)
-        if st is None or st['day'] != day_start:
-            m15 = [c for c in self.m15_of(symbol) if c[0] >= day_start]
-            today = [c for c in minutes if day_start <= c[0] < last[0]]
-            # the day's first minute itself counts (`today` stops before the last minute: at 00:01 it was empty and the
-            # day was marked 'open unknown' until its end - research/replay_missing.md, ORB never fired in the replay)
-            first = (m15[0] if m15 and m15[0][0] == day_start
-                     else next((c for c in minutes if c[0] == day_start), None))
-            if first is None:
-                self._orb_day[symbol] = {'day': day_start, 'open': None}
-                return None                       # the day's open is not known (restart mid-day): no ORB today
-            earlier = [c for c in m15 if c[0] < last[0] // 900_000 * 900_000] + today
-            st = {'day': day_start, 'open': first[1], 'last': last[0] - 60_000,
-                  'hi': max((c[2] for c in earlier), default=None), 'lo': min((c[3] for c in earlier), default=None)}
-            self._orb_day[symbol] = st
-        if st['open'] is None:
-            return None
-        before_hi, before_lo = st['hi'], st['lo']
-        for c in minutes[-5:]:
-            if st['last'] < c[0] < last[0]:          # minutes missed between checks join the "before" extremes
-                before_hi = c[2] if before_hi is None else max(before_hi, c[2])
-                before_lo = c[3] if before_lo is None else min(before_lo, c[3])
-        from strategies.classic import orb_event
-        found = orb_event(md.d1, st['open'], last[2], last[3], before_hi, before_lo, now_ms)
-        st['hi'] = last[2] if before_hi is None else max(before_hi, last[2])
-        st['lo'] = last[3] if before_lo is None else min(before_lo, last[3])
-        st['last'] = last[0]
-        if found is not None:
-            self._orb_fired.add((symbol, day_start))
-        return found
+        hi, lo = last[2], last[3]
+        samples = getattr(md, 'ticker_samples', None)
+        if samples and now_ms - samples[-1][0] <= 5_000:
+            hi, lo = max(hi, samples[-1][1]), min(lo, samples[-1][1])
+        from strategies.classic import session_orb
+        return session_orb(base, minutes, now_ms, hi, lo, self._orb_fired, symbol)
 
     def _oi_signal(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
         """The OI [15m] live test (strategies.oi_signal): each final minute, once per coin / direction / 15m."""
