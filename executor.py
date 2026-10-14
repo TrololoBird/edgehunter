@@ -665,6 +665,27 @@ class DemoExecutor:
             logger.warning(f"Demo: untracked BingX position {pos['symbol']} {pos.get('side')} {qty}: closed at market")
             await self._close(trade, 'UNTRACKED', None)
 
+    async def _dedupe_stops(self) -> None:
+        """eng-98: one stop per open trade on BingX. Before eng-85 a failed / repeated restop could leave an older stop
+        resting beside the live one (live HYPE 14.10: 12 @ 91.47 beside 24 @ 89.72) - it would later cut a new position
+        of the coin. The stop nearest the trade's own stop stays, the others are cancelled."""
+        ex = await self._exchange()
+        for trade in list(self.open.values()):
+            stops = [o for o in await ex.fetch_open_orders(trade['symbol']) if self._is_stop(o)]
+            if len(stops) < 2:
+                continue
+            ref = float(trade.get('sl') or 0)
+            px = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice') or o.get('triggerPrice') or 0)  # noqa: E731
+            keep = min(stops, key=lambda o: abs(px(o) - ref)) if ref else max(stops, key=lambda o: o.get('timestamp') or 0)
+            for o in stops:
+                if o is keep:
+                    continue
+                try:
+                    await ex.cancel_order(o['id'], trade['symbol'])
+                    logger.warning(f"Demo {trade['symbol']}: extra stop {px(o):.6g} cancelled (kept {px(keep):.6g})")
+                except Exception as e:
+                    errors.report('executor._dedupe_stops', e, f"Demo extra stop {trade['symbol']}")
+
     async def on_restop(self, s) -> None:
         """eng-58: the card trailed its stop (after TP1: the entry, then the EMA20): the remaining position's stop is
         moved on BingX (its TP1 half is already out, so no take-profit is left to re-place)."""
@@ -953,6 +974,10 @@ class DemoExecutor:
                         await self._refinalize()
                     except Exception as e:
                         logger.warning(f"Demo result recovery: {e!r}")
+                    try:
+                        await self._dedupe_stops()
+                    except Exception as e:
+                        logger.warning(f"Demo stop check: {e!r}")
             if not self.open:
                 continue
             async with self._lock:
