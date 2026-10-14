@@ -271,6 +271,7 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
     if cut % HOUR_MS == 0 and len(h1) >= 30:
         # Edwards & Magee: a line's significance grows with its timeframe - lines of 1h candles (was 15m)
         run('trendline', maniac.trendline_event, h1, HOUR_MS, '1h')
+        run('trendline E&M', maniac.trendline_em_event, h1, HOUR_MS, '1h')      # eng-107, shadow
         # eng-95: the POC retest by session on the session instruments only (the majors, gold, silver, oil): a signal
         # outside every session is dropped, the trade ends at its session's close
         from strategies.classic import orb_sessions

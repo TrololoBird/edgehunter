@@ -134,13 +134,16 @@ class SweepStrategy(Strategy):
         # (order block, FVG, BPR, breaker), and the entry (5m FVG). A raid in empty space is no ICT setup.
         poi = [z for z in zones if any(re.match(r'(ob|fvg|bpr|breaker)_(1h|4h|1d|1w)$', k) for k in z.kinds)
                and z.lo <= max(extreme, level) and z.hi >= min(extreme, level)]
+        from signal_book import shadow_veto
         if not poi:
-            return {'skip': 'no_htf_poi'}
+            # eng-107: an ICT confluence, not the sweep rule itself (the sources: liquidity -> sweep -> shift -> FVG):
+            # journaled in shadow, the card goes on
+            shadow_veto(sig, 'no_htf_poi')
         # premium / discount of the 48h dealing range: longs only in its discount half, shorts only in its premium
         from strategies.ict import dealing_range, range_position
         pos = range_position(dealing_range(x.h1 or []), extreme, d)
         if pos is not None and pos > 0.5:
-            return {'skip': 'premium' if d > 0 else 'discount'}
+            shadow_veto(sig, 'premium' if d > 0 else 'discount')     # eng-107: shadow, as no_htf_poi
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         from pierce import overshoot as _pierce
         invalid = base - d * (_pierce(x.symbol, 'swing_15m', base) or CONFIG.levels.stop_buffer_atr * atr)

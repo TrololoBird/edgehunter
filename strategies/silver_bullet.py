@@ -147,7 +147,8 @@ class SilverBulletStrategy(Strategy):
         from strategies.ict import dealing_range, range_position
         pos = range_position(dealing_range(x.h1 or []), ce, d)
         if pos is not None and pos > 0.5:
-            return {'skip': 'premium' if d > 0 else 'discount'}
+            from signal_book import shadow_veto
+            shadow_veto(sig, 'premium' if d > 0 else 'discount')     # eng-107: not in the sources' rule - shadow
         zone = (lo, ce) if d > 0 else (ce, hi)
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         risk = abs(ce - sig['anchor_extreme'])

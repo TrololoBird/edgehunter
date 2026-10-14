@@ -885,7 +885,10 @@ class SignalBook:
             # eng-59, ICT: a setup lives within its kill zone - one that came into its zone inside a kill zone and saw
             # it end without an entry is over (the next session builds its own setup)
             kz = tuple(CONFIG.strategies.smt_session)
-            if in_session(int(s.zone_since_ms), kz) and not in_session(now_ms, kz):
+            if in_session(int(s.zone_since_ms), kz) and not in_session(now_ms, kz) and \
+                    'killzone' not in CONFIG.strategies.shadow_vetoes:
+                # eng-107: with 'killzone' in shadow the card lives on (ETH 2026-10-14 expired at 09:00 UTC 45 min
+                # after its sweep, then gave the channel's whole move); an entry outside it is journaled shadow_veto
                 self._finish(s, 'EXPIRED', now, "session_end: the kill zone ended without an entry")
                 return None
         reclaim = self._reclaim_entry(s, price, now_ms)
@@ -974,7 +977,7 @@ class SignalBook:
         if reason is None:
             reason = shadow_veto(s.sig, confirm.missing(s.mode, confirms))
         if reason is None and ict_gated(s.mode, s.group_key)                 and not in_session(trigger['time'], tuple(CONFIG.strategies.smt_session)):
-            reason = 'killzone'            # eng-58: ICT trades its models inside the London / New York kill zones only
+            reason = shadow_veto(s.sig, 'killzone')   # eng-58 rule; eng-107: shadow (unproven filter)
         if reason is None:
             reason = self._against_day(s, trigger['time'])
         if reason is None and s.plan.get('session') and not in_session(trigger['time'], tuple(s.plan['session'])):
@@ -1029,6 +1032,8 @@ class SignalBook:
             from macro_calendar import blackout
             if blackout(now_ms):
                 reason = 'macro_event'
+        if reason is None and s.group_key.startswith('TL EM '):
+            reason = 'tl_em_shadow'      # eng-107: Edwards & Magee's decisive break, measured beside ours
         if reason is None and s.group_key.startswith('RSI2X '):
             reason = 'rsi2x_shadow'      # eng-106: Connors' original entry, measured beside ours
         if reason is None and s.group_key.startswith('BB3 '):

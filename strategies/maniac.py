@@ -295,6 +295,51 @@ def _trendline(h, l, c, atr: float, kind: str) -> Optional[Dict]:
     return best
 
 
+def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_000, tf: str = '1h',
+                       pct: float = 0.015) -> Optional[Dict]:
+    """
+    eng-107, the trendline break as Edwards & Magee define a DECISIVE penetration ("Technical Analysis of Stock Trends",
+    via Peter Brandt): a CLOSE beyond the line by about 3% of the price (Brandt: 1-2% for commodities / forex - `pct`
+    1.5% here, ours within his range), confirmed by time (two closes beyond) and by volume (the breaking bar's volume
+    above the 20-bar average - their volume test; the exact wording of the book was not found). The same line as
+    trendline_event. Journaled in shadow ('tl_em_shadow') beside the ATR version.
+    """
+    cfg = CONFIG.strategies
+    window = c1h[-(cfg.tl_lookback + 2):]
+    n = len(window)
+    if n < cfg.tl_min_span + 10:
+        return None
+    h, l, c = _arr(window, 2), _arr(window, 3), _arr(window, 4)
+    v = np.asarray([float(x[5]) if len(x) > 5 and x[5] is not None else 0.0 for x in window])
+    atr = float(wilder(true_range(h, l, c), 14)[-3])
+    if not atr > 0:
+        return None
+    for kind in ('resistance', 'support'):
+        line = _trendline(h[:-2], l[:-2], c[:-2], atr, kind)
+        if line is None:
+            continue
+        value = lambda j: line['p1'] + line['slope'] * (j - line['i1'])
+        d = 1 if kind == 'resistance' else -1
+        if not all(d * (c[j] - value(j)) >= pct * c[j] for j in (n - 2, n - 1)):
+            continue
+        if d * (c[n - 3] - value(n - 3)) >= pct * c[n - 3]:
+            continue                                   # the decisive break happened earlier: the first one only
+        avg_v = v[n - 22:n - 2].mean() if n >= 22 else 0.0
+        if not avg_v or v[n - 2] <= avg_v:
+            continue
+        i = n - 1
+        return {'setup': 'TL EM UP' if d > 0 else 'TL EM DOWN', 'direction': d,
+                'setup_note': f"{tf} closed twice >= {pct:.1%} {'above a falling resistance' if d > 0 else 'below a rising support'}"
+                              f" on {v[n - 2] / avg_v:.1f}x volume (Edwards & Magee)",
+                'line_p1': line['p1'], 'line_slope': line['slope'], 'line_ts1': int(window[line['i1']][0]),
+                'line_value': value(i), 'atr_line': atr,
+                'anchor_level': value(i), 'anchor_extreme': l[i] if d > 0 else h[i],
+                'anchor_label': 'trendline (E&M)', 'anchor_ts': int(window[line['i1']][0]),
+                'anchor_close': float(c[i]), 'target_price': line['p1'],
+                'event_ts': int(window[-1][0]) + period_ms}
+    return None
+
+
 def trendline_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '15m') -> Optional[Dict]:
     """
     trendline_bot: lines are built on the candles BEFORE the two confirming ones; both close beyond the line by

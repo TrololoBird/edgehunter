@@ -189,7 +189,7 @@ class TrendlineStrategy(_System):
     """Edwards & Magee trendline break on 1h lines: two closes beyond the line, a resting limit at the broken line
     (the retest), the stop beyond the last confirmed 1h pivot, targets the next 1h+ levels of the map."""
     name = 'trendline'
-    setups = {'TRENDLINE UP': 1, 'TRENDLINE DOWN': -1}
+    setups = {'TRENDLINE UP': 1, 'TRENDLINE DOWN': -1, 'TL EM UP': 1, 'TL EM DOWN': -1}   # TL EM: eng-107 shadow
     ttl_key = 'trendline_ttl'
     uses_minutes = True
 
