@@ -270,6 +270,11 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
     if cut % HOUR_MS == 0 and len(h1) >= 30:
         # Edwards & Magee: a line's significance grows with its timeframe - lines of 1h candles (was 15m)
         run('trendline', maniac.trendline_event, h1, HOUR_MS, '1h')
+        # eng-95: the POC retest by session on the session instruments only (the majors, gold, silver, oil): a signal
+        # outside every session is dropped, the trade ends at its session's close
+        from strategies.classic import orb_sessions
+        base = (symbol or '').split('/')[0]
+        sessions = orb_sessions(base, cut - 1) if base in CONFIG.strategies.orb_bases else []
         if symbol:
             try:
                 signals = auction_signals(symbol, h1, m15)
@@ -278,6 +283,8 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
                 signals = []
             for s in signals:
                 s = {k: (v.item() if hasattr(v, 'item') else v) for k, v in s.items()}
+                if not sessions:
+                    continue
                 d = s['direction']
                 events.append({
                     'setup': 'AUCTION LONG' if d > 0 else 'AUCTION SHORT', 'direction': d,
@@ -287,7 +294,8 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
                     'anchor_level': s['level'], 'anchor_extreme': s['extreme'], 'anchor_label': f"POC ({s['kind']})",
                     'anchor_ts': int(s['level_ts'] or s['ts']), 'anchor_close': s['entry'],
                     'auction_stop': s['stop'], 'auction_target': s['target'], 'auction_kind': s['kind'],
-                    'atr_1h': s['atr'], 'event_ts': int(s['ts']) + HOUR_MS})
+                    'atr_1h': s['atr'], 'event_ts': int(s['ts']) + HOUR_MS,
+                    'orb_session': sessions[0][0], 'session_end_ms': sessions[0][2]})
     return events
 
 
@@ -346,7 +354,7 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
         # classic published methods (strategies/classic.py): Dalton's 80% rule, Crabel's ORB, Connors' RSI(2)
         try:
             from strategies.classic import classic_events
-            ctx.events.extend(classic_events(m15, h1, cut))
+            ctx.events.extend(classic_events(m15, h1, cut, symbol))
         except Exception as e:
             logging.getLogger(__name__).warning(f"classic events of {symbol} failed: {type(e).__name__} {e}",
                                                 exc_info=True)

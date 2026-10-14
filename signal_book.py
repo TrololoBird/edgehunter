@@ -829,6 +829,11 @@ class SignalBook:
         elif s.status != 'ZONE':
             s.status = 'WATCH'
 
+        end_ms = (s.sig or {}).get('session_end_ms')
+        if end_ms and now_ms >= end_ms:
+            # eng-95: a session setup (ORB / VA80 / AUCTION) not entered before its session closed is over
+            self._finish(s, 'EXPIRED', now, "session_end: the session closed without an entry")
+            return None
         if s.status == 'ZONE' and ict_gated(s.mode, s.group_key) and s.zone_since_ms:
             # eng-59, ICT: a setup lives within its kill zone - one that came into its zone inside a kill zone and saw
             # it end without an entry is over (the next session builds its own setup)

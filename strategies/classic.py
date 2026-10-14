@@ -192,6 +192,74 @@ def orb_sessions(base: str, now_ms: int) -> List[tuple]:
     return out
 
 
+def _session_times(base: str, name: str, tz: str, start, end):
+    if name == 'New York' and base in ORB_NY_BY_CLASS:
+        return ORB_NY_BY_CLASS[base]
+    return start, end
+
+
+def previous_session(base: str, name: str, open_ms: int) -> Optional[tuple]:
+    """(open_ms, close_ms) of the same session on the previous weekday (local calendar)."""
+    import datetime as dt
+    for nm, tz, start, end in ORB_SESSIONS:
+        if nm != name:
+            continue
+        start, end = _session_times(base, nm, tz, start, end)
+        z = ZoneInfo(tz)
+        day = dt.datetime.fromtimestamp(open_ms / 1000, dt.timezone.utc).astimezone(z).date()
+        day -= dt.timedelta(days=1)
+        while day.weekday() >= 5:
+            day -= dt.timedelta(days=1)
+        o = dt.datetime(day.year, day.month, day.day, start[0], start[1], tzinfo=z)
+        c = dt.datetime(day.year, day.month, day.day, end[0], end[1], tzinfo=z)
+        return int(o.timestamp() * 1000), int(c.timestamp() * 1000)
+    return None
+
+
+def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]:
+    """
+    eng-95, Dalton's 80% rule by session (as on a stock exchange: yesterday's regular session's value area, today's
+    open of the same session): the session opened outside the previous same session's TPO value area and closed two
+    consecutive 30-minute periods (counted from the session's open) back inside it -> the far edge; out at the close.
+    """
+    for name, open_ms, close_ms in orb_sessions(base, cut - 1):
+        prev = previous_session(base, name, open_ms)
+        if prev is None:
+            continue
+        pc = [c for c in m15 if prev[0] <= c[0] < prev[1]]
+        if len(pc) < 0.8 * (prev[1] - prev[0]) / QUARTER_MS:
+            continue
+        day = [c for c in m15 if open_ms <= c[0] < cut]
+        if len(day) < 4 or len(day) % 2:
+            continue
+        va = value_area(pc, tpo=True)
+        if va is None:
+            continue
+        val, poc, vah = va
+        opened = day[0][1]
+        if val <= opened <= vah:
+            continue
+        side = 1 if opened < val else -1
+        inside = lambda pair: val <= pair[-1][4] <= vah        # noqa: E731
+        periods = [day[k:k + 2] for k in range(0, len(day) - 1, 2)]
+        if not (inside(periods[-1]) and inside(periods[-2])) or (len(periods) >= 3 and inside(periods[-3])):
+            continue
+        edge, far = (val, vah) if side > 0 else (vah, val)
+        last = day[-1]
+        if side * (far - last[4]) < 0.3 * (vah - val):
+            continue
+        extreme = min(c[3] for c in day) if side > 0 else max(c[2] for c in day)
+        return {'setup': 'VA80 LONG' if side > 0 else 'VA80 SHORT', 'direction': side,
+                'setup_note': f"{name} session opened {'below' if side > 0 else 'above'} the previous {name} session's "
+                              f"value area {val:.6g}-{vah:.6g} (POC {poc:.6g}), back inside for two 30m periods: "
+                              f"Dalton's 80% rule -> the far edge, out at the session's close",
+                'anchor_level': edge, 'anchor_extreme': extreme,
+                'anchor_label': f"{name} value area {'low' if side > 0 else 'high'}",
+                'anchor_ts': open_ms, 'anchor_close': last[4], 'va_far': far, 'va_poc': poc,
+                'orb_session': name, 'session_end_ms': close_ms, 'event_ts': int(last[0]) + QUARTER_MS}
+    return None
+
+
 def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, price_hi: float, price_lo: float,
                 fired: set, symbol: str) -> Optional[Dict]:
     """The first break of a running session's opening range (its first orb_range_min 1m candles), once per session.
@@ -285,9 +353,11 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
             'event_ts': int(last[0]) + DAY_MS}
 
 
-def classic_events(m15: List[List[float]], h1: List[List[float]], cut: int) -> List[Dict]:
+def classic_events(m15: List[List[float]], h1: List[List[float]], cut: int, symbol: Optional[str] = None) -> List[Dict]:
     out = []
-    found = value_area_event(m15, cut)
+    # eng-95: Dalton's 80% rule by session, on the session instruments only (was the UTC day on every coin)
+    base = (symbol or '').split('/')[0]
+    found = session_va_event(base, m15, cut) if base in CONFIG.strategies.orb_bases else None
     if found:
         out.append(found)
     return out                     # ORB (on the touch) and Connors' RSI(2) run on daily candles, loop-side (Scanner)

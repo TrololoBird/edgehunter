@@ -106,6 +106,10 @@ class AuctionStrategy(_System):
     min_rr = 1.5                     # the auction system's own rule: the next POC must pay >= 1.5 R
     setups = {'AUCTION LONG': 1, 'AUCTION SHORT': -1}
     ttl_key = 'auction_ttl'
+    time_exit = 'session'            # eng-95: out at the signal's session close (sig['session_end_ms'])
+
+    def session_end(self, entered_at: float) -> Optional[float]:
+        return None                  # only the signal's own session close (SignalBook._time_exit) ends it by time
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         cfg = CONFIG.strategies
