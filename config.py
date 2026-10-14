@@ -647,7 +647,7 @@ class StrategiesConfig:
     shadow_vetoes: tuple = ('against_bias', 'against_trend', 'not_in_pool', 'h4_against', 'regime_flat',
                             'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation', 'no_*',
                             'htf_bias', 'htf_conflict', 'rg_breakout_in_range', 'rg_countertrend',
-                            'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap')
+                            'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf')
     disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'OI SIGNAL LONG', 'PUMP START',
                              # eng-103: the Turtles (exit on the 20-day low: weeks-long trades giving back the run;
                              # live 5 of 5 closed lost, -1.28R) do not fit a bot of hour-long trades
@@ -1013,7 +1013,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-109"
+    logic_version: str = "eng-110"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

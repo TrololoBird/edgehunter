@@ -154,7 +154,7 @@ class SilverBulletStrategy(Strategy):
         risk = abs(ce - sig['anchor_extreme'])
         # eng-84: the day's draw as TP1 only on the trade's side and within 3R (a short's 'TP1' printed above its entry)
         first = (sig['sb_target'], "the day's draw on liquidity (PDH / PDL)") \
-            if risk and 0 < d * (sig['sb_target'] - ce) <= 3.0 * risk else None
+            if risk and 0 < d * (sig['sb_target'] - ce) else None      # eng-110: no 3R cap (ours)
         targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity', first=first)
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}

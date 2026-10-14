@@ -193,7 +193,7 @@ class WyckoffRangeStrategy(Strategy):
         """Wyckoff reads a 1h range inside the larger picture: no spring against a falling daily trend's weekly
         markdown, no UTAD against a rising one (both the daily trend and the weekly bias against the trade)."""
         if sig.get('trend_1d') == -direction and sig.get('weekly_bias') == -direction:
-            return 'against_htf'
+            return 'against_htf'      # eng-110: our trend / bias definitions - shadow (config.shadow_vetoes)
         return None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
@@ -206,10 +206,12 @@ class WyckoffRangeStrategy(Strategy):
                                                    RawLevel(lo, 'range', 'range low', -1)], atr, symbol=x.symbol)
         fillers = (far,) + ((sig['pnf_target'],) if sig.get('pnf_target') and d * (sig['pnf_target'] - far) > 0 else ())
         # eng-84 (Wyckoff practice): TP1 the middle of the range, then its far side / the P&F count
-        targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F count',
-                                          first=((lo + hi) / 2, 'range middle'))
+        # eng-110: Wyckoff's objectives - the range's far side and the P&F count (the eng-84 'range middle' TP1 was ours)
+        targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F count')
         # the test: back toward the spring's area (the spring's extreme to a fifth into the range)
-        zone = sorted((extreme, edge + d * 0.2 * (hi - lo)))
+        # eng-110: the test comes back to the spring's area - its extreme to the range edge (the 'fifth into the range'
+        # was ours)
+        zone = sorted((extreme, edge))
         tf = sig.get('wy_tf') or '1h'
         anchor = {'type': 'range', 'tf': tf, 'lo': lo, 'hi': hi, 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, tf, entry='pullback', zone_lo=zone[0], zone_hi=zone[1],

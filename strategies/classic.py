@@ -246,8 +246,8 @@ def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Opt
             continue
         edge, far = (val, vah) if side > 0 else (vah, val)
         last = day[-1]
-        if side * (far - last[4]) < 0.3 * (vah - val):
-            continue
+        if side * (far - last[4]) <= 0:
+            continue                               # eng-110: only 'the far edge is still ahead' (the 0.3 x VA was ours)
         extreme = min(c[3] for c in day) if side > 0 else max(c[2] for c in day)
         return {'setup': 'VA80 LONG' if side > 0 else 'VA80 SHORT', 'direction': side,
                 'setup_note': f"{name} session opened {'below' if side > 0 else 'above'} the previous {name} session's "

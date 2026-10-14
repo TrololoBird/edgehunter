@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 NY = ZoneInfo('America/New_York')
 FIVE_MS = 300_000
-FIRST_MAX_R = 3.0          # eng-84: a fixed first target farther than this many R is left to the map
+FIRST_MAX_R = float('inf')  # eng-110: no cap - the source's target (the Asian range's far side) stands; the 3R was ours
 
 
 def london_window(ts_ms: int) -> Optional[tuple]:

@@ -87,7 +87,7 @@ class LegContinuation(Strategy):
         """
         btc = sig.get('btc_1h')
         if btc is not None and direction * btc <= -CONFIG.strategies.tide_btc_against:
-            return 'against_tide'
+            return 'btc_against'     # eng-110: BTC is not Elder's tide (his is the coin's longer timeframe) - shadow
         return None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
