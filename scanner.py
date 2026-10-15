@@ -238,6 +238,7 @@ class Scanner:
             from briefing import Briefing
             self.briefing = Briefing(self)
             loops.append(self.briefing.loop())
+        loops.append(self._panel_prewarm_loop())
         if self.demo.enabled:
             loops.append(self.demo.reconcile_loop(lambda: self._running))
             loops.append(self._demo_report_loop())
@@ -273,6 +274,21 @@ class Scanner:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
         return task
+
+    async def _panel_prewarm_loop(self):
+        """audit-80: the classic indicator panel of every coin with a live card, both directions, computed in a thread
+        right after the 15m / 1h closes, so the confirmation asked on the loop finds it cached (strategies/ind_panel:
+        rolling windows over 500 candles stalled the loop 1-2s at the closes)."""
+        while self._running:
+            await asyncio.sleep(20)
+            try:
+                syms = {s.symbol for s in self.book.signals.values() if not s.finished}
+                now_ms = time.time() * 1000
+                mds = [self.market_data[x] for x in syms if x in self.market_data]
+                if mds:
+                    await asyncio.to_thread(lambda: [self.fetcher.indicator_panel(md, d, now_ms) for md in mds for d in (1, -1)])
+            except Exception as e:
+                errors.report('scanner.panel_prewarm', e)
 
     async def _demo_report_loop(self):
         """audit-80: yesterday's demo trades per strategy to the demo topic at 00:05 UTC, and an alert (never a block)
@@ -1380,8 +1396,11 @@ class Scanner:
                 return rows
             start = int(minutes[-1][0]) // tf_ms * tf_ms
             part = [m for m in minutes if m[0] >= start]
-            bar = [start, part[0][1], max(m[2] for m in part), min(m[3] for m in part), part[-1][4], 0.0, 0.0]
             rows = [r for r in rows if r[0] < start]
+            # the minute ring holds 10h: a 4h / daily candle that began earlier opens at the previous close (its
+            # high / low before the ring are unknown - approximated by the part we hold)
+            o = part[0][1] if minutes[0][0] <= start or not rows else rows[-1][4]
+            bar = [start, o, max(o, max(m[2] for m in part)), min(o, min(m[3] for m in part)), part[-1][4], 0.0, 0.0]
             return rows + [bar]
         candles = forming(candles, 900_000)
         cards = [s for s in self.book.signals.values() if s.symbol == symbol]
@@ -1436,6 +1455,9 @@ class Scanner:
             'candles_15m': candles,
             'candles_5m': candles_5m,
             'candles_1h': candles_1h,
+            # 4h / daily from their own REST histories (200 / 370 closed candles) + the forming one from the minutes
+            'candles_4h': forming([list(r) for r in md.h4][-200:], 14_400_000) if len(md.h4) else [],
+            'candles_1d': forming([list(r) for r in md.d1][-370:], 86_400_000) if len(md.d1) else [],
             'zones': [z.as_dict() for z in zones],
             'cards': [card_view(s, now) for s in cards],
             'liquidations': [list(e) for e in md.liq_events if now * 1000 - e[0] <= 86_400_000][-300:],
@@ -1595,16 +1617,17 @@ class Scanner:
             ctxs = [c for c in self.detector.context.values() if c is not None]
             pairs = sum(1 for c in ctxs if getattr(c, 'smt_pair', None))
             failed = errors.health_text()
+            gc_line = self.watchdog.gc_text()
             # the same reading for /api/health (external monitoring, the dashboard's health tab)
             self.health = {'ts': time.time(), 'tier0_sec': self.last_tier0_sec, 'scan_sec': self.last_scan_sec,
                            'heavy_sec': self.last_heavy_sec, 'books': len(self._hot), 'streams': rates,
                            'down': [r.split()[0] for r in rates if ' DOWN' in r],
                            'cpu_pct': cpu, 'rss_mb': rss,
-                           'errors': failed}
+                           'gc': gc_line, 'errors': failed}
             logger.info(f"Health: tier0 {self.last_tier0_sec:.2f}s, scan {self.last_scan_sec:.2f}s "
                         f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
                         f"smt pairs {pairs}/{len(ctxs)}, streams " + ", ".join(rates)
-                        + (f"; {failed}" if failed else ''))
+                        + (f"; {gc_line}" if gc_line else '') + (f"; {failed}" if failed else ''))
             if time.time() - last_memory >= 600:
                 # where the memory sits (process classes + the bot's own structures), every 10 minutes
                 last_memory = time.time()

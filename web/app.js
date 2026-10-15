@@ -663,7 +663,7 @@ function spark(key, color) {
 
 let coin = null, coinLoaded = 0, chart = null, series = null, tf = 15, coinData = null, priceLines = [], fibSeries = [];
 let shownZones = [];     // the zones drawn as boxes on the canvas (drawZoneBoxes)
-let oiSeries = null, cvdSeries = null, cvdSpotSeries = null, demoTrades = [];
+let oiSeries = null, cvdSeries = null, cvdSpotSeries = null, demoTrades = [], seriesMarkers = null;
 const tzShift = -new Date().getTimezoneOffset() * 60;
 
 function openCoin(symbol, leg) {
@@ -683,16 +683,12 @@ function openCoin(symbol, leg) {
     });
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => requestAnimationFrame(drawHeat));
     // OI and CVD under the candles on their own scales (lightweight-charts 4 has no panes: overlay scales with margins)
-    oiSeries = chart.addLineSeries({ priceScaleId: 'oi', color: '#f5c542', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: 'OI' });
-    cvdSeries = chart.addLineSeries({ priceScaleId: 'cvd', color: '#3cc7e8', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: 'CVD фьюч' });
-    cvdSpotSeries = chart.addLineSeries({ priceScaleId: 'cvd', color: '#b28cff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: 'CVD спот' });
-    chart.priceScale('oi').applyOptions({ scaleMargins: { top: 0.72, bottom: 0.15 }, visible: false });
-    chart.priceScale('cvd').applyOptions({ scaleMargins: { top: 0.86, bottom: 0.01 }, visible: false });
     chart.subscribeCrosshairMove(zoneTip);
-    series = chart.addCandlestickSeries({ upColor: '#2ecc71', downColor: '#ff5c5c', borderVisible: false, wickUpColor: '#2ecc71', wickDownColor: '#ff5c5c', priceFormat: { type: 'price', precision: 6, minMove: 0.000001 } });
+    series = chart.addSeries(LightweightCharts.CandlestickSeries, { upColor: '#2ecc71', downColor: '#ff5c5c', borderVisible: false, wickUpColor: '#2ecc71', wickDownColor: '#ff5c5c', priceFormat: { type: 'price', precision: 6, minMove: 0.000001 } });
+    seriesMarkers = LightweightCharts.createSeriesMarkers(series, []);
   }
   coinData = null;
-  series.setData([]); series.setMarkers([]);
+  series.setData([]); seriesMarkers.setMarkers([]);
   priceLines.forEach(l => series.removePriceLine(l)); priceLines = []; shownZones = [];
   chart.priceScale('right').applyOptions({ autoScale: true });
   loadCoin(true);
@@ -775,8 +771,20 @@ function aggregate(rows, minutes) {
 // OI / CVD on the chart's timeframe: the 15m series (the 5m chart shows them per 15m, 1h+ resamples them)
 function drawFlow(bars) {
   const on = $('#flow-on') && $('#flow-on').checked, rows = (coinData && coinData.flow_15m) || [];
-  series.priceScale().applyOptions({ scaleMargins: on && rows.length ? { top: 0.06, bottom: 0.32 } : { top: 0.08, bottom: 0.08 } });
-  if (!on || !rows.length || !bars.length) { oiSeries.setData([]); cvdSeries.setData([]); cvdSpotSeries.setData([]); return; }
+  // v5 panes under the candles: OI (pane 1), futures / spot CVD (pane 2); removed with their series when off
+  if (!on || !rows.length || !bars.length) {
+    for (const s of [oiSeries, cvdSeries, cvdSpotSeries]) if (s) chart.removeSeries(s);
+    oiSeries = cvdSeries = cvdSpotSeries = null; return;
+  }
+  if (!oiSeries) {
+    const opt = (color, title) => ({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title,
+      priceFormat: { type: 'volume' } });
+    oiSeries = chart.addSeries(LightweightCharts.LineSeries, opt('#f5c542', 'OI'), 1);
+    cvdSeries = chart.addSeries(LightweightCharts.LineSeries, opt('#3cc7e8', 'CVD фьюч'), 2);
+    cvdSpotSeries = chart.addSeries(LightweightCharts.LineSeries, opt('#b28cff', 'CVD спот'), 2);
+    const panes = chart.panes(), total = $('#chart').clientHeight;
+    if (panes.length >= 3) { panes[1].setHeight(Math.round(total * 0.14)); panes[2].setHeight(Math.round(total * 0.14)); }
+  }
   const size = Math.max(15, tf) * 60, t0 = bars[0].time, oi = new Map(), fd = new Map(), sd = new Map();
   for (const [ms, o, f, sp] of rows) {
     const t = Math.floor(ms / 1000 / size) * size + tzShift;
@@ -803,7 +811,9 @@ function zoneTip(param) {
 
 function drawCoin(fit) {
   const d = coinData; if (!d || d.error) { $('#d-body').innerHTML = `<div class="empty">${esc(d && d.error)}</div>`; return; }
-  const raw = tf >= 60 ? aggregate(d.candles_1h || [], tf) : tf === 15 ? (d.candles_15m || []) : (d.candles_5m || []);
+  const raw = tf === 1440 ? (d.candles_1d && d.candles_1d.length ? d.candles_1d : aggregate(d.candles_1h || [], tf))
+    : tf === 240 ? (d.candles_4h && d.candles_4h.length ? d.candles_4h : aggregate(d.candles_1h || [], tf))
+    : tf === 60 ? (d.candles_1h || []) : tf === 15 ? (d.candles_15m || []) : (d.candles_5m || []);
   const bars = raw.map(c => ({ time: Math.floor(c[0] / 1000) + tzShift, open: c[1], high: c[2], low: c[3], close: c[4] }));
   const precision = d.price ? Math.min(10, Math.max(2, 4 - Math.floor(Math.log10(d.price)))) : 4;
   series.applyOptions({ priceFormat: { type: 'price', precision, minMove: Math.pow(10, -precision) } });
@@ -869,7 +879,7 @@ function drawCoin(fit) {
     const f = card0.fib;
     const t = ms => Math.floor(ms / 1000 / (tf * 60)) * (tf * 60) + tzShift;
     const legLine = (pts, color) => {
-      const ls = chart.addLineSeries({ color, lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+      const ls = chart.addSeries(LightweightCharts.LineSeries, { color, lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
         crosshairMarkerVisible: false });
       ls.setData(pts.filter(p => p.time !== undefined && !Number.isNaN(p.time)).sort((a, b) => a.time - b.time)
         .filter((p, i, arr) => i === 0 || p.time > arr[i - 1].time));
@@ -904,7 +914,7 @@ function drawCoin(fit) {
   const card = card0;
   if (card) {
     if (card.zone && card.zone[0] && !card.entered_at) {
-      const age = card.created ? ` · ждёт ${ago(nowSec() - card.created)}` : '';
+      const age = card.created && !card.finished ? ` · ждёт ${ago(nowSec() - card.created)}` : '';
       line(card.zone[0], '#f5c542', 'зона' + age, 1, 2); line(card.zone[1], '#f5c542', 'зона', 1, 2);
     }
     if (card.levels) {
@@ -940,7 +950,7 @@ function drawCoin(fit) {
       markers.push({ time: at(t.closed_ms), position: t.direction > 0 ? 'aboveBar' : 'belowBar', color: t.r >= 0 ? '#2ecc71' : '#ff5c5c', shape: 'square', text: `${t.r >= 0 ? '+' : ''}${t.r.toFixed(1)}R` });
   }
   markers.sort((a, b) => a.time - b.time);
-  series.setMarkers(markers);
+  seriesMarkers.setMarkers(markers);
   drawFlow(bars);
   if (fit) {
     // a drag / wheel on the price axis turns its auto-scale off for good: the next coin (TAO ~300 -> NEAR ~5.9) kept the
@@ -1048,6 +1058,9 @@ function drawHeat() {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
   const ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, box.width, box.height);
+  // only over the candles' pane (the OI / CVD panes sit below it)
+  const pane0 = chart.panes()[0], paneH = pane0 ? pane0.getHeight() : box.height;
+  ctx.beginPath(); ctx.rect(0, 0, box.width, paneH); ctx.clip();
   drawZoneBoxes(ctx, box);
   const hm = coinData && coinData.heatmap;
   if (!hm || !hm.snapshots.length || !$('#heat-on').checked) return;   // (the zone boxes are drawn above)

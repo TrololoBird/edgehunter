@@ -184,7 +184,7 @@ async def main(use_web: bool = True):
     # into gen 2 and its full collections paused the loop 0.3s+ (watchdog 'gc (gen 2)', 100+ a day); fewer, younger
     # collections - the long-lived history is gc.freeze()d by the fetcher once loaded
     import gc
-    gc.set_threshold(50_000, 20, 100)
+    gc.set_threshold(*(int(x) for x in os.environ.get('PUMP_GC_THRESHOLD', '50000,20,100').split(',')))
 
     quick_edit = ConsoleQuickEdit()
     quick_edit.disable()

@@ -1827,7 +1827,8 @@ class DataFetcher:
         self._tasks.append(asyncio.create_task(self._external_loop()))
         self._tasks.append(asyncio.create_task(self._h4_candles_loop()))
 
-    async def _start_binance_streams(self, symbols: List[str]):
+    def _binance_plans(self, symbols: List[str]) -> List[Tuple[str, str, List[str], int]]:
+        """(market, name, raw stream names, streams per socket) of the static Binance groups; fills _binance_keys."""
         ids = {'spot': [], 'futures': []}
         self._binance_keys = {}
         for symbol in symbols:
@@ -1839,7 +1840,7 @@ class DataFetcher:
                 spot_id = self.spot_exchange.market(spot_symbol)['id']
                 ids['spot'].append(spot_id)
                 self._binance_keys[('spot', spot_id)] = symbol
-        logger.info(f"Starting Binance streams for {len(ids['spot'])} spot, {len(ids['futures'])} futures symbols")
+        logger.info(f"Binance streams for {len(ids['spot'])} spot, {len(ids['futures'])} futures symbols")
         self.streams_started_ms = self.streams_started_ms or int(time.time() * 1000)
         # Bandwidth matters more than message counts here: the link to Binance measured ~150 KB/s in total and a
         # single socket ~40-70 KB/s, beyond which the server's buffer fills and it drops the connection. So:
@@ -1855,7 +1856,10 @@ class DataFetcher:
             # eng-81 (the VPS): mark / index / funding of every contract each second and every 24h volume, ~100 KB/s
             # each; the REST loop stays as the fallback when a stream goes quiet (_binance_rest_tickers_loop)
             plans.append(('futures', 'Binance market arrays', ['!markPrice@arr@1s', '!miniTicker@arr'], 2))
-        for market, name, streams, per_socket in plans:
+        return plans
+
+    async def _start_binance_streams(self, symbols: List[str]):
+        for market, name, streams, per_socket in self._binance_plans(symbols):
             stream = BinanceStream(self, self.symbol_map, market, streams, name)
             stream.subs_per_connection = per_socket
             self._binance_streams.append(stream)
@@ -1876,11 +1880,21 @@ class DataFetcher:
             await stream.start(dynamic=venue == 'hyperliquid')
 
     async def restart_streams(self, symbols: List[str]):
-        """After a universe change: re-subscribe every static stream to the new symbol set."""
-        for stream in self._binance_streams:
-            await stream.stop()
-        self._binance_streams = []
-        await self._start_binance_streams(symbols)
+        """After a universe change: every static stream moves to the new symbol set by diff (audit-80: the sockets
+        stay up; only a group that did not exist yet is started)."""
+        by_name = {st.name: st for st in self._binance_streams}
+        for market, name, streams, per_socket in self._binance_plans(symbols):
+            st = by_name.get(name)
+            if st is None:
+                st = BinanceStream(self, self.symbol_map, market, streams, name)
+                st.subs_per_connection = per_socket
+                self._binance_streams.append(st)
+                await st.start()
+                continue
+            st.streams = streams
+            if not await st.update_static(streams):
+                await st.stop()
+                await st.start()
         for venue, stream in list(self.venue_streams.items()):
             await stream.restart(dynamic=venue == 'hyperliquid')
 

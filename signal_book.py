@@ -38,7 +38,10 @@ import time
 from strategies.ict import fvg_setup, fvg_trigger, range_position, touch_confirm, touch_trigger
 from collections import Counter
 from dataclasses import asdict, dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from strategies.base import CardLevels
 
 from config import CONFIG
 from journal import classify, veto_reason
@@ -188,7 +191,7 @@ class TrackedSignal:
     last_seen: float = 0.0
     last_price: float = 0.0
     zone_since_ms: Optional[int] = None
-    levels: Optional[Dict[str, float]] = None
+    levels: Optional['CardLevels'] = None
     entered_at: Optional[float] = None
     best_target: int = 0
     finished_at: Optional[float] = None

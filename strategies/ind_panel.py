@@ -184,7 +184,7 @@ def rules(ind: dict, d: int) -> dict:
 
 
 
-_IND_CACHE: dict = {}          # (key, last candle ts, count) -> indicators(): one computation per closed candle
+_IND_CACHE: dict = {}          # (key, last candle ts, count, direction) -> panel(): one computation per closed candle
 
 
 def panel(candles, direction: int, key=None) -> dict:
@@ -193,17 +193,20 @@ def panel(candles, direction: int, key=None) -> dict:
     until the next candle closes: every card of a coin asked for them again (watchdog: 2s loop stalls in rolling_min)."""
     if len(candles) < 250:
         return {}
-    ck = (key, candles[-1][0], len(candles)) if key is not None else None
-    ind = _IND_CACHE.get(ck) if ck is not None else None
-    if ind is None:
-        k = np.asarray([row[:6] for row in candles], dtype=np.float64)
-        ind = indicators(k)
-        if ck is not None:
-            if len(_IND_CACHE) > 600:                       # ~150 coins x 2 timeframes x 2 candles
-                _IND_CACHE.clear()
-            _IND_CACHE[ck] = ind
+    # the whole answer per (coin, timeframe, last candle, direction): rules() runs rolling windows too (a second
+    # watchdog stall in rolling_min once indicators() was cached)
+    ck = (key, candles[-1][0], len(candles), direction) if key is not None else None
+    hit = _IND_CACHE.get(ck) if ck is not None else None
+    if hit is not None:
+        return dict(hit)
+    k = np.asarray([row[:6] for row in candles], dtype=np.float64)
+    ind = indicators(k)
     out = {}
     for name, arr in rules(ind, direction).items():
         value = np.asarray(arr)[-1]
         out[name] = bool(value) if value == value else None       # NaN -> None
-    return out
+    if ck is not None:
+        if len(_IND_CACHE) > 1200:                      # ~150 coins x 2 timeframes x 2 directions x 2 candles
+            _IND_CACHE.clear()
+        _IND_CACHE[ck] = out
+    return dict(out)

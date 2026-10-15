@@ -152,6 +152,9 @@ class VenueStream:
         self._dynamic_active: Set[Any] = set()
         self._dynamic_transport: Optional[WSTransport] = None
         self._dynamic_lock = asyncio.Lock()
+        # static connections: index -> its subscriptions (read again at every reconnect) and its live transport
+        self._conn_subs: Dict[int, List[Any]] = {}
+        self._conn_transport: Dict[int, WSTransport] = {}
 
     # ------------------------------------------------------------------ venue specifics
 
@@ -180,6 +183,8 @@ class VenueStream:
         # coins on one socket, which then fell behind and was dropped at every market burst
         n = -(-len(subs) // self.subs_per_connection) if subs else 0
         chunks = [subs[k::n] for k in range(n)]
+        self._conn_subs = {i: list(chunk) for i, chunk in enumerate(chunks)}
+        self._conn_transport = {}
         for i, chunk in enumerate(chunks):
             self._tasks.append(asyncio.create_task(self._connection(chunk, i * self.connect_stagger, i)))
         if dynamic:
@@ -199,8 +204,57 @@ class VenueStream:
             await asyncio.wait(self._tasks, timeout=5)
         self._tasks.clear()
 
+    def supports_unsubscribe(self) -> bool:
+        return type(self).unsubscribe_messages is not VenueStream.unsubscribe_messages
+
+    async def update_static(self, new_subs: List[Any]) -> bool:
+        """audit-80: move the static connections to `new_subs` by diff - unsubscribe the dropped ones on the socket that
+        holds them, subscribe the new ones where there is room (a new socket when none has) - instead of dropping every
+        socket of the venue at each universe refresh (minutes of missing trades and a reconnect wave). False when the
+        venue has no unsubscribe message (the caller restarts it)."""
+        if not self._running or not self.supports_unsubscribe():
+            return False
+        wanted = list(dict.fromkeys(new_subs))
+        wanted_set = set(wanted)
+        held = {sub: i for i, subs in self._conn_subs.items() for sub in subs}
+        for i, subs in self._conn_subs.items():
+            gone = [x for x in subs if x not in wanted_set]
+            if not gone:
+                continue
+            self._conn_subs[i] = [x for x in subs if x in wanted_set]
+            transport = self._conn_transport.get(i)
+            if transport is not None and not transport.is_disconnected:
+                await self._send_all(transport, self.unsubscribe_messages(gone))
+        add = [x for x in wanted if x not in held]
+        new_conns: Dict[int, List[Any]] = {}
+        batches: Dict[int, List[Any]] = {}
+        for sub in add:
+            room = [i for i, subs in self._conn_subs.items() if len(subs) < self.subs_per_connection]
+            if room:
+                i = min(room, key=lambda k: len(self._conn_subs[k]))
+            else:
+                i = max(self._conn_subs, default=-1) + 1
+                self._conn_subs[i] = []
+                new_conns[i] = self._conn_subs[i]
+            self._conn_subs[i].append(sub)
+            if i not in new_conns:
+                batches.setdefault(i, []).append(sub)
+        for i, subs in batches.items():                  # one batch per live socket (message-rate limits)
+            transport = self._conn_transport.get(i)
+            if transport is not None and not transport.is_disconnected:
+                await self._send_all(transport, self.subscribe_messages(subs))
+        for k, (i, subs) in enumerate(new_conns.items()):
+            self._tasks.append(asyncio.create_task(self._connection(subs, k * self.connect_stagger, i)))
+        removed = sum(1 for x in held if x not in wanted_set)
+        if add or removed:
+            logger.info(f"{self.name} WS: +{len(add)} / -{removed} subscriptions in place"
+                        f"{f', {len(new_conns)} new connection(s)' if new_conns else ''}")
+        return True
+
     async def restart(self, dynamic: bool = False):
-        """Re-subscribe after the symbol map changed (universe refresh)."""
+        """Re-subscribe after the symbol map changed (universe refresh): by diff where the venue can unsubscribe."""
+        if await self.update_static(self.subscriptions()):
+            return
         wanted = set(self._dynamic_wanted)
         await self.stop()
         await self.start(dynamic=dynamic)
@@ -270,7 +324,10 @@ class VenueStream:
                             await self._send_all(transport, self.subscribe_messages(sorted(self._dynamic_wanted, key=str)))
                             self._dynamic_active = set(self._dynamic_wanted)
                 else:
-                    await self._send_all(transport, self.subscribe_messages(subs))
+                    if index in self._conn_subs:
+                        subs = self._conn_subs[index]           # updated in place by update_static
+                        self._conn_transport[index] = transport
+                    await self._send_all(transport, self.subscribe_messages(list(subs)))
                 await transport.wait_disconnected()
                 if self._running:
                     # A single drop that reconnects at once is routine for public feeds (exchange gateway restarts,
@@ -295,6 +352,8 @@ class VenueStream:
                     self.connected -= 1
                 if dynamic:
                     self._dynamic_transport = None
+                elif self._conn_transport.get(index) is transport:
+                    self._conn_transport.pop(index, None)
             if listener is not None and listener.frames:
                 backoff, failures = 1.0, 0  # reset only once data actually flowed
                 NETWORK.ok()
@@ -403,6 +462,10 @@ class BybitStream(VenueStream):
         return [{'op': 'subscribe', 'args': list(subs[i:i + self.subs_per_request])}
                 for i in range(0, len(subs), self.subs_per_request)]
 
+    def unsubscribe_messages(self, subs):
+        return [{'op': 'unsubscribe', 'args': list(subs[i:i + self.subs_per_request])}
+                for i in range(0, len(subs), self.subs_per_request)]
+
     def handle(self, payload, recv_ms: float):
         topic = payload.get('topic')
         if not topic:
@@ -458,6 +521,10 @@ class OkxStream(VenueStream):
 
     def subscribe_messages(self, subs):
         return [{'op': 'subscribe', 'args': [self._arg(s) for s in subs[i:i + self.subs_per_request]]}
+                for i in range(0, len(subs), self.subs_per_request)]
+
+    def unsubscribe_messages(self, subs):
+        return [{'op': 'unsubscribe', 'args': [self._arg(s) for s in subs[i:i + self.subs_per_request]]}
                 for i in range(0, len(subs), self.subs_per_request)]
 
     def handle(self, payload, recv_ms: float):
@@ -560,10 +627,13 @@ class BitgetStream(VenueStream):
         # Trades only: OI / funding come from one bulk REST call (the ticker channel pushes every ~150ms per symbol)
         return [('trade', native) for native in self.symbols.natives(self.venue)]
 
-    def subscribe_messages(self, subs):
-        return [{'op': 'subscribe', 'args': [{'instType': 'USDT-FUTURES', 'channel': c, 'instId': i}
-                                              for c, i in subs[k:k + self.subs_per_request]]}
+    def subscribe_messages(self, subs, op: str = 'subscribe'):
+        return [{'op': op, 'args': [{'instType': 'USDT-FUTURES', 'channel': c, 'instId': i}
+                                     for c, i in subs[k:k + self.subs_per_request]]}
                 for k in range(0, len(subs), self.subs_per_request)]
+
+    def unsubscribe_messages(self, subs):
+        return self.subscribe_messages(subs, op='unsubscribe')
 
     def handle(self, payload, recv_ms: float):
         if 'event' in payload:
@@ -615,6 +685,9 @@ class CoinbaseStream(VenueStream):
         # heartbeats keep quiet channels from being closed after 60-90s
         return [{'type': 'subscribe', 'product_ids': list(subs), 'channel': 'market_trades'},
                 {'type': 'subscribe', 'channel': 'heartbeats'}]
+
+    def unsubscribe_messages(self, subs):
+        return [{'type': 'unsubscribe', 'product_ids': list(subs), 'channel': 'market_trades'}] if subs else []
 
     def handle(self, payload, recv_ms: float):
         if payload.get('channel') != 'market_trades':

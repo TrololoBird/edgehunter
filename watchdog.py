@@ -96,16 +96,27 @@ class LoopWatchdog:
         self._stop = threading.Event()
         self._gc_start = 0.0
         self.gc_pauses: list = []       # (end monotonic, seconds, generation)
+        self.gc_totals: dict = {}       # generation -> [collections, seconds, worst] since the last Health line
         # Reports start once market data flows (arm()): before the streams are up a slow loop delays nothing
         self.armed = False
 
     # ---------------------------------------------------------------- gc timing
+
+    def gc_text(self) -> str:
+        """'gc g0 120x 0.4s (max 0.01), ...' since the last call, then reset."""
+        items, self.gc_totals = sorted(self.gc_totals.items(), key=lambda kv: (kv[0] is None, kv[0])), {}
+        return ', '.join(f"g{g} {n}x {total:.2f}s (max {worst:.2f})" for g, (n, total, worst) in items)
 
     def _gc_callback(self, phase: str, info: dict):
         if phase == 'start':
             self._gc_start = time.perf_counter()
         elif self._gc_start:
             took = time.perf_counter() - self._gc_start
+            # per generation: collections, total and worst seconds since the last Health line (gc_text)
+            t = self.gc_totals.setdefault(info.get('generation'), [0, 0.0, 0.0])
+            t[0] += 1
+            t[1] += took
+            t[2] = max(t[2], took)
             if took >= 0.1:
                 self.gc_pauses.append((time.monotonic(), took, info.get('generation')))
                 del self.gc_pauses[:-20]

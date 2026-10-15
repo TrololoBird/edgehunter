@@ -27,6 +27,8 @@ import sqlite3
 import statistics
 import time
 from datetime import datetime
+
+import numpy as np
 from typing import Callable, Dict, List, Optional, Tuple
 
 from rich.console import Console
@@ -73,10 +75,22 @@ def bootstrap_ci(values: List[float], stat: Callable = statistics.fmean, seed: i
     blocks = list(groups.values())
     if len(blocks) < 5:
         return None
-    rng = random.Random(seed)
     k = len(blocks)
+    if stat is statistics.fmean:
+        means = np.sort(_block_means(blocks, seed))
+        return float(means[int(0.05 * BOOTSTRAP)]), float(means[int(0.95 * BOOTSTRAP) - 1])
+    rng = random.Random(seed)
     draws = sorted(stat([v for _ in range(k) for v in blocks[rng.randrange(k)]]) for _ in range(BOOTSTRAP))
     return draws[int(0.05 * BOOTSTRAP)], draws[int(0.95 * BOOTSTRAP) - 1]
+
+
+def _block_means(blocks: List[List[float]], seed: int) -> 'np.ndarray':
+    """BOOTSTRAP resampled means of whole blocks, vectorized: a draw's mean = the drawn blocks' sum / their count
+    (the Python loop took 24s of a 38s report over 90 days)."""
+    sums = np.fromiter((sum(b) for b in blocks), dtype=float, count=len(blocks))
+    counts = np.fromiter((len(b) for b in blocks), dtype=float, count=len(blocks))
+    idx = np.random.default_rng(seed).integers(0, len(blocks), size=(BOOTSTRAP, len(blocks)))
+    return sums[idx].sum(axis=1) / counts[idx].sum(axis=1)
 
 
 def ci_text(values: List[float], scale: float = 100, suffix: str = "%", stat: Callable = statistics.fmean,
@@ -207,10 +221,8 @@ def bootstrap_p(values: List[float], clusters: Optional[List] = None, seed: int 
     blocks = list(groups.values())
     if len(blocks) < 5:
         return None
-    rng = random.Random(seed)
-    k = len(blocks)
-    means = [statistics.fmean([v for _ in range(k) for v in blocks[rng.randrange(k)]]) for _ in range(BOOTSTRAP)]
-    below = sum(m <= 0 for m in means) / BOOTSTRAP
+    means = _block_means(blocks, seed)
+    below = float((means <= 0).mean())
     return min(1.0, 2 * min(below, 1 - below) + 1 / BOOTSTRAP)
 
 

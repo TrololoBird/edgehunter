@@ -11,6 +11,7 @@ Target intents (the strategy says what it trades toward; Fibonacci only where a 
 A target is always >= zones.min_target_atr beyond its reference (and beyond the previous target); slots still empty are
 1-ATR steps ('ATR step'), never copies of one level.
 """
+from strategies.base import CardLevels  # noqa: F401  (the return type of entry_levels)
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
@@ -676,7 +677,7 @@ def _ext_label(target: float, label: str, ratios: Dict[float, float], plan: Dict
     return text
 
 
-def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
+def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional['CardLevels']:
     """Entry / stop / targets for an entry at `entry` (targets behind the entry are dropped, refilled beyond it)."""
     if plan.get('exit'):
         return system_levels(plan, entry, extreme, direction)

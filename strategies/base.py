@@ -20,12 +20,38 @@ The strategy interface. A strategy turns a setup (a detected event or a scored p
 Lifecycle, stop floor, R:R and the journal are shared (signal_book.py, geometry.py).
 """
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypedDict
 
 import polars as pl
 
 from config import CONFIG
 from levels import TRIGGER_MINUTES, TTL_FACTOR  # noqa: F401  (TRIGGER_MINUTES re-exported for the strategies)
+
+
+class CardLevels(TypedDict, total=False):
+    """audit-80: the card's trade geometry (geometry.entry_levels / system_levels -> TrackedSignal.levels), one place
+    that names every key the lifecycle, the executor and the page read."""
+    entry: float
+    sl: float
+    tp1: float
+    tp2: float
+    tp3: float
+    rr_tp1: Optional[float]            # (TP1 - entry - costs) / (risk + costs); None for target-less systems
+    rr_tp2: Optional[float]
+    rr_blend: Optional[float]          # a third at each target
+    low_rr: bool
+    rr_reason: Optional[str]           # why the plan fails its R:R / cost / stop-distance rule
+    risk_units: float                  # 1 = one risk unit (the Turtles' units > 1)
+    risk0: float                       # the entry's risk, kept when the stop moves (R of a trailed trade)
+    stop_pierce: Optional[float]
+    sl_src: str
+    tp1_src: str
+    tp2_src: str
+    tp3_src: str
+    zone_src: str
+    range_pos: Optional[float]
+    limit_entry: Optional[float]
+    volume_24h: Optional[float]
 
 
 @dataclass
