@@ -5,13 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Microstructure Scanner</title>
 <link rel="stylesheet" href="/static/style.css">
-<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<!-- served locally (no CDN = no charts before); the CDN only as a fallback -->
+<script src="/static/lightweight-charts.4.2.0.js"></script>
+<script>window.LightweightCharts || document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"><\/script>')</script>
 </head>
 <body>
 <header id="top">
   <div class="brand">Microstructure&nbsp;Scanner <span id="conn" class="dot off" title="связь с ботом"></span></div>
   <div id="market" class="market"></div>
   <div id="status" class="status"></div>
+  <button id="notify" class="ghost" title="уведомления браузера о новых сделках">🔕</button>
   <button id="theme" class="ghost" title="тема">◐</button>
 </header>
 <nav id="tabs">
@@ -28,6 +31,8 @@
   <div class="drawer-head">
     <div id="d-title"></div>
     <div class="drawer-tools">
+      <button data-tf="1440" class="tf" title="дневные свечи, собранные из часовых (история 1h)">1d</button>
+      <button data-tf="240" class="tf" title="4h свечи, собранные из часовых">4h</button>
       <button data-tf="60" class="tf">1h</button>
       <button data-tf="15" class="tf active">15m</button>
       <button data-tf="5" class="tf">5m</button>
@@ -36,6 +41,7 @@
       <label class="heat-toggle" title="история стакана: локальная книга по потоку изменений Binance, снимок раз в 30с, только горячие монеты (до 25). Это прошлое: где стояла ликвидность в момент каждой свечи, а не где она стоит сейчас. Линии «плотн.» — устойчивые полосы, которые бот берёт в карту уровней"><input type="checkbox" id="heat-on" checked> стакан</label>
       <label class="heat-toggle" title="выключено: только сильное устойчивое тепло - корзина держит ≥ 4× медианы своего бара в ≥ 3 барах окна (как полосы ликвидности бота); включено: вся история стакана"><input type="checkbox" id="heat-all"> всё тепло</label>
       <label class="heat-toggle" title="выключено: по 4 сильнейших зоны (сила ≥ 2) сверху и снизу цены в пределах графика; включено: до 12 на сторону, слабые тоже"><input type="checkbox" id="lv-all"> все уровни</label>
+      <button id="d-shot" class="ghost" title="сохранить график в PNG">⤓</button>
       <button id="d-close" class="ghost">✕</button>
     </div>
   </div>

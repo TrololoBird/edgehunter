@@ -514,8 +514,8 @@ function renderHealth() {
     <div class="kv">${Object.entries(st).map(([k, x]) => `<span>${esc(k)}</span><span class="mono">${typeof x === 'number' ? (Math.abs(x) >= 1000 ? usd(x) : +x.toFixed(2)) : esc(x)}</span>`).join('')}</div></div>`).join('');
   const ml = S.ml || {};
   return `<div class="grid">
-    <div class="box"><h4>Скан</h4><div class="kv"><span>tier-0</span><span class="mono">${S.timing.tier0.toFixed(2)}с</span>
-      <span>скан</span><span class="mono">${S.timing.scan.toFixed(2)}с</span><span>тяжёлый проход</span><span class="mono">${S.timing.heavy.toFixed(2)}с</span>
+    <div class="box"><h4>Скан</h4><div class="kv"><span>tier-0</span><span class="mono">${S.timing.tier0.toFixed(2)}с ${spark('tier0', 'var(--cyan)')}</span>
+      <span>скан</span><span class="mono">${S.timing.scan.toFixed(2)}с ${spark('scan', 'var(--violet)')}</span><span>тяжёлый проход</span><span class="mono">${S.timing.heavy.toFixed(2)}с ${spark('heavy', 'var(--orange)')}</span>
       <span>монет</span><span class="mono">${S.symbols}</span><span>стаканов</span><span class="mono">${S.hot}</span>
       <span>логика</span><span class="mono">${esc(S.logic_version)}</span></div></div>
     <div class="box"><h4>ML</h4><div class="kv"><span>режим</span><span>${esc(ml.regime || '—')}</span>
@@ -563,11 +563,56 @@ function onState() {
 
 // ------------------------------------------------------------------------------------------------ websocket
 
+let lastMsg = 0, retry = 0;
 function connect() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-  ws.onopen = () => $('#conn').className = 'dot on';
-  ws.onmessage = ev => { S = JSON.parse(ev.data); onState(); if (coin && Date.now() - coinLoaded > 20000) loadCoin(); };
-  ws.onclose = () => { $('#conn').className = 'dot off'; setTimeout(connect, 2000); };
+  ws.onopen = () => { $('#conn').className = 'dot on'; retry = 0; };
+  ws.onmessage = ev => {
+    S = JSON.parse(ev.data); lastMsg = Date.now(); onState(); notifyTrades(); healthSample();
+    if (coin && Date.now() - coinLoaded > 20000) loadCoin();
+  };
+  // backoff 2s .. 30s: a restarting bot is not hammered every 2 seconds
+  ws.onclose = () => { $('#conn').className = 'dot off'; retry += 1; setTimeout(connect, Math.min(30000, 2000 * retry)); };
+}
+setInterval(() => {
+  const age = lastMsg ? Math.round((Date.now() - lastMsg) / 1000) : null;
+  $('#conn').title = age === null ? 'нет связи с ботом' : `связь с ботом · обновлено ${age}с назад`;
+  if (age !== null && age > 30) $('#conn').className = 'dot off';
+}, 1000);
+
+// browser notifications of new trades (opt-in, the bell in the header)
+let notifyOn = localStorage.getItem('notify') === '1' && 'Notification' in window && Notification.permission === 'granted';
+let seenTrades = null;
+function bell() { $('#notify').textContent = notifyOn ? '🔔' : '🔕'; }
+$('#notify').addEventListener('click', async () => {
+  if (!('Notification' in window)) return;
+  if (!notifyOn && Notification.permission !== 'granted') await Notification.requestPermission();
+  notifyOn = !notifyOn && Notification.permission === 'granted';
+  localStorage.setItem('notify', notifyOn ? '1' : '0'); bell();
+});
+bell();
+function notifyTrades() {
+  const ids = new Set((S.cards || []).filter(c => c.entered_at && !c.finished).map(c => c.symbol + '|' + (c.group_key || '')));
+  if (seenTrades && notifyOn && document.hidden)
+    for (const id of ids) if (!seenTrades.has(id)) new Notification('Новая сделка', { body: id.replace(':USDT', '').replace('|', ' · ') });
+  seenTrades = ids;
+}
+
+// the Health tab's sparklines: the last hour of scan timings, sampled from the state pushes
+const HEALTH = [];
+function healthSample() {
+  if (!S || !S.timing) return;
+  const t = Date.now();
+  if (HEALTH.length && t - HEALTH[HEALTH.length - 1].t < 10000) return;
+  HEALTH.push({ t, tier0: S.timing.tier0, scan: S.timing.scan, heavy: S.timing.heavy });
+  while (HEALTH.length > 360) HEALTH.shift();
+}
+function spark(key, color) {
+  const v = HEALTH.map(h => h[key] || 0);
+  if (v.length < 2) return '';
+  const max = Math.max(...v, 0.01), w = 160, h = 28;
+  const pts = v.map((x, i) => `${(i / (v.length - 1) * w).toFixed(1)},${(h - x / max * h).toFixed(1)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-label="${key}"><polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}"/></svg>`;
 }
 
 // ------------------------------------------------------------------------------------------------ coin drawer
@@ -609,12 +654,16 @@ document.querySelectorAll('.tf').forEach(b => b.addEventListener('click', () => 
 async function loadCoin(fit = false) {
   const symbol = coin; coinLoaded = Date.now();
   try {
-    const data = await (await fetch(`/api/coin?symbol=${encodeURIComponent(symbol)}`)).json();
+    $('#chart').classList.add('loading');
+    const res = await fetch(`/api/coin?symbol=${encodeURIComponent(symbol)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
     if (symbol !== coin) return;
     coinData = data; drawCoin(fit);
     // The 1h / 5m history is loading in the background: ask again shortly
     if (!data.htf_loaded && !data.note) setTimeout(() => { if (coin === symbol) loadCoin(false); }, 4000);
   } catch (err) { $('#d-body').innerHTML = `<div class="empty">Ошибка: ${esc(err.message)}</div>`; }
+  finally { if (symbol === coin) $('#chart').classList.remove('loading'); }
 }
 
 // The two-sided scenario card (scenarios.py): the reaction zone, resistances above, supports below, a long
@@ -658,9 +707,21 @@ function scenarioHtml(s, price) {
     <div class="hint">Сценарий — механические правила по уровням, не рекомендация; проверка: research/scenario_model.md, research/level_triggers.md.</div>`;
 }
 
+// 4h / 1d candles from the 1h history (UTC-aligned buckets, like the exchange's): [ts, o, h, l, c, ...]
+function aggregate(rows, minutes) {
+  if (minutes <= 60) return rows;
+  const size = minutes * 60000, out = [];
+  for (const c of rows) {
+    const t = Math.floor(c[0] / size) * size, last = out[out.length - 1];
+    if (last && last[0] === t) { last[2] = Math.max(last[2], c[2]); last[3] = Math.min(last[3], c[3]); last[4] = c[4]; }
+    else out.push([t, c[1], c[2], c[3], c[4]]);
+  }
+  return out;
+}
+
 function drawCoin(fit) {
   const d = coinData; if (!d || d.error) { $('#d-body').innerHTML = `<div class="empty">${esc(d && d.error)}</div>`; return; }
-  const raw = tf === 60 ? (d.candles_1h || []) : tf === 15 ? d.candles_15m : d.candles_5m;
+  const raw = tf >= 60 ? aggregate(d.candles_1h || [], tf) : tf === 15 ? (d.candles_15m || []) : (d.candles_5m || []);
   const bars = raw.map(c => ({ time: Math.floor(c[0] / 1000) + tzShift, open: c[1], high: c[2], low: c[3], close: c[4] }));
   const precision = d.price ? Math.min(10, Math.max(2, 4 - Math.floor(Math.log10(d.price)))) : 4;
   series.applyOptions({ priceFormat: { type: 'price', precision, minMove: Math.pow(10, -precision) } });
@@ -679,7 +740,7 @@ function drawCoin(fit) {
   const fibOn = fibCard;
   // with the Fibonacci grid on, the map keeps only its strong zones: the grid is the story, the rest is noise
   const TFR = { '5m': 0, '15m': 1, '1h': 2, '4h': 3, '1d': 4, '1w': 5 };
-  const chartRank = tf === 60 ? 2 : tf === 15 ? 1 : 0;
+  const chartRank = tf >= 1440 ? 4 : tf >= 240 ? 3 : tf === 60 ? 2 : tf === 15 ? 1 : 0;
   const LTF_UNTIMED = new Set(['vwap', 'round', 'book', 'liq_est', 'liq_hit', 'liq_hl', 'equal', 'hvn', 'lvn', 'wall']);
   const zoneRank = z => {           // geometry._zone_rank: the zone's highest timeframe; null = valid on every chart
     let r = -1;
@@ -948,12 +1009,32 @@ $('#lv-all').addEventListener('change', () => drawCoin(false));
 $('#fib-on').addEventListener('change', () => drawCoin(false));
 $('#ev-on').addEventListener('change', () => drawCoin(false));
 window.addEventListener('resize', () => requestAnimationFrame(drawHeat));
-// The price scale can move without an event (auto-scale): redraw while the panel is open
-setInterval(() => { if (coin) drawHeat(); }, 1000);
+// The price scale can move without an event (auto-scale): check once a second, redraw only when the view moved
+let heatSig = '';
+setInterval(() => {
+  if (!coin || !chart || !series || document.hidden) return;
+  const ts = chart.timeScale(), r = ts.getVisibleLogicalRange();
+  const px = coinData && coinData.price;
+  const sig = [r && r.from, r && r.to, px && series.priceToCoordinate(px), $('#chart').clientWidth, $('#chart').clientHeight,
+               coinData && coinData.heatmap && coinData.heatmap.snapshots.length].join('|');
+  if (sig !== heatSig) { heatSig = sig; drawHeat(); }
+}, 1000);
+$('#d-shot').addEventListener('click', () => {
+  if (!chart) return;
+  const src = chart.takeScreenshot(), heat = $('#heat'), out = document.createElement('canvas');
+  out.width = src.width; out.height = src.height;
+  const ctx = out.getContext('2d'); ctx.drawImage(src, 0, 0); if (heat.width) ctx.drawImage(heat, 0, 0, src.width, src.height);
+  const a = document.createElement('a'); a.download = `${coin.replace(/[/:]/g, '_')}_${tf}m.png`; a.href = out.toDataURL('image/png'); a.click();
+});
 
 // ------------------------------------------------------------------------------------------------ theme / start
 
-function applyTheme(t) { document.documentElement.dataset.theme = t; localStorage.setItem('theme', t); if (chart) chart.applyOptions({ layout: { textColor: getComputedStyle(document.body).color } }); }
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t; localStorage.setItem('theme', t);
+  const grid = t === 'light' ? 'rgba(0,0,0,.06)' : 'rgba(128,128,128,.08)';
+  if (chart) chart.applyOptions({ layout: { textColor: getComputedStyle(document.body).color },
+    grid: { vertLines: { color: grid }, horzLines: { color: grid } } });
+}
 applyTheme(localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
 $('#theme').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 setActiveTab();

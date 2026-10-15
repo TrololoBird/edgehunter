@@ -103,9 +103,16 @@ pre.rich { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; l
   padding: 12px; background: #0b0e14; color: #d7dde8; border-radius: 8px; overflow-x: auto; }
 
 @media (max-width: 700px) {
-  header#top { gap: 8px; } .status { text-align: left; } nav#tabs { top: 0; position: static; }
+  header#top { gap: 8px; } .status { text-align: left; } nav#tabs { top: 0; position: static; overflow-x: auto; white-space: nowrap; }
   #chart { height: 300px; }
+  .drawer-head { flex-wrap: wrap; } .drawer-tools { flex-wrap: wrap; gap: 4px; }
+  .heat-toggle { font-size: 11px; }
 }
+/* the chart while /api/coin loads */
+#chart.loading::after { content: 'Загрузка…'; position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--dim); background: color-mix(in srgb, var(--bg) 55%, transparent); pointer-events: none; }
+.spark { vertical-align: middle; margin-left: 6px; opacity: .9; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
 /* scenario card (scenarios.py) */
 .scen-long, .scen-short { border: 1px solid; border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
