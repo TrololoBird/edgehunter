@@ -360,5 +360,5 @@
 ```
 .venv\Scripts\python stats.py --days 7 --last 20
 .venv\Scripts\python -m pytest tests -q
-.venv\Scripts\python research_pumps.py --months 38
+.venv\Scripts\python research/scripts/research_pumps.py --months 38
 ```

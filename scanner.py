@@ -240,6 +240,7 @@ class Scanner:
             loops.append(self.briefing.loop())
         if self.demo.enabled:
             loops.append(self.demo.reconcile_loop(lambda: self._running))
+            loops.append(self._demo_report_loop())
         running = lambda: self._running
         loops += [self.ext.deribit_loop(running), self.ext.funding_loop(running), self.ext.books_loop(running),
                   self._seed_okx_later()]
@@ -272,6 +273,32 @@ class Scanner:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
         return task
+
+    async def _demo_report_loop(self):
+        """audit-80: yesterday's demo trades per strategy to the demo topic at 00:05 UTC, and an alert (never a block)
+        once today's closed trades lost CONFIG.executor.day_alert_r R."""
+        cfg = CONFIG.executor
+        sent_day, alerted_day = int(time.time() // 86400), None
+        while self._running:
+            await asyncio.sleep(300)
+            try:
+                day = int(time.time() // 86400)
+                if cfg.daily_summary and day != sent_day and time.time() % 86400 >= 300:
+                    sent_day = day
+                    rows = await asyncio.to_thread(self.demo.day_summary, (day - 1) * 86_400_000)
+                    if rows:
+                        total = sum(r[3] or 0 for r in rows)
+                        lines = [f"{k}: {n} сд., {w or 0} в плюс, {r or 0:+.2f}R"
+                                 + (f", проскальз. {sl:+.1f} бп" if sl is not None else '') for k, n, w, r, sl in rows]
+                        self.notifier.post("📊 Демо за вчера: <b>" + f"{total:+.2f}R</b>\n" + "\n".join(lines), topic='demo')
+                if cfg.day_alert_r > 0 and alerted_day != day:
+                    today = await asyncio.to_thread(self.demo.day_summary, day * 86_400_000)
+                    total = sum(r[3] or 0 for r in today)
+                    if total <= -cfg.day_alert_r:
+                        alerted_day = day
+                        self.notifier.post(f"⚠️ Демо: за сегодня {total:+.2f}R (порог −{cfg.day_alert_r:g}R)", topic='demo')
+            except Exception as e:
+                errors.report('scanner.demo_report', e)
 
     async def stop(self):
         self._running = False

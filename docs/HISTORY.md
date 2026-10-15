@@ -28,7 +28,7 @@ Each note: what changed, why, what was measured. The newest notes are at the end
 - **Pretraining picks its coins from the past** (`pretrain.select_coins`): every USDT perpetual in the archive's S3 listing (`history.Archive.list_symbols`, delisted ones included) with a Binance spot pair (the live universe requires one; tokenized stocks / pre-IPO have none), and a coin's rows count only on days it passed the volume floor judged from the 30 days BEFORE (`eligible_days`, archive daily candles) and was listed >= 9 days. Before, today's exchange list and 24h volume picked the coins (survivorship, look-ahead). Weekly closes for `trend_w` come from the archive's daily candles (the REST API is geo-blocked in the cloud). The label's universe baseline is a 5m grid (`_forward_median`): minute rows were up to 15 min off.
 - `stats.py`: `Edge β 4h` (the baseline x the coin's beta from 7 days of hourly snapshot returns before the signal's day, Blume-adjusted, `BetaEstimator`) and Benjamini-Hochberg q-values (`bootstrap_p`, `bh_q`) in the setup table and the feature splits.
 - Replay nets funding out of each exit's R (`levels.funding_r`: the rate at the signal x the 8h settlements held through; 4h-settling coins pay about twice that).
-- **Edge is measured against the universe MEAN, not the median** (`journal.universe_return`, `stats.UniverseBaseline`, the dashboard, `research_edges.py`, `ml_eval.py`): on 6 months of 363 coins the average coin beat the median by +0.108% per 4h with NO signal (right-skewed returns; the same in every volatility tercile), so Edge against the median gave every long ~+0.11% and every short ~-0.11% - including the journal's automatic regime mutes / confirmation promotions, which therefore leaned to muting shorts. The P(edge) label stays 'beat the median' (balanced 50/50). Against the mean, no archive-testable setup has a significant 4h Edge (all q >= 0.17; the best, BULL F, +0.10% [+0.03..+0.17], is below the ~0.20% round-trip cost): `research/edges_6m.md`. P(edge) out of sample: AUC 0.53, log-loss skill +0.3%, the top-ranked rows do not have a larger Edge (`research/ml_eval_6m.txt`) - shadow only, as before.
+- **Edge is measured against the universe MEAN, not the median** (`journal.universe_return`, `stats.UniverseBaseline`, the dashboard, `research/scripts/research_edges.py`, `ml_eval.py`): on 6 months of 363 coins the average coin beat the median by +0.108% per 4h with NO signal (right-skewed returns; the same in every volatility tercile), so Edge against the median gave every long ~+0.11% and every short ~-0.11% - including the journal's automatic regime mutes / confirmation promotions, which therefore leaned to muting shorts. The P(edge) label stays 'beat the median' (balanced 50/50). Against the mean, no archive-testable setup has a significant 4h Edge (all q >= 0.17; the best, BULL F, +0.10% [+0.03..+0.17], is below the ~0.20% round-trip cost): `research/edges_6m.md`. P(edge) out of sample: AUC 0.53, log-loss skill +0.3%, the top-ranked rows do not have a larger Edge (`research/ml_eval_6m.txt`) - shadow only, as before.
 - **Archive research results** (card replays, exit rules, meta-labeling, higher timeframes, positioning, EQH / EQL, channels, pumps, the scenario card's probability model): the `research-findings` skill. Bottom line: no archive-testable setup, exit rule or model has an edge net of costs; gross R of the cards is ~0. `sweep` / `breakout` and the phase / momentum setups in `disabled_setups` are off for that reason. Load the skill before proposing or judging any strategy, filter, exit rule or model.
 - `scenarios.py` (scenario card on every coin panel) shows the random-walk geometric probability and the measured trigger rates, information only; `pumps.py` shows live small-cap pumps / dumps with each rule's measured verdict (details in the skill).
 - **Live verdict (eng-10, 2026-09-30)**: every strategy makes cards again (the archive cannot replay the live-only confirmations, liquidations, books and other venues, and a disabled strategy never produced a card, so it was never measured live); archive losers carry `archive_negative` (the «архив −» mark). Pre-registered, not to be changed after the fact: a strategy is judged once its passed entries (`vetoed` NULL, logic_version >= eng-10) span >= 30 independent 4h clusters: KEEP if mean net R > 0 and the 90% cluster-bootstrap interval's lower bound > -0.05R; otherwise its code is DELETED (detector, strategy class, config, tests). The same for the `conf_n` split (eng-6 live, 2.5 days: 0 confirmations -0.44R on 67 entries .. 4 of 4 +0.16R on 11): a confirmation count becomes a required filter only if it passes the same rule.
@@ -38,7 +38,7 @@ Each note: what changed, why, what was measured. The newest notes are at the end
 ### Live-first rework eng-8 .. eng-16 (2026-09-30)
 - **Replay honesty (eng-8)**: a stop is filled at the candle's open when it gapped through (`levels.stop_fill`); slippage grows as liquidity falls (`levels.slippage_bps`: 5 bps at >= $500M 24h volume, x sqrt($500M / volume), cap 25 bps; the planner's `geometry.cost_of` and the archive scripts keep 5 bps); `oi_accum` reads OI in coins; every entry journals the raw 1h OI change (`confirms._oi_1h`).
 - **Every strategy makes cards again (eng-10)**: a disabled strategy never produced a card, so its entries, confirmations and live-only inputs were never measured. Archive losers carry `archive_negative` («архив −»); the pre-registered **Live verdict** rule (Journal and stats) keeps or deletes each strategy.
-- **Stops from structure, not ATR constants (eng-11 .. eng-15)**: the ported systems' fixed % / ATR exits (Third Eye's 1% stop sat inside one 15m candle on SUI) are replaced by the map: the stop beyond the nearest structure (`geometry.structure_stop`), targets at the next levels; the fixed rule only without references. The buffer beyond a level is MEASURED (`research_overshoot.py` -> `models/overshoot.json`, `research/overshoot.md`: p80 of how far price pierces a level of that kind on that coin before a 15m close back within 1h; 80 coins x 12 months, stable across halves 82-83%; swing 15m 0.63%, 1h 0.77%, equal 0.61%, previous day 0.92%, round 1.36%; per coin 0.15-1.40%) - no minimum / maximum in ATR: a stop that does not pay is `low_rr`, and the card shows why («стоп далеко»: stop %, TP1 %, the entry's distance from the zone edge, `veto_notes`). Stops are no longer pushed beyond ESTIMATED liquidations (live eng-6: the widest stops, -0.16R, 0 of 22 stopped trades reached TP1). ICT (`strategies/ict.py`): the stop beyond the protected swing (the last pivot that broke structure); premium / discount journaled as `range_pos` (0 = the cheapest end of the 48h range for the direction) with a stats split.
+- **Stops from structure, not ATR constants (eng-11 .. eng-15)**: the ported systems' fixed % / ATR exits (Third Eye's 1% stop sat inside one 15m candle on SUI) are replaced by the map: the stop beyond the nearest structure (`geometry.structure_stop`), targets at the next levels; the fixed rule only without references. The buffer beyond a level is MEASURED (`research/scripts/research_overshoot.py` -> `models/overshoot.json`, `research/overshoot.md`: p80 of how far price pierces a level of that kind on that coin before a 15m close back within 1h; 80 coins x 12 months, stable across halves 82-83%; swing 15m 0.63%, 1h 0.77%, equal 0.61%, previous day 0.92%, round 1.36%; per coin 0.15-1.40%) - no minimum / maximum in ATR: a stop that does not pay is `low_rr`, and the card shows why («стоп далеко»: stop %, TP1 %, the entry's distance from the zone edge, `veto_notes`). Stops are no longer pushed beyond ESTIMATED liquidations (live eng-6: the widest stops, -0.16R, 0 of 22 stopped trades reached TP1). ICT (`strategies/ict.py`): the stop beyond the protected swing (the last pivot that broke structure); premium / discount journaled as `range_pos` (0 = the cheapest end of the 48h range for the direction) with a stats split.
 - **Methods aligned with their sources (eng-16)**: Wyckoff spring / UTAD of a 1h trading range after a trend's stop (`strategies/wyckoff_range.py`, setups SPRING / UTAD; entry on the test), the 15m B / C scores off (`legacy_wyckoff_bc`), BULL E (buying the climax) journaled without a card, honest names for A / C / F / D on the dashboard; sweep entry = retrace into the post-sweep displacement FVG (`trigger='fvg'`); breakout = the Turtles' 20-day Donchian on 1h with an acceptance close (`breakout_donchian`; the 15m `breakout_at_close` stays for pretraining / research); auction POC from 15m candles; smt in ICT's kill zones 02-05 / 07-10 NY with the more correlated of BTC / ETH (`structure.pick_correlate`); supply / demand = Seiden's base (1-6 boring candles), a limit at the proximal line, first touch only (`trigger='touch'`, `single_touch`).
 - **Data recorder** and **BingX demo execution** (`executor.py`, VST sandbox forced, every ENTRY card at 1% of a $10k base capped at $4k notional, stop + three reduce-only targets, results in `demo_trades.db`; the key in config.local.toml).
 
@@ -122,7 +122,7 @@ the phases are still scored and journaled as structured rows, no cards), `fib05`
 the standalone `smt` and `absorption` setups (now confirmations). Higher timeframes: own 4h candles (200, every 4h,
 `MarketData.h4`) and the weekly ones (`MarketData.w1`) go to the maps worker - FVG / OB / breaker zones on 4h, daily
 and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-down bias: `weekly_bias` first, else
-`daily_bias`, vetoes sweeps against it (`against_bias`). `research_maniac.py` still calls the deleted
+`daily_bias`, vetoes sweeps against it (`against_bias`). `research/scripts/research_maniac.py` still calls the deleted
 `oi_accumulation` (archive tool, not the bot).
 - eng-36: ICT additions - the sweep's FVG entry rests at the gap's consequent encroachment (CE, 50%; `ict.fvg_trigger`);
   balanced price ranges (`zones.balanced_ranges`, `bpr_1h` 1.5 / `bpr_4h` 2.5: overlapping bearish + bullish FVGs within
@@ -140,7 +140,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   half, else `curve`); Wyckoff's spring / UTAD vetoed `against_htf` when the daily trend and the weekly bias both oppose
   it; trendlines of 1h candles with the stop on 15m pivots (Edwards & Magee); a `htf_zone` confirmation on every entry
   (the price inside a 4h / daily / weekly zone: ICT / Seiden's nesting). Card rows journal `card_r` (the lifecycle's own
-  exit, units) - `stats.card_results_table`; `research_turtle.py` replays the Turtles on daily archive candles.
+  exit, units) - `stats.card_results_table`; `research/scripts/research_turtle.py` replays the Turtles on daily archive candles.
   Lighter data for the laptop: universe 70 (`max_pairs`), 25 order books, Hyperliquid trades for 70 coins.
 - eng-39: `pump` strategy (`strategies/pump.py`, the owner's): PUMP START long (+15m >= max(3%, 4 x the coin's 15m
   volatility), RVOL >= 5, OI rising, spot buying, a fresh 24h high; market entry, stop below the ignition, targets map
@@ -224,7 +224,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   take-profit orders"; their 100 / 200 / 300 R placeholders are journaled as NULL targets (`levels.simulate` treats a
   NULL target as unreachable). Still hypotheses, no source for the numbers: the time stop's 24 bars / x3, cost guard
   3x, limit wait 15 min, ORB anchored to the US equity open (crypto ORB sources use 00:00 UTC).
-- eng-52 (Compass review, `research/compass_check.md`, `research_compass.py`): journal features `prem_1h` / `prem_z`
+- eng-52 (Compass review, `research/compass_check.md`, `research/scripts/research_compass.py`): journal features `prem_1h` / `prem_z`
   (mark vs index premium, 24h history `MarketData.premium_hist`), `funding_1h` (hourly funding mode), `oi_vol`,
   `er_1h` / `chop_1h` (Kaufman ER, Choppiness), `rs_btc_z` (24h return net of BTC x beta); `journal.crowded` also
   reads the 1h premium beyond Binance's neutral band (+0.06% / -0.04%: the funding is exactly 0.01% on 57% of our
@@ -293,7 +293,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   positioning) and each contract's maintenance margin / max leverage from Bybit's public risk limits
   (models/maintenance.json, daily); equal highs / lows are within the coin's measured p50 pierce; the whale size is the
   coin's own p99.5 sweep (USD floors only during the cold start); the regime count is chosen by BIC (2..6);
-  research_level_weights.py: swings / equal / previous-day / round levels hold price LESS often than placebo prices
+  research/scripts/research_level_weights.py: swings / equal / previous-day / round levels hold price LESS often than placebo prices
   (odds ratio 0.79-0.86) and alike -> their weights are all 1.0; entry replays journal `tp1_min` for a measured time stop.
   Extended (research/level_weights.md): FVG 15m / 1h (OR 0.83 / 0.90), order blocks 1h (0.94), breakers 1h (0.83) hold
   price no better than placebo, the day's volume profile POC / VA / HVN / LVN exactly like it (0.98-1.02) -> those
@@ -329,7 +329,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   perpetuals (`fetcher.market_volumes`; within the 70-coin universe 'mid <= 80' meant every coin); a coin leaves a
   strategy's pool only when its entries are proven negative (`journal.proven_negative`, 4h blocks + BH, `min_blocks`
   8; was mean <= -0.3R over 8 entries); stats split `method nature x coin state` (Dreiss' Choppiness) and `BTC bias`.
-  `research_pools.py` (pre-registered): Turtles / Connors trades on the daily archive by coin attributes (market volume
+  `research/scripts/research_pools.py` (pre-registered): Turtles / Connors trades on the daily archive by coin attributes (market volume
   rank, ATR %, Choppiness, ER, beta / corr to BTC) -> research/pools.md.
 - eng-59 B9 (archive replay of the live lifecycle): the loop-side detectors moved from scanner.Scanner to
   `strategies/loopside.py` (`LoopDetectors`: pump, Silver Bullet, PO3, Turtles, ORB, OI signal, dump bounce, Connors)
@@ -338,7 +338,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   `LoopDetectors`, the scorer's phases / Tier-0, confirmations from Binance's own 1m flows / OI; every entry (passed and
   vetoed) also replayed by `levels.simulate`; outputs data/replay/<run>/group_NN/{cards,entries}.parquet (groups of
   `--group` coins share one book). Not in the archive: liquidations (no cascade setups), books, other venues,
-  Hyperliquid, footprint. `research_replay_report.py` -> research/replay.md (cards' net R, exits by nature, vetoes).
+  Hyperliquid, footprint. `research/scripts/research_replay_report.py` -> research/replay.md (cards' net R, exits by nature, vetoes).
 - eng-60 (local eng-56 + this note's changes, merged with origin's eng-57..59 on 2026-10-05): the map
   holds each completed UTC day's naked POC (Dalton's virgin POC: `zones.day_poc` from 5 days of 5m candles of every
   universe coin, once a day by `fetcher._day_pocs_loop`, ~700 weight; naked = no 1h candle after that day traded
@@ -370,7 +370,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   window's low / high (Williams): 20% positive at random points. Every entry journals `_ind` (strategies/ind_panel.py:
   EMA 20/50/200, RSI, MACD, ADX/DI, stochastic, %B, band width, MFI, OBV, CCI, ATR rank, RVOL as 20 directional
   rules on 15m and 1h) and `_book` (the local book's imbalance, pulled / filled within 1% over 5 min, a $50k order's
-  impact). research_indicator_confirms.py (pre-registered; research/indicator_confirms.md): 208 strategy x rule x
+  impact). research/scripts/research_indicator_confirms.py (pre-registered; research/indicator_confirms.md): 208 strategy x rule x
   timeframe cells on the archive replay, 0 pass BH q 0.10 - no classic indicator turns an entry set positive.
   Order books rebuilt (depth.py): a local book per hot coin from the @depth@500ms diff stream + a 1000-level snapshot
   with Binance's sequence rules (the 500-level REST snapshots every 60s covered BTC +-0.07%, ETH +-0.2%); every
@@ -379,7 +379,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   book. 'book' left zones.STRUCTURE_KINDS (no stop on pullable orders) and weighs 1.0; the chart's density lines
   are the bot's bands (the looser second definition and the dead `LiveDetector.levels_of` were removed).
 - eng-62 (2026-10-05, the owner: adapt the classic methods to crypto futures by search and test them on the demo):
-  research_optimize.py simulates every replayed entry (16 550, 40 coins x 12 months, 5m paths) under 524 position
+  research/scripts/research_optimize.py simulates every replayed entry (16 550, 40 coins x 12 months, 5m paths) under 524 position
   management variants (target 1-3R / the plan's TP1 / none, breakeven after +1R, a 2-3 x 1h-ATR chandelier trail,
   a third (research: half) at +1R, time stop 4-72h, stop 1.0 / 1.5 x) and selects per strategy filters (none, one or
   a pair of 53: indicator rules, coin class, session, weekend, BTC's trend, ATR rank, the bot's veto) on the first 8
@@ -390,7 +390,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   strategies/profiles.py applies the filters at the entry (`vetoed='profile'`) and the position management
   (SignalBook._profile_manage: breakeven / trail with RESTOP to the demo; the profile's time stop in _time_exit).
   Confirmations carry `_btc_slope` / `_atr_1h` for it.
-- eng-63 (2026-10-05): regime switch (research_optimize_regime.py, pre-registered): BTC 4h ADX >= 25 trend / range x
+- eng-63 (2026-10-05): regime switch (research/scripts/research_optimize_regime.py, pre-registered): BTC 4h ADX >= 25 trend / range x
   ATR above / below its 125-candle median -> trend_hv / trend_lv / range_hv / range_lv (strategies/profiles.regime_labels,
   the same function live via fetcher `_regime` from BTC's h4). Per strategy x regime one filter at most, positive in
   both training halves, validated once: ON breakout trend_hv (+0.42R [+0.18] on 105 - not applied live, the Turtles keep
@@ -399,7 +399,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   there trades only in its ON regimes (`vetoed='regime_off'`), with that regime's profile; others keep
   models/profiles.json. replay.py switches the profiles off (it measures the methods' own plans). Profile filters are
   skipped (logged) when the indicator panel is missing. docs/CLOUD_OPTIMIZE.md: the 120 coins x 24 months job
-  (research_replay_summary.py, OPT_TRAIN_MONTHS / OPT_PREFIX / OPT_PROFILES).
+  (research/scripts/research_replay_summary.py, OPT_TRAIN_MONTHS / OPT_PREFIX / OPT_PROFILES).
 - eng-64 (2026-10-05, web-checked: the OI price/OI quadrants - Bookmap, Traders Log; Trader Dale's level + order-flow
   timing): `oi` is a confirmation of every method by its type (strategies/confirm.OI_EXPECT: breaks / continuations /
   pump / OI signal / trendline / cup expect OI rising - new positions; fades - Bollinger W/M, market_profile, Seiden,
@@ -409,14 +409,14 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   a vetoed entry `flow_entry` of the same card (once per card, only in a scan where the method's own trigger did not
   enter) so the journal compares the two entries. Hot set: free order-book slots go to coins with a setup in the last
   3h, then the pinned coins (the close-entry systems had no synced book at their entry; 13 of 25 slots were used).
-- eng-65 (2026-10-05): research_overlays.py (pre-registered; research/overlays.md): early exits over the method's own
+- eng-65 (2026-10-05): research/scripts/research_overlays.py (pre-registered; research/overlays.md): early exits over the method's own
   plan - noprog_H (no +0.3R within H hours), struct (a 15m close at -0.5R), btc_K (BTC K% against within 15 min,
   altcoins) - and the alts-vs-BTC filter (the universe's median 4h return beat BTC's the trade's way). Adopted (train
   lower bound > 0 and validation > 0), all small (+0.01..+0.16R; no strategy turns positive): connors struct + alts_with,
   trendline noprog_2, market_profile btc_0.7, sweep / supply_demand noprog_4+btc_1.0 (models/exit_overlays.json;
   SignalBook._overlay_exit at each final 1m close, CLOSED at the close; the filter vetoes `alts_vs_btc`). They apply to
   the method's own plan only, so the candidate profiles that FAILED validation left models/profiles.json (bollinger,
-  trendline, market_profile, continuation, connors). research_htf_filter.py (the owner's "the higher timeframe
+  trendline, market_profile, continuation, connors). research/scripts/research_htf_filter.py (the owner's "the higher timeframe
   decides"; research/htf_filter.md): the coin's daily / 4h / weekly trend and 4h trend-vs-range change no strategy's
   mean R (0 of ~50 cells kept); continuation's entries run AGAINST the daily trend ~90% of the time (its tide is the
   1h / 4h). BTC / USDT dominance (CoinGecko /global, 5 min) journaled as `_dom`; market state carries `btc_4h`.
@@ -428,7 +428,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   Gate (SignalBook._enter): no altcoin trade against BTC's bias (`btc_bias`), none in a conflict (`htf_conflict`),
   trend / with-bias methods only the tide's way, range methods (market_profile, bollinger, wyckoff) in a range both
   ways (target capped at the 20-day range middle) and in a trend only its way (`htf_bias`); the Turtles and trendline
-  (a broken line signals a change of trend) are exempt. Journaled `_bias` (coin, btc, components). research_bias.py
+  (a broken line signals a change of trend) are exempt. Journaled `_bias` (coin, btc, components). research/scripts/research_bias.py
   (the rule fixed by the sources; the card's full final_r, by month and side; research/bias.md): the allowed trades
   lose less in most strategies (+0.01..+0.24R) but no strategy passes the pre-registered bar; the gate removes ~70% of
   the (losing) trades. Methodology fixes (the owner's audit): full-trade outcomes instead of the 8h r_tp1, results by
@@ -439,7 +439,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   4h 0.98%, 1d 4.2%) - a 4h zone's stop could sit inside 4h noise. `PlanInput.tf_atr` (Scanner._tf_atrs: ATR14 of the
   closed 1h / 4h / daily candles), `plan['tf_atr']` = the plan's own timeframe's ATR, and both floors take the max of
   the 15m ATR, the leg's and the structure timeframe's. The measured pierce beyond a level (per level kind) is
-  unchanged. research_entry_edge.py / research_geometry_audit.py (research/entry_edge.md, geometry_audit.md): on the
+  unchanged. research/scripts/research_entry_edge.py / research/scripts/research_geometry_audit.py (research/entry_edge.md, geometry_audit.md): on the
   eng-59 replay the bollinger / market_profile / connors entries do not beat placebo entries even without our stop /
   targets; trendline / pump / breakout entries do at 2 ATR (trendline's stops sat at 0.7 1h-ATR, 77% inside an hour's
   range; pump's TP1 was closer than its stop, R:R 0.63) - a replay on the current code is the cloud job's step 1.
@@ -472,7 +472,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   shock >= 4 sd and 1.2% with the breadth and the session, a BTC / ETH / XAU / CL bias change, the demo's fills /
   exits, anomalies of the watched coins, venues down / component errors / the demo's risk stop; card events add
   CLOSED / RESTOP / INVALID / ADD. `/api/briefing` (?kind=recap, ?send=1) shows the text. Oil = Binance's CLUSDT
-  (WTI, pinned). research_sessions.py -> research/sessions_leaders.md: the opens' moves vs other times and whether a
+  (WTI, pinned). research/scripts/research_sessions.py -> research/sessions_leaders.md: the opens' moves vs other times and whether a
   leader's move comes before the alts' (lagged correlation, next-15m / 60m continuation).
   The briefing is sent as pictures (`briefing_chart.py`, matplotlib; the owner's reference layout): a 4h chart (10 days; the 1h was unreadable against daily / weekly zones) with the window's extremes, the scenarios' paths and the
   named zones (global / resistance / local resistance, the zone price sits in, next / key / global support: per side
@@ -588,7 +588,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   pivots' wicks, strength = sum of tf weight x reaction x volume x recency + 0.5 per later rejection (a candle that
   came from outside, wicked in and closed back out; consecutive ones = one episode), flip = swing highs AND lows in
   one cluster. The briefing's zones are these (`briefing.key_zones`); the map's constructs (PDH, FVG, VAL, opens,
-  sessions) only name a zone they coincide with ('здесь же'). `research_sr.py` (VOID - the owner, 2026-10-08: wrong method - a 15m close back within 1h at the exact edge, no +- band in the zone's own timeframe ATR, no horizon by timeframe, no reaction size, placebos landing in other zones; the same holds for research/level_weights.md; redo before any conclusion) (research/sr_zones.md,
+  sessions) only name a zone they coincide with ('здесь же'). `research/scripts/research_sr.py` (VOID - the owner, 2026-10-08: wrong method - a 15m close back within 1h at the exact edge, no +- band in the zone's own timeframe ATR, no horizon by timeframe, no reaction size, placebos landing in other zones; the same holds for research/level_weights.md; redo before any conclusion) (research/sr_zones.md,
   40 coins x 12 months): NO class holds price better than placebo prices - all zones OR 0.94 [0.92..0.96], the
   strongest third 0.90, >= 3 touches 0.93, with a daily pivot 0.89, the same in both halves - the stronger the level
   the more often it breaks (Osler: stops beyond it accelerate the break). The card says so; the fade / bounce
@@ -662,7 +662,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   at a final minute's close: INJ entered 0.97% beyond its level on a 2.8% stop (the minute-close detection was up to a
   minute late on an RVOL-11 impulse). The demo's resting BingX stop-entry (TRIGGER_MARKET) was verified on VST but is
   not wired in yet (two per coin a day, the gates evaluated before the touch, adopting the fill into the card).
-  research_algo_whales.py (pre-registered; research/algo_whales.md, the laptop journal: 3.3k ALGO / 1k WHALES
+  research/scripts/research_algo_whales.py (pre-registered; research/algo_whales.md, the laptop journal: 3.3k ALGO / 1k WHALES
   anomalies): the coin's return from the event's price minus the mean of every coin, vs the same coin and hour on a
   random other day - no label continues or reverses in both halves (ALGO BUY 4h -0.47% [-0.86..-0.09] overall, not in
   the newer half); the raw "reversal after 4h" was the market's own move.

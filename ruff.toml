@@ -1,0 +1,12 @@
+# The lint gate (deploy/precheck.sh, CI): undefined / unused names and syntax errors fail; bugbear on the bot's code.
+extend-exclude = [".claude", ".venv", "venv"]
+
+[lint]
+select = ["F", "E9", "B"]
+# B905 (zip strict) is applied where lengths must match; B023 false-positives on closures awaited in the same
+# iteration (asyncio.gather in the fetcher's refresh loops); B007/B008 are style
+ignore = ["B905", "B023", "B007", "B008", "B006", "B904", "B017", "B018", "B020", "B027", "B028", "B039"]
+
+[lint.per-file-ignores]
+"research/**" = ["B"]
+"tests/**" = ["B"]

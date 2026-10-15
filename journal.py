@@ -981,12 +981,22 @@ class SignalJournal:
             columns = [c[0] for c in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
+    def maintenance(self) -> None:
+        """Daily: fold the WAL back into the database (it grew to 7 MB between automatic checkpoints) and let SQLite
+        refresh its planner statistics. No VACUUM: it rewrites the 100 MB file under the lock."""
+        with self._lock:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.conn.execute("PRAGMA optimize")
+
     async def evaluate_loop(self, fetcher):
         """Fill in outcomes as horizons come due (also catches up on signals from previous runs)."""
-        last_regime_stats = 0.0
+        last_regime_stats, last_maintenance = 0.0, time.time()
         while True:
             try:
                 await self._evaluate_pass(fetcher)
+                if time.time() - last_maintenance >= 86_400:
+                    last_maintenance = time.time()
+                    await asyncio.to_thread(self.maintenance)
                 if time.time() - last_regime_stats >= 3600:
                     last_regime_stats = time.time()
                     await asyncio.to_thread(self.refresh_regime_stats)

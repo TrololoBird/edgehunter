@@ -52,16 +52,16 @@ tail -f logs/replay_eng72_0.log      # "<date>: N cards, M entries / vetoes, Xs"
 
 1.3 Summaries:
 ```bash
-.venv/bin/python research_replay_report.py --run data/replay/eng72 --out research/replay_eng72.md
-.venv/bin/python research_replay_summary.py data/replay/eng72 research/replay_summary_eng72.parquet
+.venv/bin/python research/scripts/research_replay_report.py --run data/replay/eng72 --out research/replay_eng72.md
+.venv/bin/python research/scripts/research_replay_summary.py data/replay/eng72 research/replay_summary_eng72.parquet
 ```
 
 1.4 The audits of eng-59 on the new summary (env vars select the input / the report name):
 ```bash
 export REPLAY_SUMMARY=research/replay_summary_eng72.parquet REPORT_SUFFIX=_eng72
-.venv/bin/python research_entry_edge.py        # -> research/entry_edge_eng72.md  (entries vs placebo)
-.venv/bin/python research_geometry_audit.py    # -> research/geometry_audit_eng72.md (stop / TP1 in 1h ATR, R:R, cost R)
-.venv/bin/python research_bias.py              # -> research/bias_eng72.md (the HTF gate by month and side)
+.venv/bin/python research/scripts/research_entry_edge.py        # -> research/entry_edge_eng72.md  (entries vs placebo)
+.venv/bin/python research/scripts/research_geometry_audit.py    # -> research/geometry_audit_eng72.md (stop / TP1 in 1h ATR, R:R, cost R)
+.venv/bin/python research/scripts/research_bias.py              # -> research/bias_eng72.md (the HTF gate by month and side)
 ```
 
 1.5 Report `research/eng72_vs_eng59.md` (Russian summary at the top), per strategy, eng-59 vs eng-72:
@@ -87,7 +87,7 @@ Why: the heat map, walls, liquidity bands, book imbalance, pulled vs filled and 
 coin / date first (`history.Archive` lists S3 prefixes; add `bookDepth` / `aggTrades` readers to `history.py`, cached
 like the klines).
 
-Pre-register first: write `research_book_flow.py` with the rules below in its docstring, commit it, THEN run it.
+Pre-register first: write `research/scripts/research_book_flow.py` with the rules below in its docstring, commit it, THEN run it.
 1. Inputs: every passed entry of Task 1 (`vetoed` null) + 10 placebo entries per entry (same coin, same side, same
    hour of day, random other days within +-120 days).
 2. Features at the entry time (no look-ahead: only data with timestamps <= the entry):

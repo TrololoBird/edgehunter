@@ -12,8 +12,8 @@ Read `CLAUDE.md` (eng-61 / eng-62 at its end) and `research/optimize.md`, `resea
 ## Rules
 - Work on `master`; commit and push results as each step finishes (small files only: `research/*.md`,
   `research/*.parquet` < 20 MB, `models/profiles*.json`). Never commit `history_cache/` or `data/`.
-- The selection rules are pre-registered in the docstrings of `research_optimize.py`, `research_optimize_robust.py`,
-  `research_optimize_regime.py`. Do not change a rule after seeing results; a bug may be fixed (say so in the report).
+- The selection rules are pre-registered in the docstrings of `research/scripts/research_optimize.py`, `research/scripts/research_optimize_robust.py`,
+  `research/scripts/research_optimize_regime.py`. Do not change a rule after seeing results; a bug may be fixed (say so in the report).
 - Do not change the bot's signal logic. The outputs ARE the bot's profiles: `models/profiles.json` /
   `models/profiles_regime.json` are read live (strategies/profiles.py) - write the new ones under a new name (step 5)
   and let the owner swap them.
@@ -29,27 +29,27 @@ Read `CLAUDE.md` (eng-61 / eng-62 at its end) and `research/optimize.md`, `resea
    ```bash
    .venv/bin/python replay.py --months 24 --coins 120 --group 5 --rate 5e6 --out data/replay/run24m
    # or in parallel: --symbols A,B,C,D,E --out data/replay/run24m/g01  (one per group)
-   .venv/bin/python research_replay_report.py --run data/replay/run24m --out research/replay_24m.md
-   .venv/bin/python research_replay_summary.py data/replay/run24m research/replay_summary_24m.parquet
+   .venv/bin/python research/scripts/research_replay_report.py --run data/replay/run24m --out research/replay_24m.md
+   .venv/bin/python research/scripts/research_replay_summary.py data/replay/run24m research/replay_summary_24m.parquet
    ```
    Commit `research/replay_24m.md` (and the summary parquet if < 20 MB, else keep it local and note its size).
 
 2. **Optimization** (5m paths per entry x 524 position-management variants x filters; 16 months train / 8 validation):
    ```bash
-   OPT_TRAIN_MONTHS=16 .venv/bin/python research_optimize.py --replay research/replay_summary_24m.parquet \
+   OPT_TRAIN_MONTHS=16 .venv/bin/python research/scripts/research_optimize.py --replay research/replay_summary_24m.parquet \
        --rate 5e6 --out research/optimize_24m
    ```
    It writes `research/optimize_24m.md`, `.parquet` and `_matrix.npz` (the matrix stays local if > 20 MB).
 
 3. **Robust pass** (a configuration positive in BOTH training halves):
    ```bash
-   OPT_TRAIN_MONTHS=16 OPT_PREFIX=research/optimize_24m .venv/bin/python research_optimize_robust.py
+   OPT_TRAIN_MONTHS=16 OPT_PREFIX=research/optimize_24m .venv/bin/python research/scripts/research_optimize_robust.py
    ```
 
 4. **Regime switch** (BTC 4h ADX >= 25 trend / range x ATR above / below its median -> 4 regimes):
    ```bash
    OPT_TRAIN_MONTHS=16 OPT_PREFIX=research/optimize_24m OPT_PROFILES=models/profiles_regime_24m.json \
-       .venv/bin/python research_optimize_regime.py
+       .venv/bin/python research/scripts/research_optimize_regime.py
    ```
 
 5. **Profiles for the owner**: from steps 2-4 write `models/profiles_24m.json` in the format of `models/profiles.json`
@@ -67,6 +67,6 @@ Read `CLAUDE.md` (eng-61 / eng-62 at its end) and `research/optimize.md`, `resea
    main sample (vetoed ones apart); rolling walk-forward (3 months train -> 1 month test, rolled monthly) instead of one
    split, with PBO by CSCV over the searched configurations; >= 100 trades for a verdict; results by month, by market
    phase (BTC up / down / flat) and by side. Coins picked by their volume AT the time (delisted ones included).
-8. **Re-run on the 24-month replay**: `research_bias.py` (top-down bias, fixed rule), `research_overlays.py` (early
-   exits), `research_htf_filter.py` (replace its 8h `r_tp1` by the card's `final_r`), each with the summary path of
+8. **Re-run on the 24-month replay**: `research/scripts/research_bias.py` (top-down bias, fixed rule), `research/scripts/research_overlays.py` (early
+   exits), `research/scripts/research_htf_filter.py` (replace its 8h `r_tp1` by the card's `final_r`), each with the summary path of
    step 1; report them in the summary.

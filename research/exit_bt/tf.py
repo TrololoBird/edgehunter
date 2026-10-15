@@ -1,7 +1,7 @@
 """Timeframe sensitivity of the session ORB on the top-5 majors: opening-range length (15/30/60/120m) x bar
 resolution (5m vs 15m) x costs. Range = the first M minutes after the session open, entry on a break of it, stop = the
 other side, out at the session end; stop-first inside a bar (pessimistic). Run: python -I tf.py"""
-import sys, os, datetime as dt, glob
+import sys, os, datetime as dt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 import bt, sessions

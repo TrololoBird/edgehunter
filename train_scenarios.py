@@ -23,7 +23,9 @@ from typing import Dict, List
 
 import numpy as np
 
-import research_htf as rh
+import os as _os, sys as _sys  # noqa: E401
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'research', 'scripts'))
+import research_htf as rh  # noqa: E402
 from macro import MACRO_FEATURES, Macro
 from scenarios import FEATURES, MODEL_PATH, brier, build, label_first_touch, logloss
 

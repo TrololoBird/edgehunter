@@ -1057,6 +1057,11 @@ class ExecutorConfig:
     max_trades_day: int = 0
     pause_losses: int = 0
     pause_hours: float = 0.0
+    # audit-80: opt-in guards (0 = off, the owner's eng-125 decision stands until set in config.local.toml)
+    strategy_kill_r: float = 0.0      # no new trades of a strategy whose last strategy_kill_n closed trades sum <= -this R
+    strategy_kill_n: int = 30
+    day_alert_r: float = 0.0          # a Telegram alert (not a block) once the UTC day's closed trades lost this many R
+    daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 
 @dataclass(frozen=True)

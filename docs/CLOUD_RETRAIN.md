@@ -21,15 +21,15 @@ archive is not. The live journal (`signals.db`) and the demo (`demo_trades.db`) 
 |---|---|---|
 | 1 | `pretrain.py --months 12 --workers <N> --rate 2e7` | `pretrained.pkl` (P(edge) start + regime history; the bot also rebuilds it itself weekly - commit only if < 20 MB) and `pretrain_rows.parquet` (keep, not committed) |
 | 2 | `ml_eval.py` | research/ml_eval_12m.txt (P(edge) out of sample) |
-| 3 | `research_overshoot.py --months 12 --limit 120 --workers <N>` | models/overshoot.json (stop buffers beyond levels) + research/overshoot.md |
-| 4 | `research_level_weights.py --months 12 --limit 100 --workers <N>` | models/level_weights.json + research/level_weights.md |
-| 5 | `research_regimes_hmm.py` (after 1: reads pretrained.pkl) | research/regimes_hmm.md |
+| 3 | `research/scripts/research_overshoot.py --months 12 --limit 120 --workers <N>` | models/overshoot.json (stop buffers beyond levels) + research/overshoot.md |
+| 4 | `research/scripts/research_level_weights.py --months 12 --limit 100 --workers <N>` | models/level_weights.json + research/level_weights.md |
+| 5 | `research/scripts/research_regimes_hmm.py` (after 1: reads pretrained.pkl) | research/regimes_hmm.md |
 
 `models/scenario_prob.pkl` has no trainer in the repo (built once by hand); leave it as is and say so in the summary.
 
 ## 2. Archive studies (docs/CLOUD_RESEARCH.md, jobs 1-8)
 Run all eight jobs of `docs/CLOUD_RESEARCH.md` (level events + factors, the B9 replay `replay.py` + report, pools,
-Connors, daily methods, ATR / volume bars, trade-based profile, meta-labeling on the replay - `research_meta_replay.py`
+Connors, daily methods, ATR / volume bars, trade-based profile, meta-labeling on the replay - `research/scripts/research_meta_replay.py`
 is to be written there, its rule in the docstring before running). Note: research/level_factors.md (59 coins x 12
 months) was already produced on the laptop; rebuild with `--limit 100` only if time allows.
 

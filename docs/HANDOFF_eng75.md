@@ -22,7 +22,7 @@
 - **eng-75**: `sr.py` — зоны поддержки/сопротивления из разворотов цены (фракталы 1h/4h/1d с отходом ≥ 1 ATR своего ТФ, кластер в пределах tol, отбои = свеча пришла снаружи, вошла и закрылась обратно). Конструкции карты (PDH, FVG, VAL, открытия, сессии) только подписывают зону («здесь же», ≤ 2). Брифинг: 3 сопротивления, 2 поддержки, сценарии пробой+ретест / край зоны / отскок-отказ, показывается лучший по R:R, R:R < 1 не показывается.
 
 ## Главный вывод исследований
-`research/sr_zones.md` (`research_sr.py`, 40 монет × 12 мес., уровень против плацебо со сдвигом 0.3–1.5%, условие задано заранее):
+`research/sr_zones.md` (`research/scripts/research_sr.py`, 40 монет × 12 мес., уровень против плацебо со сдвигом 0.3–1.5%, условие задано заранее):
 
 | класс | OR [90%] |
 |---|---|
@@ -43,19 +43,19 @@
 
 ## Открытые задачи
 1. Посмотреть три живые карточки после перезапуска 17:24 (`/api/briefing_card`): подписи «здесь же» помещаются, зоны в боковике не слишком густые, подписи не налезают.
-2. **Предложено владельцу, ждёт согласия:** заранее заданный тест продолжения после пробоя — после закрытия 15m за зоной `sr.py` цена проходит ещё 1 ATR чаще, чем после закрытия за плацебо-ценой? (по образцу `research_sr.py`, обе половины периода). Если да — перестроить карточки вокруг пробоя.
+2. **Предложено владельцу, ждёт согласия:** заранее заданный тест продолжения после пробоя — после закрытия 15m за зоной `sr.py` цена проходит ещё 1 ATR чаще, чем после закрытия за плацебо-ценой? (по образцу `research/scripts/research_sr.py`, обе половины периода). Если да — перестроить карточки вокруг пробоя.
 3. Только после проверки на архиве: перевести карту уровней стратегий на зоны из разворотов.
 4. Решение владельца: поднимать ли `logic_version` до eng-75; коммит накопленных изменений.
 
 ## Ключевые файлы
-`sr.py`, `research_sr.py`, `briefing.py` (`key_zones`, `reaction`, `score_scenario`, `check_levels`, `check_anomalies`), `briefing_chart.py` (`plan`, `render`), `zones.py`, `signal_book.py`, `strategies/geometry.py`, `strategies/oi_signal.py`, `scanner.py` (`_notify`), `notifier.py`, `executor.py`, `webui.py` (`/api/briefing_card`), `stats.py`.
+`sr.py`, `research/scripts/research_sr.py`, `briefing.py` (`key_zones`, `reaction`, `score_scenario`, `check_levels`, `check_anomalies`), `briefing_chart.py` (`plan`, `render`), `zones.py`, `signal_book.py`, `strategies/geometry.py`, `strategies/oi_signal.py`, `scanner.py` (`_notify`), `notifier.py`, `executor.py`, `webui.py` (`/api/briefing_card`), `stats.py`.
 
 ## Состояние git (проверено 2026-10-12)
-- Локальный `master` = `origin/master` = `1ac4504` (06.10); все eng-73…75 НЕ закоммичены (19 файлов + новые `sr.py`, `research_sr.py`, `research/sr_zones.md`, `docs/HANDOFF_eng75.md`).
+- Локальный `master` = `origin/master` = `1ac4504` (06.10); все eng-73…75 НЕ закоммичены (19 файлов + новые `sr.py`, `research/scripts/research_sr.py`, `research/sr_zones.md`, `docs/HANDOFF_eng75.md`).
 - **`origin/claude/confident-euler-u0xuqy`** (облако, 11.10, от того же `1ac4504`, 17 коммитов, НЕ слит):
   - код: TA-Lib-совместимые CCI / MFI / EMA-затравка / ADX 15m (`indicators.py`, `strategies/ind_panel.py`) — меняет сигналы (Holy Grail ADX>30, правила панели, недельная EMA20 в bias); `replay.py` получил `tf_atr_of` (реплей eng-72 шёл без геометрии eng-67/69); `webui._local` — `/api/briefing` и `/api/debug` только локально; `deploy/` (Caddy, web_access.sh, setup_server.sh); `polars<2`.
   - **конфликт имён:** облако назвало свою версию `eng-73`, локально eng-73/74/75 — другое содержание. При слиянии: одна новая версия (предложение eng-76), заметку облака переименовать; конфликты в `CLAUDE.md`, `config.py` (logic_version), `webui.py` (добавить `_local` и к локальному `/api/briefing_card`).
   - исследования (реплей eng-72, 120 монет × 24 мес.): положительна только breakout (Turtles) +0.57R [+0.17..+1.01], вход лучше плацебо; bollinger −0.13, market_profile −0.16, orb −0.11 (все 24 месяца < 0), sweep −0.10 — входы = плацебо; pump и trendline — вход лучше плацебо, но геометрия съедает (pump TP1/стоп 0.72; trendline стоп 0.66 ATR1h); supply_demand / continuation / wyckoff — 15–20 сделок, выводов нет; HTF-гейт не проходит планку; стакан/поток на архиве — 0 из 24 ячеек (кандидаты: ORB + дисбаланс 2%, bollinger + дельта 15m). Цифры eng-72 занижают новую геометрию (нет tf_atr) — перемерить.
-- `origin/claude/hopeful-archimedes-3lbbtc` (04.10, eng-43/44, 50 коммитов: validation.py, research_confirms.py) — устарел, его главный фикс trendline сделан иначе в eng-57; не сливать целиком, брать отчёты при необходимости.
+- `origin/claude/hopeful-archimedes-3lbbtc` (04.10, eng-43/44, 50 коммитов: validation.py, research/scripts/research_confirms.py) — устарел, его главный фикс trendline сделан иначе в eng-57; не сливать целиком, брать отчёты при необходимости.
 - `origin/eng-51-sources`, `origin/claude/optimistic-johnson-i5kiu5` — уже в master.
 - Мусор: `.claude/worktrees/agent-…`, `research/local_before_merge/`.

@@ -30,8 +30,8 @@
 | Цифра Bulkowski «без отката 26–32%» в моих сообщениях | на его сайте throwback 53–58% → без отката ~42–47% |
 
 ## 3. Исследования (по порядку; каждое — условие заранее, согласовать с владельцем)
-1. **Реплей eng-76** (120 монет × 24 мес., `replay.py --shard`), с `tf_atr_of`. Где: облако (быстро, 24 группы) — рекомендовано; сервер ночью — медленно и мешает боту. Затем `research_replay_report.py`, `research_entry_edge.py`, `research_geometry_audit.py`, `research_eng72_vs_eng59.py` (сравнение eng-76 vs eng-72) — вердикт по стратегиям заново.
-2. **Тест зон S/R заново** (`research_sr.py` переписать), по схеме Zapranis & Tsinaslanidis + Chung & Bellotti:
+1. **Реплей eng-76** (120 монет × 24 мес., `replay.py --shard`), с `tf_atr_of`. Где: облако (быстро, 24 группы) — рекомендовано; сервер ночью — медленно и мешает боту. Затем `research/scripts/research_replay_report.py`, `research/scripts/research_entry_edge.py`, `research/scripts/research_geometry_audit.py`, `research/scripts/research_eng72_vs_eng59.py` (сравнение eng-76 vs eng-72) — вердикт по стратегиям заново.
+2. **Тест зон S/R заново** (`research/scripts/research_sr.py` переписать), по схеме Zapranis & Tsinaslanidis + Chung & Bellotti:
    - зона = кластер разворотов, полоса ± k × ATR СВОЕГО ТФ (k согласовать);
    - касание = первый вход цены в зону; исход = в какую сторону цена ВЫШЛА (без фиксированного часа), горизонт по ТФ (1h — часы, 4h — ~сутки, 1d — дни);
    - величина отхода в ATR после касания и глубина проникновения;

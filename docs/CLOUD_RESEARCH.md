@@ -24,31 +24,31 @@ Use as many workers as the machine allows (`nproc`, RAM ~1.5 GB per worker for t
 
 1. **Level events dataset** (step 1 of the level rework), then **step 2**:
    ```bash
-   .venv/bin/python research_level_events.py --months 12 --limit 100 --workers <N>
-   .venv/bin/python research_level_factors.py            # -> research/level_factors.md
+   .venv/bin/python research/scripts/research_level_events.py --months 12 --limit 100 --workers <N>
+   .venv/bin/python research/scripts/research_level_factors.py            # -> research/level_factors.md
    ```
    (The owner's machine built 48 of 60 coins; rebuild all here - same code, deterministic.)
 2. **B9 archive replay of the live card lifecycle** - the main job:
    ```bash
    .venv/bin/python replay.py --months 12 --coins 40 --group 5 --out data/replay/run12m
-   .venv/bin/python research_replay_report.py --run data/replay/run12m --out research/replay.md
+   .venv/bin/python research/scripts/research_replay_report.py --run data/replay/run12m --out research/replay.md
    ```
    Groups are independent: run several `replay.py` processes in parallel with disjoint `--symbols` lists (the top 40
    by volume split in groups of 5; one output dir per process under `data/replay/run12m/`), then one report over all.
    Commit `research/replay.md`; also write `research/replay_summary.parquet` (cards + entries concatenated, without the
    `f_*` feature columns) if it is under ~20 MB.
-3. **Pools** (coin attributes vs method): `research_pools.py` -> research/pools.md
-4. **Connors 5/95 re-run** (plan 2.7): `research_connors.py` -> research/connors_crypto.md
+3. **Pools** (coin attributes vs method): `research/scripts/research_pools.py` -> research/pools.md
+4. **Connors 5/95 re-run** (plan 2.7): `research/scripts/research_connors.py` -> research/connors_crypto.md
 5. **Daily methods** (ORB + NR4/NR7, cup with handle in weekly ATRs; plan 2.1, 2.2, 2.10):
-   `research_daily_methods.py` -> research/daily_methods.md
-6. **ATR RMA vs SMA, volume bars** (plan 3.5, 3.7): `research_atr_volbars.py --coins 40` -> research/atr_volbars.md
-7. **Volume profile from trades** (plan 3.6): `research_profile_trades.py --coins 12 --days 10`
+   `research/scripts/research_daily_methods.py` -> research/daily_methods.md
+6. **ATR RMA vs SMA, volume bars** (plan 3.5, 3.7): `research/scripts/research_atr_volbars.py --coins 40` -> research/atr_volbars.md
+7. **Volume profile from trades** (plan 3.6): `research/scripts/research_profile_trades.py --coins 12 --days 10`
    -> research/profile_trades.md
 8. **Meta-labeling on the replay** (B9's purpose): with the replay's `entries.parquet` (passed entries, `f_*` features,
    `r_tp1`), a purged walk-forward by month (embargo 1 day) of LightGBM vs a logistic regression vs the base rate on
    `r_tp1 > 0`, per strategy with >= 300 entries; report AUC, and the mean net R of the top-ranked third vs all, both
    halves. Pre-register in the script's docstring: the meta-model is useful only if the top third beats all entries in
-   both halves with the newer half's 90% interval (bootstrap of days) above 0. Script: `research_meta_replay.py`.
+   both halves with the newer half's 90% interval (bootstrap of days) above 0. Script: `research/scripts/research_meta_replay.py`.
 
 ## Output
 

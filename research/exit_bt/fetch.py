@@ -1,5 +1,5 @@
 """Download Binance USDT-M 15m klines from data.binance.vision (monthly + daily zips) into data/<SYM>.npy."""
-import io, sys, zipfile, urllib.request, numpy as np, datetime as dt
+import io, zipfile, urllib.request, numpy as np
 from concurrent.futures import ThreadPoolExecutor
 TRADFI = set('XAU CL SKHYNIX XAG SOXL SNDK BZ KORU SPCX MU SAMSUNG SOXS MSTR CRCL SKHY US BTW'.split())
 syms = [s for s in open('symbols.txt').read().split() if s[:-4] not in TRADFI]

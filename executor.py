@@ -195,14 +195,15 @@ class DemoExecutor:
                                   'error': f"limit not placed: {p.get('reason')}"[:300],
                                   'closed_ms': int(time.time() * 1000), 'close_reason': 'NO_LIMIT'})
                     return
-            limit = self.risk_limit()
+            limit = self.risk_limit() or self.strategy_killed(s.mode)
             if limit is not None:
                 # eng-58: the day's risk rules (prop practice): not traded, recorded with the rule
                 logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {limit}")
                 self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
                               'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': limit,
                               'closed_ms': int(time.time() * 1000),
-                              'close_reason': 'PAUSE' if limit.startswith('pause') else 'DAILY_LIMIT'})
+                              'close_reason': 'PAUSE' if limit.startswith('pause') else
+                              'STRATEGY_OFF' if limit.startswith('strategy') else 'DAILY_LIMIT'})
                 return
             coin = s.symbol.split('/')[0].replace('1000', '')
             busy = next((t for t in self.open.values() if t['symbol'].split('/')[0].replace('1000', '') == coin), None) or \
@@ -312,6 +313,8 @@ class DemoExecutor:
         """
         cfg = CONFIG.executor
         day0 = int(time.time() // 86400 * 86400 * 1000)
+        if not (cfg.daily_loss_r > 0 or cfg.max_trades_day > 0 or cfg.pause_losses > 0):
+            return None                              # all off: no three queries per entry
         try:
             with sqlite3.connect(self.db_path) as c:
                 closed = c.execute("SELECT r FROM demo_trades WHERE closed_ms >= ? AND r IS NOT NULL", (day0,)).fetchall()
@@ -842,9 +845,46 @@ class DemoExecutor:
             except Exception as e:
                 logger.warning(f"Demo close failed for {trade['symbol']}: {e!r}")
 
-    async def _position_qty(self, symbol: str) -> float:
+    def strategy_killed(self, strategy: Optional[str]) -> Optional[str]:
+        """audit-80, opt-in: a strategy whose last strategy_kill_n closed demo trades sum to <= -strategy_kill_r R
+        opens no new demo trade (its cards and the journal go on, so it can earn its way back on paper)."""
+        cfg = CONFIG.executor
+        if cfg.strategy_kill_r <= 0 or not strategy:
+            return None
+        try:
+            with sqlite3.connect(self.db_path) as c:
+                rows = c.execute("SELECT r FROM demo_trades WHERE strategy = ? AND r IS NOT NULL ORDER BY closed_ms DESC "
+                                 "LIMIT ?", (strategy, cfg.strategy_kill_n)).fetchall()
+        except sqlite3.Error:
+            return None
+        total = sum(r for (r,) in rows)
+        if len(rows) >= cfg.strategy_kill_n and total <= -cfg.strategy_kill_r:
+            return f"strategy {strategy} off: {total:+.1f}R over its last {len(rows)} trades"
+        return None
+
+    def day_summary(self, day0_ms: int) -> List[tuple]:
+        """(strategy, trades, wins, sum R, avg slippage bps) of the trades closed in [day0, day0 + 1 day)."""
+        with sqlite3.connect(self.db_path) as c:
+            return c.execute(
+                "SELECT COALESCE(strategy, '?'), COUNT(*), SUM(r > 0), SUM(r), "
+                "AVG(CASE WHEN entry_plan > 0 AND entry_fill > 0 THEN direction * (entry_fill - entry_plan) / entry_plan * 1e4 END) "
+                "FROM demo_trades WHERE r IS NOT NULL AND closed_ms >= ? AND closed_ms < ? GROUP BY 1 ORDER BY 4",
+                (day0_ms, day0_ms + 86_400_000)).fetchall()
+
+    async def _call(self, method: str, *args, tries: int = 3, **kw):
+        """A ccxt call with backoff on network / exchange-unavailable errors (the VST API hiccups for seconds)."""
+        import ccxt
         ex = await self._exchange()
-        for p in await ex.fetch_positions([symbol]):
+        for attempt in range(tries):
+            try:
+                return await getattr(ex, method)(*args, **kw)
+            except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
+                if attempt == tries - 1:
+                    raise
+                await asyncio.sleep(1.5 * 2 ** attempt)
+
+    async def _position_qty(self, symbol: str) -> float:
+        for p in await self._call('fetch_positions', [symbol]):
             if p.get('symbol') == symbol and p.get('contracts'):
                 return float(p['contracts'])
         return 0.0
@@ -942,13 +982,12 @@ class DemoExecutor:
         sides. The fills' prices are right but ccxt's BingX swap fills report the amount 100x the position (live REZ:
         33,333,333 for 333,333 coins), and right after a close the exit fill may not be listed yet (retried).
         """
-        ex = await self._exchange()
         d = trade['direction']
         exit_side = 'sell' if d > 0 else 'buy'
         exits = []
         for _ in range(4):
             try:
-                fills = await ex.fetch_my_trades(trade['symbol'], since=trade['opened_ms'] - 5_000)
+                fills = await self._call('fetch_my_trades', trade['symbol'], since=trade['opened_ms'] - 5_000)
             except Exception as e:
                 # the API failing must not lose the close: the row is marked FILL_PENDING below, _refinalize retries
                 logger.warning(f"Demo {reason} {trade['symbol']}: fills unavailable: {e!r}")
@@ -1010,7 +1049,6 @@ class DemoExecutor:
                              (self.FILL_PENDING, int(time.time() * 1000) - 3 * 86_400_000)).fetchall()
         if not rows:
             return
-        ex = await self._exchange()
         cache: Dict[str, List[Dict]] = {}
         for tid, symbol, d, opened, _closed, qty, entry, risk in rows:
             side = 'sell' if d > 0 else 'buy'
@@ -1018,7 +1056,7 @@ class DemoExecutor:
                 # one request per coin (the earliest open of its pending rows), one failing coin does not stop the rest
                 since = min(r[3] for r in rows if r[1] == symbol) - 5_000
                 try:
-                    cache[symbol] = await ex.fetch_my_trades(symbol, since=since)
+                    cache[symbol] = await self._call('fetch_my_trades', symbol, since=since)
                 except Exception as e:
                     logger.warning(f"Demo result recovery {symbol}: {e!r}")
                     cache[symbol] = []

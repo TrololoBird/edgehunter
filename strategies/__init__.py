@@ -66,3 +66,14 @@ def strategy_of(group_key: str) -> Optional[Strategy]:
 
 
 __all__ = ["PlanInput", "Strategy", "STRATEGIES", "SETUPS", "strategy_of"]
+
+
+def unknown_names() -> Dict[str, list]:
+    """audit-80: strategy names in the mode tables (regime / bias / confirm) that no registered strategy carries - a
+    deleted strategy's leftover (the oi_signal outage). deploy/precheck.sh prints them; 'cascade' is a shadow mode."""
+    from strategies import bias, confirm, regime
+    known = set(STRATEGIES) | {'cascade'}
+    tables = {'regime.TREND_MODES': regime.TREND_MODES, 'regime.RANGE_MODES': regime.RANGE_MODES,
+              'bias.TREND': bias.TREND, 'bias.WITH_BIAS': bias.WITH_BIAS, 'bias.RANGE': bias.RANGE,
+              'bias.EXEMPT': bias.EXEMPT, 'bias.DAILY': bias.DAILY, 'confirm.OI_EXPECT': tuple(confirm.OI_EXPECT)}
+    return {k: sorted(set(v) - known) for k, v in tables.items() if set(v) - known}
