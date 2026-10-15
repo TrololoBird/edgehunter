@@ -684,3 +684,7 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   gives it now, 913 bullish cups; was half the height 'met 76%'), TP2 the full depth (strategies.cup_target_share);
   po3 / Silver Bullet: no source target ahead (the Asian range's other side / the day's draw) = no trade (was the
   map's nearest liquidity).
+- eng-131 (2026-10-15): a card without a plan expires only once its coin's data is in (15m frame, 1h / 4h / daily ATR,
+  1m candles) and the book has run 10 minutes (SignalBook._plan_data_ready); before, every restart expired 14-59
+  restored cards within 5 minutes as 'no plan' (51 at 13:40 on 15.10) - they had no history yet, not no setup. A coin
+  whose data never comes expires at its watch TTL.

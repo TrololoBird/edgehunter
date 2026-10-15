@@ -299,6 +299,7 @@ class SignalBook:
         # signal on every scan (live ARB BEAR D: SETUP / 'not a card' every 10-30 s for hours, a journal row each time)
         self._dropped: Dict[Tuple[str, str], float] = {}
         self._skip_reason: Dict[Tuple[str, str], str] = {}
+        self._born = time.time()                 # _plan_data_ready: the start-up grace
         # (symbol, setup) -> (plan key, gate result): a phase setup repeats on every scan of its candle
         self._gate_cache: Dict[Tuple[str, str], Tuple[tuple, Optional[str]]] = {}
         self._candles_of: Callable[[str], Sequence[Sequence[float]]] = lambda symbol: []
@@ -498,6 +499,20 @@ class SignalBook:
         if done and done[0] == key:
             return 'same_leg'
         return None
+
+    PLAN_GRACE_SEC = 600      # after the book is created: the history of every coin loads in the background
+
+    def _plan_data_ready(self, symbol: str, frames, now: float) -> bool:
+        """Can a missing plan be trusted: the book has run PLAN_GRACE_SEC and the coin has its 15m frame, its 1h / 4h /
+        daily ATRs and final 1m candles (a plan built without them is None for want of data, not of a setup)."""
+        if now - self._born < self.PLAN_GRACE_SEC:
+            return False
+        df = frames.get(symbol) if frames is not None else None
+        if df is None or not getattr(df, 'height', 0):
+            return False
+        if self.tf_atr_of is not None and not self.tf_atr_of(symbol):
+            return False
+        return bool(self._candles_of(symbol)) if self._candles_of else True
 
     def _plan(self, s: TrackedSignal, frames) -> Optional[Dict]:
         strategy = self.strategy(s)
@@ -863,7 +878,13 @@ class SignalBook:
         plan = s.plan
         if plan is None or not plan['targets']:
             s.status = 'BIAS'
-            if CONFIG.strategies.structural_lifetimes:
+            if CONFIG.strategies.structural_lifetimes and not self._plan_data_ready(s.symbol, frames, now):
+                # the coin's history is not in yet (after a start: the 15m / 1h / 4h history loads in the background):
+                # no plan says nothing about the setup - it waits (every restart expired 14-59 restored cards here),
+                # at most its watch TTL (a coin whose data never comes - it left the universe)
+                if age > watch_ttl:
+                    self._finish(s, 'EXPIRED', now, f"no data for a plan within {_dur(watch_ttl)}")
+            elif CONFIG.strategies.structural_lifetimes:
                 # eng-108: no plan = no setup (was: waiting an invented watch_ttl for the leg to come back)
                 # the strategy's own reason (plan['skip']) or the plan's state: 181 sweep cards in a day ended 'no plan'
                 # with nothing to tell why
