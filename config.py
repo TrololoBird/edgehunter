@@ -43,7 +43,7 @@ class ExchangeConfig:
     # smallcap_strategies trade them (pools.allows); the demo risks smallcap_risk_mult of the usual risk on them
     smallcap_min_volume_usd: float = 1_000_000
     smallcap_max: int = 60
-    smallcap_max_spread: float = 0.003
+    smallcap_max_spread: float = 0.0
     smallcap_strategies: tuple = ('oi_build',)
     smallcap_risk_mult: float = 1.0       # eng-112: no source for halving - removed
     # eng-100: the market regime is BTC's 7-day return over its closed daily candles (time-series momentum is strongest
@@ -53,7 +53,9 @@ class ExchangeConfig:
     regime_days: int = 7
     regime_against_mult: float = 1.0      # eng-112: the sources size by volatility (Moskowitz-Ooi-Pedersen), not x0.5 against BTC - removed
     regime_exempt_bases: tuple = ('XAU', 'XAG', 'XPT', 'XPD', 'CL', 'BZ', 'COPPER')
-    max_spread: float = 0.001            # bid-ask spread / mid at the selection (10 bp)
+    # eng-126: 0 = off - the spread is inside the measured book slippage (levels.BOOK_SLIP), priced into every R:R;
+    # the 10 / 30 bp caps had no source
+    max_spread: float = 0.0
     # Binance exchangeInfo `underlyingType` values to skip: tokenized stocks (US/HK/KR/CN) and pre-IPO shares.
     # They sit flat outside their exchange's trading hours and trip squeeze/flat-price phases.
     excluded_underlying_types: tuple = ('EQUITY', 'HK_EQUITY', 'KR_EQUITY', 'CN_EQUITY', 'PREMARKET', 'COMMODITY')
@@ -794,11 +796,9 @@ class StrategiesConfig:
     # open +- the Stretch (the 10-day SMA of min(High - Open, Open - Low) of the daily candles); the first one hit is
     # the trade, the other its stop; out at the session's (UTC day's) close. Crypto's daily candle opens 00:00 UTC.
     orb_stretch_days: int = 10
-    # eng-125: the session ORB / session value area only where a session OPENS (Crabel: the opening range of the
-    # day session; Dalton: the session's value area) - gold, silver (COMEX), WTI, Brent (NYMEX / ICE), their own
-    # exchange's open only. Crypto has no open (24/7): the US equity open for BTC / ETH had no source
-    orb_bases: tuple = ('XAU', 'XAG', 'CL', 'BZ')
-    orb_range_min: int = 30
+    # eng-93, the owner (2026-10-12/14: "ORB is a stock strategy - only the majors"; "the majors, gold, silver, oil,
+    # split by sessions"): the session ORB trades only these, each session's open (strategies.classic.ORB_SESSIONS)
+    orb_bases: tuple = ('BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'XAU', 'XAG', 'CL', 'BZ')
     # Connors' RSI(2) levels (eng-58: 5 / 95, his original rule; 10 / 90 is a later variant)
     connors_rsi_low: float = 5.0
     connors_rsi_high: float = 95.0
@@ -1026,7 +1026,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-125"
+    logic_version: str = "eng-126"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

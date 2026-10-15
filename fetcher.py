@@ -1017,7 +1017,7 @@ class DataFetcher:
                 reason = f'< {cfg.min_futures_venues} other futures venues'
             elif listed and now_ms - listed < cfg.min_listing_days * 86_400_000:
                 reason = f'listed < {cfg.min_listing_days}d'
-            elif spread is not None and spread > cfg.max_spread:
+            elif cfg.max_spread > 0 and spread is not None and spread > cfg.max_spread:
                 reason = f'spread > {cfg.max_spread:.2%}'
             elif self._book_too_thin(s, volume.get(s)):
                 reason = 'book < one order'
@@ -1042,7 +1042,7 @@ class DataFetcher:
             spread = self.spreads.get(s)
             if listed and now_ms - listed < cfg.min_listing_days * 86_400_000:
                 continue
-            if spread is None or spread > cfg.smallcap_max_spread:
+            if cfg.smallcap_max_spread > 0 and (spread is None or spread > cfg.smallcap_max_spread):
                 continue
             if self._book_too_thin(s, volume.get(s)):
                 continue

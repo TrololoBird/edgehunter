@@ -246,7 +246,7 @@ class Briefing:
             hist = self._proxy_history(base)
             if hist.get('1d'):
                 import types
-                src = types.SimpleNamespace(symbol=md.symbol, h4=md.h4, d1=self._splice(list(md.d1), hist['1d']),
+                src = types.SimpleNamespace(symbol=md.symbol, h1=md.h1, h4=md.h4, last_price=md.last_price, d1=self._splice(list(md.d1), hist['1d']),
                                             w1=self._splice(list(md.w1), hist.get('1w') or []))
                 since = (self.PROXY[base], md.d1[0][0] if md.d1 else None)
         b = self.sc.fetcher.htf_bias(src, time.time() * 1000)
