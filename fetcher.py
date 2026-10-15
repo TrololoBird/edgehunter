@@ -2271,7 +2271,7 @@ class DataFetcher:
             last = base[-1][0] if base else 0
             base += [b for b in resample(minutes, size, until_ms) if b[0] > last]
             try:
-                out[tf] = panel(base, direction)
+                out[tf] = panel(base, direction, key=(md.symbol, tf))
             except Exception as e:
                 errors.report('fetcher.indicator_panel', e, f"{md.symbol} {tf}")
         return out

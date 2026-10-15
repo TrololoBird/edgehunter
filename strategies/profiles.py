@@ -119,13 +119,21 @@ def select(strategy: str, regime: Optional[str]):
     return profile(strategy), None
 
 
+_BTC_REGIME: Dict = {}
+
+
 def btc_regime(h4: List) -> Optional[str]:
-    """The regime of BTC's last closed 4h candle ([ts, o, h, l, c, ...], oldest first)."""
+    """The regime of BTC's last closed 4h candle ([ts, o, h, l, c, ...], oldest first); cached per last candle (the
+    Python RMA loop ran for every confirmation: watchdog stalls in regime_labels)."""
     if len(h4) < 145:
         return None
-    import numpy as np
-    k = np.asarray([row[:5] for row in h4], dtype=float)
-    return regime_labels(k)[-1]
+    key = (len(h4), h4[-1][0], h4[-1][4])
+    if key not in _BTC_REGIME:
+        import numpy as np
+        k = np.asarray([row[:5] for row in h4], dtype=float)
+        _BTC_REGIME.clear()
+        _BTC_REGIME[key] = regime_labels(k)[-1]
+    return _BTC_REGIME[key]
 
 
 def regime_labels(k: np.ndarray) -> list:
