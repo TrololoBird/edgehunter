@@ -420,6 +420,7 @@ class DataFetcher:
         self.spot_exchange: Optional[ccxt.Exchange] = None
         # Universe selection inputs (fetch_candidates) and the market baseline's mark prices (every USDT perpetual)
         self.spreads: Dict[str, float] = {}
+        self.book_slip: Dict[str, float] = {}     # eng-124: bps of a max_notional market order through the book
         self.baseline_ids: set = set()
         self.market_marks: Dict[str, float] = {}
         self.market_marks_at = 0.0               # when market_marks were fetched (stale marks are no baseline)
@@ -922,9 +923,60 @@ class DataFetcher:
         except Exception as e:
             logger.warning(f"Spreads unavailable for the universe selection ({type(e).__name__} {e}); previous kept")
         self.candidate_volume = {s: v for s, v in usdt_pairs}
+        await self._refresh_book_slippage([s for s, _ in usdt_pairs], by_id)
         logger.info(f"Universe candidates: {len(usdt_pairs)} perpetuals >= ${floor:,.0f} "
                     f"24h volume (excluded {excluded} stock / pre-IPO contracts)")
         return [s for s, _ in usdt_pairs]
+
+    def _book_too_thin(self, s: str, volume_24h: Optional[float]) -> bool:
+        """The 20 levels of the book do not hold one max_notional order (its slippage is unmeasurable); a thin but
+        measurable book stays - its slippage goes into the costs (levels.BOOK_SLIP) and the R:R decides."""
+        return getattr(self, 'book_slip', {}).get(s) == float('inf')
+
+    async def _refresh_book_slippage(self, candidates: List[str], by_id: Dict[str, str]):
+        """
+        eng-124: the tradable universe needs order-book depth AT THE POSITION SIZE, not only volume / spread (CoinAPI,
+        tradable universe): per candidate the slippage of a market order of executor.max_notional_usd walked through
+        the REST book (20 levels, weight 2), worst side, in bps -> self.book_slip and levels.BOOK_SLIP, the floor of the
+        coin's slippage in the costs (R:R, sizing). select_universe drops only a coin whose 20 levels do not hold the
+        order. Unknown (no book / failed call) passes, as an unknown spread does.
+        """
+        ids = {s: i for i, s in by_id.items()}
+        notional = CONFIG.executor.max_notional_usd
+        limit = int((CONFIG.exchange.max_pairs + CONFIG.exchange.smallcap_max) * 1.5)
+        out: Dict[str, float] = {}
+
+        def walk(levels, mid):
+            left, cost = notional, 0.0
+            for px, qty in levels:
+                px, qty = float(px), float(qty)
+                take = min(left, px * qty)
+                cost += take * abs(px - mid) / mid
+                left -= take
+                if left <= 0:
+                    return 1e4 * cost / notional
+            return None                       # the 20 levels do not hold the order: deeper than measured
+
+        async def one(s):
+            try:
+                book = await self._rest_call(self.futures_exchange, 'fapiPublicGetDepth',
+                                             {'symbol': ids[s], 'limit': 20}, priority=0, weight=2)
+                bids, asks = book.get('bids') or [], book.get('asks') or []
+                if not bids or not asks:
+                    return
+                mid = (float(bids[0][0]) + float(asks[0][0])) / 2
+                a, b = walk(asks, mid), walk(bids, mid)
+                out[s] = float('inf') if a is None or b is None else max(a, b)
+            except RATE_LIMIT_ERRORS:
+                raise
+            except Exception:
+                pass
+        await asyncio.gather(*(one(s) for s in candidates[:limit] if s in ids))
+        if out:
+            import levels
+            self.book_slip = out
+            levels.BOOK_SLIP.clear()
+            levels.BOOK_SLIP.update(out)
 
     def select_universe(self, candidates: List[str], current: Optional[set] = None) -> List[str]:
         """
@@ -967,6 +1019,8 @@ class DataFetcher:
                 reason = f'listed < {cfg.min_listing_days}d'
             elif spread is not None and spread > cfg.max_spread:
                 reason = f'spread > {cfg.max_spread:.2%}'
+            elif self._book_too_thin(s, volume.get(s)):
+                reason = 'book < one order'
             if reason:
                 excluded[reason] = excluded.get(reason, 0) + 1
                 continue
@@ -989,6 +1043,8 @@ class DataFetcher:
             if listed and now_ms - listed < cfg.min_listing_days * 86_400_000:
                 continue
             if spread is None or spread > cfg.smallcap_max_spread:
+                continue
+            if self._book_too_thin(s, volume.get(s)):
                 continue
             small.append(s)
         self.small_caps = set(small)

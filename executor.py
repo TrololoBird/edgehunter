@@ -357,7 +357,7 @@ class DemoExecutor:
             reject = f"BingX {fill_est:.6g} already beyond TP1 {lv['tp1']:.6g}"
         elif s.levels.get('rr_tp1') is not None:
             from strategies.geometry import cost_of
-            fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'))
+            fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'), s.symbol)
             risk = abs(fill_est - lv['sl'])
             rrs = [(d * (lv[f'tp{k}'] - fill_est) - fee) / (risk + fee) for k in (1, 2, 3)]
             blend = sum(rrs) / 3
@@ -396,7 +396,7 @@ class DemoExecutor:
         # eng-91: the round trip's costs (fees + slippage by the coin's liquidity) inside the sized distance - sized on the
         # bare stop distance a stop-out cost -1.2..-1.5R (live HBAR, ACE, TIA)
         from strategies.geometry import cost_of
-        fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'))
+        fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'), s.symbol)
         qty = min(risk_usd / (stop_dist + fee), balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         if n:
             # eng-55: the full pyramid (turtle_max_units units) must fit the notional cap - a smaller unit (a lower risk
@@ -553,7 +553,7 @@ class DemoExecutor:
             risk_usd *= CONFIG.exchange.smallcap_risk_mult          # eng-99
         risk_usd *= self.regime_mult(s)                             # eng-100
         from strategies.geometry import cost_of
-        fee = cost_of(lv['entry'], (s.sig or {}).get('volume_24h'))         # eng-91: costs inside the sized distance
+        fee = cost_of(lv['entry'], (s.sig or {}).get('volume_24h'), s.symbol)         # eng-91: costs inside the sized distance
         qty = min(risk_usd / (stop_dist + fee), balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         qty = float(ex.amount_to_precision(symbol, qty))
         min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0

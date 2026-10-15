@@ -731,7 +731,7 @@ class SignalBook:
         entry = lv.get('entry')
         if not entry or not risk:
             return 0.0
-        cost = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(s.sig.get('volume_24h')) / 1e4) * entry / risk
+        cost = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(s.sig.get('volume_24h'), s.symbol) / 1e4) * entry / risk
         return cost + funding_r(s.sig.get('funding_rate'), s.direction, entry, risk, (s.entered_at or 0) * 1000, exit_ms)
 
     @staticmethod

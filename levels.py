@@ -292,8 +292,20 @@ def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range_1h / 2
 
 
-def slippage_bps(volume_24h: Optional[float] = None) -> float:
-    """Slippage of one market order in bps: the base for liquid coins, more for thin ones (CONFIG.levels)."""
+# eng-124: bps of an executor.max_notional_usd market order walked through each coin's REST book (worst side, from the
+# mid: half spread included), refreshed with the universe (fetcher._refresh_book_slippage)
+BOOK_SLIP: Dict[str, float] = {}
+
+
+def slippage_bps(volume_24h: Optional[float] = None, symbol: Optional[str] = None) -> float:
+    """Slippage of one market order in bps: the base for liquid coins, more for thin ones (CONFIG.levels); with the
+    symbol, never below its measured book slippage (eng-124: the volume model priced 84 of 195 coins' books too cheap)."""
+    model = _model_slippage_bps(volume_24h)
+    measured = BOOK_SLIP.get(symbol) if symbol else None
+    return model if measured is None or measured != measured or measured == float('inf') else max(model, measured)
+
+
+def _model_slippage_bps(volume_24h: Optional[float] = None) -> float:
     cfg = CONFIG.levels
     if not volume_24h or volume_24h <= 0:
         return cfg.slippage_bps

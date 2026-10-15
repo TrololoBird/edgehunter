@@ -205,3 +205,20 @@ def test_unknown_z_is_no_impulse(monkeypatch):
                                                                         price_change_5m_threshold=0.0))
     assert not price_anomaly({'price_change_5m': 0.05, 'price_z': 0.0})
     assert price_anomaly({'price_change_5m': 0.004, 'price_z': 7.0})
+
+
+def test_wilson_upper_and_book_slippage_floor():
+    import levels
+    from journal import wilson_upper
+    assert wilson_upper(0, 0) == 1.0
+    assert 0.51 < wilson_upper(6, 20) < 0.53          # 30% of 20: up to ~52%
+    assert wilson_upper(60, 200) < wilson_upper(6, 20)
+    base = levels.slippage_bps(5e8)
+    levels.BOOK_SLIP['X/USDT:USDT'] = base + 7
+    try:
+        assert levels.slippage_bps(5e8, 'X/USDT:USDT') == base + 7
+        assert levels.slippage_bps(5e8, 'Y/USDT:USDT') == base
+        levels.BOOK_SLIP['X/USDT:USDT'] = float('inf')
+        assert levels.slippage_bps(5e8, 'X/USDT:USDT') == base
+    finally:
+        levels.BOOK_SLIP.clear()

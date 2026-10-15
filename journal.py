@@ -25,6 +25,16 @@ from strategies import confirm
 from scorer import LONG_PHASES, SHORT_PHASES
 
 
+def wilson_upper(hits: int, n: int, z: float = 1.96) -> float:
+    """The upper end of the 95% Wilson score interval of a proportion (hits of n)."""
+    if n <= 0:
+        return 1.0
+    p = hits / n
+    centre = p + z * z / (2 * n)
+    spread = z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5
+    return min(1.0, (centre + spread) / (1 + z * z / n))
+
+
 def _anchor_json(plan: Optional[Dict]) -> Optional[str]:
     anchor = (plan or {}).get('anchor')
     return json.dumps(anchor, separators=(',', ':'), default=float) if anchor else None
@@ -137,6 +147,8 @@ EXTRA_COLUMNS = {
     'regime2': 'TEXT',
     # eng-108: the values of removed thresholds (sweep volume / depth / pool age), journaled to look at them later
     'sweep_rvol': 'REAL', 'sweep_depth_atr': 'REAL', 'pool_age_h': 'REAL',
+    # eng-124: the stop's level kind and its measured pierce p50 / p80 / p90 (% of price): '<kind> 0.120/0.250/0.400'
+    'stop_pierce': 'TEXT',
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
@@ -583,7 +595,7 @@ class SignalJournal:
                     # eng-58: a resting limit (Seiden's line, ICT's CE / OTE): the replay fills it at the entry price
                     'limit_entry': int((tracked.plan or {}).get('trigger') == 'touch'
                                        and not CONFIG.executor.touch_confirm_close),
-                    'sl_src': lv.get('sl_src'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
+                    'sl_src': lv.get('sl_src'), 'stop_pierce': lv.get('stop_pierce'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
                     'anchor': _anchor_json(tracked.plan),
                     # eng-48: why it entered (the detector's note + the plan's trigger), was empty on entry rows
@@ -849,8 +861,9 @@ class SignalJournal:
     def refresh_hit_rates(self) -> int:
         """
         p(TP1 before the stop) per strategy from the replayed entries of the last 30 days (passed and vetoed: the
-        replay is the same), >= 30 decided ones (TP1 / TP2 / TP3 vs SL) -> strategies.geometry.HIT_RATE, which turns
-        the entry check from a fixed R:R into the expectancy p x R:R1 - (1 - p).
+        replay is the same), decided ones (TP1 / TP2 / TP3 vs SL) -> strategies.geometry.HIT_RATE (p, n, p_upper), which
+        turns the entry check from a fixed R:R into the expectancy: an entry is vetoed only when it is negative even at
+        the upper end of p's 95% Wilson interval (proven, not a small sample's noise).
         """
         from strategies import geometry
         since = int((time.time() - 30 * 86400) * 1000)
@@ -872,7 +885,10 @@ class SignalJournal:
                 continue
             c = counts.setdefault(strategy, [0, 0])
             c[0 if outcome == 'SL' else 1] += 1
-        rates = {s: (hit / (hit + sl), hit + sl) for s, (sl, hit) in counts.items() if hit + sl >= 30}
+        # eng-124: no fixed n >= 30 (a 60% rate after 20-50 trades is anywhere in 35-85% / 46-74%): every strategy with
+        # decided entries gets its rate AND the upper end of its 95% Wilson interval; the veto uses the upper end
+        rates = {s: (hit / (hit + sl), hit + sl, wilson_upper(hit, hit + sl)) for s, (sl, hit) in counts.items()
+                 if hit + sl > 0}
         geometry.HIT_RATE.clear()
         geometry.HIT_RATE.update(rates)
         return len(rates)

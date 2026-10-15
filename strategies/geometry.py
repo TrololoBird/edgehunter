@@ -19,7 +19,7 @@ from zones import POOL_KINDS, STRUCTURE_KINDS, Zone, is_pool, stop_beyond
 MEAN_KINDS = ('vwap', 'poc', 'va', 'hvn')
 
 
-def cost_of(price: float, volume_24h: Optional[float] = None) -> float:
+def cost_of(price: float, volume_24h: Optional[float] = None, symbol: Optional[str] = None) -> float:
     """
     (volume_24h: the coin's; the slippage then grows as liquidity falls, levels.slippage_bps - the same model the
     journal's replay fills with, so an entry that passes R:R here is not a loser there by construction)
@@ -28,10 +28,28 @@ def cost_of(price: float, volume_24h: Optional[float] = None) -> float:
     ~0.3R cheaper than it trades.
     """
     from levels import slippage_bps
-    return (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h) / 1e4) * price
+    return (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h, symbol) / 1e4) * price
 
 
 from pierce import measured_kind, overshoot  # noqa: E402  (measured level pierce)
+
+
+def stop_pierce(plan: Dict, stop: float) -> Optional[str]:
+    """
+    eng-124: no source names the pierce quantile of a stop's buffer (p50 / p80 / p90) - the stop's level kind and its
+    three measured quantiles (% of price) are journaled with each entry; with the row's sl / mae_4h / mfe_4h they show
+    which buffer the stopped trades would have survived, to choose the quantile on live trades.
+    """
+    zones = plan.get('zones') or []
+    try:
+        kind = kind_at(htf_zones(zones, plan.get('target_tf') or plan.get('tf')), stop) if zones else None
+    except Exception:
+        kind = None
+    kind = kind or 'swing_15m'
+    qs = [overshoot(plan.get('symbol'), kind, stop, q) for q in ('p50', 'p80', 'p90')]
+    if any(q is None for q in qs):
+        return None
+    return f"{kind} " + '/'.join(f"{100 * q / stop:.3f}" for q in qs)
 
 
 def kind_at(zones: List[Zone], price: float) -> Optional[str]:
@@ -143,9 +161,9 @@ def is_synthetic(label: Optional[str]) -> bool:
     return label == 'ATR step' or bool(re.fullmatch(r'[0-9.]+ R', label)) or label.startswith('none')
 
 
-# (strategy -> p(TP1 before the stop)) measured by the journal's replay (journal.refresh_hit_rates, hourly): with a
-# measured p the entry is judged by its expectancy, not by a fixed R:R
-HIT_RATE: Dict[str, Tuple[float, int]] = {}
+# (strategy -> (p(TP1 before the stop), n, upper end of p's 95% Wilson interval)) measured by the journal's replay
+# (journal.refresh_hit_rates, hourly): the entry is vetoed when its expectancy is negative even at the upper end
+HIT_RATE: Dict[str, Tuple[float, int, float]] = {}
 
 
 def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], sources: List[str], direction: int,
@@ -187,7 +205,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         targets.append(targets[-1])
         sources.append(sources[-1])
         on_map.append(on_map[-1])
-    fee = cost_of(entry, plan.get('volume_24h'))
+    fee = cost_of(entry, plan.get('volume_24h'), plan.get('symbol'))
     rrs = [(abs(t - entry) - fee) / (risk + fee) for t in targets[:3]]
     beyond_map = not any(direction * ((z.lo if direction > 0 else z.hi) - entry) > 0 for z in zones)
     real = [not is_synthetic(s) or (s == 'ATR step' and beyond_map) for s in sources[:3]]
@@ -223,10 +241,10 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     reason = reason or stop_too_far(plan, entry, stop)
     hit = HIT_RATE.get(plan.get('strategy'))
     if reason is None:
-        if hit and real[0]:
-            p = hit[0]
-            if p * rrs[0] - (1 - p) <= 0:
-                reason = f"expectancy {p * rrs[0] - (1 - p):+.2f}R at the measured p {p:.0%}"
+        hi = (hit[2] if len(hit) > 2 else hit[0]) if hit else None
+        if hit and real[0] and hi * rrs[0] - (1 - hi) <= 0:
+            # proven negative: even the upper end of p's 95% interval does not pay this R:R
+            reason = f"expectancy {hi * rrs[0] - (1 - hi):+.2f}R at p <= {hi:.0%} (measured {hit[0]:.0%} of {hit[1]})"
         elif blended is not None and blended < _min_rr(plan):
             reason = f"blended R:R {blended:.2f} < {_min_rr(plan):g}"
     if reason is None and real[0] and _min_rr(plan) > 0 and rrs[0] is not None and \
@@ -242,7 +260,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         targets = [entry + direction * k * risk_px for k in (100, 200, 300)]
         rrs, blended, reason, low, sources = [None, None, None], None, None, False, [label] * 3
     return {'entry': entry, 'sl': stop, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
-            'rr_tp1': rrs[0], 'rr_tp2': rrs[1], 'rr_blend': blended, 'low_rr': bool(low or reason),
+            'stop_pierce': stop_pierce(plan, stop), 'rr_tp1': rrs[0], 'rr_tp2': rrs[1], 'rr_blend': blended, 'low_rr': bool(low or reason),
             'rr_reason': reason, 'risk_units': risk_units,
             'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
 
@@ -549,13 +567,14 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         label = exit.get('tp_src', 'none (trailing exit)')
         # eng-54: the cost guard holds here too - an ORB range of 0.15% put the stop 0.10% away, under one round trip's
         # cost (live ETH 2026-10-03: -2.2R in the demo); target-less plans skipped finish_levels and with it the guard
-        fee = cost_of(entry, plan.get('volume_24h'))
+        fee = cost_of(entry, plan.get('volume_24h'), plan.get('symbol'))
         reason = 'costs >= 1/3 of the risk' if risk < CONFIG.levels.cost_guard * fee else None
         reason = reason or stop_too_far(plan, entry, stop)
         out = {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
                'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
                'low_rr': bool(reason), 'rr_reason': reason, 'risk_units': 1.0,
-               'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': sl_src}
+               'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': sl_src,
+               'stop_pierce': stop_pierce(plan, stop)}
         tp1 = exit.get('tp1_price')
         if tp1 is not None:
             # eng-85: a trailing system with a real first target (Bollinger's band at the signal): half out there; it

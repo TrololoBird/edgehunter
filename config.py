@@ -1025,7 +1025,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-123"
+    logic_version: str = "eng-124"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
@@ -1089,10 +1089,10 @@ class ExecutorConfig:
     account_usd: float = 10_000.0
     max_notional_usd: float = 4_000.0
     limit_wait_min: int = 15      # a touch plan's BingX limit kept this long after Binance's touch (eng-46)
-    # eng-105, the owner: partial profit at +1R for every trade - partial_share of the position out at +partial_r R
+    # eng-105: partial profit at +1R for every trade - partial_share of the position out at +partial_r R
     # (an exchange take-profit order, it fills between scans too); the rest keeps its stop (break-even + costs after
     # +1R) and the method's exit. Skipped where the plan's TP1 is already nearer than +1R (TP1 is the partial then).
-    # eng-105, the owner: no resting limits - a touch of the zone only arms the entry; the trade opens at the CLOSE of
+    # eng-105: no resting limits - a touch of the zone only arms the entry; the trade opens at the CLOSE of
     # the trigger-timeframe candle that touched the zone and closed back on the trade's side of its line
     touch_confirm_close: bool = True
     partial_r: float = 1.0
