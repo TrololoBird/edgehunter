@@ -132,11 +132,11 @@ def btc_regime(h4: List) -> Optional[str]:
         import numpy as np
         k = np.asarray([row[:5] for row in h4], dtype=float)
         _BTC_REGIME.clear()
-        _BTC_REGIME[key] = regime_labels(k)[-1]
+        _BTC_REGIME[key] = regime_labels(k, last_only=True)[-1]
     return _BTC_REGIME[key]
 
 
-def regime_labels(k: np.ndarray) -> list:
+def regime_labels(k: np.ndarray, last_only: bool = False) -> list:
     """Regime of each 4h candle of k ([open_ms, o, h, l, c]), as strategies/profiles.regime does live."""
     h, l, c = k[:, 2], k[:, 3], k[:, 4]
     prev = np.concatenate(([c[0]], c[:-1]))
@@ -156,7 +156,8 @@ def regime_labels(k: np.ndarray) -> list:
     pdi, mdi = 100 * rma(pdm) / atr, 100 * rma(mdm) / atr
     adx = rma(np.nan_to_num(100 * abs(pdi - mdi) / np.maximum(pdi + mdi, 1e-12)))
     out = []
-    for i in range(len(k)):
+    # last_only: the live caller reads the last label only (the per-candle nanmedian loop stalled the loop 1.5s)
+    for i in (range(len(k) - 1, len(k)) if last_only else range(len(k))):
         if i < 140 or np.isnan(adx[i]) or np.isnan(atr[i]):
             out.append(None)
             continue

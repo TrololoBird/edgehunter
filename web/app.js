@@ -772,7 +772,8 @@ function aggregate(rows, minutes) {
 function drawFlow(bars) {
   const on = $('#flow-on') && $('#flow-on').checked, rows = (coinData && coinData.flow_15m) || [];
   // v5 panes under the candles: OI (pane 1), futures / spot CVD (pane 2); removed with their series when off
-  if (!on || !rows.length || !bars.length) {
+  // the flow series covers ~5 days of 15m candles: a dot on the daily chart, hidden there
+  if (!on || !rows.length || !bars.length || tf >= 1440) {
     for (const s of [oiSeries, cvdSeries, cvdSpotSeries]) if (s) chart.removeSeries(s);
     oiSeries = cvdSeries = cvdSpotSeries = null; return;
   }
@@ -783,7 +784,7 @@ function drawFlow(bars) {
     cvdSeries = chart.addSeries(LightweightCharts.LineSeries, opt('#3cc7e8', 'CVD фьюч'), 2);
     cvdSpotSeries = chart.addSeries(LightweightCharts.LineSeries, opt('#b28cff', 'CVD спот'), 2);
     const panes = chart.panes(), total = $('#chart').clientHeight;
-    if (panes.length >= 3) { panes[1].setHeight(Math.round(total * 0.14)); panes[2].setHeight(Math.round(total * 0.14)); }
+    if (panes.length >= 3) { panes[1].setHeight(Math.round(total * 0.17)); panes[2].setHeight(Math.round(total * 0.17)); }
   }
   const size = Math.max(15, tf) * 60, t0 = bars[0].time, oi = new Map(), fd = new Map(), sd = new Map();
   for (const [ms, o, f, sp] of rows) {
@@ -1140,7 +1141,7 @@ $('#d-shot').addEventListener('click', () => {
   if (!chart) return;
   const src = chart.takeScreenshot(), heat = $('#heat'), out = document.createElement('canvas');
   out.width = src.width; out.height = src.height;
-  const ctx = out.getContext('2d'); ctx.drawImage(src, 0, 0); if (heat.width) ctx.drawImage(heat, 0, 0, src.width, src.height);
+  const ctx = out.getContext('2d'); ctx.fillStyle = getComputedStyle(document.body).backgroundColor; ctx.fillRect(0, 0, out.width, out.height); ctx.drawImage(src, 0, 0); if (heat.width) ctx.drawImage(heat, 0, 0, src.width, src.height);
   const a = document.createElement('a'); a.download = `${coin.replace(/[/:]/g, '_')}_${tf}m.png`; a.href = out.toDataURL('image/png'); a.click();
 });
 
