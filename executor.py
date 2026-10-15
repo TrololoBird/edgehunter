@@ -740,9 +740,12 @@ class DemoExecutor:
             if not qty or pos['symbol'] in mine:
                 continue
             last = self._finalized.get(pos['symbol'])
-            if last and time.time() - last[1] < 900 and last[0].get('id'):
+            if (last and time.time() - last[1] < 900 and last[0].get('id')
+                    and (1 if pos.get('side') == 'long' else -1) == last[0].get('direction')
+                    and qty <= float(last[0].get('qty') or 0) * 1.001):
                 # eng-132: finalized minutes ago yet the position is on BingX: the flat read was wrong. Back to tracking
-                # (its stop is untouched); dumping it at market wrote EXCHANGE + UNTRACKED for one trade
+                # (same side, not more than the trade held); dumping it at market wrote EXCHANGE + UNTRACKED for one
+                # trade. The finalize cancelled its stop and take-profits: both are put back below
                 trade = last[0]
                 with sqlite3.connect(self.db_path) as c:
                     c.execute("UPDATE demo_trades SET closed_ms = NULL, close_reason = NULL, exit_avg = NULL, "
@@ -753,6 +756,13 @@ class DemoExecutor:
                 logger.warning(f"Demo: {pos['symbol']} was finalized {time.time() - last[1]:.0f}s ago but BingX still "
                                f"holds {qty}: back in tracking")
                 self.alert(f"⚠️ Демо {pos['symbol']}: позиция жива после закрытия в базе, возвращена в отслеживание")
+                try:
+                    await self._restore_stop(trade)
+                    min_qty = ((ex.markets[trade['symbol']].get('limits') or {}).get('amount') or {}).get('min') or 0
+                    await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(trade.get('trail')),
+                                                                 bool(trade.get('no_tp'))), min_qty)
+                except Exception as e:
+                    errors.report('executor.close_untracked', e, f"Demo re-protect {trade['symbol']}")
                 continue
             d = 1 if pos.get('side') == 'long' else -1
             entry = float(pos.get('entryPrice') or 0)
@@ -1218,6 +1228,7 @@ class DemoExecutor:
                             except Exception as e:
                                 errors.report('executor.cancel_after_flat', e, f"{trade['symbol']}: its stop / targets may still rest on BingX")
                             await self._finalize(trade, 'EXCHANGE', None)
+                            self._untracked_at = 0          # eng-132: the untracked check on the next pass, not in 5 min
                     except Exception as e:
                         # network / signature hiccups of the VST API retry next minute: one line; anything else with
                         # its traceback

@@ -712,7 +712,7 @@ def card_results_table(console: Console, rows: List):
         units = [_col(r, 'units') or 1 for r in members]
         tps = [best_tp(r) for r in members]
         n = len(rs)
-        sl0 = sum(1 for r, b in zip(members, tps) if b == 0 and r['group_key'].startswith('SL'))
+        sl0 = sum(1 for r, b in zip(members, tps) if b == 0 and r['group_key'].startswith('SL') and r['card_r'] <= 0)
         # eng-132: a stop that ended IN PROFIT (the trailed / break-even stop) is not a loss: counted apart ('TRAIL')
         trail = sum(1 for r in members if r['group_key'].startswith('SL') and r['card_r'] > 0)
         per_unit = statistics.fmean(x / u for x, u in zip(rs, units))   # eng-132: R of a Turtle trade per unit held

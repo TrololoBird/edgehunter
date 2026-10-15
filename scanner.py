@@ -786,6 +786,7 @@ class Scanner:
         if not rows:
             return
         self.detector.skip_log, self.loopside.skip_log = [], []
+        self.loopside._skip_seen.clear()
         if self.journal:
             self.journal.record_history_skips(rows)
 
