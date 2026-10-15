@@ -301,7 +301,7 @@ def contrast(ts_a, v_a, ts_b, v_b, rng, n_boot, lag):
     return dict(a=float(np.nanmean(A)), b=float(np.nanmean(B)), diff=float(d0), n_b=int(len(ua)),
                 lo=float(np.percentile(diff, 5)), hi=float(np.percentile(diff, 95)),
                 lo_a=float(np.percentile(ma, 5)), hi_a=float(np.percentile(ma, 95)),
-                p=max(p_boot, p_nw))
+                p=max(p_boot, p_nw), p_lo=max(1 - p_boot, 1 - p_nw))   # stricter of the two in each direction
 
 
 def bh(pvals):
@@ -524,7 +524,7 @@ def main():
             res[h] = contrast(ts_all[hs & has], R[hs & has], ts_all[hs & ~has], R[hs & ~has], rng, args.boot, lifetime_b)
         tag_rows.append((tg, res))
         if res.get('holdout'):
-            p_all.append(2 * min(res['holdout']['p'], 1 - res['holdout']['p'] + 1e-12))
+            p_all.append(min(1.0, 2 * min(res['holdout']['p'], res['holdout']['p_lo'])))
             tags.append(('tag', tg))
     for col in macro_cols:
         v = d[col].to_numpy().astype(float)
@@ -541,7 +541,7 @@ def main():
         res['bounds'] = (float(lo_b), float(hi_b))
         feat_rows.append((col, res))
         if res.get('holdout'):
-            p_all.append(2 * min(res['holdout']['p'], 1 - res['holdout']['p'] + 1e-12))
+            p_all.append(min(1.0, 2 * min(res['holdout']['p'], res['holdout']['p_lo'])))
             tags.append(('feat', col))
     q = dict(zip(tags, bh(p_all)))
 

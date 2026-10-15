@@ -35,3 +35,15 @@ for k in $(seq 0 23); do nohup .venv/bin/python replay.py --months 6 --coins 60 
 - Commit `research/entries_placebo_eng133.md` and the `*_placebo.parquet` next to it if < 20 MB. Never `data/`.
 - Report: every family and feature with n / means / intervals / q, the passing and the failing alike; the PASS rule is
   the protocol's, applied mechanically; the descriptive blocks are not conclusions. Do not tune anything afterwards.
+
+## Caveats to state in the report (reviewer, 2026-10-15)
+- Trades are measured with one 8 h window (`trade_ttl_sec`) for every timeframe, not the live lifecycle (live bot:
+  `structural_lifetimes=True`). The real trade and its placebo share the window, so the contrast is fair, but a family
+  verdict means "TP1 vs stop within 8 h", not "the strategy works live". 4h / 1d setups will mostly close near 0 R.
+- Families without a TP1 (Turtles, Connors, band exits: `no_tp`) are not tested; list them as "not tested (no TP1)".
+- DXY (FRED DTWEXBGS) is published weekly with a delay: a mild look-ahead, like the revised ETF flows.
+- Placebo entry is one minute earlier than a real entry (same costs): negligible.
+- Memory: the parent process holds ~1.4M placebo rows (~0.5-0.8 GB peak); use `--workers 4` in the cloud, not under
+  `MemoryMax=1G`.
+- Fixed before the run: the two-sided p of tags / features now takes the stricter of bootstrap and Newey-West in each
+  direction (`p`, `p_lo`).
