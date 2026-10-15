@@ -162,7 +162,7 @@ def orb_event(d1: Sequence[Sequence[float]], day_open: float, price_hi: float, p
 
 # ------------------------------------------------------------------------------------------------ session ORB (eng-93)
 
-# eng-93 (the owner: ORB on the majors, gold, silver and oil, by session): the opening range of each session's first
+# eng-93 / eng-125 (ORB where a session opens: gold, silver, oil at their exchange's open): the opening range of each session's first
 # orb_range_min minutes, the first break of its high / low is the trade, out at that session's close. Local hours (DST
 # by zoneinfo), Monday-Friday. New York per asset class: the US equity open for crypto, COMEX's for metals (08:20 ET),
 # NYMEX's for energy (09:00 ET).
@@ -180,6 +180,8 @@ def orb_sessions(base: str, now_ms: int) -> List[tuple]:
     out = []
     now = dt.datetime.fromtimestamp(now_ms / 1000, dt.timezone.utc)
     for name, tz, start, end in ORB_SESSIONS:
+        if base in ORB_NY_BY_CLASS and name != 'New York':
+            continue                     # eng-125: the instrument's own exchange open only (COMEX / NYMEX)
         if name == 'New York' and base in ORB_NY_BY_CLASS:
             start, end = ORB_NY_BY_CLASS[base]
         local = now.astimezone(ZoneInfo(tz))

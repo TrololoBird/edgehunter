@@ -370,7 +370,7 @@ class MLConfig:
     regime_veto_min_n: int = 30
     # False discovery rate of the journal's automatic rules (regime mutes, promoted confirmations): Benjamini-
     # Hochberg over all the groups tested at once
-    rule_fdr: float = 0.10
+    rule_fdr: float = 0.05           # eng-125: Benjamini & Hochberg (1995) use q = 0.05; 0.10 had no source
     # P(edge): shown on cards once trained on this many labelled rows; shadow mode (never filters)
     success_enabled: bool = True
     success_min_trained: int = 300
@@ -408,7 +408,7 @@ class LevelsConfig:
     # volatility rises into CPI / FOMC and falls after) - was an invented 30 / 60
     macro_before_min: int = 10
     macro_after_min: int = 45
-    # eng-100 (the owner): this many minutes before a high-impact US release an open intraday trade in profit has its
+    # eng-100: this many minutes before a high-impact US release an open intraday trade in profit has its
     # stop at break-even + costs, one flat / in loss is closed at market (stops are run both ways in the first minutes);
     # the multi-day systems (Turtles, Connors) keep theirs
     macro_guard_min: int = 0         # eng-123: the open-trade guard has no source - off (the entry window stays)
@@ -436,7 +436,7 @@ class LevelsConfig:
     # eng-108: removed (0 = off) - an invented 10%; the size is set by the stop, so a stop-out loses 1 R whatever its width
     max_stop_pct: float = 0.0
     # eng-69: the stop sits beyond its structure by max(measured pierce, this x ATR of the structure timeframe)
-    # eng-113, the owner's rule (eng-69: "beyond the zone with a 3-5% margin" - on altcoins' 4h zones ~1.5 ATR of the
+    # eng-113 (eng-69: "beyond the zone with a 3-5% margin" - on altcoins' 4h zones ~1.5 ATR of the
     # zone's timeframe): the stop sits beyond its structure by max(measured pierce, this x the structure tf's ATR)
     zone_buffer_atr: float = 0.0     # eng-123: the sources: 'slightly beyond the distal line', no size - the measured pierce
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
@@ -794,9 +794,10 @@ class StrategiesConfig:
     # open +- the Stretch (the 10-day SMA of min(High - Open, Open - Low) of the daily candles); the first one hit is
     # the trade, the other its stop; out at the session's (UTC day's) close. Crypto's daily candle opens 00:00 UTC.
     orb_stretch_days: int = 10
-    # eng-93 (the owner): the session ORB trades only these (the majors, gold, silver, WTI and Brent oil) and the
-    # opening range is the session's first orb_range_min minutes (strategies.classic.ORB_SESSIONS)
-    orb_bases: tuple = ('BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'XAU', 'XAG', 'CL', 'BZ')
+    # eng-125: the session ORB / session value area only where a session OPENS (Crabel: the opening range of the
+    # day session; Dalton: the session's value area) - gold, silver (COMEX), WTI, Brent (NYMEX / ICE), their own
+    # exchange's open only. Crypto has no open (24/7): the US equity open for BTC / ETH had no source
+    orb_bases: tuple = ('XAU', 'XAG', 'CL', 'BZ')
     orb_range_min: int = 30
     # Connors' RSI(2) levels (eng-58: 5 / 95, his original rule; 10 / 90 is a later variant)
     connors_rsi_low: float = 5.0
@@ -1025,7 +1026,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-124"
+    logic_version: str = "eng-125"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
@@ -1098,12 +1099,12 @@ class ExecutorConfig:
     partial_r: float = 1.0
     partial_share: float = 0.0       # eng-123: no study for half at +1R (practitioners' advice only) - off
     max_leverage: int = 5            # eng-84: 2-5x (the 3-5-7 rule); the risk is set by the stop, cross margin
-    # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak) - ours inside
-    # those ranges: -3R a day, 6 trades a day, 4 hours after 3 losses in a row
-    daily_loss_r: float = 3.0
-    max_trades_day: int = 6
-    pause_losses: int = 3
-    pause_hours: float = 4.0
+    # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak). eng-125: the
+    # numbers were picked inside those ranges, no source -> off (0); the risk per trade (1%, the Turtles' unit) stays
+    daily_loss_r: float = 0.0
+    max_trades_day: int = 0
+    pause_losses: int = 0
+    pause_hours: float = 0.0
 
 
 @dataclass(frozen=True)

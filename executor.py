@@ -316,11 +316,11 @@ class DemoExecutor:
         # eng-85: a resting limit holds a slot of the day (it fills without asking again)
         opened += sum(1 for p in self.pending.values() if not p.get('skip'))
         day_r = sum(r for (r,) in closed)
-        if day_r <= -cfg.daily_loss_r:
+        if cfg.daily_loss_r > 0 and day_r <= -cfg.daily_loss_r:
             return f"daily loss limit: {day_r:+.2f}R today"
-        if opened >= cfg.max_trades_day:
+        if cfg.max_trades_day > 0 and opened >= cfg.max_trades_day:
             return f"daily trade limit: {opened} trades today"
-        if len(last) == cfg.pause_losses and all(r < 0 for r, _ in last) and                 time.time() * 1000 - last[0][1] < cfg.pause_hours * 3_600_000:
+        if cfg.pause_losses > 0 and len(last) == cfg.pause_losses and all(r < 0 for r, _ in last) and                 time.time() * 1000 - last[0][1] < cfg.pause_hours * 3_600_000:
             return f"pause after {cfg.pause_losses} losses in a row"
         return None
 
