@@ -11,13 +11,23 @@ shadow tag or macro feature separate winners from losers? Nothing here changes t
 
 ## Placebo
 Same coin, the SAME direction, the same stop / target distance (ATR units of the setup's timeframe), 100 copies per real entry at a
-random time shifted by +-12 h .. 7 days; same exit rules and costs.
+random time shifted by +-3 d .. 14 d, excluding +-48 h around the real trade (so the placebo never sits in the real move itself), drawn only from copies whose 4h-trend sign and ATR(14) percentile (terciles) match the real entry's; same exit rules and costs.
 
 ## Statistics
-- Unit = a 4h time bucket (all entries of all coins in the bucket averaged), then block bootstrap over days. >= 30 independent buckets
+- Unit = a 4h time bucket (all entries of all coins in the bucket averaged), then a MOVING-BLOCK bootstrap with blocks of 48 h (>= the p90 trade lifetime, since neighbouring 4h buckets share one market move) - or Newey-West with lag = p90 lifetime in buckets; the stricter interval counts. >= 30 independent buckets
   per family, else "no verdict".
 - Per family (setup) and per shadow tag / macro feature bucket: mean net R, mean minus placebo mean, 90% bootstrap interval.
 - Multiple testing: Benjamini-Hochberg over all tested families + tag/feature buckets, FDR <= 0.05.
+
+- Stop/target are ATR(14) multiples measured at the PLACEBO's own entry (same gross R:R), never the real trade's % distance.
+- Purge: a 48 h buffer between the halves; trades opened in the first half and closed in the second are dropped.
+
+## Descriptive extras (reported, NOT pass-rule items, nothing is tuned from them)
+- Horizon profile: Real vs Placebo net R and MFE quantiles (25/50/75%, in R) at fixed horizons 4 / 8 / 12 / 24 bars of the setup's timeframe, with the stops and targets untouched.
+- Structural exit, one per family, fixed now: BB W-BOTTOM / M-TOP = touch of SMA20; VA80 / AUCTION = POC.
+- Counterfactual Cluster Cap (<= 2 cards of one side per 4h window, top by R:R_net): the R curve with and without. Not for production; any use needs the owner's yes.
+- Measured pairwise correlation of the entries' 1h returns in the same 4h window (the N_eff = N / (1 + (N-1) rho) figure must come from our data, not from an assumed rho 0.8).
+- XAU / CL features are treated as missing on Saturday, Sunday, Friday after 21:00 UTC and Sunday before 22:00 UTC (CME closed); SPY / QQQ only inside the NYSE regular session.
 
 ## Pass rule ("entries work" / "the filter or feature matters")
 ALL of: mean net R > 0.05 in BOTH halves; mean R above the placebo's 90th percentile in both halves; BH-adjusted q <= 0.05 on the
