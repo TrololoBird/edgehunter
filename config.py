@@ -768,6 +768,10 @@ class StrategiesConfig:
     # with BTC as one market - 12 Silver Bullet longs on 2026-10-02 were one bet. Turtle units counted by the
     # Turtles' own 12-unit limit, not here
     crowd_max: int = 6
+    # eng-128: the data-mined layers (models/profiles.json, profiles_regime.json: research_optimize's filters, stops,
+    # break-even, time stops, the 'regime_off' veto; models/exit_overlays.json: research_overlays' early exits and the
+    # alts_with filter) have no source - fitted on the archive, several negative on their own validation: off
+    optimized_profiles: bool = False
     time_after_tp1: float = 3.0
     time_stop_min_sec: int = 4 * 3600
     # The Turtles' units (strategies/turtle.py): +1 unit every turtle_add_n x N in favour, at most turtle_max_units per
@@ -974,7 +978,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-127"
+    logic_version: str = "eng-128"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

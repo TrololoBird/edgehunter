@@ -1113,9 +1113,11 @@ class SignalBook:
                 reason = 'regime_trend'
             reason = shadow_veto(s.sig, reason)
         prof, regime_veto = profiles.select(s.mode, (confirms or {}).get('_regime'))
+        if not CONFIG.strategies.optimized_profiles:
+            prof, regime_veto = None, None      # eng-128: data-mined profiles off (no source)
         if reason is None and regime_veto:
             reason = shadow_veto(s.sig, regime_veto)
-        if reason is None and not prof:
+        if reason is None and not prof and CONFIG.strategies.optimized_profiles:
             for f in profiles.overlay_filters(s.mode, 'plan'):
                 if f == 'alts_with':
                     mkt, btc = s.sig.get('mkt_4h'), s.sig.get('btc_4h')
@@ -1169,14 +1171,10 @@ class SignalBook:
             s.plan = {**(s.plan or {}), 'pm': dict(prof['pm']), 'profile': prof.get('status', 'candidate'),
                       'pm_atr': confirms.get('_atr_1h'), 'pm_best': None, 'trail_after_tp1': False,
                       'no_tp': str(prof['pm'].get('target')) == 'none' or bool((s.plan or {}).get('no_tp'))}
-        mid = hb.get('range_mid')
-        if s.mode in htf_bias.RANGE and (hb.get('coin') or {}).get('bias') == 'range' and mid and not (prof and prof.get('pm')) \
-                and s.direction * (mid - levels['entry']) > 0 and s.direction * (levels['tp1'] - mid) > 0:
-            # a range trade is out at the range's middle (the higher timeframe's range, 20 days)
-            levels.update(tp1=mid, tp2=mid, tp3=mid, tp1_src='range middle (HTF)', tp2_src='range middle (HTF)',
-                          tp3_src='range middle (HTF)')
+        # eng-128: no 'range middle (HTF)' override of the methods' own targets (it had no source)
         levels['risk0'] = abs(levels['entry'] - levels['sl'])
-        overlays = profiles.exit_overlays(s.mode, 'profile' if prof and prof.get('pm') else 'plan')
+        overlays = profiles.exit_overlays(s.mode, 'profile' if prof and prof.get('pm') else 'plan') \
+            if CONFIG.strategies.optimized_profiles else []
         if overlays:
             s.plan = {**(s.plan or {}), 'exit_overlays': overlays, 'ov_best': None}
         if (s.plan or {}).get('add_half'):
