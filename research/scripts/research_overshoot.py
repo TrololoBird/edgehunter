@@ -169,7 +169,13 @@ def main():
             logging.info(f"overshoot: {k}/{len(jobs)} {r['symbol']} {len(r['tests'])} tests")
     mid = (datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc).timestamp() * 1000 +
            datetime.combine(end, datetime.min.time(), tzinfo=timezone.utc).timestamp() * 1000) / 2
-    model = {'window': [start.isoformat(), end.isoformat()], 'global': {}, 'coins': {}}
+    model = {'window': [start.isoformat(), end.isoformat()], 'global': {}, 'coins': {}, 'groups': {}, 'coin_group': {}}
+    # eng-132: a coin (or a level kind) without >= 20 rejections of its own takes the figure of its LIQUIDITY group (the
+    # coins sorted by volume over the window, thirds), not the mean of all coins: a thin coin pierces deeper than BTC
+    order = {f: i for i, (_, f, _, _) in enumerate(coins)}
+    n_groups = 3
+    group_of = lambda sym: min(n_groups - 1, order.get(sym, len(coins)) * n_groups // max(1, len(coins)))  # noqa: E731
+    by_group = [defaultdict(list) for _ in range(n_groups)]
     rows = []
     allk = defaultdict(list)
     halves = defaultdict(lambda: ([], []))
@@ -181,10 +187,15 @@ def main():
             breaks[kind][1] += 0 if rej else 1
             if rej:
                 per[kind].append(depth)
+                by_group[group_of(r['symbol'])][kind].append(depth)
                 allk[kind].append(depth)
                 halves[kind][0 if ts < mid else 1].append(depth)
+        model['coin_group'][keys.get(r['symbol'], r['symbol'])] = f"g{group_of(r['symbol'])}"
         model['coins'][keys.get(r['symbol'], r['symbol'])] = {k: {'p50': pct(v, 50), 'p80': pct(v, 80), 'p90': pct(v, 90), 'n': len(v)}
                                        for k, v in per.items() if len(v) >= 20}
+    for g, kinds in enumerate(by_group):
+        model['groups'][f'g{g}'] = {k: {'p50': pct(v, 50), 'p80': pct(v, 80), 'p90': pct(v, 90), 'n': len(v)}
+                                    for k, v in kinds.items() if len(v) >= 20}
     for k in KINDS:
         v = allk[k]
         model['global'][k] = {'p50': pct(v, 50), 'p80': pct(v, 80), 'p90': pct(v, 90), 'n': len(v)}

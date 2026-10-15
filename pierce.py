@@ -32,13 +32,18 @@ def model() -> Dict:
 
 
 def overshoot(symbol: Optional[str], kind: str, price: float, q: str = 'p80') -> Optional[float]:
-    """The q-quantile pierce of this kind of level on this coin (its own figure with >= 20 rejections, else all
-    coins'), in price units; None without the model."""
+    """The q-quantile pierce of this kind of level on this coin (its own figure with >= 20 rejections, else its liquidity
+    group's, else all coins'), in price units; None without the model."""
     m = model()
     if not m:
         return None
     kind = kind if kind in KINDS else 'swing_15m'
-    row = ((m.get('coins') or {}).get(symbol) or {}).get(kind) or (m.get('global') or {}).get(kind) or {}
+    # eng-132: a coin without >= 20 rejections of this kind takes its LIQUIDITY group's figure (volume thirds of the model's
+    # window); a coin the model never saw is a new / thin one: the thinnest group, not the mean of BTC and the rest
+    groups = m.get('groups') or {}
+    gname = (m.get('coin_group') or {}).get(symbol) or (max(groups) if groups else None)
+    group = groups.get(gname) or {}
+    row = ((m.get('coins') or {}).get(symbol) or {}).get(kind) or group.get(kind) or (m.get('global') or {}).get(kind) or {}
     value = row.get(q)
     return price * value / 100 if value else None
 
