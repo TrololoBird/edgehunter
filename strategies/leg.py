@@ -17,7 +17,7 @@ from config import CONFIG
 from levels import _leg_levels, fib_price, find_impulse, retracement_of
 from strategies.base import TRIGGER_MINUTES, PlanInput, Strategy, base_plan
 from strategies.geometry import select_targets
-from zones import is_structural, merge, support_in
+from zones import merge
 
 
 def _leg_anchor(impulse: Dict) -> Dict:

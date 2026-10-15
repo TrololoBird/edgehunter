@@ -23,7 +23,6 @@ maps worker runs them after every 15m close; the 1h systems when an hour closed)
 Fixes of his code (the ideas as written, not the slips): Third Eye's realtime filters `(~use_x or cond)` are always
 true in Python (~True == -2), so his live bot traded the CCI cross alone - here the filters apply as in his backtest.
 """
-import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np

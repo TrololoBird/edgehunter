@@ -29,7 +29,7 @@ import numpy as np
 from strategies.ind_panel import ema
 
 # the method's nature (how the bias gates it); the Turtles are the higher-timeframe rule themselves and stay free
-TREND = ('continuation', 'orb', 'pump', 'cup_handle', 'oi_signal', 'po3')
+TREND = ('continuation', 'orb', 'pump', 'cup_handle', 'po3')
 WITH_BIAS = ('sweep', 'connors', 'supply_demand')        # trade a pullback / raid in the higher timeframe's direction
 RANGE = ('market_profile', 'bollinger', 'wyckoff')       # range edges; in a trend only its direction
 # trendline: a broken trendline signals a CHANGE of trend (Edwards & Magee) - gating it by the old trend contradicts
@@ -112,7 +112,6 @@ def gate(strategy: str, direction: int, coin_bias: Optional[str], btc_bias: Opti
     if strategy in EXEMPT or coin_bias is None:
         return None
     side = 'bull' if direction > 0 else 'bear'
-    other = 'bear' if direction > 0 else 'bull'
     # eng-100: the 'btc_bias' veto removed - BTC's direction now scales the risk (the 7-day momentum regime in the
     # executor) instead of blocking the trade
     if coin_bias == 'conflict':

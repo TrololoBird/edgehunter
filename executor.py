@@ -21,7 +21,7 @@ import errors
 import os
 import sqlite3
 import time
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from config import CONFIG
 
@@ -71,6 +71,7 @@ class DemoExecutor:
         self._markets_ready = False
         with sqlite3.connect(db_path) as c:
             c.execute(SCHEMA)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_demo_pending ON demo_trades(error, closed_ms)")
             for row in c.execute("SELECT id, card_id, symbol, direction, opened_ms, entry_fill, qty, sl, risk_usd "
                                  "FROM demo_trades WHERE closed_ms IS NULL"):
                 self.open[row[1]] = dict(zip(('id', 'card_id', 'symbol', 'direction', 'opened_ms', 'entry_fill',
@@ -269,7 +270,7 @@ class DemoExecutor:
     @staticmethod
     def tp_parts(ex, symbol: str, qty: float, trail: bool, no_tp: bool):
         """(target index, amount) of the take-profit orders: thirds at TP1-3; eng-58 trailing plans (continuation,
-        pump, oi_signal) half at TP1 and the rest on the card's trailing stop (RESTOP); target-less plans none."""
+        pump) half at TP1 and the rest on the card's trailing stop (RESTOP); target-less plans none."""
         if no_tp:
             return []
         if trail:
@@ -348,7 +349,6 @@ class DemoExecutor:
         # the fill is BingX's own ask (a long) / bid (a short): the trade is judged at that price, not at the plan's
         fill_est = float((quote.get('ask') if d > 0 else quote.get('bid')) or bx_last)
         reject = None
-        plan_risk = abs(lv['entry'] - lv['sl'])
         if d * (fill_est - lv['sl']) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"
         # eng-113 (the owner): no invented chase cap - the size is recomputed at BingX's price (stop_dist below), so the
@@ -740,7 +740,6 @@ class DemoExecutor:
             return
         async with self._lock:
             try:
-                ex = await self._exchange()
                 symbol, d = trade['symbol'], trade['direction']
                 left = await self._position_qty(symbol)
                 if left <= 0:
@@ -940,12 +939,14 @@ class DemoExecutor:
         d = trade['direction']
         exit_side = 'sell' if d > 0 else 'buy'
         exits = []
-        for attempt in range(4):
-            fills = await ex.fetch_my_trades(trade['symbol'], since=trade['opened_ms'] - 5_000)
-            # eng-91: only fills after this trade's entry - the 5s margin let the previous trade's exit on the same
-            # coin into this one's average (_refinalize already filtered it)
-            exits = [f for f in fills if f.get('side') == exit_side and f.get('price')
-                     and (f.get('timestamp') or 0) > trade['opened_ms'] - 1_000]
+        for _ in range(4):
+            try:
+                fills = await ex.fetch_my_trades(trade['symbol'], since=trade['opened_ms'] - 5_000)
+            except Exception as e:
+                # the API failing must not lose the close: the row is marked FILL_PENDING below, _refinalize retries
+                logger.warning(f"Demo {reason} {trade['symbol']}: fills unavailable: {e!r}")
+                fills = []
+            exits = self._exit_fills(fills, exit_side, trade['opened_ms'])
             if exits:
                 break
             await asyncio.sleep(5)
@@ -957,9 +958,11 @@ class DemoExecutor:
             logger.warning(f"Demo {reason} {trade['symbol']}: no exit fill found yet, retried later")
             pnl = fees = None
         else:
-            fees = CONFIG.journal.fee_round_trip / 2 * (entry + exit_avg) * qty
+            fees = self._fees(entry, exit_avg, qty, exits)
             pnl = d * (exit_avg - entry) * qty - fees
         risk = trade.get('risk_usd') or 0
+        if not risk:
+            logger.warning(f"Demo {reason} {trade['symbol']}: risk_usd is 0 - R left empty")
         with sqlite3.connect(self.db_path) as c:
             c.execute("UPDATE demo_trades SET closed_ms = ?, close_reason = ?, exit_avg = ?, fees_usd = ?, pnl_usd = ?, "
                       "r = ?, journal_r = ? WHERE id = ?",
@@ -969,9 +972,27 @@ class DemoExecutor:
                 c.execute("UPDATE demo_trades SET error = ? WHERE id = ?", (self.FILL_PENDING, trade['id']))
         self.open.pop(trade['card_id'], None)
         if pnl is not None:
-            logger.info(f"Demo {reason} {trade['symbol']}: {pnl:+.2f} USD ({pnl / risk if risk else 0:+.2f}R)")
+            r_txt = f"{pnl / risk:+.2f}R" if risk else "R n/a"
+            logger.info(f"Demo {reason} {trade['symbol']}: {pnl:+.2f} USD ({r_txt})")
 
     FILL_PENDING = 'exit fill pending'
+
+    @staticmethod
+    def _exit_fills(fills: List[Dict], side: str, opened_ms: float) -> List[Dict]:
+        """eng-91: only exit-side fills after this trade's entry (the 1s margin covers BingX's clock; the 5s fetch
+        margin let the previous trade's exit on the same coin in). One rule for _finalize and _refinalize."""
+        return [f for f in fills if f.get('side') == side and f.get('price') and f.get('amount')
+                and (f.get('timestamp') or 0) > opened_ms - 1_000]
+
+    @staticmethod
+    def _fees(entry: float, exit_avg: float, qty: float, exits: List[Dict]) -> float:
+        """The entry side at the configured taker rate; the exit side from BingX's own fee on the fills when it is
+        reported in USDT (a limit / take-profit exit pays maker), else the configured rate."""
+        half = CONFIG.journal.fee_round_trip / 2
+        paid = [f.get('fee') or {} for f in exits]
+        if paid and all(fe.get('currency') in ('USDT', 'VST') and fe.get('cost') is not None for fe in paid):
+            return half * entry * qty + sum(abs(float(fe['cost'])) for fe in paid)
+        return half * (entry + exit_avg) * qty
 
     async def _refinalize(self) -> None:
         """Closed trades whose exit fill was not listed at the close (1000PEPE 2026-10-06 11:07, the link failing):
@@ -983,15 +1004,23 @@ class DemoExecutor:
         if not rows:
             return
         ex = await self._exchange()
-        for tid, symbol, d, opened, closed, qty, entry, risk in rows:
+        cache: Dict[str, List[Dict]] = {}
+        for tid, symbol, d, opened, _closed, qty, entry, risk in rows:
             side = 'sell' if d > 0 else 'buy'
-            fills = await ex.fetch_my_trades(symbol, since=opened - 5_000)
-            exits = [f for f in fills if f.get('side') == side and f.get('price') and f.get('timestamp', 0) > opened]
+            if symbol not in cache:
+                # one request per coin (the earliest open of its pending rows), one failing coin does not stop the rest
+                since = min(r[3] for r in rows if r[1] == symbol) - 5_000
+                try:
+                    cache[symbol] = await ex.fetch_my_trades(symbol, since=since)
+                except Exception as e:
+                    logger.warning(f"Demo result recovery {symbol}: {e!r}")
+                    cache[symbol] = []
+            exits = self._exit_fills(cache[symbol], side, opened)
             weight = sum(f['amount'] for f in exits)
             if not weight:
                 continue
             exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight
-            fees = CONFIG.journal.fee_round_trip / 2 * (entry + exit_avg) * qty
+            fees = self._fees(entry, exit_avg, qty, exits)
             pnl = d * (exit_avg - entry) * qty - fees
             with sqlite3.connect(self.db_path) as c:
                 c.execute("UPDATE demo_trades SET exit_avg = ?, fees_usd = ?, pnl_usd = ?, r = ?, error = NULL WHERE id = ?",

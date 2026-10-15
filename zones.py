@@ -64,7 +64,7 @@ def leverage_mix() -> List[Tuple[float, float]]:
     if mix:
         return sorted(mix)
     cfg = CONFIG.zones
-    return list(zip(map(float, cfg.liq_leverages), cfg.liq_leverage_weights))
+    return list(zip(map(float, cfg.liq_leverages), cfg.liq_leverage_weights, strict=True))
 
 
 def maintenance_of(symbol: Optional[str]) -> Tuple[float, Optional[float]]:
@@ -426,7 +426,7 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
                     tilt = [w * (1 + (aggression - 0.5) * (2 * i / (tiers - 1) - 1)) if tiers > 1 else w
                             for i, w in enumerate(weights)]
                     norm = sum(tilt) or 1.0
-                    for lev, w in zip(levs, tilt):
+                    for lev, w in zip(levs, tilt, strict=True):
                         liq = p * (1 - side * (1 / lev - mmr))
                         key = (int(liq / step), side)
                         clusters[key] = clusters.get(key, 0.0) + change * w / norm

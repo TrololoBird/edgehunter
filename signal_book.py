@@ -609,7 +609,7 @@ class SignalBook:
 
     def _trail(self, s: TrackedSignal, candles_of, hi: Optional[float] = None, lo: Optional[float] = None) -> None:
         """
-        eng-58, momentum / trend trades (plan 'trail_after_tp1': continuation, pump, oi_signal): half out at TP1
+        eng-58, momentum / trend trades (plan 'trail_after_tp1': continuation, pump): half out at TP1
         (Qullamaggie, ICT's partials), then the rest's stop to the entry and up behind the EMA20 of the entry
         timeframe (the closed bars), only ever toward the trade; a RESTOP event moves the demo's stop.
         """

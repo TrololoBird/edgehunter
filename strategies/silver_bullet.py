@@ -83,7 +83,7 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
             continue
         for i in range(max(raid + 2, 2), len(inside)):
             a, m, c = inside[i - 2], inside[i - 1], inside[i]
-            body, span = abs(m[4] - m[1]), m[2] - m[3]
+            span = m[2] - m[3]
             if span <= 0 or (m[4] - m[1]) * d <= 0:     # eng-119: no body share (ours)
                 continue
             if (max(m[4], c[4]) <= swing) if d > 0 else (min(m[4], c[4]) >= swing):

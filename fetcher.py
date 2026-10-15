@@ -2101,6 +2101,9 @@ class DataFetcher:
                     raise
                 except Exception as e:
                     book.snapshot_wanted = True
+                    # shutdown closed the ccxt instance under an in-flight call: not an error
+                    if not self._running or type(e).__name__ == 'ExchangeClosedByUser':
+                        return
                     errors.report('fetcher.book_snapshot', e, f"{symbol} 1000-level snapshot")
 
         running: set = set()

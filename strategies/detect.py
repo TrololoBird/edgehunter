@@ -8,7 +8,6 @@ It returns setup dicts that the scanner turns into signals (the coin's live Tier
 """
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from config import CONFIG
 from strategies.cascade import CascadeTracker
 from strategies.structure import Context
 

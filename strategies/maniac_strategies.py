@@ -7,7 +7,6 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from config import CONFIG
 from levels import MINUTE_MS, resample
 from strategies.base import PlanInput, Strategy, base_plan
 from strategies.geometry import select_targets, system_levels

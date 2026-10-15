@@ -92,7 +92,7 @@ def fvg_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, i
     c = [x[4] for x in ltf]
     for i in range(start + 2, len(ltf) - 1):
         j = i - 1                                          # the displacement candle
-        body, span = abs(c[j] - o[j]), h[j] - l[j]
+        span = h[j] - l[j]
         if span <= 0 or (c[j] - o[j]) * direction <= 0:     # eng-119: no body share (ours) - the FVG is the displacement
             continue
         if direction > 0:
@@ -153,7 +153,7 @@ def fvg_setup(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, int
         return None
     for i in range(start + 2, len(ltf)):
         j = i - 1                                          # the displacement candle
-        body, span = abs(c[j] - o[j]), h[j] - l[j]
+        span = h[j] - l[j]
         if span <= 0 or (c[j] - o[j]) * direction <= 0:     # eng-119: no body share (ours) - the FVG is the displacement
             continue
         if direction > 0:

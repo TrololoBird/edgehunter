@@ -361,9 +361,6 @@ def classify(sig: Dict) -> Tuple[str, str, int]:
         # Directional only when both confirm: OI clearly rising (new positions, not just unknown/flat OI) and the
         # 5m futures taker flow on the same side as the move. Missing data = unconfirmed.
         cvd = perp_flow_5m(sig)
-        # OI rising in the coin's own terms (z of its 5m OI change) above a small floor; the fixed threshold only
-        # while its OI volatility is unknown
-        oi_z = sig.get('oi_z', 0.0) or 0.0
         oi_confirms = oi > 0        # eng-121: the price / OI matrix (OI rising = new positions); our floors / z removed
         flow_confirms = bool(cvd) and (cvd > 0) == up
         if oi_confirms and flow_confirms:
@@ -474,6 +471,9 @@ class SignalJournal:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
         self._migrate()
+        # after _migrate: setup_ts_ms is a migrated column on old databases (the entry lookups of finalize / card_r)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_entry ON signals(symbol, group_key, setup_ts_ms) "
+                          "WHERE kind = 'entry'")
         self.conn.commit()
         # (symbol, family) -> (last logged ts, its rank); seeded from the DB so restarts respect the cooldown
         cutoff = int((time.time() - CONFIG.journal.cooldown_sec) * 1000)

@@ -155,7 +155,7 @@ def wyckoff_events(h1: Sequence[Sequence[float]], period_ms: int = HOUR_MS, tf: 
     if len(h1) < 10:
         return []
     last = h1[-1]
-    o, h, l, c = last[1], last[2], last[3], last[4]
+    h, l, c = last[2], last[3], last[4]
     span = h - l
     if span <= 0:
         return []
@@ -164,7 +164,6 @@ def wyckoff_events(h1: Sequence[Sequence[float]], period_ms: int = HOUR_MS, tf: 
         if rng is None:
             continue
         lo, hi = rng['lo'], rng['hi']
-        height = hi - lo
         # eng-119: the spring as the sources define it - below the SC low, closed back inside (the half-wick and the 30%
         # pierce limits were ours)
         if d > 0 and l < lo and c > lo:

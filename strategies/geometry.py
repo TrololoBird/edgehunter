@@ -14,7 +14,7 @@ A target is always >= zones.min_target_atr beyond its reference (and beyond the 
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import CONFIG
-from zones import POOL_KINDS, STRUCTURE_KINDS, Zone, is_pool, stop_beyond
+from zones import POOL_KINDS, STRUCTURE_KINDS, Zone, stop_beyond
 
 MEAN_KINDS = ('vwap', 'poc', 'va', 'hvn')
 

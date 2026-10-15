@@ -126,10 +126,9 @@ def find_impulse(df: Optional[pl.DataFrame], leg_direction: int,
     first_15m = int(rows[0][0])
     older = [list(r) for r in rows[:end_idx]][::-1] + \
         [list(c) for c in (htf or []) if c[0] + 3_600_000 <= first_15m][::-1]
-    start, start_ts, broke = None, None, False
+    start, start_ts = None, None
     for c in older:
         if (c[2] > end) if leg_direction > 0 else (c[3] < end):
-            broke = True
             break
         if start is None or (c[3] < start if leg_direction > 0 else c[2] > start):
             start, start_ts = (c[3] if leg_direction > 0 else c[2]), int(c[0])

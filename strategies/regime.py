@@ -21,7 +21,7 @@ from typing import Dict, Optional, Sequence
 import numpy as np
 
 # setups that need the move to continue / a breakout to hold, and setups that fade an extreme back into a range
-TREND_MODES = ('continuation', 'pump', 'oi_signal', 'oi_build', 'breakout', 'orb')
+TREND_MODES = ('continuation', 'pump', 'oi_build', 'breakout', 'orb')
 RANGE_MODES = ('sweep', 'market_profile', 'bollinger', 'wyckoff', 'supply_demand', 'po3', 'connors', 'cascade')
 EDGE = 0.25          # the outer quarter of the range is its edge
 
