@@ -53,5 +53,11 @@ feature) has the same sign in both halves and q <= 0.05 on the holdout. Anything
 - Feature terciles: the bounds are computed on the development half and applied unchanged to the holdout.
 - Live journal: XAU / CL are logged always; the CME-closed mask is applied at analysis time from the timestamp; SPY / QQQ by the `us_session` column.
 
+## Implementation decisions fixed before the run (2026-10-15; script `research/scripts/research_entries_placebo_eng133.py`, seed 133)
+- ATR(14) = simple mean of 14 true ranges of the closed bars of the setup's timeframe, computed from the 1m archive for the real entry and every placebo alike; the placebo candidates are the timeframe bars inside the 3..14 d window (either side, >48 h from the real trade), uniform, at most 100 without replacement (fewer = `placebo_n` < 100 is reported); the ATR/price terciles are per coin and timeframe over the replayed period; the placebo's entry price = the close of the 1m candle before its decision time, its funding = the real entry's.
+- The bucket sequence for the bootstrap = the sorted non-empty 4h buckets, block = max(12, 0.9 x trade lifetime in buckets); the p-value of a family = max(one-sided block-bootstrap p, Newey-West p); tag / feature contrasts use the two-sided version of the same p.
+- Horizon profile = net R and MFE with no stop and no target (mark at the horizon), 10 placebo copies per entry. Structural exit: BB W-BOTTOM / M-TOP only (SMA20 touch, original stop); VA80 / AUCTION need the POC, which the replay does not write: not computed.
+- Run size: 60 coins, `--group 5`, 24 shards, then `--placebos 100 --boot 5000`. Extra macro feature: broad dollar index 1-day change (FRED DTWEXBGS).
+
 ## Reported either way
 All families and features with n, means, intervals, q; the ones that fail are listed too. No threshold is tuned after seeing results.

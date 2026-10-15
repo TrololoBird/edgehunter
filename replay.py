@@ -413,6 +413,10 @@ def _entry_row(e, now_ms: int) -> Dict:
             'tp2': lv.get('tp2'), 'tp3': lv.get('tp3'), 'rr_tp1': lv.get('rr_tp1'), 'sl_src': lv.get('sl_src'),
             'limit_entry': lv.get('limit_entry'), 'volume_24h': (e.sig or {}).get('volume_24h'),
             'funding': (e.sig or {}).get('funding_rate'),
+            # eng-133 research columns (written only): the setup's timeframe and its ATR(14) at the entry, the shadow
+            # tags (strings are not picked up by f_*), the logic version
+            'tf': (e.plan or {}).get('tf'), 'atr_tf': (e.plan or {}).get('tf_atr'),
+            'shadow_veto': (e.sig or {}).get('shadow_veto'), 'logic_version': CONFIG.journal.logic_version,
             'tp1_src': lv.get('tp1_src'), 'conf_n': sum(1 for k, v in (e.confirms or {}).items()
                                                          if not k.startswith('_') and v is True),
             # the signal's numeric context (Tier-0 metrics, trends, biases): the meta-labeling features
