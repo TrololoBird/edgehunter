@@ -3,15 +3,13 @@ How far price pierces a level before it turns back: the stop buffer measured, no
 buffer and the 1 ATR stop floor).
 
 Levels, each known only from the candle that confirms it (no look-ahead):
-  swing_15m / swing_1h  a pivot high / low with 2 candles on each side (Bill Williams' fractal, the live swings;
-                        eng-126, was 3: no source)
-  equal                 two 1h pivots of one side within the coin's median swing_1h pierce of each other (eng-126:
-                        two passes; was 0.1%: no source)
+  swing_15m / swing_1h  a pivot high / low with 3 candles on each side (known 3 candles after it)
+  equal                 two 1h pivots of one side within 0.1% of each other (the later pivot's time)
   pdhl                  the previous UTC day's high / low (known at the day's close)
   round                 round numbers: a tenth of the price's order of magnitude
-The first 15m candle that trades beyond an untouched level is a TEST. It is a REJECTION when that candle closes back on
-the level's side (eng-126: the live close confirmation - a close beyond is a break and invalidates the plan; was any
-close back within 4 candles: no source); its depth = the wick beyond the level, in % of the level. Else a BREAK. Per coin x kind: p50 / p80 / p90 of rejection depths, the break share.
+The first 15m candle that trades beyond an untouched level is a TEST. It is a REJECTION when a close back on the
+level's side comes within 4 candles (1h); its depth = the furthest price beyond the level until that close, in % of
+the level. Else a BREAK. Per coin x kind: p50 / p80 / p90 of rejection depths, the break share.
 
 Stability check (the number is only useful if it holds): p80 from the older half, then the share of the newer half's
 rejections that stayed within it (80% expected if it is stable).
@@ -26,13 +24,13 @@ import math
 import os
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import numpy as np
 
 KINDS = ('swing_15m', 'swing_1h', 'equal', 'pdhl', 'round')
-PIVOT = 2
-RECLAIM = 1
+PIVOT = 3
+RECLAIM = 4
 DAY_MS = 86_400_000
 
 
@@ -47,7 +45,7 @@ def pivots(h: np.ndarray, l: np.ndarray, k: int):
     return out
 
 
-def levels_of(c15: np.ndarray, equal_tol: Optional[float] = None) -> List[tuple]:
+def levels_of(c15: np.ndarray) -> List[tuple]:
     """(known_from_ms, price, side, kind) of every level the 15m candles define."""
     ts, h, l = c15[:, 0], c15[:, 2], c15[:, 3]
     out = []
@@ -67,9 +65,9 @@ def levels_of(c15: np.ndarray, equal_tol: Optional[float] = None) -> List[tuple]
         for i, p, s in piv:
             out.append((t1[i + PIVOT] + 3_600_000, p, s, 'swing_1h'))
         by_side = defaultdict(list)
-        for i, p, s in piv if equal_tol else []:
+        for i, p, s in piv:
             for j, q in by_side[s][-10:]:
-                if abs(p / q - 1) * 100 <= equal_tol:
+                if abs(p / q - 1) <= 0.001:
                     out.append((t1[i + PIVOT] + 3_600_000, max(p, q) if s > 0 else min(p, q), s, 'equal'))
                     break
             by_side[s].append((i, p))
@@ -131,11 +129,7 @@ def run_coin(job) -> Dict:
     c15 = arch.klines_ohlc('futures', symbol, '15m', date.fromisoformat(start), date.fromisoformat(end))
     if len(c15) < 2000:
         return {'symbol': symbol, 'tests': []}
-    first = tests_of(c15, levels_of(c15))
-    h1 = [d for _, k, rej, d in first if k == 'swing_1h' and rej]
-    tol = float(np.median(h1)) if h1 else None
-    second = tests_of(c15, [x for x in levels_of(c15, tol) if x[3] == 'equal']) if tol else []
-    return {'symbol': symbol, 'tests': first + second}
+    return {'symbol': symbol, 'tests': tests_of(c15, levels_of(c15))}
 
 
 def pct(xs, q):
