@@ -1515,22 +1515,35 @@ class DataFetcher:
         """The top-down bias of the coin and of BTC (strategies/bias.py) from their closed daily / 4h / weekly candles:
         {'coin': {...}, 'btc': {...}, 'range_mid': the coin's 20-day range middle}."""
         from strategies import bias as htf
+        from strategies import regime as rg
         try:
             out = {}
+            cache = self.__dict__.setdefault('_bias_cache', {})
             for tag, m in (('coin', md), ('btc', self.markets.get('BTC/USDT:USDT'))):
                 if m is None:
                     continue
-                st = htf.state(htf.closed(list(m.d1), 86_400_000, now_ms), htf.closed(list(m.h4), 14_400_000, now_ms),
-                               htf.closed(list(m.w1), 7 * 86_400_000, now_ms))
-                out[tag] = htf.describe(st, htf.bias_of(st))
-                out[tag]['bias_daily'] = htf.bias_of(st, daily_method=True)     # the tide of daily methods
+                # the daily / 4h / weekly part changes only when one of those candles closes (every 4h boundary is
+                # also the day's and the week's) or the lists are reloaded: cached; the regime reads the live price
+                key = (m.symbol, int(now_ms // 14_400_000), len(m.d1), len(m.h4), len(m.w1),
+                       m.d1[-1][0] if m.d1 else 0, m.h4[-1][0] if m.h4 else 0, m.w1[-1][0] if m.w1 else 0)
+                hit = cache.get(m.symbol) if isinstance(m, MarketData) else None
+                if hit is not None and hit[0] == key:
+                    part = hit[1]
+                else:
+                    st = htf.state(htf.closed(list(m.d1), 86_400_000, now_ms),
+                                   htf.closed(list(m.h4), 14_400_000, now_ms),
+                                   htf.closed(list(m.w1), 7 * 86_400_000, now_ms))
+                    part = (htf.describe(st, htf.bias_of(st)), htf.bias_of(st, daily_method=True), htf.range_mid(st))
+                    if isinstance(m, MarketData):        # not a briefing proxy (spliced history) under the coin
+                        cache[m.symbol] = (key, part)
+                out[tag] = dict(part[0])
+                out[tag]['bias_daily'] = part[1]     # the tide of daily methods
                 # eng-104: the one regime on the trades' horizon (strategies/regime.py)
-                from strategies import regime as rg
                 out[tag]['rg'] = rg.state(htf.closed(list(m.h1), 3_600_000, now_ms),
                                           htf.closed(list(m.h4), 14_400_000, now_ms),
                                           htf.closed(list(m.d1), 86_400_000, now_ms), m.last_price)
                 if tag == 'coin':
-                    out['range_mid'] = htf.range_mid(st)
+                    out['range_mid'] = part[2]
             return out
         except Exception as e:
             errors.report('fetcher.htf_bias', e, md.symbol)

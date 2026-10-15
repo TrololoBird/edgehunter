@@ -45,10 +45,17 @@ CREATE TABLE IF NOT EXISTS demo_trades (
 """
 
 
+def credentials() -> tuple:
+    """(key, secret): BINGX_API_KEY / BINGX_API_SECRET from the environment (systemd EnvironmentFile, mode 600)
+    first, then config.local.toml [executor] - the key out of a file that sits next to the code."""
+    cfg = CONFIG.executor
+    return (os.environ.get('BINGX_API_KEY') or cfg.api_key, os.environ.get('BINGX_API_SECRET') or cfg.api_secret)
+
+
 class DemoExecutor:
     def __init__(self, db_path: str = 'demo_trades.db'):
         cfg = CONFIG.executor
-        self.enabled = bool(cfg.enabled and cfg.api_key and cfg.api_secret)
+        self.enabled = bool(cfg.enabled and all(credentials()))
         self.db_path = db_path
         self._band_warned: set = set()       # coins whose market close BingX rejected (102202): warned once
         self._quotes_seen: Dict[str, tuple] = {}   # symbol -> (BingX last, since): a VST quote that stopped moving
@@ -82,8 +89,8 @@ class DemoExecutor:
     async def _exchange(self):
         if self.ex is None:
             import ccxt.async_support as ccxt
-            cfg = CONFIG.executor
-            self.ex = ccxt.bingx({'apiKey': cfg.api_key, 'secret': cfg.api_secret, 'enableRateLimit': True,
+            key, secret = credentials()
+            self.ex = ccxt.bingx({'apiKey': key, 'secret': secret, 'enableRateLimit': True,
                                   'timeout': 30_000,   # the VST contract list (~1200 markets) took > 10s under load
                                   # no recvWindow option: ccxt's bingx.sign never sends it (checked in ccxt 4.5.85: only
                                   # the deposit / withdraw endpoints read it); BingX's window stays 5s; the cause of
@@ -1109,8 +1116,8 @@ class DemoExecutor:
 
 async def _cli(args):
     ex = DemoExecutor(db_path=':memory:')
-    if not (CONFIG.executor.api_key and CONFIG.executor.api_secret):
-        print("No [executor] api_key / api_secret in config.local.toml")
+    if not all(credentials()):
+        print("No BINGX_API_KEY / BINGX_API_SECRET in the environment nor [executor] api_key / api_secret in config.local.toml")
         return
     try:
         x = await ex._exchange()

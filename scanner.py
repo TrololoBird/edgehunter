@@ -109,6 +109,7 @@ class Scanner:
 
     def __init__(self, journal=None):
         self.fetcher = DataFetcher()
+        self.health: Dict = {}                   # the last Health reading (/api/health)
         self.scorer = PhaseScorer()
         self.web = None   # webui.WebUI, attached by main.py
         self.journal = journal
@@ -1543,13 +1544,20 @@ class Scanner:
                     rate += f" lag {lag:.1f}s"
                 rates.append(rate)
                 last_counts[venue] = count
-            process = ""
+            process, cpu, rss = "", None, None
             if proc is not None:
-                # cpu: % of one core over the last minute
-                process = f", cpu {proc.cpu_percent(None):.0f}%, mem {proc.memory_info().rss / 2**20:.0f}MB"
+                # cpu: % of one core over the last minute (read once: a second call measures since the first)
+                cpu, rss = proc.cpu_percent(None), proc.memory_info().rss / 2**20
+                process = f", cpu {cpu:.0f}%, mem {rss:.0f}MB"
             ctxs = [c for c in self.detector.context.values() if c is not None]
             pairs = sum(1 for c in ctxs if getattr(c, 'smt_pair', None))
             failed = errors.health_text()
+            # the same reading for /api/health (external monitoring, the dashboard's health tab)
+            self.health = {'ts': time.time(), 'tier0_sec': self.last_tier0_sec, 'scan_sec': self.last_scan_sec,
+                           'heavy_sec': self.last_heavy_sec, 'books': len(self._hot), 'streams': rates,
+                           'down': [r.split()[0] for r in rates if ' DOWN' in r],
+                           'cpu_pct': cpu, 'rss_mb': rss,
+                           'errors': failed}
             logger.info(f"Health: tier0 {self.last_tier0_sec:.2f}s, scan {self.last_scan_sec:.2f}s "
                         f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
                         f"smt pairs {pairs}/{len(ctxs)}, streams " + ", ".join(rates)

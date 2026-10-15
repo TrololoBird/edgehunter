@@ -7,6 +7,10 @@ Wants=network-online.target
 Type=simple
 User=pump
 WorkingDirectory=/opt/pump
+# secrets (BINGX_API_KEY / BINGX_API_SECRET, TELEGRAM_BOT_TOKEN): root-owned, mode 600; optional ('-')
+EnvironmentFile=-/etc/pump-bot.env
+# refuse to start a tree that does not import / lint (deploy/precheck.sh)
+ExecStartPre=/opt/pump/deploy/precheck.sh
 ExecStart=/opt/pump/.venv/bin/python main.py
 # main.py shuts down gracefully on SIGTERM (saves cards / state, closes the journal); give it time
 KillSignal=SIGTERM

@@ -436,6 +436,7 @@ class WebUI:
         app.router.add_get('/api/anomaly_stats', self._anomaly_stats)
         app.router.add_get('/api/stats', self._stats)
         app.router.add_get('/api/debug', self._debug)
+        app.router.add_get('/api/health', self._health)
         app.router.add_get('/api/briefing', self._briefing)
         app.router.add_get('/api/briefing_card', self._briefing_card)
         app.router.add_static('/static/', WEB_DIR)
@@ -523,8 +524,16 @@ class WebUI:
 
     @staticmethod
     def _json(data) -> web.Response:
-        return web.Response(body=orjson.dumps(data, default=str, option=orjson.OPT_SERIALIZE_NUMPY),
+        resp = web.Response(body=orjson.dumps(data, default=str, option=orjson.OPT_SERIALIZE_NUMPY),
                             content_type='application/json')
+        resp.enable_compression()      # /api/coin with the heatmap history is megabytes of JSON
+        return resp
+
+    async def _health(self, request):
+        """The last minute's Health reading as JSON; 'ok' false when it is older than 3 minutes or a venue is DOWN."""
+        h = dict(getattr(self.scanner, 'health', None) or {})
+        h['ok'] = bool(h) and time.time() - h.get('ts', 0) < 180 and not h.get('down')
+        return web.json_response(h, status=200 if h['ok'] else 503)
 
     async def _coin(self, request):
         symbol = request.query.get('symbol', '')

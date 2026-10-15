@@ -180,6 +180,11 @@ def keep_awake(on: bool) -> None:
 
 async def main(use_web: bool = True):
     print("Crypto microstructure scanner - loading markets and starting streams (Ctrl+C to stop)")
+    # the streams allocate millions of short-lived tuples a minute: the default gen-0 threshold (2000) promoted them
+    # into gen 2 and its full collections paused the loop 0.3s+ (watchdog 'gc (gen 2)', 100+ a day); fewer, younger
+    # collections - the long-lived history is gc.freeze()d by the fetcher once loaded
+    import gc
+    gc.set_threshold(50_000, 20, 100)
 
     quick_edit = ConsoleQuickEdit()
     quick_edit.disable()
