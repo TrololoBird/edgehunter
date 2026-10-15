@@ -34,7 +34,7 @@ def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
         return None
     last = minutes[-1]
     # by time, not by index (eng-74: after a feed gap minutes[-16] is older than 15 minutes - a false '+x% in 15m')
-    from strategies.oi_signal import _close_at
+    from strategies.oi_build import _close_at
     base = next((c for c in minutes if c[0] == int(last[0]) - 15 * MINUTE_MS), None)
     if base is None or _close_at(minutes, int(last[0]) - 15 * MINUTE_MS) is None:
         return None
