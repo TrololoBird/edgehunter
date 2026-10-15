@@ -128,7 +128,11 @@ class Po3Strategy(Strategy):
         # ~3% stop, MAGIC ran +16% and came back to the stop); farther, the nearest map liquidity is TP1
         risk = abs(ce - sig['anchor_extreme'])
         first = (sig['po3_target'], "the Asian range's other side") \
-            if risk and d * (sig['po3_target'] - ce) <= FIRST_MAX_R * risk else None
+            if risk and 0 < d * (sig['po3_target'] - ce) <= FIRST_MAX_R * risk else None
+        if first is None:
+            # the source's target is the Asian range's other side; without it (behind the entry) there is no PO3
+            # trade - was the map's nearest liquidity, a target no source names
+            return {'skip': "no Asian-range target ahead"}
         targets, sources = select_targets(zones, ce, d, atr, 'draw_liquidity', fillers, "the day's draw (PDH / PDL)",
                                           first=first)
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'PO3 FVG (CE)',

@@ -7,12 +7,13 @@ Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
 - the handle after the right rim: 5 days (O'Neil: at least one to two weeks) .. cup/4 candles, drifting in the cup's UPPER half and no deeper than 12% of the
   rim, on lower volume than the cup's;
 - the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
-- stop below the handle's low; target the pivot + the cup's depth (Bulkowski's measured move); O'Neil's own rule
+- stop below the handle's low; TP1 the pivot + 61% of the depth, TP2 + the full depth (Bulkowski's measure rule); O'Neil's own rule
   (cut losses at 7-8%, take 20-25%) is an exit rule, not an entry filter: the stop is the nearer of the handle's low
   and 8% below the entry, the minimum R:R to the measured target is 1.
 """
 from typing import Dict, List, Optional, Sequence
 
+from config import CONFIG
 from strategies.base import PlanInput, Strategy
 from strategies.maniac_strategies import _System, _confirm_plan  # noqa: F401  (_System: the gate key)
 
@@ -64,10 +65,13 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int) -> O
                 return None
             if c[last] > pivot * 1.05:
                 return None                          # O'Neil: 5% past the pivot the buy point is missed - no chase
-            # eng-51, Bulkowski's measure rule: the full height is reached by only ~50% of upward breakouts, half of it
-            # by ~76% - TP1 at half the height, TP2 at the full height
-            target = pivot + 0.5 * (rim - bottom)
-            target_full = pivot + (rim - bottom)
+            # Bulkowski's measure rule as his site states it now (thepatternsite.com/cup.html, 06/2026): the depth from
+            # the RIGHT cup lip to the lowest valley x the share of patterns that met the full target (bullish cups in a
+            # bull market: 61%, 913 trades), added to the breakout price - TP1; TP2 the full depth. Was half the
+            # height of the lower rim 'met 76%' (eng-51), a figure his current page does not give
+            height = h[r] - bottom
+            target = pivot + CONFIG.strategies.cup_target_share * height
+            target_full = pivot + height
             return {'setup': 'CUP HANDLE', 'direction': 1,
                     'setup_note': f"{tf} cup with handle: rims {h[left]:.6g} / {h[r]:.6g}, depth {depth:.0%} over "
                                   f"{cup_len} candles, handle {len(handle)} candles to {h_lo:.6g}; closed above the "
@@ -94,7 +98,7 @@ class CupHandleStrategy(_System):
         stop = max(sig['ch_stop'], sig['anchor_close'] * 0.92)
         src = 'below the handle' if stop == sig['ch_stop'] else "8% below the buy point (O'Neil)"
         exit = {'stop': ['price', stop], 'stop_src': src,
-                'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': 'half the cup height (Bulkowski, met 76%)',
+                'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': f"{CONFIG.strategies.cup_target_share:.0%} of the cup depth (Bulkowski's measure rule)",
                 'tp2': ['level', sig.get('ch_target_full') or sig['ch_target'], 0.0, None],
                 'atr': x.atr, 'own_targets': True}
         return _confirm_plan(x, self.name, sig.get('ch_tf', '1d'), exit, 'close above the handle pivot on volume')

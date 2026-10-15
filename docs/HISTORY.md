@@ -677,3 +677,10 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   LATE_FILL / UNTRACKED / a failed close. Signals: 'no plan' expiries journal the strategy's reason; sweeps no longer
   take round numbers as the pool (sweep_round_pools, 39 of 77 INVALIDs eng-125..128). Not changed: the sweep's CE
   entry - its MISSED cards were IN the zone, the FVG trigger did not form before TP1.
+- eng-130 (2026-10-15, the owner's order after the source check of every strategy's target): supply_demand targets
+  the opposing fresh 4h supply / demand zone's proximal line (Seiden: "the distance between our supply and target
+  (T1: Demand)"; was the map's opposite liquidity - breakers, equal lows, the day open), no opposing zone = no trade
+  (maniac.sd_opposing); cup_handle TP1 = breakout + 61% of the right-lip depth (Bulkowski's measure rule as his site
+  gives it now, 913 bullish cups; was half the height 'met 76%'), TP2 the full depth (strategies.cup_target_share);
+  po3 / Silver Bullet: no source target ahead (the Asian range's other side / the day's draw) = no trade (was the
+  map's nearest liquidity).

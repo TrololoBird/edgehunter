@@ -702,6 +702,9 @@ class StrategiesConfig:
     # round-number study found clustering at round prices but no reliable return after them (Urquhart 2017, Economics
     # Letters 159) - rounds stay on the level map (targets / stops), not as the pool a sweep reverses from
     sweep_round_pools: bool = False
+    # Bulkowski's measure rule for the cup with handle: the share of the right-lip-to-valley depth added to the breakout
+    # (his 'percentage meeting price target', bullish cups in a bull market: 61% of 913, thepatternsite.com/cup.html)
+    cup_target_share: float = 0.61
     sweep_min_depth_atr: float = 0.1
     sweep_max_depth_atr: float = 1.0
     sweep_min_rvol: float = 0.0              # eng-108: removed (invented; the sources' sweep has no volume rule) - journaled
@@ -982,7 +985,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-129"
+    logic_version: str = "eng-130"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

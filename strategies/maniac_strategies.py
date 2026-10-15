@@ -9,7 +9,7 @@ import numpy as np
 
 from levels import MINUTE_MS, resample
 from strategies.base import PlanInput, Strategy, base_plan
-from strategies.geometry import select_targets, system_levels
+from strategies.geometry import system_levels
 from strategies.maniac import find_pivots
 from zones import merge
 
@@ -101,15 +101,25 @@ class SupplyDemandStrategy(_System):
         far = lo if d > 0 else hi
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         near = hi if d > 0 else lo
-        targets, sources = select_targets(zones, near, d, atr, 'opposite_liquidity')
+        # Seiden's target: the opposing fresh 4h zone's proximal line (maniac.sd_opposing), not the map's liquidity;
+        # none -> no profit zone to measure -> no trade
+        opposing = [t for t in (sig.get('sd_targets') or []) if d * (t[0] - near) > 0]
+        if not opposing:
+            return {'skip': 'no opposing supply / demand zone'}
+        targets, sources = [t[0] for t in opposing], [t[1] for t in opposing]
+        while len(targets) < 3:
+            targets.append(targets[-1])
+            sources.append(sources[-1])
         plan = base_plan(x, self.name, _anchor(sig, '4h'), '4h', entry='pullback', trigger='touch', single_touch=True,
                          zone_lo=lo, zone_hi=hi,
                          zone_src=f"{sig.get('anchor_label', 'zone')}: odds {score}/10 (strength "
                                   f"{sig.get('sd_strength')}, time {sig.get('sd_time')}, fresh 2, R:R 2, big picture "
                                   f"{big}, arrival {arrival})",
                          invalid=far, fix_invalid=True, missable=False, stop_ref=far,
-                         exit={'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': atr,
-                               'stop_src': 'beyond the distal line'},
+                         # the opposing zones only (own_targets): TP1 the nearest, TP2 the next (the last repeats)
+                         exit={'stop': ['ref', 0.0], 'tp': ['level', targets[0], 0.0, None],
+                               'tp2': ['level', targets[1], 0.0, None], 'own_targets': True, 'atr': atr,
+                               'stop_src': 'beyond the distal line', 'tp_src': 'the opposing 4h supply / demand zone (Seiden)'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
                          sd_score=score, key=(sig['anchor_ts'], near))
         return plan

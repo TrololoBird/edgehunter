@@ -207,6 +207,7 @@ def sd_zone_events(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_MS,
     zones = _sd_bases(bars)
     if len(zones) < 10:
         return []
+    closes = [x[4] for x in bars]
     speeds = np.array([z['speed'] for z in zones])
     lo3, hi3 = np.quantile(speeds, [1 / 3, 2 / 3])
     med_base = float(np.median([z['n_base'] for z in zones]))
@@ -229,8 +230,35 @@ def sd_zone_events(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_MS,
                     'anchor_level': hi if side > 0 else lo, 'anchor_extreme': lo if side > 0 else hi,
                     'anchor_label': f"{'demand' if side > 0 else 'supply'} zone (base)",
                     'anchor_ts': int(bars[z['base_to']][0]), 'anchor_close': bars[-1][4],
+                    'sd_targets': sd_opposing(zones, closes, side, hi if side > 0 else lo),
                     'event_ts': int(bars[-1][0]) + period_ms})
     return out
+
+
+def sd_opposing(zones: List[Dict], closes: Sequence[float], side: int, ref: float, n: int = 3) -> List[List]:
+    """
+    Seiden's target: the OPPOSING zone - for a demand trade the nearest fresh supply zone above (its proximal line,
+    the lowest body of its base), for a supply trade the nearest fresh demand zone below (its proximal line, the highest
+    body); "the distance between our supply and target (T1: Demand) represents our potential profit zone" (FXStreet,
+    'Lessons from the pros', 2014). Fresh = no close beyond its distal line since it was confirmed. Up to `n`
+    [price, label] pairs, nearest first. Was the map's opposite liquidity (old highs / lows, equal levels, sessions),
+    which is not his target.
+    """
+    out = []
+    for z in zones:
+        if z['side'] != -side:
+            continue
+        after = closes[z['confirm']:]
+        if side > 0:
+            proximal, broken = z['lo'], any(c > z['hi'] for c in after)
+            beyond = proximal > ref
+        else:
+            proximal, broken = z['hi'], any(c < z['lo'] for c in after)
+            beyond = proximal < ref
+        if beyond and not broken:
+            out.append([float(proximal), f"4h {'supply' if side > 0 else 'demand'} zone {z['lo']:.6g}-{z['hi']:.6g}"])
+    out.sort(key=lambda t: side * (t[0] - ref))
+    return out[:n]
 
 
 # ------------------------------------------------------------------------------------------------ trendlines
