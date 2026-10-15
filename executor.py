@@ -60,7 +60,9 @@ class DemoExecutor:
         cfg = CONFIG.executor
         self.enabled = bool(cfg.enabled and all(credentials()))
         self.db_path = db_path
-        self._band_warned: set = set()       # coins whose market close BingX rejected (102202): warned once
+        self._flat_seen: Dict[str, int] = {}      # card id -> consecutive reconcile passes that read the position as 0
+        self._finalized: Dict[str, tuple] = {}    # symbol -> (trade, time) of the last finalize (close_untracked guard)
+        self._band_warned: set = set()      # coins whose market close BingX rejected (102202): warned once
         self._quotes_seen: Dict[str, tuple] = {}   # symbol -> (BingX last, since): a VST quote that stopped moving
         self.ex = None
         self.open: Dict[str, Dict] = {}          # card id -> trade
@@ -138,6 +140,10 @@ class DemoExecutor:
         ex = await self._exchange()
         self._quote = None
         base, rest = symbol.split('/', 1)
+        if base in BINGX_ALIAS:
+            # eng-132: BingX rejects the NCCO* contracts in one-way mode (101414 'non-crypto symbol ... not support
+            # openapi', XAG 15.10 and CL 15.10): NO_MARKET, not an ERROR after a round of ticker calls
+            return None, 'TradFi contract: BingX openapi does not trade it (101414)'
         bare = base[4:] if base.startswith('1000') else base
         candidates = [(symbol, 1.0), (f"{bare}/{rest}", 1e-3 if bare != base else 1.0),
                       (f"1000{bare}/{rest}", 1e3 if bare == base else 1.0)]
@@ -733,6 +739,21 @@ class DemoExecutor:
             qty = float(pos.get('contracts') or 0)
             if not qty or pos['symbol'] in mine:
                 continue
+            last = self._finalized.get(pos['symbol'])
+            if last and time.time() - last[1] < 900 and last[0].get('id'):
+                # eng-132: finalized minutes ago yet the position is on BingX: the flat read was wrong. Back to tracking
+                # (its stop is untouched); dumping it at market wrote EXCHANGE + UNTRACKED for one trade
+                trade = last[0]
+                with sqlite3.connect(self.db_path) as c:
+                    c.execute("UPDATE demo_trades SET closed_ms = NULL, close_reason = NULL, exit_avg = NULL, "
+                              "fees_usd = NULL, pnl_usd = NULL, r = NULL, journal_r = NULL, error = NULL WHERE id = ?",
+                              (trade['id'],))
+                self.open[trade['card_id']] = trade
+                self._finalized.pop(pos['symbol'], None)
+                logger.warning(f"Demo: {pos['symbol']} was finalized {time.time() - last[1]:.0f}s ago but BingX still "
+                               f"holds {qty}: back in tracking")
+                self.alert(f"⚠️ Демо {pos['symbol']}: позиция жива после закрытия в базе, возвращена в отслеживание")
+                continue
             d = 1 if pos.get('side') == 'long' else -1
             entry = float(pos.get('entryPrice') or 0)
             trade = {'card_id': f"{pos['symbol']}|UNTRACKED|{int(time.time())}", 'symbol': pos['symbol'],
@@ -932,7 +953,8 @@ class DemoExecutor:
         of every R sum (11 rows, -12.54 USD by 15.10)."""
         with sqlite3.connect(self.db_path) as c:
             return c.execute("SELECT COUNT(*), COALESCE(SUM(pnl_usd), 0) FROM demo_trades WHERE r IS NULL AND "
-                             "pnl_usd IS NOT NULL AND closed_ms >= ? AND closed_ms < ?",
+                             "pnl_usd IS NOT NULL AND closed_ms >= ? AND closed_ms < ? "
+                             "AND COALESCE(error, '') NOT LIKE 'duplicate of%'",
                              (day0_ms, day0_ms + 86_400_000)).fetchone()
 
     async def _call(self, method: str, *args, tries: int = 3, **kw):
@@ -1029,6 +1051,12 @@ class DemoExecutor:
                     self.open.setdefault(trade['card_id'], trade)
                     self.alert(f"⚠️ Демо {symbol}: закрытие ({reason}) не прошло ({str(e)[:120]}), стоп на месте, повтор")
                     raise
+        # eng-132: the cancel-all only after a second empty answer (the exchange's stop is the last protection)
+        await asyncio.sleep(2)
+        if await self._position_qty(symbol) != 0:
+            logger.warning(f"Demo {symbol}: position reappeared after a flat read: stops kept, trade stays tracked")
+            self.open.setdefault(trade['card_id'], trade)
+            return
         try:
             await ex.cancel_all_orders(symbol)           # flat: the stop and whatever else rests on the coin
         except Exception as e:
@@ -1073,6 +1101,7 @@ class DemoExecutor:
             if pnl is None and qty and entry:
                 c.execute("UPDATE demo_trades SET error = ? WHERE id = ?", (self.FILL_PENDING, trade['id']))
         self.open.pop(trade['card_id'], None)
+        self._finalized[trade['symbol']] = (trade, time.time())
         if pnl is not None:
             r_txt = f"{pnl / risk:+.2f}R" if risk else "R n/a"
             logger.info(f"Demo {reason} {trade['symbol']}: {pnl:+.2f} USD ({r_txt})")
@@ -1174,7 +1203,15 @@ class DemoExecutor:
                                 logger.info(f"Demo: {trade['symbol']} has no open card any more: closing the orphan")
                                 await self._close(trade, 'ORPHAN', None)
                                 continue
-                        if await self._position_qty(trade['symbol']) == 0:
+                        if await self._position_qty(trade['symbol']) != 0:
+                            self._flat_seen.pop(trade['card_id'], None)
+                        else:
+                            # eng-132: ONE empty answer is not flat (a glitchy fetch_positions at 10:04 on 2026-10-15
+                            # made cancel_all take the stops of HYPE / UNI / XPL): two in a row, a pass apart
+                            self._flat_seen[trade['card_id']] = self._flat_seen.get(trade['card_id'], 0) + 1
+                            if self._flat_seen[trade['card_id']] < 2:
+                                continue
+                            self._flat_seen.pop(trade['card_id'], None)
                             await self._exchange()
                             try:
                                 await self.ex.cancel_all_orders(trade['symbol'])

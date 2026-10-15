@@ -618,6 +618,8 @@ class SignalBook:
         s.finish_reason, s.finish_price = reason or status, s.last_price
         self.finished_now.append(s)
         label = f"SL after TP{s.best_target}" if status == 'SL' and s.best_target else status
+        if status == 'SL' and s.entered_at and s.levels and s.direction * (s.levels['sl'] - s.levels['entry']) > 0:
+            label = 'TRAIL'          # eng-132: the trailed stop sits beyond the entry - a stop out in profit, not a loss
         self.session_results[label] += 1
         if s.entered_at and s.r_now is not None:
             s.final_r = self._exit_r(s, status)

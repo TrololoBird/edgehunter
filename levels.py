@@ -327,7 +327,7 @@ def fill_price(levels: Dict[str, float], direction: int, candles: List[List]) ->
     """
     if not candles:
         return None
-    slip = slippage_bps(levels.get('volume_24h')) / 1e4
+    slip = slippage_bps(levels.get('volume_24h'), levels.get('symbol')) / 1e4
     return float(candles[0][1]) * (1 + direction * slip)
 
 
@@ -379,7 +379,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         return result
 
     through = CONFIG.levels.target_through_bps / 1e4
-    slip = slippage_bps(levels.get('volume_24h')) / 1e4
+    slip = slippage_bps(levels.get('volume_24h'), levels.get('symbol')) / 1e4
 
     def reached(level: float, high: float, low: float) -> bool:
         # a limit target fills once price traded through it (a touch fills only part of the queue)

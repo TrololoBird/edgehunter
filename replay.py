@@ -471,7 +471,7 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
             continue
         a = int(np.searchsorted(c.m_ts, e['ts'], side='left'))
         b = int(np.searchsorted(c.m_ts, e['ts'] + ttl, side='left'))
-        lv = {k: e.get(k) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3', 'limit_entry', 'volume_24h')}
+        lv = {k: e.get(k) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3', 'limit_entry', 'volume_24h', 'symbol')}
         res = simulate(lv, e['direction'], c.fut[a:b, :6].tolist(), funding_8h=e.get('funding'))
         e['outcome'] = res.get('outcome')
         for col in ('r_tp1', 'r_tp2', 'r_be'):

@@ -124,6 +124,11 @@ CREATE TABLE IF NOT EXISTS liq_levels (
     ref_price REAL
 );
 CREATE INDEX IF NOT EXISTS idx_liq_levels ON liq_levels(symbol, ts_ms);
+-- eng-132: a strategy that did not run on a coin for want of history ('skip: history N < M'), once a coin, strategy, day
+CREATE TABLE IF NOT EXISTS history_skips (
+    ts_ms INTEGER NOT NULL, symbol TEXT NOT NULL, strategy TEXT NOT NULL, held INTEGER NOT NULL, needed INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_history_skips ON history_skips(ts_ms);
 """
 
 # Columns added after the first release; created on old databases by _migrate()
@@ -692,6 +697,25 @@ class SignalJournal:
             self.conn.commit()
         self._last_snapshot = now
         return len(rows)
+
+    def record_history_skips(self, rows: List[Tuple]) -> None:
+        """[(symbol, strategy, held, needed)] of the strategies a history gate stopped; once a day per coin and strategy."""
+        now = int(time.time() * 1000)
+        day = now // 86_400_000
+        seen = self.__dict__.setdefault('_skip_seen', set())
+        if len(seen) > 20_000:
+            seen.clear()
+        fresh = []
+        for symbol, strategy, held, needed in rows:
+            if (symbol, strategy, day) not in seen:
+                seen.add((symbol, strategy, day))
+                fresh.append((now, symbol, strategy, int(held), int(needed)))
+        if not fresh:
+            return
+        with self._lock:
+            self.conn.executemany("INSERT INTO history_skips (ts_ms, symbol, strategy, held, needed) VALUES (?, ?, ?, ?, ?)", fresh)
+            self.conn.commit()
+        logger.debug(f"skip: history shorter than needed for {len(fresh)} coin / strategy pairs")
 
     def record_liquidations(self, events: List[Tuple]) -> None:
         """Live liquidations [(symbol, ts_ms, price, usd, side, venue)]."""

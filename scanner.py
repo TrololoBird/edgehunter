@@ -780,6 +780,15 @@ class Scanner:
             for tracked in self.book.finished_now:
                 self._background_task(self.demo.on_finish(tracked))
 
+    def _drain_history_skips(self) -> None:
+        """eng-132: the strategies a history gate stopped (loop side and the maps worker's contexts) to the journal."""
+        rows = self.detector.skip_log + self.loopside.skip_log
+        if not rows:
+            return
+        self.detector.skip_log, self.loopside.skip_log = [], []
+        if self.journal:
+            self.journal.record_history_skips(rows)
+
     def _detect_setups(self) -> List[Tuple[str, Dict]]:
         """Detected setups of this scan as signals (the coin's live Tier-0 metrics + the setup's leg / note)."""
         out: List[Tuple[str, Dict]] = []
@@ -790,6 +799,7 @@ class Scanner:
             bands = self.fetcher.depth.liquidity_bands(symbol)
             setups = self.detector.scan(symbol, self._minute_candles(symbol), md.tier0, now_ms, bands)
             setups.extend(self.loopside.scan(symbol, md, now_ms))
+            self._drain_history_skips()
             if setups:
                 self._recent_setup[symbol] = now_ms
             for setup in setups:

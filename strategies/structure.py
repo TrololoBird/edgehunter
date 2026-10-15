@@ -31,6 +31,7 @@ class Context:
     tail: List[List[float]] = field(default_factory=list)   # the last 24 closed 15m candles
     events: List[Dict] = field(default_factory=list)       # setups of the candle that just closed
     smt_pair: Optional[str] = None                          # the SMT correlate (corr >= smt_min_correlation), None = none
+    skips: List[Tuple[str, int, int]] = field(default_factory=list)   # eng-132: (strategy, history held, history needed)
 
     @property
     def vol_ratio(self) -> float:
@@ -217,11 +218,13 @@ def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
 
 
 def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[float]],
-                  corr: Optional[List[List[float]]], cut: int, h4: Sequence = (), d1: Sequence = ()) -> List[Dict]:
+                  corr: Optional[List[List[float]]], cut: int, h4: Sequence = (), d1: Sequence = (),
+                  skips: Optional[List] = None) -> List[Dict]:
     """crypto_maniac's systems on the candle that just closed (15m), and on the hour when one closed (1h)."""
     from strategies import maniac
     log = logging.getLogger(__name__)
     events: List[Dict] = []
+    short = skips.append if skips is not None else (lambda _: None)
 
     def run(name, fn, *args):
         try:
@@ -240,6 +243,8 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
     # Seiden draws supply / demand on 4h or higher and enters on the lower one: zones of 4h candles at the 4h close,
     # the limit touch on 1h (eng-37; eng-34 1h zones, the sample's 15m before). His curve: demand is bought in the
     # lower half of the daily range (20 days), supply sold in the upper half
+    if cut % (4 * HOUR_MS) == 0 and len(h4) < 40:
+        short(('supply_demand', len(h4), 40))
     if cut % (4 * HOUR_MS) == 0 and len(h4) >= 40:
         found = []
         run_into = lambda: maniac.sd_zone_events(h4, 4 * HOUR_MS, '4h')     # noqa: E731
@@ -259,16 +264,24 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
     # review of the live trades; crypto write-ups use 2h-5h with a daily trend filter, which the top-down bias gives)
     if cut % (4 * HOUR_MS) == 0:
         b4 = bars_4h(h1, cut)
+        if len(b4) < 60:
+            short(('bollinger', len(b4), 60))
         if len(b4) >= 60:
             run('Bollinger W / M', maniac.bollinger_wm_event, b4, 4 * HOUR_MS, '4h')
             run('Bollinger Method III', maniac.bb_method3_event, b4, 4 * HOUR_MS, '4h')   # eng-106, shadow
+        if len(h4) < 146:
+            short(('bollinger', len(h4), 146))
         if len(h4) >= 146:
             run('Bollinger Method I', maniac.bb_method1_event, list(h4), 4 * HOUR_MS, '4h')   # eng-127
+    if cut % (24 * HOUR_MS) == 0 and len(d1) < 120:
+        short(('cup_handle', len(d1), 120))
     if cut % (24 * HOUR_MS) == 0 and len(d1) >= 120:
         # O'Neil's cup with handle on DAILY candles at the UTC day's close (eng-58: his weekly / daily bases of >= 7
         # weeks; the 1h / 4h version of eng-40..57 was another pattern under his name)
         from strategies.cup_handle import cup_handle
-        run('cup with handle 1d', cup_handle, list(d1), '1d', 24 * HOUR_MS)
+        run('cup with handle 1d', cup_handle, list(d1), '1d', 24 * HOUR_MS, skips)
+    if cut % HOUR_MS == 0 and len(h1) < 30:
+        short(('trendline', len(h1), 30))
     if cut % HOUR_MS == 0 and len(h1) >= 30:
         # Edwards & Magee: a line's significance grows with its timeframe - lines of 1h candles (was 15m)
         run('trendline E&M', maniac.trendline_em_event, h1, HOUR_MS, '1h')      # eng-107, shadow
@@ -326,7 +339,7 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
             from strategies.wyckoff_range import wyckoff_events
             ctx.events.extend(wyckoff_events(bars_4h(h1, cut), 4 * HOUR_MS, '4h'))
         corr15 = merge_candles(corr, [], cut, QUARTER_MS) if corr else None
-        ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut, list(h4 or []), list(d1 or [])))
+        ctx.events.extend(maniac_events(symbol, m15, h1, corr15, cut, list(h4 or []), list(d1 or []), ctx.skips))
         # classic published methods (strategies/classic.py): Dalton's 80% rule, Crabel's ORB, Connors' RSI(2)
         try:
             from strategies.classic import classic_events

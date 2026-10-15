@@ -690,7 +690,7 @@ def card_results_table(console: Console, rows: List):
         return
     table = Table(title="Entered cards by their own exit (card_r, R of one unit)", header_style="bold magenta",
                   border_style="blue")
-    for name in ("Strategy", "Cards", "Mean R", "Win", "TP1", "TP2", "TP3", "SL before TP1", "Avg units"):
+    for name in ("Strategy", "Cards", "Mean R", "Win", "TP1", "TP2", "TP3", "SL before TP1", "Trail", "Avg units", "R / unit"):
         table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in cards:
@@ -713,12 +713,16 @@ def card_results_table(console: Console, rows: List):
         tps = [best_tp(r) for r in members]
         n = len(rs)
         sl0 = sum(1 for r, b in zip(members, tps) if b == 0 and r['group_key'].startswith('SL'))
+        # eng-132: a stop that ended IN PROFIT (the trailed / break-even stop) is not a loss: counted apart ('TRAIL')
+        trail = sum(1 for r in members if r['group_key'].startswith('SL') and r['card_r'] > 0)
+        per_unit = statistics.fmean(x / u for x, u in zip(rs, units))   # eng-132: R of a Turtle trade per unit held
         table.add_row(name, str(n), Text(f"{statistics.fmean(rs):+.2f}R", style="green" if statistics.fmean(rs) > 0 else "red"),
                       f"{sum(x > 0 for x in rs) / n:.0%}",
                       f"{sum(b >= 1 for b in tps)} ({sum(b >= 1 for b in tps) / n:.0%})",
                       f"{sum(b >= 2 for b in tps)} ({sum(b >= 2 for b in tps) / n:.0%})",
                       f"{sum(b >= 3 for b in tps)} ({sum(b >= 3 for b in tps) / n:.0%})",
-                      f"{sl0} ({sl0 / n:.0%})", f"{statistics.fmean(units):.1f}")
+                      f"{sl0} ({sl0 / n:.0%})", f"{trail} ({trail / n:.0%})", f"{statistics.fmean(units):.1f}",
+                      f"{per_unit:+.2f}R")
     console.print(table)
 
 
@@ -884,7 +888,7 @@ def card_r_net(row) -> Optional[float]:
     if not entry or sl is None or entry == sl:
         return r
     from levels import slippage_bps
-    cost = CONFIG.journal.fee_round_trip + 2 * slippage_bps(_col(row, 'volume_24h')) / 1e4
+    cost = CONFIG.journal.fee_round_trip + 2 * slippage_bps(_col(row, 'volume_24h'), _col(row, 'symbol')) / 1e4
     return r - cost * entry / abs(entry - sl)
 
 

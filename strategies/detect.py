@@ -19,12 +19,14 @@ class LiveDetector:
         self._fired: Dict[Tuple[str, str, int], float] = {}
         self._last_minute: Dict[str, int] = {}
         self.cascades = CascadeTracker()
+        self.skip_log: List[Tuple[str, str, int, int]] = []   # eng-132: (symbol, strategy, held, needed) to the journal
 
     def set_context(self, symbol: str, context: Optional[Context], now_ms: int):
         if context is None:
             self.context.pop(symbol, None)
             return
         self.context[symbol] = context
+        self.skip_log.extend((symbol, *s) for s in context.skips)
         for event in context.events:
             key = (symbol, event['setup'], event['event_ts'])
             if key in self._fired:

@@ -32,6 +32,7 @@ class LoopDetectors:
         self._po3_fired: set = set()
         self._pump_checked: Dict[str, int] = {}      # symbol -> the last final minute the pump checks ran on
         self._pump_fired: set = set()                # pump starts / tops already fired
+        self.skip_log: List[tuple] = []              # eng-132: (symbol, strategy, held, needed): a history gate said no
 
     def scan(self, symbol: str, md, now_ms: int) -> List[Dict]:
         """Every loop-side setup of the coin this scan (in the scanner's order)."""
@@ -55,6 +56,7 @@ class LoopDetectors:
         self._pump_checked[symbol] = minute
         minutes = self.minutes_of(symbol)
         if len(minutes) < 120:
+            self.skip_log.append((symbol, 'pump', len(minutes), 120))
             return []
         out = []
         cfg = CONFIG.strategies
@@ -64,7 +66,7 @@ class LoopDetectors:
             closes = [c[4] for c in self.m15_of(symbol)[-97:]]
             rets = [b / a - 1 for a, b in zip(closes, closes[1:]) if a]
             vol = (sum(r * r for r in rets) / len(rets)) ** 0.5 if len(rets) > 20 else None
-            found = pump_start(minutes, md.tier0 or {}, vol, now_ms)
+            found = pump_start(minutes, md.tier0 or {}, vol, now_ms, list(md.h1 or ()))
             if found and (symbol, found['anchor_ts'] // 3_600_000) not in self._pump_fired:
                 self._pump_fired.add((symbol, found['anchor_ts'] // 3_600_000))
                 out.append(found)
@@ -131,6 +133,7 @@ class LoopDetectors:
         """The Turtles' channel breakout on the touch (strategies.turtle), checked on each new final minute, once per
         coin, direction and day."""
         if len(md.d1) < 60:
+            self.skip_log.append((symbol, 'breakout', len(md.d1), 60))
             return None
         minute = md.minute_closed_until
         if not minute or self._turtle_checked.get(symbol) == minute:
@@ -204,6 +207,7 @@ class LoopDetectors:
         """The short of the first bounce after a dump (strategies.pump.dump_bounce) on each closed 1h candle."""
         h1 = list(md.h1)
         if len(h1) < 190:
+            self.skip_log.append((symbol, 'pump', len(h1), 190))
             return None
         closed = int(h1[-1][0])
         if self._dump_checked.get(symbol) == closed:
@@ -221,6 +225,7 @@ class LoopDetectors:
     def _connors_daily(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
         """Connors' RSI(2) on the coin's daily candles, once per closed day (fresh within the day's first 2 hours)."""
         if len(md.d1) < 202:
+            self.skip_log.append((symbol, 'connors', len(md.d1), 202))
             return None
         day_close = int(md.d1[-1][0]) + 86_400_000
         if self._connors_checked.get(symbol) == day_close or now_ms - day_close > 2 * 3_600_000:

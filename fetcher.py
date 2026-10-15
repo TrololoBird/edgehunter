@@ -2295,8 +2295,10 @@ class DataFetcher:
         for venue, stream in self.venue_streams.items():
             status.setdefault(venue, {}).update(connected=stream.connected, bytes=stream.bytes)
         binance = list(self._binance_streams) + self._depth_streams
+        # eng-132: Binance's forceOrder stream pushes at most ONE liquidation per symbol per 1000 ms (the snapshot of the
+        # latest; Binance's own wording) - its liquidation sums are a lower bound, flagged for the dashboard
         status.setdefault('binance', {}).update(connected=sum(s.connected for s in self._binance_streams),
-                                                bytes=sum(s.bytes for s in binance))
+                                                bytes=sum(s.bytes for s in binance), liq_sampled=True)
         return status
 
     # ------------------------------------------------------------------ stop

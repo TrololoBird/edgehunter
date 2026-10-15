@@ -22,7 +22,7 @@ def _pivots_high(h: List[float], k: int = 3) -> List[int]:
     return [i for i in range(k, len(h) - k) if h[i] == max(h[i - k:i + k + 1])]
 
 
-def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int) -> Optional[Dict]:
+def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skips: Optional[List] = None) -> Optional[Dict]:
     """The breakout of a cup with handle on the candle that just closed ([ts, o, h, l, c, quote_vol]), else None."""
     n = len(candles)
     if n < 60:
@@ -49,7 +49,13 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int) -> O
                 continue
             # eng-118: the rims within 5% and the U-vs-V quarter count were ours (O'Neil gives no numbers): removed - the
             # shape is held by his depth 12-33%, the 30% prior advance and the handle in the upper half <= 12% deep
-            before = l[max(0, left - 2 * cup_len):left]
+            if left < 2 * cup_len:
+                # eng-132: the prior advance is measured over 2x the cup's length before the left rim; a shorter history
+                # measured it on a cut window (a rise looked smaller or bigger than it was): skipped, and said so
+                if skips is not None and not any(s[0] == 'cup_handle' for s in skips):
+                    skips.append(('cup_handle', left, 2 * cup_len))
+                continue
+            before = l[left - 2 * cup_len:left]
             if not before or h[left] / min(before) - 1 < 0.30:
                 continue                             # no prior advance
             if not 5 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks (longer = stalling)

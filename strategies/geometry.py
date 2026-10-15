@@ -201,7 +201,12 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
             if p50 and direction * (t - direction * p50 - entry) > 0:
                 t = t - direction * p50
         adj.append(t)
-    targets = adj
+    # eng-132: the pierce pulls each target by its own kind's p50, so a nearer level of a deeper-piercing kind could end
+    # behind a farther one: nearest first again (TP1 < TP2 < TP3), sources and map flags following their targets
+    order = sorted(range(len(adj)), key=lambda i: direction * adj[i])
+    targets = [adj[i] for i in order]
+    sources = [sources[i] for i in order] + list(sources[len(adj):])
+    on_map = [on_map[i] for i in order]
     while len(targets) < 3:
         targets.append(targets[-1])
         sources.append(sources[-1])

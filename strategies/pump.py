@@ -27,8 +27,10 @@ from zones import merge
 QUARTER_MS = 900_000
 
 
-def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[float], now_ms: int) -> Optional[Dict]:
-    """minutes: final 1m candles (>= 24h preferred); m: the coin's Tier-0 metrics; vol_15m: std of 15m returns."""
+def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[float], now_ms: int,
+               h1: Sequence[Sequence[float]] = ()) -> Optional[Dict]:
+    """minutes: final 1m candles; m: the coin's Tier-0 metrics; vol_15m: std of 15m returns; h1: the closed 1h candles
+    (eng-132: the 24h high comes from them - the 1m history holds only ~10h, so every 10h-old high looked 'fresh')."""
     cfg = CONFIG.strategies
     if len(minutes) < 120 or not vol_15m:
         return None
@@ -45,8 +47,12 @@ def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
         return None
     if (m.get('oi_change_5m') or 0) <= 0 or (m.get('spot_cvd_5m') or 0) <= 0:
         return None
-    day = [c for c in minutes if c[0] >= now_ms - 86_400_000 - MINUTE_MS and c[0] < minutes[-15][0]]
-    if day and last[2] <= max(c[2] for c in day):
+    cut = minutes[-15][0]
+    # closed hours starting before the minutes' first candle (the hour holding it too) + the minutes themselves (before the last 15m): a full 24h window
+    first_min = minutes[0][0]
+    day = [c[2] for c in h1 if now_ms - 86_400_000 - MINUTE_MS <= c[0] and c[0] < first_min]
+    day += [c[2] for c in minutes if c[0] >= now_ms - 86_400_000 - MINUTE_MS and c[0] < cut]
+    if day and last[2] <= max(day):
         return None                                   # not a fresh 24h high: a recovery inside the range
     quiet = minutes[-60:-15]
     low = min(c[3] for c in minutes[-16:])

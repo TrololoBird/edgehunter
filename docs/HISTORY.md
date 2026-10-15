@@ -688,3 +688,18 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   1m candles) and the book has run 10 minutes (SignalBook._plan_data_ready); before, every restart expired 14-59
   restored cards within 5 minutes as 'no plan' (51 at 13:40 on 15.10) - they had no history yet, not no setup. A coin
   whose data never comes expires at its watch TTL.
+- eng-132 (2026-10-15, the owner's release plan; decisions delegated to the session): 
+  A, demo safety: a position is flat only after two empty reads (reconcile passes a minute apart, then a 2s re-read
+  before cancel_all) - one glitchy fetch_positions at 10:04 took the stops of HYPE / UNI / XPL and close_untracked
+  then booked the same positions again as UNTRACKED (ids 110-112 = 55-57, $49 twice; deploy/mark_dup_untracked.py marks
+  them, usd_without_r skips them); a position found within 15 min of its finalize goes back to tracking instead of
+  being dumped; TradFi contracts (XAU / XAG / CL / BZ: BingX 101414) are NO_MARKET; finish_levels sorts the targets
+  after the pierce pull. B, data: PUMP START's 24h high from the 1h history (the 1m history holds ~10h: every 10h-old
+  high looked 'fresh'); the cup is skipped, not measured on a cut window, when the history before the left rim is
+  shorter than 2x the cup; every history gate that stops a strategy writes history_skips (once a coin / strategy / day);
+  the Binance venue status carries liq_sampled (forceOrder = at most one liquidation a second). B2 NOT done: 125 is
+  Bollinger's six months of DAILY bars and he gives no intraday rule; comparing a 15m / 4h width with the daily
+  minimum makes every bar a squeeze. D, analytics: the replay's slippage takes the symbol's measured book slippage
+  (levels.simulate / fill_price, replay, stats.card_r_net); the card table shows stops out in profit (Trail) and R per
+  unit. D2 / D3 (expectancy by thirds, p over OPEN entries) change the entry veto, not just the reports: left for a
+  pre-registered study.
