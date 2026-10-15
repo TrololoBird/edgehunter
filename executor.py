@@ -747,6 +747,9 @@ class DemoExecutor:
                 # (same side, not more than the trade held); dumping it at market wrote EXCHANGE + UNTRACKED for one
                 # trade. The finalize cancelled its stop and take-profits: both are put back below
                 trade = last[0]
+                await asyncio.sleep(5)                   # a cached position snapshot lives a few seconds: read again
+                if await self._position_qty(pos['symbol']) <= 0:
+                    continue
                 with sqlite3.connect(self.db_path) as c:
                     c.execute("UPDATE demo_trades SET closed_ms = NULL, close_reason = NULL, exit_avg = NULL, "
                               "fees_usd = NULL, pnl_usd = NULL, r = NULL, journal_r = NULL, error = NULL WHERE id = ?",
@@ -1062,8 +1065,16 @@ class DemoExecutor:
                     self.alert(f"⚠️ Демо {symbol}: закрытие ({reason}) не прошло ({str(e)[:120]}), стоп на месте, повтор")
                     raise
         # eng-132: the cancel-all only after a second empty answer (the exchange's stop is the last protection)
+        # eng-132: BingX's position endpoint may serve a cached snapshot for a few seconds after the fill: three reads
+        # (2s, then 3s apart) must all show a position before it counts as "reappeared"
         await asyncio.sleep(2)
-        if await self._position_qty(symbol) != 0:
+        reappeared = await self._position_qty(symbol) != 0
+        for _ in range(2):
+            if not reappeared:
+                break
+            await asyncio.sleep(3)
+            reappeared = await self._position_qty(symbol) != 0
+        if reappeared:
             logger.warning(f"Demo {symbol}: position reappeared after a flat read: stops kept, trade stays tracked")
             self.open.setdefault(trade['card_id'], trade)
             return
