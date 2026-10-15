@@ -15,7 +15,7 @@ import json
 import os
 import sys
 from html.parser import HTMLParser
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 FARSIDE = 'https://farside.co.uk/btc/'                 # the latest ~2 weeks
 FARSIDE_ALL = 'https://farside.co.uk/bitcoin-etf-flow-all-data/'     # since the launch (2024-01-11): --history once
@@ -78,8 +78,9 @@ def parse_flows(html: str) -> dict:
                 continue                                  # header, Total / Average / Maximum / Minimum rows
             cells = [num(c) for c in r[1:-1]]
             tot = num(r[-1])
-            if tot is not None and any(c is not None for c in cells):
-                out[d] = tot
+            recent = (datetime.now(timezone.utc) - datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc)).days < 7
+            if tot is not None and any(c is not None for c in cells) and not (recent and any(c is None for c in cells)):
+                out[d] = tot                              # a recent day with a missing issuer cell is still partial: skipped
         if len(out) > len(best):
             best = out
     return best

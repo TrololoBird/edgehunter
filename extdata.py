@@ -43,7 +43,8 @@ CAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'us_calendar
 NY = ZoneInfo('America/New_York')
 _CAL = (None, set(), set())
 ETF_LAG_H = 32
-ETF_MAX_AGE_D = 6        # a last visible day older than this (Farside timer dead) is NULL, not a stale value                       # a day D (00:00 UTC) is visible from D+1 08:00 UTC
+ETF_MAX_AGE_D = 6        # a last visible day older than this (Farside timer dead) is NULL, not a stale value
+SLOW_MAX_AGE_S = 2 * 86400   # VIX / Fear & Greed not refreshed for this long: NULL, never an old value
 
 
 def us_session(now_s: float) -> Optional[int]:
@@ -57,7 +58,7 @@ def us_session(now_s: float) -> Optional[int]:
             with open(CAL_FILE, encoding='utf-8') as f:
                 c = json.load(f)
             _CAL = (mt, set(c.get('closed', ())), set(c.get('early', ())))
-    except (OSError, ValueError):
+    except Exception:                        # a missing / broken / wrong-typed file: weekday and hours decide
         pass
     t = datetime.fromtimestamp(now_s, timezone.utc).astimezone(NY)
     if t.weekday() >= 5 or t.strftime('%Y-%m-%d') in _CAL[1]:
@@ -90,6 +91,8 @@ class ExternalData:
         self.coin: Dict[str, Dict[str, float]] = {}
         self._session: Optional[aiohttp.ClientSession] = None
         self._tradfi_ok: Dict[str, float] = {}
+        self._slow_ok: Dict[str, float] = {}
+        self._slow_stale: set = set()
 
     async def _json(self, url: str, payload=None):
         if self._session is None:
@@ -141,19 +144,38 @@ class ExternalData:
                 d = datetime.strptime(row['DATE'], '%m/%d/%Y').strftime('%Y-%m-%d')
                 if d < today:                      # the previous session's close only: today's bar is not final
                     prev = float(row['CLOSE'])
+            if prev is None:
+                raise ValueError('no VIX row before today')
             self.market['vix_prev'] = prev
+            self._slow_fresh('vix_prev')
         except Exception as e:
-            logger.debug(f"VIX shadow feature: {e!r}")
+            self._slow_failed('vix_prev', e)
         try:
             d = await self._json(FNG)
             self.market['fng'] = float(d['data'][0]['value'])
+            self._slow_fresh('fng')
         except Exception as e:
-            logger.debug(f"Fear & Greed shadow feature: {e!r}")
+            self._slow_failed('fng', e)
         try:
             with open(ETF_FILE, encoding='utf-8') as f:
                 self.market['etf_flow_1d'], self.market['etf_flow_3d'] = etf_flows_visible(json.load(f), time.time())
-        except (OSError, ValueError):
-            pass
+        except OSError:
+            pass                                   # no file yet (the Farside timer is not installed): NULL
+        except Exception as e:
+            self.market['etf_flow_1d'] = self.market['etf_flow_3d'] = None
+            errors.report('extdata.etf_file', e, "etf_flows.json")
+
+    def _slow_fresh(self, key: str):
+        self._slow_ok[key] = time.time()
+        self._slow_stale.discard(key)
+
+    def _slow_failed(self, key: str, e: Exception):
+        logger.debug(f"{key} shadow feature: {e!r}")
+        if time.time() - self._slow_ok.get(key, 0) > SLOW_MAX_AGE_S:          # stale: NULL, one WARNING
+            self.market[key] = None
+            if key not in self._slow_stale:
+                self._slow_stale.add(key)
+                errors.report('extdata.slow_macro', e, f"{key} not refreshed for 2 days")
 
     def of(self, symbol: str) -> Dict[str, float]:
         return self.coin.get(symbol, {})

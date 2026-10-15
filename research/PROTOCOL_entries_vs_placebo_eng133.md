@@ -47,5 +47,11 @@ feature) has the same sign in both halves and q <= 0.05 on the holdout. Anything
 - Placebo matching on trend/volatility: the same coin and the same stop/target in ATR units are matched; a same-sign 4h-trend condition is
   added to the placebo draw (copies whose trend_4h sign differs from the real entry's are discarded).
 
+## Clarifications fixed before the run (2026-10-15, no data seen)
+- "Placebo's 90th percentile" = the 90th percentile of the distribution of the placebo MEAN net R over the 100 copy-sets (copy k of every real entry forms set k), per half.
+- q = one-sided p of (real mean - placebo mean) from the 48 h moving-block bootstrap (the stricter of it and Newey-West), then Benjamini-Hochberg.
+- Feature terciles: the bounds are computed on the development half and applied unchanged to the holdout.
+- Live journal: XAU / CL are logged always; the CME-closed mask is applied at analysis time from the timestamp; SPY / QQQ by the `us_session` column.
+
 ## Reported either way
 All families and features with n, means, intervals, q; the ones that fail are listed too. No threshold is tuned after seeing results.
