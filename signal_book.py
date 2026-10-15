@@ -56,7 +56,7 @@ MANAGE_EXEMPT = ('breakout', 'connors', 'cup_handle', 'oi_build')
 # break-even + the round trip's costs (taker 0.05% x 2 + slippage ~0.05%): a break-even stop that fills is ~0, not -costs
 BE_COST = 0.0015
 # eng-84: the regime each method needs (ADX(14) of 4h): trend-following methods / mean-reversion methods
-REGIME_TREND = ('continuation', 'pump', 'oi_signal')
+REGIME_TREND = ('continuation', 'pump', 'oi_build')
 REGIME_RANGE = ('bollinger', 'market_profile')
 from strategies.geometry import entry_levels
 
@@ -614,6 +614,26 @@ class SignalBook:
         timeframe (the closed bars), only ever toward the trade; a RESTOP event moves the demo's stop.
         """
         plan, lv, d = s.plan or {}, s.levels, s.direction
+        sar = plan.get('sar')
+        if sar and candles_of and lv.get('sl'):
+            # eng-127, Bollinger's Method I: Wilder's Parabolic SAR of the plan's bars, stepped once per CLOSED bar
+            # since the signal; the stop follows it (the SAR's own stop-and-reverse touch is the stop order)
+            from strategies.maniac import parabolic_sar_step
+            size = int(sar['tf_min']) * MINUTE_MS
+            minutes = list(candles_of(s.symbol))
+            if minutes:
+                done = (int(minutes[-1][0]) + MINUTE_MS) // size * size
+                bars = [b for b in resample(minutes, int(sar['tf_min']), done) if sar['last_ts'] < b[0] and b[0] + size <= done]
+                for b in bars:
+                    nxt, ep, af, stopped = parabolic_sar_step(sar['sar'], sar['ep'], sar['af'], d, b[2], b[3])
+                    sar.update(sar=nxt, ep=ep, af=af, last_ts=int(b[0]))
+                    if stopped:
+                        break
+                if d * (sar['sar'] - lv['sl']) > 0:
+                    lv['sl'] = sar['sar']
+                    lv['sl_src'] = f"Parabolic SAR (AF {sar['af']:.2f})"
+                    self.events.append((s, 'RESTOP'))
+            return
         pct = plan.get('trail_pct')
         if pct and hi is not None and lo is not None and lv.get('sl'):
             # eng-88: a percentage trailing stop behind the best price since the entry (OI build), only toward the
@@ -1054,6 +1074,12 @@ class SignalBook:
                 reason = 'macro_event'
         if reason is None and s.group_key.startswith('RSI2X '):
             reason = 'rsi2x_shadow'      # eng-106: Connors' original entry, measured beside ours
+        if reason is None and s.group_key in ('FLUSH REVERSAL', 'SQUEEZE REVERSAL'):
+            reason = 'cascade_shadow'    # eng-127: no tested cascade-reversal rules exist - shadow
+        if reason is None and s.group_key.startswith('OI BUILD '):
+            reason = 'oi_shadow'         # eng-127: Pring's OI rule - no study shows OI predicts crypto returns: shadow
+        if reason is None and s.mode == 'supply_demand' and (s.plan or {}).get('sd_score', 10) < 8:
+            reason = 'sd_score'          # eng-127: Seiden / OTA - below 8 of 10 odds enhancer points no trade
         if reason is None and s.group_key.startswith('BB3 '):
             reason = 'bb3_shadow'        # eng-106: Bollinger's Method III as his manual states it, measured beside the W / M
         if reason is None and not (s.plan or {}).get('trail_days') and self.crowded(s.mode, s.direction, entered_at):
@@ -1300,7 +1326,7 @@ class SignalBook:
         for c in candles:
             s.managed_ms = int(c[0]) + MINUTE_MS
             o, hi, lo = float(c[1]), float(c[2]), float(c[3])
-            if (lo <= lv['sl']) if d > 0 else (hi >= lv['sl']):
+            if not (s.plan or {}).get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl'])):
                 s.exit_fill = min(o, lv['sl']) if d > 0 else max(o, lv['sl'])
                 return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))
             for k in ((1,) if (s.plan or {}).get('trail_after_tp1') else (3, 2, 1)):

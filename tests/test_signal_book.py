@@ -8,7 +8,8 @@ T_ZONE = CUR15 / 1000 + 10          # scan time that puts zone_since_ms exactly 
 IMPULSE_UP = dict(is_structured=False, alert_type='ANOMALY', price_change_5m=0.03, oi_change_5m=0.01,
                   futures_cvd_5m=5e5, delta_ratio=0.3, rvol_1m=4, whale_net_5m=0, has_spot=True, spot_cvd_5m=3e5)
 # A 15m trend continuation (phase F markup): the setup the 15m-leg continuation lifecycle is tested with
-MARKUP = dict(is_structured=True, alert_type='LONG', long_score=5, short_score=0, phase_f_score=5, active_phases=['F'],
+# eng-127: BULL F is gone (Bollinger's Method I is BB1); the continuation card comes from a Tier-0 impulse
+MARKUP = dict(alert_type='LONG', price_change_5m=0.03, price_z=8.0, oi_change_5m=0.01, futures_cvd_5m=1e5,
               has_spot=True)
 
 

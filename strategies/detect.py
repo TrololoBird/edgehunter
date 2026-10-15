@@ -60,7 +60,7 @@ class LiveDetector:
         if self.cascades.active(symbol):
             return True
         m = metrics or {}
-        return (m.get('liq_long_5m') or 0.0) + (m.get('liq_short_5m') or 0.0) >= CONFIG.liquidations.cascade_min_usd
+        return (m.get('liq_long_5m') or 0.0) + (m.get('liq_short_5m') or 0.0) > 0
 
     def scan(self, symbol: str, minutes: Sequence[Sequence[float]], metrics: Dict[str, float], now_ms: int,
              bands: Sequence[Tuple[float, int, float]] = ()) -> List[Dict]:

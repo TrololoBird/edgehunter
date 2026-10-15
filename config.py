@@ -616,7 +616,7 @@ class PoolsConfig:
                     ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
                     ('sweep', 'major,large,mid', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
                     ('pump', 'all', '', 0.0, 'volatility'), ('cup_handle', 'all', '', 0.0, 'volume'),
-                    ('oi_signal', 'all', '', 0.0, 'volume'), ('po3', 'major,large,mid', '', 0.0, 'volume'))
+                    ('po3', 'major,large,mid', '', 0.0, 'volume'))
 
 
 @dataclass(frozen=True)
@@ -634,7 +634,7 @@ class StrategiesConfig:
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
-                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'oi_signal', 'po3', 'oi_build')
+                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'po3', 'oi_build')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
@@ -656,20 +656,13 @@ class StrategiesConfig:
                             'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation', 'no_*',
                             'htf_bias', 'htf_conflict', 'rg_breakout_in_range', 'rg_countertrend',
                             'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day')
-    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'OI SIGNAL LONG', 'PUMP START',
-                             # eng-103: the Turtles (exit on the 20-day low: weeks-long trades giving back the run;
-                             # live 5 of 5 closed lost, -1.28R) do not fit a bot of hour-long trades
-                             'BREAKOUT UP', 'BREAKOUT DOWN',
-                             # eng-109 (the owner: a formula or a primary source, else off): invented thresholds -
-                             # the OI robots (Telegram-channel hypotheses), crypto_maniac's supply / demand, AUCTION and
-                             # ATR trendline bots (their authors' numbers), the liquidation cascades, the phase D / F
-                             # delta / OI floors. The trendline trades Edwards & Magee's decisive break instead (TL EM)
-                             'OI SIGNAL SHORT', 'OI BUILD LONG', 'SD DEMAND', 'SD SUPPLY', 'AUCTION LONG',
-                             'AUCTION SHORT', 'TRENDLINE UP', 'TRENDLINE DOWN', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL',
-                             'BULL F', 'BEAR D',
-                             # eng-111: Connors uses no stop and a leveraged perpetual cannot run without one - his
-                             # system cannot be traded as he defines it (the catastrophic stop was ours)
-                             'RSI2 LONG', 'RSI2 SHORT', 'RSI2X LONG', 'RSI2X SHORT')
+    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'PUMP START',
+                             # eng-127: the setups switched off in eng-109 for invented thresholds are rewritten from
+                             # their sources or deleted - Seiden's odds enhancers (SD), the failed auction (AUCTION),
+                             # Bollinger's Method I (BB1, replaces BULL F / BEAR D), Connors without a stop at 1x,
+                             # the Turtles as written; Pring's OI rule and the cascades in shadow; the ATR-line bot
+                             # and the OI robots deleted
+                             )
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
@@ -742,14 +735,7 @@ class StrategiesConfig:
     # ---- crypto_maniac's systems (github.com/roman-boop; strategies/maniac.py): his parameters as he ships them.
     # Longer histories they need: 15m / 1h candles of every coin (fetcher._hourly_candles_loop, limit 499 = weight 2)
     long_history_candles: int = 499
-    # supply_demand-v4: ATR(20) of the bars before the source candle, 6 bars of approach, the departure confirmed
-    # within 4 bars by a close 2 ATR beyond, zone height <= 1.2 ATR, score >= 3.5
-    sd_atr_period: int = 20
-    sd_prior_bars: int = 6
-    sd_lookahead: int = 4
-    sd_min_move_atr: float = 2.0
-    sd_max_zone_atr: float = 1.2
-    sd_min_score: float = 3.5
+    # eng-127: supply / demand by Seiden / OTA's odds enhancers (strategies/maniac.sd_zone_events), no thresholds
     sd_ttl: tuple = (7 * 86400, 86400, 3 * 86400)   # 4h zones (Seiden: 4h or higher) live a week
     # classic methods (strategies/classic.py): entered at the signal's close; the trade lives a session
     classic_ttl: tuple = (3600, 3600, 12 * 3600)
@@ -804,7 +790,6 @@ class StrategiesConfig:
     connors_rsi_high: float = 95.0
     # eng-55: Connors uses no stop. A perpetual with leverage needs one for the margin: a CATASTROPHIC stop this many
     # daily ATR(20) away, journaled as our deviation (it is not part of his exit)
-    connors_disaster_atr: float = 2.5   # eng-84: 2.5 daily ATR (was 3)
     # eng-55 dump bounce (research/pumps*.md, positive in every period 2021-2026): a DUMP = close >= dump_min_move
     # below the 6h high on >= 3x the hour's volume of the week before; short the first 38.2-61.8% bounce on a 1h close
     # below the previous low; stop above the bounce + 0.25 ATR(1h); TP1 the dump's low, TP2 the 1.618 extension
@@ -812,49 +797,12 @@ class StrategiesConfig:
     dump_vol_x: float = 3.0
     # eng-57 wide watch: perpetuals outside the universe above this 24h volume (pretraining's floor, research_pumps)
     wide_min_volume: float = 3_000_000
-    # eng-56 OI signal (strategies/oi_signal.py, a live test of cryptomillion's OI [15m] alerts): our thresholds
-    oi_sig_oi_15m: float = 0.03
-    oi_sig_price_15m: float = 0.02
-    # eng-88: OI build (strategies/oi_build.py), a live test: OI 1h / price 1h floors, the trailing stop, 4h at most
-    oi_build_oi_1h: float = 0.05
-    oi_build_price_1h: float = 0.02
-    oi_build_trail: float = 0.02
-    # eng-90: not extended (<= this many ATR(15m) above the day's VWAP); the trail / stop in ATR(5m), >= oi_build_trail
-    oi_build_max_vwap_atr: float = 2.0
-    oi_build_trail_atr: float = 3.0
-    # eng-91: Kaufman's efficiency ratio of the last hour (net move / the path) - a directional start, not a chop
-    oi_build_min_er: float = 0.35
+    # eng-127: OI build = Pring's rule (strategies/oi_build.py, shadow); the OI robots' thresholds are deleted
     oi_build_ttl: tuple = (900, 900, 4 * 3600)
     # ICT optimal trade entry for the continuations (trend / momentum): the pullback into 0.62-0.79 of a leg that left
     # a fair value gap (displacement); invalid beyond the leg's start (ICT: "past the 100% level")
     require_displacement: bool = True
-    # auction_theory_in_code (1h): consolidation windows, POC concentration, impulse, retest reaction, targets
-    auction_atr_period: int = 14
-    auction_windows: tuple = (24, 48, 96)
-    auction_max_range_atr: float = 6.0
-    auction_max_range_pct: float = 0.10
-    auction_max_net_ratio: float = 0.35
-    auction_bin_atr: float = 0.20
-    auction_min_concentration: float = 2.5
-    auction_strong_concentration: float = 2.8
-    auction_poc_edge: float = 0.15
-    auction_candidate_stale: int = 8
-    auction_impulse_mult: float = 1.0
-    auction_impulse_horizon: int = 12
-    auction_touch_atr: float = 0.25
-    auction_reaction_atr: float = 0.15
-    auction_invalidation_atr: float = 0.90
-    auction_reaction_window: int = 3
-    auction_max_touches: int = 2
-    auction_level_ttl: int = 1500
-    auction_max_crosses: int = 6
-    auction_level_cooldown: int = 5
-    auction_local_window: int = 30
-    auction_max_levels: int = 50
-    auction_min_rr: float = 1.5
-    auction_stop_pad_atr: float = 0.35
-    auction_min_risk_atr: float = 0.15
-    auction_ttl: tuple = (3600, 3600, 48 * 3600)
+    # eng-127: AUCTION = the failed auction (strategies/classic.failed_auction_event); the ported engine is deleted
     # lllll SMT / Quasimodo (15m main + 5m entry): the correlate is BTC (ETH for BTC itself); require_if_available;
     # the 5m inversion FVG within 8 main bars; entries only 02:00-10:00 New York (his session; () = any time)
     smt_main_bars: int = 500
@@ -1026,7 +974,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-126"
+    logic_version: str = "eng-127"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

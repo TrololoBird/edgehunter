@@ -260,6 +260,57 @@ def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Opt
     return None
 
 
+def failed_auction_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]:
+    """
+    eng-127, the failed auction (Steidlmayer / Dalton, auction market theory): the session OPENED INSIDE the previous
+    same session's TPO value area, probed beyond one edge and did not find acceptance there - acceptance = two
+    consecutive 30-minute periods closing beyond (the TPO convention of the 80% rule) - then a 30-minute period closed
+    back inside: "price re-enters a previously accepted value range ... the market will auction to the opposite end"
+    -> the far edge; the stop beyond the probe's extreme; out at the session's close. (The opening outside value is
+    the 80% rule, session_va_event.)
+    """
+    for name, open_ms, close_ms in orb_sessions(base, cut - 1):
+        prev = previous_session(base, name, open_ms)
+        if prev is None:
+            continue
+        pc = [c for c in m15 if prev[0] <= c[0] < prev[1]]
+        if len(pc) < 0.8 * (prev[1] - prev[0]) / QUARTER_MS:
+            continue
+        day = [c for c in m15 if open_ms <= c[0] < cut]
+        if len(day) < 2 or len(day) % 2:
+            continue
+        va = value_area(pc, tpo=True)
+        if va is None:
+            continue
+        val, poc, vah = va
+        if not val <= day[0][1] <= vah:
+            continue
+        periods = [(max(x[2] for x in day[k:k + 2]), min(x[3] for x in day[k:k + 2]), day[k + 1][4])
+                   for k in range(0, len(day) - 1, 2)]
+        hi, lo, close = periods[-1]
+        if not val <= close <= vah:
+            continue
+        for side, edge, far in ((-1, vah, val), (1, val, vah)):
+            beyond = [(p[2] > edge) if side < 0 else (p[2] < edge) for p in periods]
+            if any(beyond[k] and beyond[k + 1] for k in range(len(beyond) - 1)):
+                continue                       # accepted beyond the edge at some point: not a failed auction
+            probed = (hi > edge) if side < 0 else (lo < edge)
+            if not (probed or (len(beyond) >= 2 and beyond[-2])):
+                continue                       # this period is not the return from a probe
+            extreme = max(p[0] for p in periods) if side < 0 else min(p[1] for p in periods)
+            if side * (far - close) <= 0:
+                continue
+            return {'setup': 'AUCTION LONG' if side > 0 else 'AUCTION SHORT', 'direction': side,
+                    'setup_note': f"{name} session opened inside the previous {name} value area {val:.6g}-{vah:.6g}, "
+                                  f"probed {'below' if side > 0 else 'above'} to {extreme:.6g} without acceptance (no two "
+                                  f"30m closes beyond) and closed back inside: failed auction -> the far edge {far:.6g}",
+                    'anchor_level': edge, 'anchor_extreme': extreme,
+                    'anchor_label': f"{name} value area {'low' if side > 0 else 'high'} (failed auction)",
+                    'anchor_ts': open_ms, 'anchor_close': close, 'va_far': far, 'va_poc': poc,
+                    'orb_session': name, 'session_end_ms': close_ms, 'event_ts': int(day[-1][0]) + QUARTER_MS}
+    return None
+
+
 def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, price_hi: float, price_lo: float,
                 fired: set, symbol: str, d1: Sequence[Sequence[float]] = ()) -> Optional[Dict]:
     """Crabel's ORB on a running session (eng-109): the first 5m close beyond the session's open +- the Stretch, once
@@ -374,7 +425,8 @@ def classic_events(m15: List[List[float]], h1: List[List[float]], cut: int, symb
     out = []
     # eng-95: Dalton's 80% rule by session, on the session instruments only (was the UTC day on every coin)
     base = (symbol or '').split('/')[0]
-    found = session_va_event(base, m15, cut) if base in CONFIG.strategies.orb_bases else None
-    if found:
-        out.append(found)
+    for fn in (session_va_event, failed_auction_event):     # eng-127: the failed auction beside the 80% rule
+        found = fn(base, m15, cut) if base in CONFIG.strategies.orb_bases else None
+        if found:
+            out.append(found)
     return out                     # ORB (on the touch) and Connors' RSI(2) run on daily candles, loop-side (Scanner)

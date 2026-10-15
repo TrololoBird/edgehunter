@@ -22,8 +22,6 @@ class LoopDetectors:
         self._orb_checked: Dict[str, int] = {}       # symbol -> the last final minute Crabel's ORB was checked on
         self._orb_fired: set = set()                 # (symbol, day) ORBs already fired (one a day)
         self._orb_day: Dict[str, Dict] = {}          # symbol -> the UTC day's open and extremes so far (ORB)
-        self._oi_sig_checked: Dict[str, int] = {}    # symbol -> the last final minute the OI signal was checked on
-        self._oi_sig_fired: set = set()              # (symbol, direction, 15m bucket) OI signals already fired
         self._oi_build_checked: Dict[str, int] = {}  # eng-88: symbol -> the last final minute the OI build was checked on
         self._oi_build_fired: set = set()            # (symbol, hour) OI builds already fired
         self._dump_checked: Dict[str, int] = {}      # symbol -> the last closed 1h candle the dump bounce was checked on
@@ -38,7 +36,7 @@ class LoopDetectors:
     def scan(self, symbol: str, md, now_ms: int) -> List[Dict]:
         """Every loop-side setup of the coin this scan (in the scanner's order)."""
         out: List[Dict] = []
-        for fn in (self._connors_daily, self._turtle_breakout, self._orb_touch, self._dump_bounce, self._oi_signal,
+        for fn in (self._connors_daily, self._turtle_breakout, self._orb_touch, self._dump_bounce,
                    self._oi_build, self._po3, self._silver_bullet):
             found = fn(symbol, md, now_ms)
             if isinstance(found, list):
@@ -60,7 +58,7 @@ class LoopDetectors:
             return []
         out = []
         cfg = CONFIG.strategies
-        from strategies.oi_signal import _close_at
+        from strategies.oi_build import _close_at
         base15 = _close_at(minutes, int(minutes[-1][0]) - 15 * 60_000)     # by time (eng-74), None across a gap
         if base15 and minutes[-1][4] / base15 - 1 >= cfg.pump_start_min_pct:
             closes = [c[4] for c in self.m15_of(symbol)[-97:]]
@@ -184,29 +182,8 @@ class LoopDetectors:
         from strategies.classic import session_orb
         return session_orb(base, minutes, now_ms, hi, lo, self._orb_fired, symbol, list(getattr(md, 'd1', None) or []))
 
-    def _oi_signal(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
-        """The OI [15m] live test (strategies.oi_signal): each final minute, once per coin / direction / 15m."""
-        minute = md.minute_closed_until
-        # eng-105, the owner: no entry on a 1m spike - the conditions are read at a 5m candle's CLOSE (the last
-        # final minute ends a 5m bar, so its close is the 5m close)
-        if not minute or self._oi_sig_checked.get(symbol) == minute or (minute + 60_000) % 300_000:
-            return None
-        self._oi_sig_checked[symbol] = minute
-        oi5 = (md.tier0 or {}).get('oi_change_5m')
-        if oi5 is None or oi5 <= 0:
-            return None                           # cheap gate: OI is not rising at all right now
-        from strategies.oi_signal import oi_signal
-        found = oi_signal(self.minutes_of(symbol), list(md.oi_samples), now_ms)
-        if found is None:
-            return None
-        key = (symbol, found['direction'], now_ms // 900_000)
-        if key in self._oi_sig_fired:
-            return None
-        self._oi_sig_fired.add(key)
-        return found
-
     def _oi_build(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
-        """eng-88, the OI build live test (strategies.oi_build): each final minute, once per coin per hour."""
+        """eng-127, Pring's OI rule in shadow (strategies.oi_build): at 5m closes, once per coin per hour."""
         minute = md.minute_closed_until
         # eng-105, the owner: no entry on a 1m spike - the conditions are read at a 5m candle's CLOSE (the last
         # final minute ends a 5m bar, so its close is the 5m close)
@@ -214,12 +191,7 @@ class LoopDetectors:
             return None
         self._oi_build_checked[symbol] = minute
         from strategies.oi_build import oi_build
-        # eng-90: the closed 15m candles (ATR, the PDH close) and the previous day's high (the last closed daily
-        # candle, only when it is yesterday's)
-        day_start = int(now_ms // 86_400_000 * 86_400_000)
-        pd = md.d1[-1] if getattr(md, 'd1', None) else None
-        pdh = pd[2] if pd and int(pd[0]) + 86_400_000 == day_start else None
-        found = oi_build(self.minutes_of(symbol), list(md.oi_samples), now_ms, self.m15_of(symbol), pdh)
+        found = oi_build(self.minutes_of(symbol), list(getattr(md, 'oi_5m', None) or []), now_ms)
         if found is None:
             return None
         key = (symbol, now_ms // 3_600_000)

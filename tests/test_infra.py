@@ -222,3 +222,25 @@ def test_wilson_upper_and_book_slippage_floor():
         assert levels.slippage_bps(5e8, 'X/USDT:USDT') == base
     finally:
         levels.BOOK_SLIP.clear()
+
+
+def test_parabolic_sar_trails_and_stops():
+    from strategies.maniac import parabolic_sar_step
+    sar, ep, af = 90.0, 100.0, 0.02
+    sar, ep, af, stopped = parabolic_sar_step(sar, ep, af, 1, 102.0, 99.0)
+    assert not stopped and ep == 102.0 and abs(af - 0.04) < 1e-12 and 90.0 < sar <= 99.0
+    _, _, _, stopped = parabolic_sar_step(sar, ep, af, 1, 101.0, sar - 0.01)
+    assert stopped
+
+
+def test_oi_build_pring_rule():
+    from strategies.oi_build import oi_build
+    t0 = 1_800_000_000_000 // 300_000 * 300_000
+    oi = [(t0 - (287 - k) * 300_000, 1000.0 + k * 0.1) for k in range(288)]
+    oi[-1] = (oi[-1][0], oi[-13][1] * 1.05)            # the last hour +5%, far above the day's average hour
+    minutes = [[t0 - (120 - k) * 60_000, 100, 100.5 + k * 0.01, 99.5 + k * 0.01, 100 + k * 0.01, 1e5, 6e4]
+               for k in range(121)]
+    sig = oi_build(minutes, oi, t0 + 60_000)
+    assert sig and sig['setup'] == 'OI BUILD LONG' and sig['oi_build_oi60'] > sig['oi_build_mean']
+    flat = [(t, 1000.0) for t, _ in oi]
+    assert oi_build(minutes, flat, t0 + 60_000) is None

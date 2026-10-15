@@ -27,7 +27,7 @@ def _x(df, direction, setup, sig=None):
 def test_impulse_plan_continuation_and_reversal(rally_frame):
     imp = find_impulse(rally_frame, +1)
     assert imp and imp['end'] > 119 and imp['start'] < 101 and imp['candles'] >= 4
-    plan = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'BULL F'))
+    plan = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'IMPULSE UP'))
     assert plan['zone_lo'] < plan['zone_hi'] and plan['targets'][0] >= imp['end'] - 1e-9
     assert plan['invalid'] == fib_price(imp, CONFIG.levels.continuation_invalid) and plan['reset'] == imp['end'] and not plan['missable']
     assert 0.382 <= retracement_of(imp, 109.5) <= 0.786
@@ -55,7 +55,7 @@ def test_ltf_trigger_bull_bear_and_flow():
 
 
 def test_entry_levels_reversal_stop_beyond_leg_end(rally_frame):
-    plan = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'BULL F'))
+    plan = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'IMPULSE UP'))
     trig = ltf_trigger(bull_ltf(), +1, CUR15, FIVE)
     lv = entry_levels(plan, trig['entry'], trig['extreme'], +1)
     assert lv['sl'] < 109.2 and lv['tp1'] > trig['entry'] and lv['rr_tp1'] > 0 and 'low_rr' in lv
@@ -63,9 +63,9 @@ def test_entry_levels_reversal_stop_beyond_leg_end(rally_frame):
 
 def test_low_rr_flag(rally_frame):
     # the synthetic rally has no swing between its origin and the pullback: no protected swing (strategies/ict.py)
-    plan = dict(STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'BULL F')), protected=None)
+    plan = dict(STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'IMPULSE UP')), protected=None)
     atr = plan['atr']
-    far = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'BULL F'))['targets'][0]
+    far = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'IMPULSE UP'))['targets'][0]
     tight = entry_levels(dict(plan, retarget=False, targets=[far, far + atr, far + 2 * atr], target_src=['a', 'b', 'c']),
                          far - 0.1, far - 5, +1)
     assert tight['low_rr'] is True

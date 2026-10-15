@@ -2,7 +2,6 @@
 Strategies: each class of market event has its own anchor, entry, stop and target intent (see the modules).
 
     strategy    setups                              anchor   structure / entry        targets
-    trend       BULL F / BEAR D                     leg      15m-1h-4h / 5m-15m-1h    extension
     momentum    IMPULSE UP / DOWN                   leg      15m-1h-4h / 5m-15m-1h    extension
     wyckoff     BULL A / B / E, BEAR C              leg      15m-1h-4h / 5m-15m-1h    range side (A, B), mean (C, E)
     sweep       SWEEP LOW / SWEEP HIGH              level    1h / 4h pools, 15m / 5m  opposite liquidity
@@ -34,7 +33,7 @@ from typing import Dict, Optional, Tuple
 from strategies.base import PlanInput, Strategy
 from strategies.breakout import BreakoutStrategy
 from strategies.cascade import ExhaustionStrategy
-from strategies.leg import MomentumStrategy, TrendStrategy
+from strategies.leg import MomentumStrategy
 from strategies.level import SweepStrategy
 from strategies.maniac_strategies import MANIAC_STRATEGIES
 from strategies.wyckoff_range import WyckoffRangeStrategy
@@ -42,7 +41,6 @@ from strategies.classic_strategies import CLASSIC_STRATEGIES
 from strategies.silver_bullet import SilverBulletStrategy
 from strategies.pump import DumpBounceStrategy, PumpStartStrategy, PumpTopStrategy
 from strategies.cup_handle import CupHandleStrategy
-from strategies.oi_signal import OiSignalStrategy
 from strategies.oi_build import OiBuildStrategy
 from strategies.po3 import Po3Strategy
 
@@ -50,10 +48,10 @@ from strategies.po3 import Po3Strategy
 # spring, Market Profile's 80% rule and POC retest, the continuation's two impulse detectors) keeps one class per
 # playbook under ONE name - the journal, pools, stats and the live verdict judge the methodology
 _ALL: Tuple[Strategy, ...] = (
-    TrendStrategy(), MomentumStrategy(), SweepStrategy(), SilverBulletStrategy(), ExhaustionStrategy(),
+    MomentumStrategy(), SweepStrategy(), SilverBulletStrategy(), ExhaustionStrategy(),
     WyckoffRangeStrategy(),
     BreakoutStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES, PumpStartStrategy(), PumpTopStrategy(),
-    DumpBounceStrategy(), CupHandleStrategy(), OiSignalStrategy(), Po3Strategy(), OiBuildStrategy())
+    DumpBounceStrategy(), CupHandleStrategy(), Po3Strategy(), OiBuildStrategy())
 STRATEGIES: Dict[str, Strategy] = {}
 for _s in _ALL:
     STRATEGIES.setdefault(_s.name, _s)

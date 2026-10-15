@@ -1,5 +1,5 @@
 """
-Cards of crypto_maniac's systems (detectors: strategies/maniac.py, auction_engine.py). Each keeps its author's entry
+Cards of crypto_maniac's systems (detectors: strategies/maniac.py, classic.py). Each keeps its author's entry
 and exit: the entry at the signal's close (confirm_only: skipped, not re-timed, when his rule rejects it) or his own
 5m trigger (pinbar retest, inversion FVG), his stop and his target; the lifecycle, journal and stats are ours.
 """
@@ -56,89 +56,89 @@ class _System(Strategy):
 # ------------------------------------------------------------------------------------------------ supply / demand
 
 class SupplyDemandStrategy(_System):
-    """supply_demand-v4: a fresh 15m zone; a 5m pinbar retesting it is the entry; stop beyond the pinbar and the zone
-    (no buffer); the zone is dead on a 15m CLOSE beyond it (his INVALIDATION_METHOD 'close'). He sends no target:
-    targets are ours (the opposite liquidity on the map)."""
+    """
+    eng-127, Seiden / OTA's odds enhancers (strategies/maniac.sd_zone_events): a 4h zone, its first return; the entry
+    at the close of the candle that touched the zone and closed back (the confirmation entry - Seiden's score 8; the
+    bot takes no resting limits), the stop beyond the distal line, the target the opposite liquidity at >= 3:1 (his
+    profit margin). The score (max 10) is completed here and the entry vetoed below 8 ('sd_score'):
+      strength 0-2, time 0-1    from the detector (the coin's own history);
+      freshness 2               the first return only (a second would be 1, a third 0: not traded);
+      reward / risk 2           min_rr 3 (his "at least 3:1") - below it there is no trade at all;
+      big picture 0-2           1 for the daily trend with the trade (coin_trend of the daily closes), 1 for the
+                                zone on the right side of the curve (the lower half of the 20-day range for demand);
+      arrival 0-1               1 when no opposite swing (a 2/2 fractal of 1h) formed on the way back to the zone
+                                (Seiden: "we don't want new resistance levels before we buy").
+    """
     name = 'supply_demand'
     setups = {'SD DEMAND': 1, 'SD SUPPLY': -1}
-    min_rr = 3.0                     # Seiden (Online Trading Academy): a trade needs >= 3:1 reward / risk to the opposing zone
+    min_rr = 3.0
     ttl_key = 'sd_ttl'
-    time_exit = 'fixed'                # the method's own exit (eng-47)
+    time_exit = 'fixed'
     uses_minutes = True
 
-    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
-        """eng-58, Seiden / OTA's odds enhancer 'big picture': demand only when the daily trend is not down, supply only
-        when it is not up."""
-        return 'big_picture' if sig.get('trend_1d') == -direction else None
+    @staticmethod
+    def arrival(h1, since_ms: int, d: int) -> int:
+        bars = [b for b in h1 if b[0] >= since_ms]
+        if len(bars) < 5:
+            return 1
+        k = 2 if d > 0 else 3
+        vals = [b[k] for b in bars]
+        for i in range(2, len(vals) - 2):
+            w = vals[i - 2:i + 3]
+            if (d > 0 and vals[i] == max(w)) or (d < 0 and vals[i] == min(w)):
+                return 0
+        return 1
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr
         if sig.get('zone_lo') is None or not atr:
             return None
-        # Seiden's curve: demand only low on the higher-timeframe curve, supply only high (the daily range of 20 days)
+        trend = sig.get('trend_1d')
         curve = sig.get('curve_pos')
-        if curve is not None and (curve > 0.5 if d > 0 else curve < 0.5):
-            return {'skip': 'curve'}
+        big = (1 if trend == d else 0) + (1 if curve is not None and (curve <= 0.5 if d > 0 else curve >= 0.5) else 0)
+        arrival = self.arrival(x.h1 or [], int(sig.get('departure_ts') or sig['anchor_ts']), d)
+        score = int(sig.get('sd_strength') or 0) + int(sig.get('sd_time') or 0) + 2 + 2 + big + arrival
         lo, hi = sig['zone_lo'], sig['zone_hi']
         far = lo if d > 0 else hi
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         near = hi if d > 0 else lo
         targets, sources = select_targets(zones, near, d, atr, 'opposite_liquidity')
-        # Seiden: a resting limit at the proximal line, the stop beyond the distal line, the zone's FIRST touch only
         plan = base_plan(x, self.name, _anchor(sig, '4h'), '4h', entry='pullback', trigger='touch', single_touch=True,
-                         zone_lo=lo, zone_hi=hi, zone_src=f"{sig.get('anchor_label', 'zone')} (5m pinbar)",
-                         # not missable: the zone is confirmed only once price left it by 2 ATR, so a target
-                         # measured from the zone is often behind price already; his zone waits for the return
-                         invalid=far, fix_invalid=True, invalid_close_min=240, missable=False, stop_ref=far,
+                         zone_lo=lo, zone_hi=hi,
+                         zone_src=f"{sig.get('anchor_label', 'zone')}: odds {score}/10 (strength "
+                                  f"{sig.get('sd_strength')}, time {sig.get('sd_time')}, fresh 2, R:R 2, big picture "
+                                  f"{big}, arrival {arrival})",
+                         invalid=far, fix_invalid=True, missable=False, stop_ref=far,
                          exit={'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': atr,
-                               'stop_src': 'beyond the pinbar and the zone'},
+                               'stop_src': 'beyond the distal line'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
-                         key=(sig['anchor_ts'], near))
+                         sd_score=score, key=(sig['anchor_ts'], near))
         return plan
 
 
 # ------------------------------------------------------------------------------------------------ auction
 
 class AuctionStrategy(_System):
-    """auction_theory_in_code: a POC retest reacted on 1h; entry at that close, stop beyond the test's extreme + 0.35
-    ATR, target the nearest strong untested POC (skipped below 1.5 R), else 2.5 R."""
-    name = 'market_profile'        # eng-35: Dalton's POC retest, with the 80% rule (classic_strategies.py)
-    min_rr = 1.5                     # the auction system's own rule: the next POC must pay >= 1.5 R
+    """eng-127, the failed auction (strategies/classic.failed_auction_event): in at the close of the 30-minute period
+    back inside value, the stop beyond the probe's extreme, the target the value area's opposite end, out at the
+    session's close. Replaces the ported auction_theory_in_code POC retest (its 0.35 ATR / 1.5 R / 2.5 R numbers)."""
+    name = 'market_profile'
+    min_rr = 1.0
     setups = {'AUCTION LONG': 1, 'AUCTION SHORT': -1}
-    ttl_key = 'auction_ttl'
-    time_exit = 'session'            # eng-95: out at the signal's session close (sig['session_end_ms'])
+    ttl_key = 'classic_ttl'
+    time_exit = 'session'
 
     def session_end(self, entered_at: float) -> Optional[float]:
         return None                  # only the signal's own session close (SignalBook._time_exit) ends it by time
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
-        cfg = CONFIG.strategies
         sig = x.sig
-        if sig.get('auction_stop') is None:
+        if sig.get('va_far') is None:
             return None
-        target, tp_src = sig.get('auction_target'), 'naked strong POC'
-        if target is None:
-            # the engine's own 1h POCs hold none ahead: the next POC of another profile on the map - a completed
-            # day's naked POC (Dalton's virgin POC), the 4-day or the 24h composite (was: no_target)
-            atr = sig.get('atr_1h') or x.atr
-            ahead = sorted((lv for lv in (x.raw_levels or []) if lv.kind == 'poc'
-                            and x.direction * (lv.price - sig['anchor_close']) > 0.1 * atr),
-                           key=lambda lv: x.direction * (lv.price - sig['anchor_close']))
-            if ahead:
-                target, tp_src = ahead[0].price, ahead[0].label
-        exit = {'stop': ['price', sig['auction_stop']], 'stop_src': "beyond the POC test + measured pierce",
-                # no 'x R' fallback target (eng-41): the next POC, else no trade
-                'tp': ['level', target, cfg.auction_min_rr, None],
-                'tp_src': tp_src, 'atr': sig.get('atr_1h') or x.atr}
-        plan = _confirm_plan(x, self.name, '1h', exit, f"POC {sig['anchor_level']:.6g} retest reaction ({sig.get('auction_kind')})")
-        if plan and not plan.get('skip'):
-            # eng-84 (volume-profile write-ups, the owner's review: ZEC / SKY bought at the 1h close in empty space): the
-            # 1h reaction only arms the trade; the entry is a 15m structure shift with agreeing taker flow inside the
-            # area between the POC and the reaction's close (a rejection on the lower timeframe), not the 1h close
-            lo, hi = sorted((sig['anchor_level'], sig['anchor_close']))
-            plan.update(entry='pullback', confirm_only=False, trigger='shift', missable=True, zone_lo=lo, zone_hi=hi,
-                        zone_src='POC area: 15m rejection with taker flow')
-        return plan
+        exit = {'stop': ['ref', 0.0], 'tp': ['level', sig['va_far'], 1.0, None], 'atr': x.atr, 'own_targets': True,
+                'stop_src': "beyond the failed probe's extreme", 'tp_src': 'value area opposite end (failed auction)'}
+        return _confirm_plan(x, self.name, '15m', exit, 'back inside value after a probe without acceptance',
+                             stop_ref=sig['anchor_extreme'], stop_ref_only=True)
 
 
 # ------------------------------------------------------------------------------------------------ SMT
@@ -189,7 +189,7 @@ class TrendlineStrategy(_System):
     """Edwards & Magee trendline break on 1h lines: two closes beyond the line, a resting limit at the broken line
     (the retest), the stop beyond the last confirmed 1h pivot, targets the next 1h+ levels of the map."""
     name = 'trendline'
-    setups = {'TRENDLINE UP': 1, 'TRENDLINE DOWN': -1, 'TL EM UP': 1, 'TL EM DOWN': -1}   # TL EM: eng-107 shadow
+    setups = {'TL EM UP': 1, 'TL EM DOWN': -1}   # eng-127: the ATR-line bot (TRENDLINE UP / DOWN) is deleted
     ttl_key = 'trendline_ttl'
     uses_minutes = True
 
@@ -219,7 +219,8 @@ class TrendlineStrategy(_System):
             # eng-84 (breakout-retest write-ups: retest + a confirming candle, not a resting limit; the owner's review):
             # the retest area is the line to half an hour-ATR beyond it on the broken side; the entry is a 15m
             # structure shift with agreeing taker flow there
-            area = sorted((line, line + d * 5 * pad)) if pad else (line, line)   # pad = 0.1 ATR(1h)
+            # eng-127: the retest area = the line to its measured pierce (the 5 x pad was ours)
+            area = sorted((line, line + d * pad)) if pad else (line, line)
             plan.update(entry='pullback', confirm_only=False, trigger='shift', missable=True,
                         zone_lo=area[0], zone_hi=area[1], zone_src='the broken trendline: retest + 15m confirmation')
         return plan
@@ -259,5 +260,28 @@ class BollingerStrategy(_System):
         return plan
 
 
+class BollingerSqueezeStrategy(_System):
+    """eng-127, Bollinger's Method I (strategies/maniac.bb_method1_event): in at the close of the first band close after
+    a Squeeze, out on Wilder's Parabolic SAR of the 4h bars (SignalBook._trail), no target."""
+    name = 'breakout'
+    setups = {'BB1 UP': 1, 'BB1 DOWN': -1}
+    min_rr = 0.0
+    ttl_key = 'bollinger_ttl'
+    time_exit = 'fixed'
+
+    def plan(self, x: PlanInput) -> Optional[Dict]:
+        sig = x.sig
+        if sig.get('bb_stop') is None:
+            return None
+        exit = {'stop': ['price', sig['bb_stop']], 'stop_src': 'Parabolic SAR (Wilder 0.02 / 0.20) of the 4h bars',
+                'tp': ['trail'], 'tp_src': 'none: out on the Parabolic SAR (Bollinger, Method I)', 'atr': x.atr}
+        plan = _confirm_plan(x, self.name, '4h', exit, 'Bollinger Method I: first band close after a Squeeze')
+        if plan and not plan.get('skip'):
+            plan['no_tp'] = True
+            plan['sar'] = {'tf_min': 240, 'sar': sig['bb_stop'], 'ep': sig['sar_ep'], 'af': 0.02,
+                           'last_ts': int(sig['event_ts']) - 240 * 60_000}
+        return plan
+
+
 MANIAC_STRATEGIES: List[Strategy] = [SupplyDemandStrategy(), AuctionStrategy(), TrendlineStrategy(),
-                                     BollingerStrategy()]
+                                     BollingerStrategy(), BollingerSqueezeStrategy()]

@@ -1,5 +1,7 @@
 """
-Liquidation exhaustion (FLUSH REVERSAL / SQUEEZE REVERSAL). A cascade of forced liquidations overshoots mechanically
+Liquidation exhaustion (FLUSH REVERSAL / SQUEEZE REVERSAL) - eng-127: SHADOW only ('cascade_shadow'): "buy after a
+cascade" is trader folklore (no tested rules); the adjacent evidence is intraday reversal after large price jumps
+(Wen, Bouri, Xu, Zhao 2022) and overreaction after negative Bitcoin shocks. A cascade of forced liquidations overshoots mechanically
 and price snaps back once the forced flow stops; the entry needs the extreme move AND a sign the flush is over.
 
 Wyckoff (Pruden, Weis): a liquidation cascade is a selling / buying climax; the climax itself is not bought - the
@@ -61,12 +63,14 @@ class CascadeTracker:
     def check(self, symbol: str, minutes: Sequence[Sequence[float]], m: Dict[str, float], atr: float,
               now_ms: int) -> Optional[Dict]:
         cfg = CONFIG.strategies
-        liq = CONFIG.liquidations
         liq_long, liq_short = m.get('liq_long_5m') or 0.0, m.get('liq_short_5m') or 0.0
-        total = liq_long + liq_short
         px = m.get('price_change_5m') or 0.0
         watch_ms = cfg.exhaustion_ttl[0] * 1000
-        if total >= liq.cascade_min_usd and total >= liq.cascade_avg_minute_share * (m.get('avg_minute_usd') or 0.0):
+        # eng-127: the event = an extreme 5m move in the coin's own terms (Tier-0's z rule: the "large intraday price
+        # jump" after which Wen et al. 2022 measure Bitcoin's intraday reversal) with the forced side's liquidations
+        # dominating - no $ floor of ours. No study gives tradable cascade rules: the setup is journaled in SHADOW
+        from journal import price_anomaly
+        if price_anomaly({'price_change_5m': px, 'price_z': m.get('price_z')}) and (liq_long or liq_short):
             # Long liquidations on a drop -> a long reversal candidate; short liquidations on a rally -> a short one
             direction = 1 if liq_long > liq_short and px < 0 else -1 if liq_short > liq_long and px > 0 else 0
             event = self.events.get(symbol)

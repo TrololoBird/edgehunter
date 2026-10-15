@@ -871,7 +871,7 @@ class SignalJournal:
             rows = self.conn.execute(
                 "SELECT strategy, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
                 "outcome IN ('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL AND tp1 IS NOT NULL AND "
-                "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', 'tl_em_shadow')",
+                "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', 'tl_em_shadow', 'oi_shadow', 'cascade_shadow')",
                 (since,)).fetchall()
         # eng-102: only entries WITH a TP1 (a target-less system - Bollinger / ORB / breakout rows with tp1 NULL - only
         # ever ends 'SL' here: Bollinger measured p 0% and every entry was vetoed 'expectancy -1.00R') and of the

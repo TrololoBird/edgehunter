@@ -139,90 +139,98 @@ def in_session(ts_ms: int, session: Tuple[str, ...]) -> bool:
 
 # ------------------------------------------------------------------------------------------------ supply / demand
 
-def _sd_departure(c15, i: int, zone: Dict, atr: float, kind: str) -> Optional[Tuple[int, float]]:
-    cfg = CONFIG.strategies
-    first = c15[i + 1]
-    body = abs(first[4] - first[1])
-    if body < 0.55 * atr:
-        return None
-    # eng-55 Seiden / OTA (secondary sources agree): the leg-out is an "exciting" candle, its body > half its range
-    # (the base's "boring" candles have bodies <= half)
-    if first[2] - first[3] <= 0 or body <= 0.5 * (first[2] - first[3]):
-        return None
-    future = range(i + 1, min(len(c15), i + cfg.sd_lookahead + 1))
-    if zone['type'] > 0:
-        if first[4] <= first[1] or first[4] <= zone['high'] + 0.15 * atr:
-            return None
-        dist = {j: c15[j][4] - zone['high'] for j in future}
-    else:
-        if first[4] >= first[1] or first[4] >= zone['low'] - 0.15 * atr:
-            return None
-        dist = {j: zone['low'] - c15[j][4] for j in future}
-    confirmed = [j for j in future if dist[j] >= cfg.sd_min_move_atr * atr]
-    if not confirmed:
-        return None
-    j = confirmed[0]
-    score = min(4.0, dist[j] / atr) + min(1.5, body / atr) + (1.0 if kind in ('order', 'base') else 0.5)
-    return j, round(score, 2)
+def _boring(k) -> bool:
+    """OTA / Seiden: a base ("boring") candle - its body at most half its range."""
+    return k[2] > k[3] and abs(k[4] - k[1]) <= 0.5 * (k[2] - k[3])
 
 
-def sd_zone_events(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '15m') -> List[Dict]:
+def _exciting(k, side: int) -> bool:
+    """A leg-out ("exciting") candle of the side: body more than half its range, closing in the side's direction."""
+    return k[2] > k[3] and abs(k[4] - k[1]) > 0.5 * (k[2] - k[3]) and side * (k[4] - k[1]) > 0
+
+
+def _sd_bases(bars: Sequence[Sequence[float]]) -> List[Dict]:
     """
-    supply_demand-v4 find_supply_demand_zones, the zones CONFIRMED by the candle that just closed. The source candle is
-    the last counter-trend candle (an order block) or a rejection pinbar at a local extreme reached by a >= 0.75 ATR
-    approach over 6 bars; the next candle departs with a body >= 0.55 ATR and a close >= 2 ATR beyond the zone comes
-    within 4 bars; zone height <= 1.2 ATR; score >= 3.5 (strength of the departure + body + kind). ATR(20) of the
-    candles BEFORE the source candle.
+    Every base of the history and its departure: a run of boring candles followed by a run of exciting candles of
+    one side. Demand: distal = the lowest low of the base, proximal = its highest body; supply mirrored. The departure
+    ends at the first candle that is not exciting (its close confirms the zone). `speed` = the departure's move beyond
+    the proximal line per candle, in ATR(14) (Seiden: "how quickly they leave"); `n_base` = the base's candles.
     """
-    cfg = CONFIG.strategies
-    n = len(c15)
-    if n < cfg.sd_atr_period + cfg.sd_prior_bars + 3:
+    n = len(bars)
+    if n < 20:
         return []
-    h, l, c = _arr(c15, 2), _arr(c15, 3), _arr(c15, 4)
-    tr = true_range(h, l, c)
-    zones = []
-    for i in range(max(cfg.sd_atr_period + cfg.sd_prior_bars, n - 1 - cfg.sd_lookahead), n - 1):
-        atr = float(tr[i - cfg.sd_atr_period:i].mean())
-        if not atr > 0:
-            continue
-        # Sam Seiden's base: 1-6 "boring" candles (body <= half the candle) right before the departure; demand =
-        # lowest wick (distal) to the highest body (proximal), supply mirrored. (The order-block / pinbar source of
-        # the ported code was ICT's, not Seiden's.)
-        k = i
-        while k >= 0 and i - k < 6 and c15[k][2] > c15[k][3] \
-                and abs(c15[k][4] - c15[k][1]) <= 0.5 * (c15[k][2] - c15[k][3]):
-            k -= 1
-        base = c15[k + 1:i + 1]
-        if not base:
-            continue
-        candidates = [(1, 'base'), (-1, 'base')]
-        for side, kind in candidates:
-            if side > 0:
-                low, high = min(x[3] for x in base), max(max(x[1], x[4]) for x in base)
-            else:
-                low, high = min(min(x[1], x[4]) for x in base), max(x[2] for x in base)
-            if high <= low or high - low > cfg.sd_max_zone_atr * atr:
-                continue
-            zone = {'type': side, 'low': low, 'high': high}
-            dep = _sd_departure(c15, i, zone, atr, kind)
-            if dep is None or dep[0] != n - 1 or dep[1] < cfg.sd_min_score:
-                continue
-            zones.append((dep[1], i, side, kind, low, high, atr))
+    h, l, c = _arr(bars, 2), _arr(bars, 3), _arr(bars, 4)
+    atr = wilder(true_range(h, l, c), 14)
     out = []
-    for side in (1, -1):
-        picked = sorted((z for z in zones if z[2] == side), reverse=True)
-        if not picked:
+    i = 1
+    while i < n - 1:
+        if not _boring(bars[i]):
+            i += 1
             continue
-        score, i, side, kind, low, high, atr = picked[0]
+        j = i
+        while j + 1 < n and _boring(bars[j + 1]):
+            j += 1
+        base = bars[i:j + 1]
+        for side in (1, -1):
+            k = j + 1
+            while k < n and _exciting(bars[k], side):
+                k += 1
+            if k == j + 1 or k >= n:          # no departure, or it has not ended yet
+                continue
+            if side > 0:
+                lo, hi = min(x[3] for x in base), max(max(x[1], x[4]) for x in base)
+                move = max(x[2] for x in bars[j + 1:k]) - hi
+            else:
+                lo, hi = min(min(x[1], x[4]) for x in base), max(x[2] for x in base)
+                move = lo - min(x[3] for x in bars[j + 1:k])
+            a = atr[j]
+            if not (a > 0) or hi <= lo or move <= 0:
+                continue
+            out.append({'side': side, 'lo': lo, 'hi': hi, 'base_from': i, 'base_to': j, 'confirm': k,
+                        'speed': move / (k - j - 1) / a, 'n_base': j - i + 1, 'atr': float(a)})
+        i = j + 1
+    return out
+
+
+def sd_zone_events(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '15m') -> List[Dict]:
+    """
+    eng-127, Sam Seiden / Online Trading Academy's odds enhancers ("5 years of Sam Seiden supply and demand
+    teaching": Strength of the move max 2, Time at level max 1, Freshness max 2, Reward / Risk max 2, Big picture
+    max 2, Arrival max 1; 9-10 limit order, 8 confirmation entry, below that no trade). The zones CONFIRMED by the
+    candle that just closed; the history-relative scores are fixed here, the rest at the entry
+    (SupplyDemandStrategy / SignalBook):
+      strength  the departure speed ranked among this coin's departures (Seiden: "the more quickly they move, the
+                more out of balance"): upper third 2, middle 1, lower 0;
+      time      the base's candles at most the coin's median (Seiden: "few candles ... be very careful about coming up
+                with a specific number") 1, else 0.
+    Replaces the ported supply_demand-v4 thresholds (0.55 ATR body, 2 ATR within 4 bars, 1.2 ATR height, score 3.5).
+    """
+    zones = _sd_bases(bars)
+    if len(zones) < 10:
+        return []
+    speeds = np.array([z['speed'] for z in zones])
+    lo3, hi3 = np.quantile(speeds, [1 / 3, 2 / 3])
+    med_base = float(np.median([z['n_base'] for z in zones]))
+    out = []
+    for z in zones:
+        if z['confirm'] != len(bars) - 1:
+            continue
+        side, lo, hi = z['side'], z['lo'], z['hi']
+        strength = 2 if z['speed'] >= hi3 else 1 if z['speed'] >= lo3 else 0
+        time_pts = 1 if z['n_base'] <= med_base else 0
+        if strength + time_pts + 2 + 2 + 2 + 1 < 8:
+            continue                  # cannot reach 8 even with the best big picture and arrival: no card
         out.append({'setup': 'SD DEMAND' if side > 0 else 'SD SUPPLY', 'direction': side,
-                    'setup_note': f"{tf} {'demand' if side > 0 else 'supply'} zone {low:.6g}-{high:.6g} "
-                                  f"({kind} candle, score {score:.1f}) confirmed by a {'rally' if side > 0 else 'drop'} "
-                                  f"of {cfg.sd_min_move_atr:g}+ ATR; entry at the proximal line, first touch only",
-                    'zone_lo': low, 'zone_hi': high, 'zone_kind': kind, 'zone_score': score,
-                    'anchor_level': high if side > 0 else low, 'anchor_extreme': low if side > 0 else high,
-                    'anchor_label': f"{'demand' if side > 0 else 'supply'} zone ({kind})",
-                    'anchor_ts': int(c15[i][0]), 'anchor_close': c15[-1][4],
-                    'event_ts': int(c15[-1][0]) + period_ms})
+                    'setup_note': f"{tf} {'demand' if side > 0 else 'supply'} zone {lo:.6g}-{hi:.6g}: base of "
+                                  f"{z['n_base']} candles, departure {z['speed']:.2f} ATR / candle "
+                                  f"(strength {strength}/2, time {time_pts}/1)",
+                    'zone_lo': lo, 'zone_hi': hi, 'zone_kind': 'base', 'sd_strength': strength,
+                    'sd_time': time_pts, 'zone_score': strength + time_pts,
+                    'departure_ts': int(bars[z['confirm'] - 1][0]),
+                    'anchor_level': hi if side > 0 else lo, 'anchor_extreme': lo if side > 0 else hi,
+                    'anchor_label': f"{'demand' if side > 0 else 'supply'} zone (base)",
+                    'anchor_ts': int(bars[z['base_to']][0]), 'anchor_close': bars[-1][4],
+                    'event_ts': int(bars[-1][0]) + period_ms})
     return out
 
 
@@ -236,63 +244,6 @@ def find_pivots(values: np.ndarray, left: int, right: int, kind: str) -> List[in
         if values[i] == m and int(np.sum(w == m)) == 1:
             out.append(i)
     return out
-
-
-def _trendline(h, l, c, atr: float, kind: str) -> Optional[Dict]:
-    """trendline_bot _detect_one_side (sloped only): the best line through >= 3 pivots, never closed through."""
-    cfg = CONFIG.strategies
-    n = len(c)
-    if n < cfg.tl_min_span + 2 * cfg.tl_pivot + 2 or atr <= 0:
-        return None
-    vals = l if kind == 'support' else h
-    pivots = find_pivots(vals, cfg.tl_pivot, cfg.tl_pivot, 'low' if kind == 'support' else 'high')
-    piv = np.asarray(pivots, dtype=int)
-    flat_limit = math.tan(math.radians(cfg.tl_flat_deg)) * atr
-    best, best_score = None, ()
-    for a in range(len(pivots)):
-        for b in range(a + 1, len(pivots)):
-            i1, i2 = pivots[a], pivots[b]
-            if i2 - i1 < cfg.tl_min_span:
-                continue
-            p1, p2 = vals[i1], vals[i2]
-            slope = (p2 - p1) / (i2 - i1)
-            if kind == 'support' and slope < -flat_limit:
-                continue
-            if kind == 'resistance' and slope > flat_limit:
-                continue
-            angle = math.degrees(math.atan(slope / atr))
-            if abs(angle) > cfg.tl_max_deg or abs(angle) <= cfg.tl_flat_deg:
-                continue                                  # his config trades sloped lines only
-            idx = np.arange(i1, n)
-            line = p1 + slope * (idx - i1)
-            if kind == 'support':
-                if np.any(c[i1:] < line - cfg.tl_violation_atr * atr):
-                    continue
-                touch = (l[i1:] - line) <= cfg.tl_touch_atr * atr
-                dist_now = c[-1] - line[-1]
-            else:
-                if np.any(c[i1:] > line + cfg.tl_violation_atr * atr):
-                    continue
-                touch = (line - h[i1:]) <= cfg.tl_touch_atr * atr
-                dist_now = line[-1] - c[-1]
-            if dist_now > cfg.tl_max_dist_atr * atr:
-                continue
-            tidx = np.flatnonzero(touch)
-            if tidx.size == 0 or (n - 1) - (i1 + tidx[-1]) > cfg.tl_last_touch_age:
-                continue
-            touches = 1 + int(np.sum(np.diff(tidx) > max(1, cfg.tl_touch_gap)))
-            if touches < cfg.tl_min_touches:
-                continue
-            span = piv[piv >= i1]
-            pivot_touches = int(np.sum(np.abs(vals[span] - (p1 + slope * (span - i1))) <= cfg.tl_pivot_tol_atr * atr))
-            if pivot_touches < cfg.tl_min_pivot_touches:
-                continue
-            score = (pivot_touches, touches, i2 - i1, i2)
-            if best is None or score > best_score:
-                best, best_score = {'kind': kind, 'i1': i1, 'i2': i2, 'p1': float(p1), 'p2': float(p2),
-                                    'slope': float(slope), 'angle': angle, 'touches': touches,
-                                    'pivot_touches': pivot_touches}, score
-    return best
 
 
 def _em_line(h, l, c, kind: str) -> Optional[Dict]:
@@ -332,7 +283,7 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
     via Peter Brandt): a CLOSE beyond the line by about 3% of the price (eng-109: their 3%; Brandt's 1-2% is his own
     suggestion for commodities / forex), confirmed by time (two closes beyond) and by volume (the breaking bar's volume
     above the 20-bar average - their volume test; the exact wording of the book was not found). The same line as
-    trendline_event. Journaled in shadow ('tl_em_shadow') beside the ATR version.
+    the ATR-line bot (deleted in eng-127).
     """
     cfg = CONFIG.strategies
     window = c1h[-(cfg.tl_lookback + 2):]
@@ -373,50 +324,73 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
     return None
 
 
-def trendline_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '15m') -> Optional[Dict]:
+def parabolic_sar_step(sar: float, ep: float, af: float, d: int, hi: float, lo: float,
+                       step: float = 0.02, cap: float = 0.2) -> Tuple[float, float, float, bool]:
     """
-    trendline_bot: lines are built on the candles BEFORE the two confirming ones; both close beyond the line by
-    >= 0.15 ATR, the last with a body >= 0.35 ATR, <= 1.2 ATR beyond it and closing in its outer 40%. A broken
-    resistance (falling or flat) -> long, a broken support (rising or flat) -> short. ATR = Wilder(14) of 15m.
+    One bar of Wilder's Parabolic SAR (New Concepts in Technical Trading Systems, 1978: AF 0.02, +0.02 per new extreme,
+    at most 0.20) for a position of side d: (new sar, ep, af, stopped). The bar is first checked against the current
+    SAR (a touch stops the position), then the SAR for the next bar is computed.
     """
-    cfg = CONFIG.strategies
-    window = c15[-(cfg.tl_lookback + 2):]
-    n = len(window)
-    if n < cfg.tl_min_span + 10:
-        return None
-    h, l, c, o = _arr(window, 2), _arr(window, 3), _arr(window, 4), _arr(window, 1)
-    atr = float(wilder(true_range(h, l, c), 14)[-3])
-    if not atr > 0:
-        return None
-    buf = cfg.tl_confirm_atr * atr
-    for kind in ('resistance', 'support'):
-        line = _trendline(h[:-2], l[:-2], c[:-2], atr, kind)
-        if line is None:
-            continue
-        value = lambda j: line['p1'] + line['slope'] * (j - line['i1'])
-        d = 1 if kind == 'resistance' else -1
-        if not all(d * (c[j] - value(j)) > buf for j in (n - 2, n - 1)):
-            continue
-        i = n - 1
-        if abs(c[i] - o[i]) < cfg.tl_min_body_atr * atr or abs(c[i] - value(i)) > cfg.tl_max_depth_atr * atr:
-            continue
-        rng = h[i] - l[i]
-        pos = ((h[i] - c[i]) if d > 0 else (c[i] - l[i])) / rng if rng > 0 else 0.0
-        if pos > cfg.tl_close_pos_max:
-            continue
-        return {'setup': 'TRENDLINE UP' if d > 0 else 'TRENDLINE DOWN', 'direction': d,
-                'setup_note': f"{tf} closed twice {'above a falling resistance' if d > 0 else 'below a rising support'} "
-                              f"({line['pivot_touches']} pivots, {line['touches']} touches, angle {line['angle']:+.0f})",
-                'line_p1': line['p1'], 'line_slope': line['slope'], 'line_ts1': int(window[line['i1']][0]),
-                'line_value': value(i), 'atr_line': atr,
-                'anchor_level': value(i), 'anchor_extreme': l[i] if d > 0 else h[i],
-                'anchor_label': 'trendline', 'anchor_ts': int(window[line['i1']][0]),
-                'anchor_close': float(c[i]), 'target_price': line['p1'],
-                'event_ts': int(window[-1][0]) + period_ms}
-    return None
+    if (d > 0 and lo <= sar) or (d < 0 and hi >= sar):
+        return sar, ep, af, True
+    if (d > 0 and hi > ep) or (d < 0 and lo < ep):
+        ep, af = (hi if d > 0 else lo), min(cap, af + step)
+    nxt = sar + af * (ep - sar)
+    # Wilder: the SAR never moves into the bar's range (here: beyond this bar's extreme against the position)
+    nxt = min(nxt, lo) if d > 0 else max(nxt, hi)
+    return nxt, ep, af, False
 
 
-# ------------------------------------------------------------------------------------------------ Bollinger W / M
+def bb_method1_event(bars: Sequence[Sequence[float]], period_ms: int = 4 * HOUR_MS, tf: str = '4h') -> Optional[Dict]:
+    """
+    eng-127, Bollinger's Method I - volatility breakout (Bollinger on Bollinger Bands, ch. 15-16): "await a Squeeze, then
+    go with the expansion".
+    - BB(20, 2); BandWidth = (upper - lower) / middle; the Squeeze = BandWidth at its lowest of the last 125 bars
+      (his "six-month low", 125 bars on any timeframe);
+    - the signal: the FIRST close outside a band after the last Squeeze bar (no close outside since it), confirmed
+      by the volume indicator he pairs with the bands - Bostian's Intraday Intensity % (21) > 0 for a close above
+      the upper band, < 0 below the lower;
+    - the head fake is handled by the exit he names: Wilder's Parabolic SAR (0.02 / 0.20), its first value the
+      extreme against the trade of the 20 bars of the band (the prior range), trailed bar by bar (SignalBook).
+    No target (an expansion is ridden until the SAR stops it). Replaces BULL F / BEAR D (phase scores with our delta /
+    OI floors and an ICT pullback entry).
+    """
+    n = len(bars)
+    if n < 20 + 125 + 1:
+        return None
+    h, l, c = _arr(bars, 2), _arr(bars, 3), _arr(bars, 4)
+    v = np.asarray([float(b[5]) if len(b) > 5 and b[5] is not None else 0.0 for b in bars])
+    ma, sd = rolling_mean(c, 20), rolling_std(c, 20)
+    upper, lower = ma + 2 * sd, ma - 2 * sd
+    with np.errstate(divide='ignore', invalid='ignore'):
+        bw = (upper - lower) / ma
+    i = n - 1
+    squeeze = [k for k in range(i - 125, i) if k >= 144 and np.isfinite(bw[k])
+               and bw[k] <= np.nanmin(bw[k - 124:k + 1])]
+    if not squeeze:
+        return None
+    k0 = squeeze[-1]
+    if any(c[j] > upper[j] or c[j] < lower[j] for j in range(k0 + 1, i)):
+        return None
+    d = 1 if c[i] > upper[i] else -1 if c[i] < lower[i] else 0
+    if not d:
+        return None
+    rng = h - l
+    clv = np.where(rng > 0, (2 * c - h - l) / np.where(rng > 0, rng, 1), 0.0)
+    s_v = v[i - 20:i + 1].sum()
+    ii = float((clv[i - 20:i + 1] * v[i - 20:i + 1]).sum() / s_v) if s_v > 0 else 0.0
+    if d * ii <= 0:
+        return None
+    sar0 = float(l[i - 19:i + 1].min() if d > 0 else h[i - 19:i + 1].max())
+    return {'setup': 'BB1 UP' if d > 0 else 'BB1 DOWN', 'direction': d,
+            'setup_note': f"{tf} Bollinger Method I: Squeeze (BandWidth {bw[k0]:.4f}, 125-bar low) then the first close "
+                          f"{'above the upper' if d > 0 else 'below the lower'} band {c[i]:.6g}, Intraday Intensity "
+                          f"{ii:+.2f}; exit Parabolic SAR from {sar0:.6g}",
+            'anchor_level': float(c[i]), 'anchor_extreme': sar0, 'anchor_label': 'Bollinger Method I',
+            'bb_stop': sar0, 'bb_ii': ii, 'sar_ep': float(h[i] if d > 0 else l[i]),
+            'anchor_ts': int(bars[k0][0]), 'anchor_close': float(c[i]), 'event_ts': int(bars[-1][0]) + period_ms,
+            'bb_tf': tf}
+
 
 def bb_method3_event(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_MS, tf: str = '4h') -> Optional[Dict]:
     """

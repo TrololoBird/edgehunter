@@ -2,7 +2,7 @@
 Leg strategies: a real leg (levels.find_impulse: its end on the last 12h of 15m candles, its start searched back over
 15m and 1h history; its timeframe by duration 15m / 1h / 4h, the entry 3-6x finer).
 
-continuation (BULL F / BEAR D: Bollinger method I; IMPULSE UP / DOWN: Tier-0) by ICT's optimal trade entry: a leg
+continuation (IMPULSE UP / DOWN: Tier-0; BULL F / BEAR D removed in eng-127 - Bollinger's Method I is BB1) by ICT's optimal trade entry: a leg
 that BROKE STRUCTURE (its end beyond the last swing before its start, eng-58) with displacement (a fair value gap);
 the pullback zone = the strongest support inside 0.62-0.79 of the leg (else the EMA20 there, Raschke's Holy Grail);
 a resting limit at the zone's near edge (eng-58, ICT enters on a limit in the OTE, not on a later 5m shift); invalid
@@ -142,12 +142,6 @@ class LegContinuation(Strategy):
                          stop_ref=stop_ref, stop_ref_src=stop_ref_src,
                          intent='extension', fillers=tuple(extensions), fill_label='ext', targets=targets,
                          target_src=sources, zones=zones, key=(impulse['end_ts'], impulse['end']), impulse=impulse)
-
-
-class TrendStrategy(LegContinuation):
-    """The impulse detected by Bollinger's method I (D / F out of a squeeze)."""
-    name = 'continuation'
-    setups = {'BULL F': 1, 'BEAR D': -1}
 
 
 class MomentumStrategy(LegContinuation):

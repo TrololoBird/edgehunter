@@ -95,22 +95,21 @@ class ConnorsStrategy(_System):
             return None
         # Connors: out on the first daily CLOSE above (long) / below (short) the CURRENT 5-day SMA - a moving
         # exit, not the SMA5 of the signal day touched intraday (eng-48); SignalBook checks it on each daily close
-        # eng-55: Connors uses no stop; the perpetual's margin needs one - a catastrophic stop connors_disaster_atr
-        # daily ATR away, labelled as OUR deviation (eng-48..54: a 2% stop sat inside one day's noise)
-        from config import CONFIG
+        # eng-127, Connors (Short Term Trading Strategies That Work, rule 5 "Stops Hurt": stops of 1-50% all lowered
+        # the results): NO stop order. The position runs at 1x (executor: no liquidation) and is sized like a Turtle
+        # unit - 1% of the account per daily ATR (N); 'sl' = entry -+ 1 N is only the R unit, never an exit
         datr = sig.get('connors_atr')
-        if datr:
-            stop = ['price', sig['anchor_close'] - x.direction * CONFIG.strategies.connors_disaster_atr * datr]
-        else:
-            stop = ['pct', 0.10]
+        if not datr:
+            return None
+        stop = ['price', sig['anchor_close'] - x.direction * datr]
         exit = {'stop': stop, 'tp': ['level', sig['connors_sma5'], 0.0, None], 'atr': x.atr,
-                'stop_src': f"catastrophic stop {CONFIG.strategies.connors_disaster_atr:g} daily ATR (our deviation: "
-                            f"Connors uses none)",
+                'stop_src': 'none (Connors): R unit = 1 daily ATR, position at 1x',
                 'tp_src': 'SMA5 (Connors exit)', 'connors_exit': True}
         plan = _confirm_plan(x, self.name, '1d', exit, 'daily RSI(2) extreme with the SMA200 trend')
         if plan and not plan.get('skip'):
             plan['connors_exit'] = True
             plan['no_tp'] = True              # out on the SMA5 close: no take-profit orders
+            plan['no_stop'] = True
         return plan
 
 

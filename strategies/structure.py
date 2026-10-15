@@ -220,7 +220,6 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
                   corr: Optional[List[List[float]]], cut: int, h4: Sequence = (), d1: Sequence = ()) -> List[Dict]:
     """crypto_maniac's systems on the candle that just closed (15m), and on the hour when one closed (1h)."""
     from strategies import maniac
-    from strategies.auction_engine import auction_signals
     log = logging.getLogger(__name__)
     events: List[Dict] = []
 
@@ -263,6 +262,8 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
         if len(b4) >= 60:
             run('Bollinger W / M', maniac.bollinger_wm_event, b4, 4 * HOUR_MS, '4h')
             run('Bollinger Method III', maniac.bb_method3_event, b4, 4 * HOUR_MS, '4h')   # eng-106, shadow
+        if len(h4) >= 146:
+            run('Bollinger Method I', maniac.bb_method1_event, list(h4), 4 * HOUR_MS, '4h')   # eng-127
     if cut % (24 * HOUR_MS) == 0 and len(d1) >= 120:
         # O'Neil's cup with handle on DAILY candles at the UTC day's close (eng-58: his weekly / daily bases of >= 7
         # weeks; the 1h / 4h version of eng-40..57 was another pattern under his name)
@@ -270,34 +271,7 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
         run('cup with handle 1d', cup_handle, list(d1), '1d', 24 * HOUR_MS)
     if cut % HOUR_MS == 0 and len(h1) >= 30:
         # Edwards & Magee: a line's significance grows with its timeframe - lines of 1h candles (was 15m)
-        run('trendline', maniac.trendline_event, h1, HOUR_MS, '1h')
         run('trendline E&M', maniac.trendline_em_event, h1, HOUR_MS, '1h')      # eng-107, shadow
-        # eng-95: the POC retest by session on the session instruments only (the majors, gold, silver, oil): a signal
-        # outside every session is dropped, the trade ends at its session's close
-        from strategies.classic import orb_sessions
-        base = (symbol or '').split('/')[0]
-        sessions = orb_sessions(base, cut - 1) if base in CONFIG.strategies.orb_bases else []
-        if symbol:
-            try:
-                signals = auction_signals(symbol, h1, m15)
-            except Exception as e:
-                log.warning(f"auction of {symbol} failed: {type(e).__name__} {e}", exc_info=True)
-                signals = []
-            for s in signals:
-                s = {k: (v.item() if hasattr(v, 'item') else v) for k, v in s.items()}
-                if not sessions:
-                    continue
-                d = s['direction']
-                events.append({
-                    'setup': 'AUCTION LONG' if d > 0 else 'AUCTION SHORT', 'direction': d,
-                    'setup_note': f"1h retest of the POC {s['level']:.6g} (concentration {s['conc']:.1f}, {s['kind']}) "
-                                  f"reacted: close {'above' if d > 0 else 'below'} by >= "
-                                  f"{CONFIG.strategies.auction_reaction_atr:g} ATR",
-                    'anchor_level': s['level'], 'anchor_extreme': s['extreme'], 'anchor_label': f"POC ({s['kind']})",
-                    'anchor_ts': int(s['level_ts'] or s['ts']), 'anchor_close': s['entry'],
-                    'auction_stop': s['stop'], 'auction_target': s['target'], 'auction_kind': s['kind'],
-                    'atr_1h': s['atr'], 'event_ts': int(s['ts']) + HOUR_MS,
-                    'orb_session': sessions[0][0], 'session_end_ms': sessions[0][2]})
     return events
 
 

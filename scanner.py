@@ -338,7 +338,7 @@ class Scanner:
             m['spot_cvd_5m'] = minute_delta(md.spot_minute_klines, now_ms) + float(flow.get('agg_spot_cvd_5m', 0.0))
             m['agg_oi_change_5m'] = self.fetcher.deriv_snapshot(symbol, now_ms)['agg_oi_change_5m']
             # eng-88: OI over 15 / 60 minutes beside the 5m one (an OI build is a fast 5m step or a running hour)
-            from strategies.oi_signal import _oi_change
+            from strategies.oi_build import _oi_change
             samples = list(md.oi_samples)
             for label, minutes in (('oi_chg_15m', 15), ('oi_chg_60m', 60)):
                 v = _oi_change(samples, now_ms, minutes)

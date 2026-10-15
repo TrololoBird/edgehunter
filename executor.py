@@ -397,7 +397,11 @@ class DemoExecutor:
         # bare stop distance a stop-out cost -1.2..-1.5R (live HBAR, ACE, TIA)
         from strategies.geometry import cost_of
         fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'), s.symbol)
-        qty = min(risk_usd / (stop_dist + fee), balance * cfg.max_leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
+        no_stop = bool((getattr(s, 'plan', None) or {}).get('no_stop'))
+        # eng-127: a system without a stop (Connors: "stops hurt") - the 'stop' is only the R unit (1 daily ATR, the
+        # Turtles' N sizing) and the position runs at 1x, so the account carries it to any price without a liquidation
+        leverage = 1 if no_stop else cfg.max_leverage
+        qty = min(risk_usd / (stop_dist + fee), balance * leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         if n:
             # eng-55: the full pyramid (turtle_max_units units) must fit the notional cap - a smaller unit (a lower risk
             # per N, the same for every unit) instead of a first unit of full size and the rest cut off
@@ -412,7 +416,7 @@ class DemoExecutor:
             logger.info(f"Demo: {symbol} size {qty} below the minimum {min_qty}")
             return
         try:
-            await ex.set_leverage(cfg.max_leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
+            await ex.set_leverage(leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
         except Exception as e:
             errors.report('executor._open', e, f"Demo leverage {symbol}")
         side, exit_side = ('buy', 'sell') if d > 0 else ('sell', 'buy')
@@ -439,9 +443,10 @@ class DemoExecutor:
                                     for k in ('tp1', 'tp2', 'tp3')},     # no_tp: placeholders are no targets
                  'risk_usd': qty * abs(fill - lv['sl'])}
         try:
-            await ex.create_order(symbol, 'market', exit_side, qty, None,
-                                  {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True,
-                                   'workingType': 'MARK_PRICE'})
+            if not no_stop:
+                await ex.create_order(symbol, 'market', exit_side, qty, None,
+                                      {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True,
+                                       'workingType': 'MARK_PRICE'})
         except Exception as e:
             # never an unprotected position: recorded and closed at market
             trade['id'] = self._insert(trade)
@@ -731,7 +736,7 @@ class DemoExecutor:
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
         # eng-84: a trade entered by a resting limit is keyed by the waiting card (c<created>) - it was never restopped
         trade = self.open.get(card_id) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
-        if trade is None:
+        if trade is None or (getattr(s, 'plan', None) or {}).get('no_stop'):
             return
         async with self._lock:
             try:
