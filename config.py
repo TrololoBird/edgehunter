@@ -698,6 +698,10 @@ class StrategiesConfig:
     # ('against_trend'): live, sweeps of highs in a rising market lost -0.35R a trade, sweeps of lows +0.36R
     sweep_swing_hours: int = 100_000  # eng-121: every intact swing of the 1h history (a pool lives until traded through; 72h was ours)
     sweep_pool_min_age_sec: int = 0          # eng-108: removed (invented 1h); the pool only has to exist before the sweep
+    # round numbers as the swept pool: 39 of 77 sweep INVALIDs (eng-125..128) were 'beyond the extreme at round N'; the
+    # round-number study found clustering at round prices but no reliable return after them (Urquhart 2017, Economics
+    # Letters 159) - rounds stay on the level map (targets / stops), not as the pool a sweep reverses from
+    sweep_round_pools: bool = False
     sweep_min_depth_atr: float = 0.1
     sweep_max_depth_atr: float = 1.0
     sweep_min_rvol: float = 0.0              # eng-108: removed (invented; the sources' sweep has no volume rule) - journaled
@@ -978,7 +982,7 @@ class JournalConfig:
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-128"
+    logic_version: str = "eng-129"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

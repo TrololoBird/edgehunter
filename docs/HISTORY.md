@@ -668,3 +668,12 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   the newer half); the raw "reversal after 4h" was the market's own move.
 - FREEZE (the owner, 2026-10-12): no signal-logic change and no bot restart until Wednesday 2026-10-14 13:00 MSK
   (10:00 UTC), except a fix of a crash that loses data or demo orders; ideas go to docs/PLAN_server_eng76.md.
+- eng-129 (2026-10-15, the owner's P0 + P1 order): demo executor - the stop rests until the position is flat (_close
+  cancelled everything first and left it naked when the close failed / hit 102202), a 5-min stop guard re-places a
+  missing stop (or closes when the price is beyond it), trailed stops persisted, _refinalize bounded by the close time
+  (it mixed the next trades' exits in), risk_usd = stop distance + costs (R = -1 at the stop, was -1.1..-1.3), the
+  fill price from fetch_order when the reply has none, one fill lookup under the lock (was up to 20s), day limits
+  >= 1e5 treated as off (LIMIT 1000000 per entry), UNTRACKED USD in the daily summary, Telegram alerts on NO_STOP /
+  LATE_FILL / UNTRACKED / a failed close. Signals: 'no plan' expiries journal the strategy's reason; sweeps no longer
+  take round numbers as the pool (sweep_round_pools, 39 of 77 INVALIDs eng-125..128). Not changed: the sweep's CE
+  entry - its MISSED cards were IN the zone, the FVG trigger did not form before TP1.

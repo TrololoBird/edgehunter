@@ -71,6 +71,8 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
     for price, side, label, formed in pools:
         if c[0] - formed < cfg.sweep_pool_min_age_sec * 1000 or formed > c[0]:
             continue
+        if not cfg.sweep_round_pools and (label or '').startswith('round'):
+            continue
         if side > 0:
             depth, back = c[2] - price, c[4] < price
         else:

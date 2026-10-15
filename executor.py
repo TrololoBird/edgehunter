@@ -35,6 +35,9 @@ ORPHAN_LIMIT_HOLD_MS = 24 * 3600_000
 # eng-86: no market entry when BingX's price already ran this share of the planned risk past the plan's entry (laptop
 # demo journal: a chase >= 0.25R cost -0.64R against the journal, n=15; < 0.25R -0.07R; live GRASS +3.6%: -2.32R)
 CHASE_MAX_R = float('inf')       # eng-113: removed (the size follows the price)
+# the day's risk rules at or above this are 'off' (config.local.toml set them to 1e6 to switch them off: risk_limit then
+# read the whole table on every entry - LIMIT 1000000)
+LIMIT_OFF_AT = 100_000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS demo_trades (
@@ -66,6 +69,9 @@ class DemoExecutor:
         # expired while the bot was down is never restored, so its finish never comes (3 demo positions stayed
         # open for 15h, 2026-10-01): the reconcile loop closes such orphans
         self.card_is_open = lambda card_id: True
+        # set by the scanner: a Telegram line to the demo topic for the incidents (NO_STOP / UNTRACKED / LATE_FILL /
+        # a stop re-placed by the guard) - they are failures of the order handling, not statistics
+        self.alert = lambda text: None
         # resting limit entries of touch plans (Seiden's proximal line, the Silver Bullet's CE): waiting-card key ->
         # {order_id, symbol, levels in BingX prices, ...} (eng-46)
         self.pending: Dict[str, Dict] = {}
@@ -79,10 +85,15 @@ class DemoExecutor:
         with sqlite3.connect(db_path) as c:
             c.execute(SCHEMA)
             c.execute("CREATE INDEX IF NOT EXISTS idx_demo_pending ON demo_trades(error, closed_ms)")
-            for row in c.execute("SELECT id, card_id, symbol, direction, opened_ms, entry_fill, qty, sl, risk_usd "
-                                 "FROM demo_trades WHERE closed_ms IS NULL"):
+            # columns added after the first schema: migrated once here (was an ALTER TABLE on every trade)
+            have = {r[1] for r in c.execute("PRAGMA table_info(demo_trades)")}
+            for col, kind in (('basis', 'REAL'), ('exit_ref', 'REAL'), ('no_stop', 'INTEGER')):
+                if col not in have:
+                    c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
+            for row in c.execute("SELECT id, card_id, symbol, direction, opened_ms, entry_fill, qty, sl, risk_usd, no_stop, "
+                                 "strategy FROM demo_trades WHERE closed_ms IS NULL"):
                 self.open[row[1]] = dict(zip(('id', 'card_id', 'symbol', 'direction', 'opened_ms', 'entry_fill',
-                                              'qty', 'sl', 'risk_usd'), row))
+                                              'qty', 'sl', 'risk_usd', 'no_stop', 'strategy'), row))
 
     # ------------------------------------------------------------------ exchange
 
@@ -313,7 +324,9 @@ class DemoExecutor:
         """
         cfg = CONFIG.executor
         day0 = int(time.time() // 86400 * 86400 * 1000)
-        if not (cfg.daily_loss_r > 0 or cfg.max_trades_day > 0 or cfg.pause_losses > 0):
+        loss_r, max_trades, pause_n = (x if 0 < x < LIMIT_OFF_AT else 0
+                                       for x in (cfg.daily_loss_r, cfg.max_trades_day, cfg.pause_losses))
+        if not (loss_r or max_trades or pause_n):
             return None                              # all off: no three queries per entry
         try:
             with sqlite3.connect(self.db_path) as c:
@@ -321,17 +334,18 @@ class DemoExecutor:
                 opened = c.execute("SELECT COUNT(*) FROM demo_trades WHERE opened_ms >= ? AND entry_fill IS NOT NULL",
                                    (day0,)).fetchone()[0]
                 last = c.execute("SELECT r, closed_ms FROM demo_trades WHERE r IS NOT NULL ORDER BY closed_ms DESC LIMIT ?",
-                                 (cfg.pause_losses,)).fetchall()
+                                 (pause_n,)).fetchall() if pause_n else []
         except sqlite3.Error:
             return None
         # eng-85: a resting limit holds a slot of the day (it fills without asking again)
         opened += sum(1 for p in self.pending.values() if not p.get('skip'))
         day_r = sum(r for (r,) in closed)
-        if cfg.daily_loss_r > 0 and day_r <= -cfg.daily_loss_r:
+        if loss_r and day_r <= -loss_r:
             return f"daily loss limit: {day_r:+.2f}R today"
-        if cfg.max_trades_day > 0 and opened >= cfg.max_trades_day:
+        if max_trades and opened >= max_trades:
             return f"daily trade limit: {opened} trades today"
-        if cfg.pause_losses > 0 and len(last) == cfg.pause_losses and all(r < 0 for r, _ in last) and                 time.time() * 1000 - last[0][1] < cfg.pause_hours * 3_600_000:
+        if pause_n and len(last) == pause_n and all(r < 0 for r, _ in last) and \
+                time.time() * 1000 - last[0][1] < cfg.pause_hours * 3_600_000:
             return f"pause after {cfg.pause_losses} losses in a row"
         return None
 
@@ -443,7 +457,16 @@ class DemoExecutor:
             if qty <= 0 or qty < min_qty:
                 raise
             order = await ex.create_order(symbol, 'market', side, qty)
-        fill = float(order.get('average') or order.get('price') or lv['entry'])
+        fill = order.get('average') or order.get('price')
+        if not fill:
+            # the create reply may carry no average: the order's own state, never the plan's price (it made R the plan's)
+            try:
+                o = await self._call('fetch_order', order['id'], symbol)
+                fill = o.get('average') or o.get('price')
+                order = {**order, 'filled': o.get('filled') or order.get('filled')}
+            except Exception as e:
+                errors.report('executor._open', e, f"Demo fill price {symbol}")
+        fill = float(fill or fill_est)
         # the exits use what was FILLED: a stop for the ordered size failed on a partial fill (live INJ 2026-10-03:
         # 'order size must be less than the available amount of 529', the position sat without a stop)
         qty = float(order.get('filled') or 0) or qty
@@ -451,7 +474,8 @@ class DemoExecutor:
                  'opened_ms': int(time.time() * 1000), 'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty,
                  'sl': lv['sl'], **{k: (None if (getattr(s, 'plan', None) or {}).get('no_tp') else lv[k])
                                     for k in ('tp1', 'tp2', 'tp3')},     # no_tp: placeholders are no targets
-                 'risk_usd': qty * abs(fill - lv['sl'])}
+                 # the risk the size was computed from (stop distance + the round trip's costs): R = -1 at the stop
+                 'risk_usd': qty * (abs(fill - lv['sl']) + fee), 'no_stop': int(no_stop)}
         try:
             if not no_stop:
                 await ex.create_order(symbol, 'market', exit_side, qty, None,
@@ -461,6 +485,7 @@ class DemoExecutor:
             # never an unprotected position: recorded and closed at market
             trade['id'] = self._insert(trade)
             logger.warning(f"Demo ENTRY {symbol}: stop not placed ({e!r}): closed at market")
+            self.alert(f"⛔ Демо {symbol}: стоп не поставлен ({str(e)[:120]}), позиция закрыта рынком")
             await self._close(trade, 'NO_STOP', None)
             return
         plan = getattr(s, 'plan', None) or {}
@@ -581,7 +606,7 @@ class DemoExecutor:
             errors.report('executor._place_limit', e, f"Demo leverage {symbol}")
         price = float(ex.price_to_precision(symbol, lv['entry']))
         order = await ex.create_order(symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
-        self.pending[key] = {'order_id': order['id'], 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio,
+        self.pending[key] = {'order_id': order['id'], 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio, 'fee': fee,
                              'basis': ratio / scale - 1, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
                              'placed_ms': int(time.time() * 1000), 'risk_usd': qty * stop_dist,
                              'trail': bool(plan.get('trail_after_tp1')), 'no_tp': bool(plan.get('no_tp'))}
@@ -616,6 +641,7 @@ class DemoExecutor:
             trade = self._limit_trade(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']), filled)
             logger.warning(f"Demo limit {p['symbol']} {p['setup']} was filled ({filled}) though its card ended "
                            f"({why}): closed at market")
+            self.alert(f"⚠️ Демо {p['symbol']}: лимитка исполнилась после конца карточки ({why}), закрыта рынком")
             await self._close(trade, 'LATE_FILL', None)
             return
         logger.info(f"Demo: limit {p['symbol']} {p['setup']} cancelled: {why}")
@@ -669,7 +695,7 @@ class DemoExecutor:
         trade = {'card_id': p.get('card_id') or key, 'symbol': p['symbol'], 'setup': p['setup'],
                  'strategy': p['strategy'], 'direction': p['direction'], 'opened_ms': int(time.time() * 1000),
                  'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty, 'sl': lv['sl'], 'tp1': lv['tp1'],
-                 'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * abs(fill - lv['sl'])}
+                 'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * (abs(fill - lv['sl']) + float(p.get('fee') or 0))}
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, p['scale']
         trade['from_limit'] = True
@@ -690,6 +716,7 @@ class DemoExecutor:
         except Exception as e:
             # found filled only after price ran through the stop (live CAP 2026-10-02): out at market, never unprotected
             logger.warning(f"Demo LIMIT FILLED {symbol}: stop not placed ({e!r}): closed at market")
+            self.alert(f"⛔ Демо {symbol}: стоп после исполнения лимитки не поставлен, закрыта рынком")
             await self._close(trade, 'SL', None)
             return
         self.open[trade['card_id']] = trade
@@ -715,15 +742,41 @@ class DemoExecutor:
                      'error': 'a BingX position no card owned (lost limit fill): closed at market'}
             trade['id'] = self._insert(trade)
             logger.warning(f"Demo: untracked BingX position {pos['symbol']} {pos.get('side')} {qty}: closed at market")
+            self.alert(f"⚠️ Демо: чужая позиция {pos['symbol']} {pos.get('side')} {qty} без карточки, закрыта рынком")
             await self._close(trade, 'UNTRACKED', None)
+
+    async def _restore_stop(self, trade: Dict) -> None:
+        if trade.get('no_stop') or trade.get('strategy') == 'connors' or not trade.get('sl'):
+            return                                   # eng-127: a system without a stop (Connors) - nothing to restore
+        symbol, d, sl = trade['symbol'], trade['direction'], float(trade['sl'])
+        left = await self._position_qty(symbol)
+        if left <= 0:
+            return                                   # flat: the reconcile pass finalizes it
+        ex = await self._exchange()
+        t = await ex.fetch_ticker(symbol)
+        last = float(t.get('last') or 0)
+        if last and d * (last - sl) <= 0:
+            logger.warning(f"Demo {symbol}: no stop on BingX and the price {last:.6g} is beyond it ({sl:.6g}): closed")
+            self.alert(f"⛔ Демо {symbol}: стопа на бирже не было, цена уже за стопом, закрыта рынком")
+            await self._close(trade, 'SL', None)
+            return
+        await self._place_stop(symbol, d, left, sl)
+        logger.warning(f"Demo {symbol}: the position {left} had no stop on BingX: re-placed at {sl:.6g}")
+        self.alert(f"⚠️ Демо {symbol}: у позиции не было стопа на бирже, поставлен заново ({sl:.6g})")
 
     async def _dedupe_stops(self) -> None:
         """eng-98: one stop per open trade on BingX. Before eng-85 a failed / repeated restop could leave an older stop
         resting beside the live one (live HYPE 14.10: 12 @ 91.47 beside 24 @ 89.72) - it would later cut a new position
-        of the coin. The stop nearest the trade's own stop stays, the others are cancelled."""
+        of the coin. The stop nearest the trade's own stop stays, the others are cancelled.
+        The guard the other way: an open position with NO stop (a cancel that went through while its replacement
+        failed, a close that failed after the take-profits went) gets its stop back at the trade's level, or is closed
+        at market when the price is already beyond it."""
         ex = await self._exchange()
         for trade in list(self.open.values()):
             stops = [o for o in await ex.fetch_open_orders(trade['symbol']) if self._is_stop(o)]
+            if not stops:
+                await self._restore_stop(trade)
+                continue
             if len(stops) < 2:
                 continue
             ref = float(trade.get('sl') or 0)
@@ -764,6 +817,8 @@ class DemoExecutor:
                 new = await self._place_stop(symbol, d, left, s.levels['sl'] * scale)
                 await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
                 trade['sl'] = s.levels['sl'] * scale
+                with sqlite3.connect(self.db_path) as c:     # the stop guard restores THIS stop after a restart
+                    c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
                 logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
             except Exception as e:
                 logger.warning(f"Demo restop {s.symbol}: {e!r}")
@@ -800,6 +855,7 @@ class DemoExecutor:
                     new = await self._place_stop(symbol, d, total, s.levels['sl'] * scale)
                 except Exception as e:
                     logger.warning(f"Demo ADD {symbol}: stop for {total} not placed ({e!r}): closed at market")
+                    self.alert(f"⛔ Демо {symbol}: стоп после добора не поставлен, закрыта рынком")
                     await self._close(trade, 'NO_STOP', None)
                     return
                 await self._cancel_orders(symbol, keep=new.get('id'))
@@ -871,6 +927,14 @@ class DemoExecutor:
                 "FROM demo_trades WHERE r IS NOT NULL AND closed_ms >= ? AND closed_ms < ? GROUP BY 1 ORDER BY 4",
                 (day0_ms, day0_ms + 86_400_000)).fetchall()
 
+    def usd_without_r(self, day0_ms: int) -> tuple:
+        """(trades, USD) closed in the day with a dollar result but no R (UNTRACKED: no planned stop) - they fell out
+        of every R sum (11 rows, -12.54 USD by 15.10)."""
+        with sqlite3.connect(self.db_path) as c:
+            return c.execute("SELECT COUNT(*), COALESCE(SUM(pnl_usd), 0) FROM demo_trades WHERE r IS NULL AND "
+                             "pnl_usd IS NOT NULL AND closed_ms >= ? AND closed_ms < ?",
+                             (day0_ms, day0_ms + 86_400_000)).fetchone()
+
     async def _call(self, method: str, *args, tries: int = 3, **kw):
         """A ccxt call with backoff on network / exchange-unavailable errors (the VST API hiccups for seconds)."""
         import ccxt
@@ -893,37 +957,30 @@ class DemoExecutor:
         """The card's own exit price (Binance) next to the demo's fill: the demo lost ~0.15R a trade to the journal,
         almost all on the card-driven market closes (eng-74) - measured, not guessed."""
         with sqlite3.connect(self.db_path) as c:
-            try:
-                c.execute("ALTER TABLE demo_trades ADD COLUMN exit_ref REAL")
-            except sqlite3.OperationalError:
-                pass
             c.execute("UPDATE demo_trades SET exit_ref = ? WHERE id = ?", (price, trade_id))
 
     async def _close(self, trade: Dict, reason: str, journal_r: Optional[float], passive: bool = False) -> None:
+        """
+        Out of the trade. The stop rests until the position is flat: only the take-profits (and an older closing limit)
+        go first, the stop is cancelled after the position is 0. The cancel-all first left the position without a stop
+        whenever the close then failed (any error but 101290 / 102202 raised past it; 102202 left a bare limit).
+        """
         ex = await self._exchange()
         symbol, d = trade['symbol'], trade['direction']
-        if not passive:
-            try:
-                await ex.cancel_all_orders(symbol)
-            except Exception as e:
-                errors.report('executor._close', e, f"Demo cancel {symbol}")
-        else:
-            # eng-85: the stop rests while the passive limit works (the cancel-all first left ~15s without one); only
-            # the take-profits go, the stop is cancelled right before the market remainder below
-            try:
-                for o in await ex.fetch_open_orders(symbol):
-                    if not self._is_stop(o):
-                        try:
-                            await ex.cancel_order(o['id'], symbol)
-                        except Exception as e:
-                            errors.report('executor._close', e, f"Demo cancel TP {symbol}")
-            except Exception as e:
-                errors.report('executor._close', e, f"Demo cancel {symbol}")
+        side = 'sell' if d > 0 else 'buy'
+        try:
+            for o in await ex.fetch_open_orders(symbol):
+                if not self._is_stop(o):
+                    try:
+                        await ex.cancel_order(o['id'], symbol)
+                    except Exception as e:
+                        errors.report('executor._close', e, f"Demo cancel TP {symbol}")
+        except Exception as e:
+            errors.report('executor._close', e, f"Demo cancel {symbol}")
         left = await self._position_qty(symbol)
         if left > 0 and passive:
             # a card-driven exit (band / session / time / trail - no stop urgency): a reduce-only limit at the touch
             # first (the VST spread reached 0.4-3%: a market order paid all of it), the rest at market after 15s
-            side = 'sell' if d > 0 else 'buy'
             try:
                 t = await ex.fetch_ticker(symbol)
                 px = float((t.get('ask') if d > 0 else t.get('bid')) or t.get('last'))
@@ -944,12 +1001,7 @@ class DemoExecutor:
                 else:
                     errors.report('executor._close', e, f"Demo passive close {symbol}")
             left = await self._position_qty(symbol)
-            try:
-                await ex.cancel_all_orders(symbol)       # the stop, now that the market remainder follows
-            except Exception as e:
-                errors.report('executor._close', e, f"Demo cancel {symbol}")
         if left > 0:
-            side = 'sell' if d > 0 else 'buy'
             try:
                 await ex.create_order(symbol, 'market', side, left, None, {'reduceOnly': True})
             except Exception as e:
@@ -960,7 +1012,7 @@ class DemoExecutor:
                     reason = 'EXCHANGE'
                 elif '102202' in str(e):
                     # VST's thin book: the market order would fill beyond BingX's price band (102202). A reduce-only limit
-                    # at the touch instead; the trade stays open, the next pass re-places it at the fresh price
+                    # at the touch instead, the stop still resting; the trade stays open, the next pass re-places it
                     t = await ex.fetch_ticker(symbol)
                     px = float((t.get('bid') if d > 0 else t.get('ask')) or t.get('last'))
                     await ex.create_order(symbol, 'limit', side, left, px, {'reduceOnly': True})
@@ -973,7 +1025,14 @@ class DemoExecutor:
                     self.open.setdefault(trade['card_id'], trade)
                     return
                 else:
+                    # the stop still rests: the trade stays tracked, the reconcile loop retries the close
+                    self.open.setdefault(trade['card_id'], trade)
+                    self.alert(f"⚠️ Демо {symbol}: закрытие ({reason}) не прошло ({str(e)[:120]}), стоп на месте, повтор")
                     raise
+        try:
+            await ex.cancel_all_orders(symbol)           # flat: the stop and whatever else rests on the coin
+        except Exception as e:
+            errors.report('executor._close', e, f"Demo cancel {symbol}")
         await self._finalize(trade, reason, journal_r)
 
     async def _finalize(self, trade: Dict, reason: str, journal_r: Optional[float]) -> None:
@@ -984,24 +1043,21 @@ class DemoExecutor:
         """
         d = trade['direction']
         exit_side = 'sell' if d > 0 else 'buy'
-        exits = []
-        for _ in range(4):
-            try:
-                fills = await self._call('fetch_my_trades', trade['symbol'], since=trade['opened_ms'] - 5_000)
-            except Exception as e:
-                # the API failing must not lose the close: the row is marked FILL_PENDING below, _refinalize retries
-                logger.warning(f"Demo {reason} {trade['symbol']}: fills unavailable: {e!r}")
-                fills = []
-            exits = self._exit_fills(fills, exit_side, trade['opened_ms'])
-            if exits:
-                break
-            await asyncio.sleep(5)
+        # one attempt: this runs under the executor's lock, and the old 4 x 5s retries held every entry / restop up
+        # to 20s per close; a fill not listed yet is FILL_PENDING and _refinalize picks it up within 5 minutes
+        try:
+            fills = await self._call('fetch_my_trades', trade['symbol'], since=trade['opened_ms'] - 5_000)
+        except Exception as e:
+            # the API failing must not lose the close: the row is marked FILL_PENDING below, _refinalize retries
+            logger.warning(f"Demo {reason} {trade['symbol']}: fills unavailable: {e!r}")
+            fills = []
+        exits = self._exit_fills(fills, exit_side, trade['opened_ms'], time.time() * 1000)
         qty, entry = float(trade.get('qty') or 0), float(trade.get('entry_fill') or 0)
         weight = sum(f['amount'] for f in exits)
         exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight if weight else None
         if exit_avg is None or not qty or not entry:
             # the fills list can lag a close (or the API is unreachable): retried by reconcile_loop (_refinalize)
-            logger.warning(f"Demo {reason} {trade['symbol']}: no exit fill found yet, retried later")
+            logger.info(f"Demo {reason} {trade['symbol']}: no exit fill listed yet, recovered by the 5-min pass")
             pnl = fees = None
         else:
             fees = self._fees(entry, exit_avg, qty, exits)
@@ -1024,11 +1080,12 @@ class DemoExecutor:
     FILL_PENDING = 'exit fill pending'
 
     @staticmethod
-    def _exit_fills(fills: List[Dict], side: str, opened_ms: float) -> List[Dict]:
+    def _exit_fills(fills: List[Dict], side: str, opened_ms: float, closed_ms: float) -> List[Dict]:
         """eng-91: only exit-side fills after this trade's entry (the 1s margin covers BingX's clock; the 5s fetch
-        margin let the previous trade's exit on the same coin in). One rule for _finalize and _refinalize."""
+        margin let the previous trade's exit on the same coin in) and not after its close (+2 min for a fill listed
+        late): _refinalize retried for 3 days and took the NEXT trades' exits on the coin into this one's result."""
         return [f for f in fills if f.get('side') == side and f.get('price') and f.get('amount')
-                and (f.get('timestamp') or 0) > opened_ms - 1_000]
+                and opened_ms - 1_000 < (f.get('timestamp') or 0) <= closed_ms + 120_000]
 
     @staticmethod
     def _fees(entry: float, exit_avg: float, qty: float, exits: List[Dict]) -> float:
@@ -1050,7 +1107,7 @@ class DemoExecutor:
         if not rows:
             return
         cache: Dict[str, List[Dict]] = {}
-        for tid, symbol, d, opened, _closed, qty, entry, risk in rows:
+        for tid, symbol, d, opened, closed, qty, entry, risk in rows:
             side = 'sell' if d > 0 else 'buy'
             if symbol not in cache:
                 # one request per coin (the earliest open of its pending rows), one failing coin does not stop the rest
@@ -1060,7 +1117,7 @@ class DemoExecutor:
                 except Exception as e:
                     logger.warning(f"Demo result recovery {symbol}: {e!r}")
                     cache[symbol] = []
-            exits = self._exit_fills(cache[symbol], side, opened)
+            exits = self._exit_fills(cache[symbol], side, opened, closed)
             weight = sum(f['amount'] for f in exits)
             if not weight:
                 continue
@@ -1134,10 +1191,6 @@ class DemoExecutor:
     def _set_basis(self, trade_id: int, basis: float) -> None:
         """BingX vs Binance at the entry (journaled: the venue gap the demo trades through)."""
         with sqlite3.connect(self.db_path) as c:
-            try:
-                c.execute("ALTER TABLE demo_trades ADD COLUMN basis REAL")
-            except sqlite3.OperationalError:
-                pass
             c.execute("UPDATE demo_trades SET basis = ? WHERE id = ?", (basis, trade_id))
 
     def _insert(self, row: Dict) -> int:

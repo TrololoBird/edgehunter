@@ -865,7 +865,10 @@ class SignalBook:
             s.status = 'BIAS'
             if CONFIG.strategies.structural_lifetimes:
                 # eng-108: no plan = no setup (was: waiting an invented watch_ttl for the leg to come back)
-                self._finish(s, 'EXPIRED', now, "the setup stopped qualifying (no plan)")
+                # the strategy's own reason (plan['skip']) or the plan's state: 181 sweep cards in a day ended 'no plan'
+                # with nothing to tell why
+                why = 'no targets' if plan is not None else self._skip_reason.get((s.symbol, s.group_key))
+                self._finish(s, 'EXPIRED', now, "the setup stopped qualifying (no plan" + (f": {why})" if why else ")"))
             elif age > watch_ttl:
                 self._finish(s, 'EXPIRED', now, f"the leg stopped qualifying and did not return for {_dur(watch_ttl)}")
             return None

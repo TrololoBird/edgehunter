@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import errors
@@ -116,6 +117,7 @@ class Scanner:
         self.notifier = Notifier()
         from executor import DemoExecutor
         self.demo = DemoExecutor()
+        self.demo.alert = lambda text: self.notifier.post(html.escape(text), topic='demo')
         self.demo.card_is_open = lambda card_id: any(
             card_id in (f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}", f"{s.symbol}|{s.group_key}|c{int(s.created)}")
             and not s.finished for s in self.book.signals.values())
@@ -306,6 +308,9 @@ class Scanner:
                         total = sum(r[3] or 0 for r in rows)
                         lines = [f"{k}: {n} сд., {w or 0} в плюс, {r or 0:+.2f}R"
                                  + (f", проскальз. {sl:+.1f} бп" if sl is not None else '') for k, n, w, r, sl in rows]
+                        n_usd, usd = await asyncio.to_thread(self.demo.usd_without_r, (day - 1) * 86_400_000)
+                        if n_usd:
+                            lines.append(f"без R (UNTRACKED и т.п.): {n_usd} сд., {usd:+.2f} $")
                         self.notifier.post(f"📊 Демо за вчера ({CONFIG.journal.logic_version}): <b>{total:+.2f}R</b>\n"
                                            + "\n".join(lines), topic='demo')
                 if cfg.day_alert_r > 0 and alerted_day != day:
