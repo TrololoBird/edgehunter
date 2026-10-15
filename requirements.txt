@@ -14,3 +14,5 @@ scikit-learn>=1.9,<2     # IsolationForest anomalies, GaussianMixture regimes
 river>=0.26,<0.27        # online P(edge) + ADWIN (0.x: minor versions change APIs)
 matplotlib>=3.11,<4      # briefing cards (briefing_chart.py, Agg backend)
 rich>=15,<16             # stats.py tables
+curl_cffi>=0.13,<1       # tools/farside_flows.py only (Chrome TLS fingerprint for Farside's Cloudflare); not imported by the bot
+exchange_calendars>=4.13,<5   # tools/farside_flows.py only (NYSE holidays -> us_calendar.json); pulls pandas, never imported by the bot

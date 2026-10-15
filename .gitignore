@@ -35,3 +35,5 @@ models/maintenance.json
 models/sectors.json
 pretrained.pkl
 .venv
+etf_flows.json
+us_calendar.json

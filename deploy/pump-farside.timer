@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Farside ETF flows fetch (after all issuers reported, before the 08:00 UTC visibility)
+
+[Timer]
+OnCalendar=*-*-* 07:30:00 UTC
+OnCalendar=*-*-* 13:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

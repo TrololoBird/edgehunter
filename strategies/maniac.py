@@ -373,7 +373,8 @@ def bb_method1_event(bars: Sequence[Sequence[float]], period_ms: int = 4 * HOUR_
     eng-127, Bollinger's Method I - volatility breakout (Bollinger on Bollinger Bands, ch. 15-16): "await a Squeeze, then
     go with the expansion".
     - BB(20, 2); BandWidth = (upper - lower) / middle; the Squeeze = BandWidth at its lowest of the last 125 bars
-      (his "six-month low", 125 bars on any timeframe);
+      (his "six-month low" is 125 bars of the DAILY chart; applying 125 bars to other timeframes is our assumption,
+      measured in research/bb1_windows.md);
     - the signal: the FIRST close outside a band after the last Squeeze bar (no close outside since it), confirmed
       by the volume indicator he pairs with the bands - Bostian's Intraday Intensity % (21) > 0 for a close above
       the upper band, < 0 below the lower;

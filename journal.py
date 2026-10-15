@@ -202,6 +202,9 @@ EXTRA_COLUMNS = {
     'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
     'weis_ratio': 'REAL', 'tp1_min': 'REAL', 'limit_entry': 'INTEGER',
+    # eng-133 shadow features (extdata.macro_loop): TradFi perpetuals' changes %, NYSE session flag, previous VIX close,
+    # Fear & Greed, spot-ETF net flow USD m (1 day / 3 days, visible from D+1 08:00 UTC): journal only, never a filter
+    'xau_chg_1h': 'REAL', 'xau_chg_24h': 'REAL', 'oil_chg_1h': 'REAL', 'oil_chg_24h': 'REAL', 'spy_chg_1h': 'REAL', 'spy_chg_24h': 'REAL', 'qqq_chg_1h': 'REAL', 'qqq_chg_24h': 'REAL', 'us_session': 'REAL', 'vix_prev': 'REAL', 'fng': 'REAL', 'etf_flow_1d': 'REAL', 'etf_flow_3d': 'REAL',
 }
 
 FEATURE_KEYS = {
@@ -224,6 +227,7 @@ FEATURE_KEYS = {
     'chop_1h': 'chop_1h', 'rs_btc_z': 'rs_btc_z', 'event_risk': 'event_risk', 'near52': 'near52',
     'vol_rank': 'vol_rank', 'liq_proxy': 'liq_proxy',
     'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d', 'weis_ratio': 'weis_ratio',
+    'xau_chg_1h': 'xau_chg_1h', 'xau_chg_24h': 'xau_chg_24h', 'oil_chg_1h': 'oil_chg_1h', 'oil_chg_24h': 'oil_chg_24h', 'spy_chg_1h': 'spy_chg_1h', 'spy_chg_24h': 'spy_chg_24h', 'qqq_chg_1h': 'qqq_chg_1h', 'qqq_chg_24h': 'qqq_chg_24h', 'us_session': 'us_session', 'vix_prev': 'vix_prev', 'fng': 'fng', 'etf_flow_1d': 'etf_flow_1d', 'etf_flow_3d': 'etf_flow_3d',
 }
 
 # anomaly label -> (median |4h move| / the coin's usual |4h move|, n): refreshed hourly (refresh_anomaly_effects)

@@ -35,6 +35,7 @@ from strategies import confirm
 from strategies.detect import LiveDetector
 from strategies.structure import PART_COLUMNS, build_maps, part_candles, trend_w_of
 from netstate import NETWORK
+from extdata import us_session
 from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
@@ -246,6 +247,7 @@ class Scanner:
             loops.append(self._demo_report_loop())
         running = lambda: self._running
         loops += [self.ext.deribit_loop(running), self.ext.funding_loop(running), self.ext.books_loop(running),
+                  self.ext.macro_loop(running),
                   self._seed_okx_later()]
         if CONFIG.recorder.enabled:
             import recorder
@@ -1156,6 +1158,7 @@ class Scanner:
         sig['btc_mom_7d'] = self._btc_momentum()                  # eng-100: the market regime (executor risk)
         sig.update(self.market_state)
         sig.update(self.ext.market)
+        sig['us_session'] = us_session(time.time())               # eng-133: computed at the card, not cached
         sig.update(self.ext.of(symbol))
         sig.update(self.fetcher.icebergs.features(symbol))
         ctx = self.detector.context.get(symbol)

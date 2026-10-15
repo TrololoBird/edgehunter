@@ -1,0 +1,9 @@
+[Unit]
+Description=Farside spot-ETF flows + NYSE calendar for the bot's shadow features (one request a day)
+
+[Service]
+Type=oneshot
+User=pump
+WorkingDirectory=/opt/pump
+ExecStart=/opt/pump/.venv/bin/python tools/farside_flows.py --out-dir /opt/pump
+Nice=10

@@ -9,15 +9,23 @@ stats / P(edge), never a trigger until the journal proves one:
   per coin `funding_spread` (max - min of the venues' 8h-equivalent rates): crowding on one venue.
 - OKX `rubik/stat/taker-volume` (5m taker buy / sell of each coin's contracts): the OKX flow windows are seeded at
   start-up for the minutes before the streams (Binance's are seeded from its 1m klines).
+- eng-133 (shadow features, journaled, never a filter): Binance TradFi perpetuals (gold, WTI oil, SPY, QQQ) 1h / 24h
+  changes, the US cash-session flag, the previous day's CBOE VIX close, the Fear & Greed index and the spot-ETF net
+  flow (tools/farside_flows.py writes etf_flows.json; a day D is visible from D+1 08:00 UTC: no look-ahead).
 - Order books of OKX (`market/books`, 50 levels) and Bybit (`market/orderbook`, 50) for the hot coins every 60s ->
   per coin `okx_book_imb` / `bybit_book_imb`: (bid - ask) / (bid + ask) within 0.5% of the mid (Binance has its own).
 """
 import asyncio
+import csv
+import io
 import json
 import logging
 import errors
+import os
 import time
+from datetime import datetime, timezone
 from typing import Dict, Optional
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -27,14 +35,61 @@ DERIBIT = 'https://www.deribit.com/api/v2/public'
 HL = 'https://api.hyperliquid.xyz/info'
 OKX = 'https://www.okx.com/api/v5'
 BYBIT = 'https://api.bybit.com/v5'
+VIX_CSV = 'https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv'
+FNG = 'https://api.alternative.me/fng/?limit=1'
+TRADFI = {'xau': 'XAUUSDT', 'oil': 'CLUSDT', 'spy': 'SPYUSDT', 'qqq': 'QQQUSDT'}
+ETF_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etf_flows.json')
+CAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'us_calendar.json')
+NY = ZoneInfo('America/New_York')
+_CAL = (None, set(), set())
+ETF_LAG_H = 32
+ETF_MAX_AGE_D = 6        # a last visible day older than this (Farside timer dead) is NULL, not a stale value                       # a day D (00:00 UTC) is visible from D+1 08:00 UTC
+
+
+def us_session(now_s: float) -> Optional[int]:
+    """1 = the NYSE regular session (09:30-16:00 New York, 13:00 on early closes) is open, 0 = closed. The holidays and
+    early closes come from us_calendar.json (tools/farside_flows.py writes it from exchange_calendars: pandas stays out
+    of the bot); without the file the weekday and the hours alone decide."""
+    global _CAL
+    try:
+        mt = os.path.getmtime(CAL_FILE)
+        if _CAL[0] != mt:
+            with open(CAL_FILE, encoding='utf-8') as f:
+                c = json.load(f)
+            _CAL = (mt, set(c.get('closed', ())), set(c.get('early', ())))
+    except (OSError, ValueError):
+        pass
+    t = datetime.fromtimestamp(now_s, timezone.utc).astimezone(NY)
+    if t.weekday() >= 5 or t.strftime('%Y-%m-%d') in _CAL[1]:
+        return 0
+    close = 13 * 60 if t.strftime('%Y-%m-%d') in _CAL[2] else 16 * 60
+    return int(9 * 60 + 30 <= t.hour * 60 + t.minute < close)
+
+
+def etf_flows_visible(flows: Dict[str, float], now_s: float):
+    """(last visible day's net flow, sum of the last 3 visible days) in USD m; a day D counts from D+1 08:00 UTC."""
+    vis, last_t = [], 0.0
+    for d, v in sorted(flows.items()):
+        try:
+            t = datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            continue
+        if t + ETF_LAG_H * 3600 <= now_s and v is not None:
+            vis.append(float(v))
+            last_t = t
+    return (vis[-1], sum(vis[-3:])) if vis and now_s - last_t < ETF_MAX_AGE_D * 86400 else (None, None)
 
 
 class ExternalData:
     def __init__(self, fetcher):
         self.fetcher = fetcher
         self.market: Dict[str, Optional[float]] = {'dvol_btc': None, 'dvol_chg_1h': None, 'pc_oi_btc': None}
+        for k in TRADFI:
+            self.market[f'{k}_chg_1h'] = self.market[f'{k}_chg_24h'] = None
+        self.market.update({'us_session': None, 'vix_prev': None, 'fng': None, 'etf_flow_1d': None, 'etf_flow_3d': None})
         self.coin: Dict[str, Dict[str, float]] = {}
         self._session: Optional[aiohttp.ClientSession] = None
+        self._tradfi_ok: Dict[str, float] = {}
 
     async def _json(self, url: str, payload=None):
         if self._session is None:
@@ -48,6 +103,57 @@ class ExternalData:
     async def close(self):
         if self._session is not None:
             await self._session.close()
+
+    # ------------------------------------------------------------------ eng-133: macro shadow features
+    async def macro_loop(self, running):
+        """TradFi perpetuals every 5 min; VIX / Fear & Greed / ETF file every 30 min. Journal context only."""
+        last_slow = 0.0
+        while running():
+            for k, sym in TRADFI.items():
+                try:
+                    rows = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
+                                                         {'symbol': sym, 'interval': '1h', 'limit': 27}, priority=1)
+                    c = [float(r[4]) for r in rows]          # CLOSED candles only: c[-1] is the live one
+                    if len(c) < 27:
+                        raise ValueError('short klines')
+                    self.market[f'{k}_chg_1h'] = (c[-2] / c[-3] - 1) * 100
+                    self.market[f'{k}_chg_24h'] = (c[-2] / c[-26] - 1) * 100
+                    self._tradfi_ok[k] = time.time()
+                except Exception as e:
+                    logger.debug(f"TradFi shadow feature {k}: {e!r}")
+                    if time.time() - self._tradfi_ok.get(k, 0) > 3 * 3600:        # stale: NULL, never an old value
+                        self.market[f'{k}_chg_1h'] = self.market[f'{k}_chg_24h'] = None
+            if time.time() - last_slow > 1800:
+                last_slow = time.time()
+                await self._slow_macro()
+            await asyncio.sleep(300)
+
+    async def _slow_macro(self):
+        try:
+            if self._session is None:
+                self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
+            async with self._session.get(VIX_CSV) as r:
+                text = await r.text()
+            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            prev = None
+            lines = text.splitlines()
+            for row in csv.DictReader(io.StringIO('\n'.join(lines[:1] + lines[-12:]))):
+                d = datetime.strptime(row['DATE'], '%m/%d/%Y').strftime('%Y-%m-%d')
+                if d < today:                      # the previous session's close only: today's bar is not final
+                    prev = float(row['CLOSE'])
+            self.market['vix_prev'] = prev
+        except Exception as e:
+            logger.debug(f"VIX shadow feature: {e!r}")
+        try:
+            d = await self._json(FNG)
+            self.market['fng'] = float(d['data'][0]['value'])
+        except Exception as e:
+            logger.debug(f"Fear & Greed shadow feature: {e!r}")
+        try:
+            with open(ETF_FILE, encoding='utf-8') as f:
+                self.market['etf_flow_1d'], self.market['etf_flow_3d'] = etf_flows_visible(json.load(f), time.time())
+        except (OSError, ValueError):
+            pass
 
     def of(self, symbol: str) -> Dict[str, float]:
         return self.coin.get(symbol, {})
