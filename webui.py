@@ -437,6 +437,7 @@ class WebUI:
         app.router.add_get('/api/stats', self._stats)
         app.router.add_get('/api/debug', self._debug)
         app.router.add_get('/api/health', self._health)
+        app.router.add_get('/api/demo', self._demo)
         app.router.add_get('/api/briefing', self._briefing)
         app.router.add_get('/api/briefing_card', self._briefing_card)
         app.router.add_static('/static/', WEB_DIR)
@@ -528,6 +529,46 @@ class WebUI:
                             content_type='application/json')
         resp.enable_compression()      # /api/coin with the heatmap history is megabytes of JSON
         return resp
+
+    async def _demo(self, request):
+        """The BingX demo trades for the page: the equity curve (closed trades in order), per-strategy totals with each
+        one's daily R, and with ?symbol= that coin's trades for the chart's markers."""
+        demo = getattr(self.scanner, 'demo', None)
+        path = getattr(demo, 'db_path', None)
+        if not path or not os.path.exists(path):
+            return self._json({'trades': [], 'strategies': []})
+        symbol = request.query.get('symbol')
+
+        def read():
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                where, args = "WHERE r IS NOT NULL", []
+                if symbol:
+                    where, args = "WHERE entry_fill IS NOT NULL AND symbol = ?", [symbol]
+                rows = conn.execute("SELECT opened_ms, closed_ms, symbol, strategy, setup, direction, entry_fill, exit_avg, sl, "
+                                    f"tp1, r, pnl_usd, close_reason FROM demo_trades {where} ORDER BY COALESCE(closed_ms, opened_ms) "
+                                    "LIMIT 5000", args).fetchall()
+            finally:
+                conn.close()
+            keys = ('opened_ms', 'closed_ms', 'symbol', 'strategy', 'setup', 'direction', 'entry', 'exit', 'sl', 'tp1',
+                    'r', 'pnl', 'reason')
+            trades = [dict(zip(keys, r, strict=True)) for r in rows]
+            per = {}
+            for t in trades:
+                if t['r'] is None:
+                    continue
+                st = per.setdefault(t['strategy'] or '?', {'strategy': t['strategy'] or '?', 'n': 0, 'wins': 0, 'r': 0.0,
+                                                            'days': {}})
+                st['n'] += 1
+                st['wins'] += t['r'] > 0
+                st['r'] += t['r']
+                day = int(t['closed_ms'] // 86_400_000)
+                st['days'][day] = st['days'].get(day, 0.0) + t['r']
+            for st in per.values():
+                st['days'] = sorted(st['days'].items())
+            return {'trades': trades, 'strategies': sorted(per.values(), key=lambda x: x['r'])}
+
+        return self._json(await asyncio.to_thread(read))
 
     async def _health(self, request):
         """The last minute's Health reading as JSON; 'ok' false when it is older than 3 minutes or a venue is DOWN."""

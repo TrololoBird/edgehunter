@@ -118,3 +118,18 @@ pre.rich { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; l
 .scen-long, .scen-short { border: 1px solid; border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
 .scen-long { border-color: #2ecc71; }
 .scen-short { border-color: #ff5c5c; }
+
+/* audit-80: zone tooltip, touch popover, equity curve, heat scale */
+.zone-tip { position: absolute; z-index: 3; max-width: 220px; padding: 6px 8px; font-size: 12px; pointer-events: none;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+.pop { margin: 4px 14px; padding: 8px 10px; font-size: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; }
+button.q { padding: 0 4px; color: var(--dim); font-size: 11px; }
+@media (hover: hover) { button.q { display: none; } }
+svg.equity { width: 100%; max-width: 720px; height: auto; display: block; margin: 6px 0 12px; }
+svg.equity .eq { fill: none; stroke: var(--cyan); stroke-width: 1.8; }
+svg.equity .dd { fill: var(--red-bg); stroke: none; }
+svg.equity .axis { stroke: var(--line); }
+svg.equity .tick { fill: var(--dim); font-size: 10px; }
+.heat-scale i { display: inline-block; width: 28px; height: 8px; vertical-align: middle; margin: 0 3px 0 8px; border-radius: 2px; }
+.hs-bid { background: linear-gradient(90deg, rgba(46,204,113,.05), rgba(46,204,113,.7)); }
+.hs-ask { background: linear-gradient(90deg, rgba(255,92,92,.05), rgba(255,92,92,.7)); }

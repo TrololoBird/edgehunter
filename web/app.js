@@ -20,6 +20,11 @@ function fp(v) {
   const digits = Math.max(2, 4 - Math.floor(Math.log10(a)));
   return v.toFixed(Math.min(digits, 10));
 }
+// R the same way everywhere: sign, 2 decimals, colored
+function rFmt(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return '<span class="dim">—</span>';
+  return `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${v > 0 ? '+' : ''}${v.toFixed(2)}R</span>`;
+}
 function pct(v, d = 2, colored = true) {
   if (v === null || v === undefined || Number.isNaN(v)) return '<span class="dim">—</span>';
   const s = (v >= 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
@@ -317,8 +322,8 @@ function progressBar(c) {
 }
 
 function renderTrade() {
-  const rows = (S.cards || []).filter(c => c.entered_at && !c.finished);
-  return `<div class="hint">Карточки, где сработал вход. Цели и стоп — из карты уровней монеты (источник под ценой). R сейчас — результат в единицах риска.</div>` +
+  const rows = (S.cards || []).filter(c => c.entered_at && !c.finished).filter(matches);
+  return `<div class="toolbar">${filterBox()}</div><div class="hint">Карточки, где сработал вход. Цели и стоп — из карты уровней монеты (источник под ценой). R сейчас — результат в единицах риска.</div>` +
     table('trade', [
       { k: 'Монета', v: setupCell, s: c => c.name },
       { k: 'Статус', v: c => statusPill(c.status) },
@@ -327,7 +332,7 @@ function renderTrade() {
       { k: 'Стоп', v: c => `${fp(c.levels.sl)}<br><span class="src">${esc(c.levels.sl_src || '')}</span>`, num: true },
       { k: 'Цели', v: c => targetsCell([c.levels.tp1, c.levels.tp2, c.levels.tp3], [c.levels.tp1_src, c.levels.tp2_src, c.levels.tp3_src]) },
       { k: 'R:R', v: c => (c.levels.rr_tp1 || 0).toFixed(1), s: c => c.levels.rr_tp1, num: true },
-      { k: 'R сейчас', v: c => c.r_now === null ? '—' : `<span class="${c.r_now >= 0 ? 'up' : 'down'}">${c.r_now.toFixed(2)}R</span>${progressBar(c)}`, s: c => c.r_now, num: true },
+      { k: 'R сейчас', v: c => `${rFmt(c.r_now)}${c.r_now === null ? '' : progressBar(c)}`, s: c => c.r_now, num: true },
       { k: 'Подтверждения', v: confirmsCell, s: c => Object.values(c.confirms || {}).filter(v => v === true || (typeof v === 'string' && v !== 'n/a')).length, num: true,
         tip: 'на входе: поток тейкеров, спот, открытый интерес, ордерфлоу у экстремума; ★ — обязательное для этой стратегии' },
       { k: 'Толпа', v: crowdCell, s: c => c.crowd || 0, num: true, tip: 'сколько монет дали сетап того же направления за 5 минут: много — это движение всего рынка' },
@@ -337,8 +342,8 @@ function renderTrade() {
 }
 
 function renderWait() {
-  const rows = (S.cards || []).filter(c => !c.entered_at && !c.finished);
-  return `<div class="hint">Сетапы, ждущие входа. У каждого семейства своя механика (наведи на название семейства).
+  const rows = (S.cards || []).filter(c => !c.entered_at && !c.finished).filter(matches);
+  return `<div class="toolbar">${filterBox()}</div><div class="hint">Сетапы, ждущие входа. У каждого семейства своя механика (наведи на название семейства).
     <b>Зона</b> — где ищется триггер (у пробоя — сам диапазон). <b>Цели</b> — ближайшие сильные уровни карты за ценой.
     Если цена дойдёт до TP1 раньше входа — «пропущен»; если пробьёт экстремум разворота — «отменён».
     <b>Отсеяно</b> — сколько триггеров не прошли фильтры и почему.</div>` +
@@ -360,10 +365,16 @@ function renderWait() {
 function hoursPicker() {
   return `<label>за <select id="hours">${[3, 6, 12, 24, 48, 72, 168].map(h => `<option value="${h}" ${h === hours ? 'selected' : ''}>${h < 48 ? h + 'ч' : h / 24 + 'д'}</option>`).join('')}</select></label>`;
 }
+let filterDir = Number(localStorage.getItem('fdir') || 0), filterStrat = localStorage.getItem('fstrat') || '';
 function filterBox() {
-  return `<input id="filter" placeholder="фильтр: монета или метка" value="${esc(filterText)}">`;
+  const strats = [...new Set((S.cards || []).map(c => c.strategy || c.mode).filter(Boolean))].sort();
+  return `<input id="filter" placeholder="фильтр: монета или метка" value="${esc(filterText)}">
+    <select id="fdir" title="направление"><option value="0">↕ все</option><option value="1" ${filterDir > 0 ? 'selected' : ''}>▲ long</option><option value="-1" ${filterDir < 0 ? 'selected' : ''}>▼ short</option></select>
+    <select id="fstrat" title="стратегия"><option value="">все стратегии</option>${strats.map(x => `<option ${x === filterStrat ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
 }
-const matches = r => !filterText || (r.name + ' ' + (r.group_key || r.label || r.setup || '')).toLowerCase().includes(filterText.toLowerCase());
+const matches = r => (!filterText || (r.name + ' ' + (r.group_key || r.label || r.setup || '')).toLowerCase().includes(filterText.toLowerCase()))
+  && (!filterDir || Math.sign(r.direction || 0) === filterDir)
+  && (!filterStrat || (r.strategy || r.mode || familyOf(r.setup || r.group_key)) === filterStrat);
 const dirRet = (r, h) => r[`ret_${h}`] === null || r[`ret_${h}`] === undefined ? null : r[`ret_${h}`] * (r.direction || 1);
 
 async function renderDone() {
@@ -504,8 +515,39 @@ function renderForming() {
 
 async function renderStats() {
   const days = hours / 24;
-  const html = await api(`/api/stats?days=${days}`, 60);
-  return `<div class="toolbar">${hoursPicker()} <span class="dim">отчёт stats.py по текущей версии логики (${esc(S.logic_version)})</span></div>${html}`;
+  const [html, demo] = await Promise.all([api(`/api/stats?days=${days}`, 60), api('/api/demo', 60).catch(() => null)]);
+  return `<div class="toolbar">${hoursPicker()} <span class="dim">отчёт stats.py по текущей версии логики (${esc(S.logic_version)})</span></div>${demoHtml(demo)}${html}`;
+}
+
+// The BingX demo account: equity curve in R with its drawdown, and each strategy's total with a daily-R sparkline
+function demoHtml(demo) {
+  const tr = (demo && demo.trades || []).filter(t => t.r !== null && t.closed_ms);
+  if (!tr.length) return '';
+  let eq = 0, peak = 0, maxDd = 0;
+  const pts = tr.map(t => { eq += t.r; peak = Math.max(peak, eq); maxDd = Math.min(maxDd, eq - peak); return [t.closed_ms, eq, eq - peak]; });
+  const w = 720, h = 160, x0 = pts[0][0], x1 = pts[pts.length - 1][0] || x0 + 1;
+  const lo = Math.min(0, ...pts.map(p => p[1]), maxDd), hi = Math.max(0.5, ...pts.map(p => p[1]));
+  const X = t => ((t - x0) / Math.max(1, x1 - x0) * (w - 40) + 36).toFixed(1), Y = v => (h - 14 - (v - lo) / (hi - lo) * (h - 24)).toFixed(1);
+  const line = pts.map(p => `${X(p[0])},${Y(p[1])}`).join(' ');
+  const dd = pts.map(p => `${X(p[0])},${Y(p[2])}`).join(' ');
+  const svg = `<svg class="equity" viewBox="0 0 ${w} ${h}" role="img" aria-label="кривая доходности демо в R">
+    <line x1="36" x2="${w - 4}" y1="${Y(0)}" y2="${Y(0)}" class="axis"/>
+    <text x="2" y="${+Y(hi) + 4}" class="tick">${hi.toFixed(1)}R</text><text x="2" y="${+Y(lo) + 4}" class="tick">${lo.toFixed(1)}R</text>
+    <polygon points="${X(x0)},${Y(0)} ${dd} ${X(x1)},${Y(0)}" class="dd"/>
+    <polyline points="${line}" class="eq"/></svg>`;
+  const rows = (demo.strategies || []).map(st => `<tr><td>${esc(st.strategy)}</td><td class="num">${st.n}</td>
+    <td class="num">${st.n ? Math.round(st.wins / st.n * 100) : 0}%</td><td class="num">${rFmt(st.r)}</td>
+    <td>${barsSpark(st.days.map(d => d[1]))}</td></tr>`).join('');
+  return `<h3>Демо-счёт BingX: ${tr.length} сделок, итог ${rFmt(eq)}, макс. просадка ${rFmt(maxDd)}</h3>${svg}
+    <table class="tbl"><thead><tr><th>Стратегия</th><th>Сделок</th><th>В плюс</th><th>R</th><th>R по дням</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+function barsSpark(v) {
+  if (!v.length) return '';
+  const m = Math.max(...v.map(Math.abs), 0.01), bw = 6, h = 24;
+  return `<svg class="spark" width="${v.length * bw}" height="${h}">${v.map((x, i) => {
+    const bh = Math.max(1, Math.abs(x) / m * (h / 2));
+    return `<rect x="${i * bw}" y="${x >= 0 ? h / 2 - bh : h / 2}" width="${bw - 1}" height="${bh}" fill="${x >= 0 ? 'var(--green)' : 'var(--red)'}"/>`;
+  }).join('')}</svg>`;
 }
 
 function renderHealth() {
@@ -548,6 +590,8 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'hours') { hours = Number(e.target.value); localStorage.setItem('hours', hours); render(); }
+  if (e.target.id === 'fdir') { filterDir = Number(e.target.value); localStorage.setItem('fdir', filterDir); render(); }
+  if (e.target.id === 'fstrat') { filterStrat = e.target.value; localStorage.setItem('fstrat', filterStrat); render(); }
 });
 document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => {
   tab = b.dataset.tab; localStorage.setItem('tab', tab); setActiveTab(); render();
@@ -619,6 +663,7 @@ function spark(key, color) {
 
 let coin = null, coinLoaded = 0, chart = null, series = null, tf = 15, coinData = null, priceLines = [], fibSeries = [];
 let shownZones = [];     // the zones drawn as boxes on the canvas (drawZoneBoxes)
+let oiSeries = null, cvdSeries = null, cvdSpotSeries = null, demoTrades = [];
 const tzShift = -new Date().getTimezoneOffset() * 60;
 
 function openCoin(symbol, leg) {
@@ -637,6 +682,13 @@ function openCoin(symbol, leg) {
       timeScale: { timeVisible: true, secondsVisible: false }, rightPriceScale: { scaleMargins: { top: 0.08, bottom: 0.08 } },
     });
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => requestAnimationFrame(drawHeat));
+    // OI and CVD under the candles on their own scales (lightweight-charts 4 has no panes: overlay scales with margins)
+    oiSeries = chart.addLineSeries({ priceScaleId: 'oi', color: '#f5c542', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: 'OI' });
+    cvdSeries = chart.addLineSeries({ priceScaleId: 'cvd', color: '#3cc7e8', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: 'CVD фьюч' });
+    cvdSpotSeries = chart.addLineSeries({ priceScaleId: 'cvd', color: '#b28cff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: 'CVD спот' });
+    chart.priceScale('oi').applyOptions({ scaleMargins: { top: 0.72, bottom: 0.15 }, visible: false });
+    chart.priceScale('cvd').applyOptions({ scaleMargins: { top: 0.86, bottom: 0.01 }, visible: false });
+    chart.subscribeCrosshairMove(zoneTip);
     series = chart.addCandlestickSeries({ upColor: '#2ecc71', downColor: '#ff5c5c', borderVisible: false, wickUpColor: '#2ecc71', wickDownColor: '#ff5c5c', priceFormat: { type: 'price', precision: 6, minMove: 0.000001 } });
   }
   coinData = null;
@@ -658,6 +710,7 @@ async function loadCoin(fit = false) {
     const res = await fetch(`/api/coin?symbol=${encodeURIComponent(symbol)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    demoTrades = await fetch(`/api/demo?symbol=${encodeURIComponent(symbol)}`).then(r => r.ok ? r.json() : { trades: [] }).then(x => x.trades || []).catch(() => []);
     if (symbol !== coin) return;
     coinData = data; drawCoin(fit);
     // The 1h / 5m history is loading in the background: ask again shortly
@@ -717,6 +770,35 @@ function aggregate(rows, minutes) {
     else out.push([t, c[1], c[2], c[3], c[4]]);
   }
   return out;
+}
+
+// OI / CVD on the chart's timeframe: the 15m series (the 5m chart shows them per 15m, 1h+ resamples them)
+function drawFlow(bars) {
+  const on = $('#flow-on') && $('#flow-on').checked, rows = (coinData && coinData.flow_15m) || [];
+  series.priceScale().applyOptions({ scaleMargins: on && rows.length ? { top: 0.06, bottom: 0.32 } : { top: 0.08, bottom: 0.08 } });
+  if (!on || !rows.length || !bars.length) { oiSeries.setData([]); cvdSeries.setData([]); cvdSpotSeries.setData([]); return; }
+  const size = Math.max(15, tf) * 60, t0 = bars[0].time, oi = new Map(), fd = new Map(), sd = new Map();
+  for (const [ms, o, f, sp] of rows) {
+    const t = Math.floor(ms / 1000 / size) * size + tzShift;
+    if (t < t0) continue;
+    if (o !== null) oi.set(t, o);
+    fd.set(t, (fd.get(t) || 0) + (f || 0)); if (sp !== null) sd.set(t, (sd.get(t) || 0) + sp);
+  }
+  const cum = m => { let a = 0; return [...m.entries()].sort((x, y) => x[0] - y[0]).map(([time, v]) => ({ time, value: (a += v) })); };
+  oiSeries.setData([...oi.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value })));
+  cvdSeries.setData(cum(fd)); cvdSpotSeries.setData(sd.size ? cum(sd) : []);
+}
+
+// a tooltip with the zone under the cursor: its sources, strength, timeframe
+function zoneTip(param) {
+  const tip = $('#zone-tip'); if (!tip) return;
+  if (!param || !param.point || !coinData) { tip.hidden = true; return; }
+  const price = series.coordinateToPrice(param.point.y);
+  const z = price === null ? null : (coinData.zones || []).find(z => price >= z.lo && price <= z.hi);
+  if (!z) { tip.hidden = true; return; }
+  tip.innerHTML = `<b>${fp(z.lo)} – ${fp(z.hi)}</b> · сила ${z.strength ?? '—'}<br>${(z.kinds || []).map(k => esc(kindName(k))).join(', ')}`;
+  tip.style.left = Math.min(param.point.x + 14, $('#chart').clientWidth - 220) + 'px'; tip.style.top = (param.point.y + 14) + 'px';
+  tip.hidden = false;
 }
 
 function drawCoin(fit) {
@@ -821,7 +903,10 @@ function drawCoin(fit) {
   }
   const card = card0;
   if (card) {
-    if (card.zone && card.zone[0] && !card.entered_at) { line(card.zone[0], '#f5c542', 'зона', 1, 2); line(card.zone[1], '#f5c542', 'зона', 1, 2); }
+    if (card.zone && card.zone[0] && !card.entered_at) {
+      const age = card.created ? ` · ждёт ${ago(nowSec() - card.created)}` : '';
+      line(card.zone[0], '#f5c542', 'зона' + age, 1, 2); line(card.zone[1], '#f5c542', 'зона', 1, 2);
+    }
     if (card.levels) {
       const lv = card.levels;
       line(lv.entry, '#3cc7e8', 'вход', 0, 2); line(lv.sl, '#ff5c5c', 'стоп', 0, 2);
@@ -846,7 +931,17 @@ function drawCoin(fit) {
     if (r.kind === 'card') return { time: t, position: 'aboveBar', color: '#f5c542', shape: 'square', text: r.group_key.split(' ')[0].toLowerCase() };
     return null;
   }).filter(m => m && barTimes.has(m.time)).sort((a, b) => a.time - b.time);
+  // the BingX demo trades of this coin: entry / exit markers colored by result
+  for (const t of demoTrades) {
+    const at = ms => Math.floor(ms / 1000 / size) * size + tzShift;
+    const ti = at(t.opened_ms);
+    if (barTimes.has(ti)) markers.push({ time: ti, position: t.direction > 0 ? 'belowBar' : 'aboveBar', color: '#3cc7e8', shape: t.direction > 0 ? 'arrowUp' : 'arrowDown', text: 'демо' });
+    if (t.closed_ms && t.r !== null && barTimes.has(at(t.closed_ms)))
+      markers.push({ time: at(t.closed_ms), position: t.direction > 0 ? 'aboveBar' : 'belowBar', color: t.r >= 0 ? '#2ecc71' : '#ff5c5c', shape: 'square', text: `${t.r >= 0 ? '+' : ''}${t.r.toFixed(1)}R` });
+  }
+  markers.sort((a, b) => a.time - b.time);
   series.setMarkers(markers);
+  drawFlow(bars);
   if (fit) {
     // a drag / wheel on the price axis turns its auto-scale off for good: the next coin (TAO ~300 -> NEAR ~5.9) kept the
     // old range and its candles sat off-screen - every new coin / timeframe starts auto-scaled again
@@ -857,7 +952,8 @@ function drawCoin(fit) {
 
   $('#d-title').innerHTML = `${esc(d.symbol.replace(':USDT', '').replace('/USDT', ''))} <small>${fp(d.price)} · ATR 15m ${fp(d.atr)}${d.note ? ' · монета вне текущей вселенной: без карты уровней' : d.htf_loaded ? '' : ' · 1h история ещё грузится'}</small>`;
   $('#legend').innerHTML = [...usedKinds].map(k => `<span><i style="background:${kindColor(k)}"></i>${esc(kindName(k))}</span>`).join('') +
-    '<span class="dim">сплошные — сильные зоны (конфлюэнция ≥ 2), пунктир — слабые</span>';
+    '<span class="dim">сплошные — сильные зоны (конфлюэнция ≥ 2), пунктир — слабые</span>' +
+    ($('#heat-on').checked && d.heatmap ? '<span class="heat-scale" title="яркость = объём корзины к медиане своего бара (лог-шкала)"><i class="hs-bid"></i>bid <i class="hs-ask"></i>ask · ×2 … ×16+ к медиане</span>' : '');
 
   let body = '';
   for (const c of d.cards || []) {
@@ -1006,6 +1102,14 @@ function drawHeat() {
 $('#heat-on').addEventListener('change', drawHeat);
 $('#heat-all').addEventListener('change', drawHeat);
 $('#lv-all').addEventListener('change', () => drawCoin(false));
+$('#flow-on').addEventListener('change', () => drawCoin(false));
+// touch screens show no title tooltips: a tap on a toolbar label's «?» shows its explanation
+document.querySelectorAll('.heat-toggle[title]').forEach(l => {
+  const q = document.createElement('button'); q.className = 'ghost q'; q.type = 'button'; q.textContent = '?'; q.setAttribute('aria-label', 'пояснение');
+  q.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const p = $('#pop'); p.textContent = l.title; p.hidden = !p.hidden; });
+  l.after(q);
+});
+document.addEventListener('click', e => { const p = $('#pop'); if (p && !p.hidden && !e.target.classList.contains('q')) p.hidden = true; });
 $('#fib-on').addEventListener('change', () => drawCoin(false));
 $('#ev-on').addEventListener('change', () => drawCoin(false));
 window.addEventListener('resize', () => requestAnimationFrame(drawHeat));

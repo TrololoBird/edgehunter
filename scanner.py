@@ -290,7 +290,8 @@ class Scanner:
                         total = sum(r[3] or 0 for r in rows)
                         lines = [f"{k}: {n} сд., {w or 0} в плюс, {r or 0:+.2f}R"
                                  + (f", проскальз. {sl:+.1f} бп" if sl is not None else '') for k, n, w, r, sl in rows]
-                        self.notifier.post("📊 Демо за вчера: <b>" + f"{total:+.2f}R</b>\n" + "\n".join(lines), topic='demo')
+                        self.notifier.post(f"📊 Демо за вчера ({CONFIG.journal.logic_version}): <b>{total:+.2f}R</b>\n"
+                                           + "\n".join(lines), topic='demo')
                 if cfg.day_alert_r > 0 and alerted_day != day:
                     today = await asyncio.to_thread(self.demo.day_summary, day * 86_400_000)
                     total = sum(r[3] or 0 for r in today)
@@ -1440,7 +1441,22 @@ class Scanner:
             'liquidations': [list(e) for e in md.liq_events if now * 1000 - e[0] <= 86_400_000][-300:],
             'heatmap': self.fetcher.depth.heatmap(symbol),
             'htf_loaded': md.htf_loaded,
+            'flow_15m': self._flow_series(md),
+            'funding': md.funding_rate,
         }
+
+    @staticmethod
+    def _flow_series(md) -> List:
+        """[[open ms, open interest (base), futures taker delta USD, spot taker delta USD]] of the last 500 15m candles
+        (the chart's OI / CVD panes; the page accumulates the deltas into CVD over the visible window)."""
+        fut = md.futures_df
+        if fut is None or fut.is_empty():
+            return []
+        fut = fut.tail(500).select(['timestamp', 'open_interest', 'taker_delta'])
+        spot = {}
+        if md.spot_df is not None and not md.spot_df.is_empty():
+            spot = dict(md.spot_df.tail(500).select(['timestamp', 'taker_delta']).iter_rows())
+        return [[int(t), oi, fd, spot.get(t)] for t, oi, fd in fut.iter_rows()]
 
     # ------------------------------------------------------------------ background loops
 

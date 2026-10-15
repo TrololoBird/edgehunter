@@ -76,3 +76,19 @@ The market regime changes, so nothing is fitted once on the past: models start f
 - `webui.py` + `web/` (plain HTML/JS, TradingView lightweight-charts from jsdelivr): aiohttp server inside the bot on 127.0.0.1:8765, opened in the browser at start. `/ws` pushes the full state after every scan (`build_state`); `/api/coin` = 1h (4 days) / 15m / 5m candles + level map (the card's plan when there is one) + 48h of the coin's journal, answered from memory at once (the 1h / 5m history loads in the background, `load_htf_background`, and the page asks again; coins outside the universe get REST candles at priority 0); a card opens on the chart of its structure timeframe (1h for 1h / 4h legs, 5m for 5m anchors); the waiting tab shows each card's anchor (a leg, a level, a range) and its entry timeframe; the order-book heatmap is drawn behind the candles on a canvas (toggle «стакан»); `/api/history`, `/api/anomaly_stats` read the journal through their own read-only SQLite connection (edge = against the universe median); `/api/stats` renders `stats.report` to HTML. Every setup shows its strategy (hover: its mechanics). Tabs: in trade, waiting (zone / targets with sources, vetoed triggers and why), finished (card outcomes with reason and what price did afterwards; entries incl. vetoed), anomalies (live, per-label follow-through, history), forming / vetoed, stats, health. Click a row for the coin panel (chart with zones, card levels and journal markers).
 - `notifier.py`: optional (off by default) Windows balloon / Telegram on ZONE, ENTRY, TP, SL; fire-and-forget tasks.
 
+
+### BingX demo: the money path (`executor.py`, audit-80)
+1. A card enters on Binance's numbers -> `on_entry`. Limit plans rest as `pending` (`_place_limit`) and fill on BingX.
+2. `_open`: BingX's quote gives `ratio = bx_last / binance_now`; entry / stop / targets are scaled by it (contract scale
+   x the venue basis), the fill is BingX's ask (long) / bid (short). Rejected when that fill is beyond the stop or TP1, or
+   the blended R:R at it is under the plan's `min_rr` (row `PRICE_GAP`).
+3. Size = risk USD / |fill - stop|, capped by the notional / leverage limits; stop-market + reduce-only targets.
+4. Closes: `_close` (our exit) or `reconcile_loop` (the exchange's own stop / target, orphans, untracked positions).
+   `_finalize` reads BingX's fills (`_exit_fills`, one rule for the first try and `_refinalize`); fees = configured
+   taker rate on the entry + BingX's own fee on the exit fills (`_fees`). A missing fill -> `exit fill pending`, retried 3 days.
+5. Guards: the day rules (`daily_loss_r`, `max_trades_day`, `pause_*`) and the per-strategy kill-switch
+   (`strategy_kill_r` / `strategy_kill_n`) are 0 = off; `day_alert_r` only alerts. Credentials: `BINGX_API_KEY` /
+   `BINGX_API_SECRET` (systemd `EnvironmentFile=/etc/pump-bot.env`) before `config.local.toml`.
+6. Reporting: the daily per-strategy summary (00:05 UTC, demo topic); `/api/demo` (equity curve, per-strategy daily R,
+   `?symbol=` the coin's trades for the chart's markers); `/api/health` (the minute's Health line as JSON, 503 when stale
+   or a venue is DOWN).
