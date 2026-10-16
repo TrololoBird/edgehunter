@@ -14,6 +14,10 @@ stats / P(edge), never a trigger until the journal proves one:
   flow (tools/farside_flows.py writes etf_flows.json; a day D is visible from D+1 08:00 UTC: no look-ahead).
 - Order books of OKX (`market/books`, 50 levels) and Bybit (`market/orderbook`, 50) for the hot coins every 60s ->
   per coin `okx_book_imb` / `bybit_book_imb`: (bid - ask) / (bid + ask) within 0.5% of the mid (Binance has its own).
+- eng-134 (shadow, journaled, never a filter): Upbit's KRW tickers (all markets in one keyless call, every 60s) ->
+  per coin `kimchi_prem` % = the KRW price / Upbit's own KRW-USDT / the Binance futures price - 1 (no FX source
+  needed), computed at the card; NULL when the snapshot or the coin's last Upbit trade is older than 3 min, the coin
+  is not on Upbit, or |premium| > 30% (a ticker shared by two different coins).
 """
 import asyncio
 import csv
@@ -42,6 +46,9 @@ ETF_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etf_flows.j
 CAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'us_calendar.json')
 NY = ZoneInfo('America/New_York')
 _CAL = (None, set(), set())
+UPBIT = 'https://api.upbit.com/v1'
+UPBIT_MAX_AGE_S = 180
+_CAL_CHECKED = 0.0
 ETF_LAG_H = 32
 ETF_MAX_AGE_D = 6        # a last visible day older than this (Farside timer dead) is NULL, not a stale value
 SLOW_MAX_AGE_S = 2 * 86400   # VIX / Fear & Greed not refreshed for this long: NULL, never an old value
@@ -51,15 +58,17 @@ def us_session(now_s: float) -> Optional[int]:
     """1 = the NYSE regular session (09:30-16:00 New York, 13:00 on early closes) is open, 0 = closed. The holidays and
     early closes come from us_calendar.json (tools/farside_flows.py writes it from exchange_calendars: pandas stays out
     of the bot); without the file the weekday and the hours alone decide."""
-    global _CAL
-    try:
-        mt = os.path.getmtime(CAL_FILE)
-        if _CAL[0] != mt:
-            with open(CAL_FILE, encoding='utf-8') as f:
-                c = json.load(f)
-            _CAL = (mt, set(c.get('closed', ())), set(c.get('early', ())))
-    except Exception:                        # a missing / broken / wrong-typed file: weekday and hours decide
-        pass
+    global _CAL, _CAL_CHECKED
+    if time.time() - _CAL_CHECKED >= 60:      # eng-134: a stat per card stalled the loop (watchdog: getmtime)
+        _CAL_CHECKED = time.time()
+        try:
+            mt = os.path.getmtime(CAL_FILE)
+            if _CAL[0] != mt:
+                with open(CAL_FILE, encoding='utf-8') as f:
+                    c = json.load(f)
+                _CAL = (mt, set(c.get('closed', ())), set(c.get('early', ())))
+        except Exception:                    # a missing / broken / wrong-typed file: weekday and hours decide
+            pass
     t = datetime.fromtimestamp(now_s, timezone.utc).astimezone(NY)
     if t.weekday() >= 5 or t.strftime('%Y-%m-%d') in _CAL[1]:
         return 0
@@ -93,6 +102,8 @@ class ExternalData:
         self._tradfi_ok: Dict[str, float] = {}
         self._slow_ok: Dict[str, float] = {}
         self._slow_stale: set = set()
+        self._upbit: Dict[str, tuple] = {}       # coin -> (KRW price, its last trade time s)
+        self._upbit_t = 0.0
 
     async def _json(self, url: str, payload=None):
         if self._session is None:
@@ -179,6 +190,40 @@ class ExternalData:
 
     def of(self, symbol: str) -> Dict[str, float]:
         return self.coin.get(symbol, {})
+
+    # ------------------------------------------------------------------ eng-134: Upbit (kimchi premium)
+    async def upbit_loop(self, running):
+        markets, listed_at = [], 0.0
+        while running():
+            try:
+                if not markets or time.time() - listed_at > 3600:
+                    rows = await self._json(f"{UPBIT}/market/all")
+                    markets = [x['market'] for x in rows if str(x.get('market', '')).startswith('KRW-')]
+                    listed_at = time.time()
+                rows = await self._json(f"{UPBIT}/ticker?markets={','.join(markets)}")
+                self._upbit = {x['market'][4:]: (float(x['trade_price']), float(x.get('trade_timestamp') or 0) / 1000)
+                               for x in rows if x.get('trade_price')}
+                self._upbit_t = time.time()
+            except Exception as e:
+                markets = []                         # a delisted market fails the whole call: re-list next time
+                errors.report('extdata.upbit_loop', e, "Upbit KRW tickers")
+            await asyncio.sleep(60)
+
+    def kimchi(self, symbol: str, price: Optional[float]) -> Optional[float]:
+        """Upbit premium % of a coin over its Binance futures price; None when stale / not listed."""
+        usdt = self._upbit.get('USDT', (None,))[0]
+        if not price or not usdt or time.time() - self._upbit_t > UPBIT_MAX_AGE_S:
+            return None
+        base = symbol.split('/')[0]
+        mult = 1.0
+        if base.startswith('1000') and base[4:] in self._upbit:  # 1000PEPE is quoted per 1000 coins
+            base, mult = base[4:], 1000.0
+        krw, traded = self._upbit.get(base, (None, 0))
+        if not krw or time.time() - traded > UPBIT_MAX_AGE_S:     # an illiquid pair's last trade is an old price
+            return None
+        prem = (krw * mult / usdt / price - 1) * 100
+        # same ticker, another coin (KRW-EDGE is Definitive, EDGEUSDT is not: -67%); real premiums stay well inside
+        return prem if abs(prem) <= 30 else None
 
     # ------------------------------------------------------------------ Deribit
     async def deribit_loop(self, running):

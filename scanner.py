@@ -247,7 +247,7 @@ class Scanner:
             loops.append(self._demo_report_loop())
         running = lambda: self._running
         loops += [self.ext.deribit_loop(running), self.ext.funding_loop(running), self.ext.books_loop(running),
-                  self.ext.macro_loop(running),
+                  self.ext.macro_loop(running), self.ext.upbit_loop(running),
                   self._seed_okx_later()]
         if CONFIG.recorder.enabled:
             import recorder
@@ -1160,6 +1160,7 @@ class Scanner:
         sig.update(self.ext.market)
         sig['us_session'] = us_session(time.time())               # eng-133: computed at the card, not cached
         sig.update(self.ext.of(symbol))
+        sig['kimchi_prem'] = self.ext.kimchi(symbol, self._price_of(symbol))   # eng-134: shadow only
         sig.update(self.fetcher.icebergs.features(symbol))
         ctx = self.detector.context.get(symbol)
         sig['coin_trend'] = ctx.trend if ctx is not None else None

@@ -703,3 +703,9 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   (levels.simulate / fill_price, replay, stats.card_r_net); the card table shows stops out in profit (Trail) and R per
   unit. D2 / D3 (expectancy by thirds, p over OPEN entries) change the entry veto, not just the reports: left for a
   pre-registered study.
+- eng-134 (2026-10-16, owner's go on external data; logic_version unchanged, shadow only): `kimchi_prem` - Upbit KRW
+  premium % over the Binance futures price (Upbit's own KRW-USDT as the FX; NULL when the coin's last Upbit trade is
+  > 3 min old or |prem| > 30%: KRW-EDGE is another coin than EDGEUSDT); `us_session` stats its calendar file once a
+  minute (getmtime per card showed in watchdog stalls); `tools/coinglass_heatmap.py` - research downloader of
+  CoinGlass's keyless order-book heatmap (undocumented endpoint, never a live input). CoinGecko: `/global` and sectors
+  were already used; keyless offers nothing else needed.
