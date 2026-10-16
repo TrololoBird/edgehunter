@@ -282,7 +282,8 @@ function renderHeader() {
   document.documentElement.style.setProperty('--hdr-h', $('#top').offsetHeight + 'px');   // the header wraps on narrow screens
   $('#status').textContent = S.status ? '⏳ ' + S.status : '';
   const cards = S.cards || [];
-  $('#n-trade').textContent = cards.filter(c => c.entered_at && !c.finished).length;
+  const inTrade = cards.filter(c => c.entered_at && !c.finished);
+  $('#n-trade').textContent = inTrade.length + (inTrade.some(c => c.demo !== undefined) ? ` · BingX ${inTrade.filter(c => c.demo && !c.demo.closed_ms).length}` : '');
   $('#n-wait').textContent = cards.filter(c => !c.entered_at && !c.finished).length;
   $('#n-done').textContent = Object.values((S.session || {}).results || {}).reduce((a, b) => a + b, 0);
   $('#n-anom').textContent = (S.anomalies || []).length;
@@ -329,12 +330,24 @@ function progressBar(c) {
   return `<div class="bar" title="SL → TP3">${ticks}<b style="left:${pos(c.price)}%;background:${color}"></b></div>`;
 }
 
+// the BingX demo mirror of a card in a trade: a position, or why there is none (the card's own trade goes on)
+const DEMO_RU = { NO_MARKET: 'нет рынка на BingX', OVERLAP: 'монета занята другой карточкой', ERROR: 'ошибка ордера',
+  EXCHANGE: 'закрыта биржей', UNTRACKED: 'закрыта как неотслеживаемая', ORPHAN: 'закрыта: карточка потерялась', SL: 'стоп',
+  CLOSED: 'закрыта', TP3: 'TP3', NO_STOP: 'без стопа — закрыта' };
+function demoCell(c) {
+  const d = c.demo;
+  if (!d) return '<span class="dim" title="BingX-демо не открывало эту карточку (до запуска демо, вне лимита или фильтров)">нет</span>';
+  if (!d.closed_ms) return '<span class="pill good">в позиции</span>';
+  const why = DEMO_RU[d.reason] || d.reason || '';
+  return `<span class="pill bad" title="${esc(d.error || '')}">нет</span><br><span class="src">${esc(why)}${d.r !== null && d.r !== undefined ? ' ' + rFmt(d.r) : ''}, ${new Date(d.closed_ms).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>`;
+}
 function renderTrade() {
   const rows = (S.cards || []).filter(c => c.entered_at && !c.finished).filter(matches);
   return `<div class="toolbar">${filterBox()}</div><div class="hint">Карточки, где сработал вход. Цели и стоп — из карты уровней монеты (источник под ценой). R сейчас — результат в единицах риска.</div>` +
     table('trade', [
       { k: 'Монета', v: setupCell, s: c => c.name },
       { k: 'Статус', v: c => statusPill(c.status) },
+      { k: 'BingX', v: demoCell, s: c => c.demo ? (c.demo.closed_ms ? 1 : 0) : 2, tip: 'позиция зеркала на BingX-демо; если её нет — причина (наведите на «нет»)' },
       { k: 'Цена', v: c => fp(c.price), num: true },
       { k: 'Вход', v: c => fp(c.levels?.entry), num: true },
       { k: 'Стоп', v: c => c.levels ? `${fp(c.levels.sl)}<br><span class="src">${esc(c.levels.sl_src || '')}</span>` : '—', num: true },

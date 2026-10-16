@@ -272,10 +272,39 @@ def _anomaly_effect(label: str):
     return {'x': round(e[0], 2), 'n': e[1]} if e else None
 
 
+_DEMO_CACHE: Dict = {'t': 0.0, 'by_card': {}}
+
+
+def _demo_status(scanner, now: float) -> Dict[str, Dict]:
+    """card key (symbol|setup|entered_at) -> its newest BingX demo row: the page shows why a card in a trade has no
+    position on BingX (no market, the coin held by another card, an error, closed by the exchange). Re-read every 30s
+    (a ~100-row table)."""
+    path = getattr(getattr(scanner, 'demo', None), 'db_path', None)
+    if not path or not os.path.exists(path):
+        return {}
+    if now - _DEMO_CACHE['t'] >= 30:
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                rows = conn.execute("SELECT card_id, closed_ms, close_reason, error, r FROM demo_trades ORDER BY id").fetchall()
+            finally:
+                conn.close()
+            _DEMO_CACHE['by_card'] = {r[0]: {'closed_ms': r[1], 'reason': r[2], 'error': (r[3] or '')[:120], 'r': _num(r[4])}
+                                      for r in rows}
+        except sqlite3.Error as e:
+            logging.getLogger(__name__).info(f"Demo status read failed: {e}")
+        _DEMO_CACHE['t'] = now
+    return _DEMO_CACHE['by_card']
+
+
 def build_state(scanner) -> Dict:
     now = time.time()
     book = scanner.book
     cards = [card_view(s, now) for s in book.signals_view(now)]
+    demo = _demo_status(scanner, now)
+    for c in cards:
+        if c.get('entered_at'):
+            c['demo'] = demo.get(f"{c['id']}|{int(c['entered_at'])}")
     forming = []
     for sym, sig in book.watchlist:
         bull = sig.get('alert_type') == 'LONG'
