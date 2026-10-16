@@ -565,6 +565,8 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         # a system without a profit target (the Turtles: out on the opposite N-day channel, SignalBook trails it):
         # its own stop; TP1-3 are 100 / 200 / 300 R placeholders the lifecycle never reaches (R:R never vetoes it)
         stop = exit['stop'][1]
+        if exit.get('stop_n'):
+            stop = entry - direction * exit['stop_n']          # review V05: a distance from the entry (Turtles' 2N)
         sl_src = exit.get('stop_src', 'the system stop')
         if exit.get('pad'):
             # a structural stop (Bollinger's retest): beyond it by the pierce / zone buffer, never inside 1 ATR

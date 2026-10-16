@@ -263,3 +263,61 @@ def test_funding_by_the_contracts_interval():
     from levels import funding_r
     assert funding_r(0.001, 1, 100, 10, 1 * H, 5 * H) == 0.0                     # 8h grid: no settlement
     assert funding_r(0.001, 1, 100, 10, 1 * H, 5 * H, interval_h=4) == pytest.approx(0.005)  # 4h: 04:00 paid
+
+
+# ---------------------------------------------------------------------- PR #5 review (V-items that hit this code)
+
+def test_fvg_not_built_across_a_hole():
+    from strategies.ict import fvg_setup
+    step = 300_000
+    bars = [[k * step, 100, 101, 99, 100] for k in range(10)]
+    bars[5] = [5 * step, 99, 100.5, 95, 96]                         # the sweep, then a swing high at bar 3
+    bars[3] = [3 * step, 100, 102, 99, 101]
+    # bar 6 missing (dropped as incomplete): 7 and 8 are no neighbours of 5
+    bars = bars[:6] + [[7 * step, 96, 103, 96, 103], [8 * step, 103, 108, 104, 107]]
+    assert fvg_setup(bars, 1, 5 * step, step) is None
+
+
+def test_turtle_stop_is_2n_from_the_entry():
+    from strategies.geometry import system_levels
+    plan = {'exit': {'stop': ['price', 103.0], 'stop_n': 2.0, 'tp': ['trail'], 'atr': 1.0}, 'atr': 1.0,
+            'symbol': None, 'zones': [], 'tf': '1d'}
+    assert system_levels(plan, 106.0, None, 1)['sl'] == pytest.approx(104.0)
+
+
+def test_turtle_entry_day_stop_is_ambiguous():
+    from strategies.turtle import _last_s1_was_winner, n_series
+    d1 = [[i * DAY, 100, 100.5, 99.5, 100, 1e6] for i in range(40)]
+    d1.append([40 * DAY, 100, 101, 95, 100.8, 1e6])                 # breakout and the 2N stop on the same day
+    d1 += [[(41 + i) * DAY, 101 + i, 102 + i, 100 + i, 101.5 + i, 1e6] for i in range(15)]   # runs up
+    d1.append([56 * DAY, 116, 116, 104, 105, 1e6])                  # out on the 10-day low, far above the entry
+    assert _last_s1_was_winner(d1, n_series(d1)) is None
+
+
+def test_sd_opposing_zone_touched_by_a_wick_is_not_fresh():
+    from strategies.maniac import sd_opposing
+    zones = [{'side': -1, 'lo': 110.0, 'hi': 120.0, 'confirm': 0}]
+    bars = [[0, 100, 100, 100, 100], [1, 100, 101, 99, 100], [2, 105, 115, 104, 105], [3, 103, 104, 102, 103]]
+    assert sd_opposing(zones, bars, 1, 100.0) == []
+
+
+def test_dump_bounce_needs_a_known_rank():
+    from strategies.loopside import LoopDetectors
+    ld = LoopDetectors(lambda s: [], lambda s: [])
+    md = SimpleNamespace(h1=[[i * H, 1, 1, 1, 1, 1] for i in range(200)])
+    assert ld._dump_bounce('X/USDT:USDT', md, 200 * H) is None      # rank unknown: not the studied class
+
+
+def test_linear_v_is_no_cup():
+    from strategies.cup_handle import cup_handle
+    bars = []
+    for i in range(200):                                            # prior advance 60 -> 100
+        p = 60 + 40 * i / 199
+        bars.append([i * DAY, p, p * 1.01, p * 0.99, p, 1e6])
+    for k in range(61):                                             # a straight V of 60 days, 25% deep
+        p = 100 - 25 * (1 - abs(k - 30) / 30)
+        bars.append([(200 + k) * DAY, p, p * 1.005, p * 0.995, p, 1e6])
+    for k in range(8):                                              # handle
+        bars.append([(261 + k) * DAY, 98, 99, 96, 97, 5e5])
+    bars.append([269 * DAY, 97, 104, 97, 103, 3e6])                 # breakout on volume
+    assert cup_handle(bars, '1d', DAY) is None

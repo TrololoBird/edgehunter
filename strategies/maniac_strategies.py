@@ -295,7 +295,9 @@ class BollingerSqueezeStrategy(_System):
         if plan and not plan.get('skip'):
             plan['no_tp'] = True
             plan['sar'] = {'tf_min': 240, 'sar': sig['bb_stop'], 'ep': sig['sar_ep'], 'af': 0.02,
-                           'last_ts': int(sig['event_ts']) - 240 * 60_000}
+                           'last_ts': int(sig['event_ts']) - 240 * 60_000,
+                           # review V08: the signal bar is the first step's previous bar (two-bar limit)
+                           'prev_hi': sig.get('sar_prev_hi'), 'prev_lo': sig.get('sar_prev_lo')}
         return plan
 
 

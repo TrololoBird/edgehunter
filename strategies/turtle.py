@@ -61,7 +61,7 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
             elif d < 0 and c[2] >= hi10:
                 exit_px = hi10
             if exit_px is not None:
-                last = d * (exit_px - entry) > 0
+                last = None if pos.get('ambiguous') else d * (exit_px - entry) > 0
                 pos = None
             continue
         hi20 = max(x[2] for x in d1[i - 20:i])
@@ -73,6 +73,10 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
             pos = {'d': 1, 'entry': hi20, 'stop': hi20 - 2 * n}
         elif c[3] < lo20:
             pos = {'d': -1, 'entry': lo20, 'stop': lo20 + 2 * n}
+        if pos is not None and ((pos['d'] > 0 and c[3] <= pos['stop']) or (pos['d'] < 0 and c[2] >= pos['stop'])):
+            # review V06: the entry day also traded through the 2N stop - the OHLC does not tell which came first, so
+            # this breakout's result is unknown (never a winner that skips the next S1); it stays the open hypothetical
+            pos['ambiguous'] = True
     return last
 
 
@@ -85,6 +89,7 @@ def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: fl
     already crossed earlier today is no entry now (live eng-32: started mid-day, the bot entered MOVR 26% above a
     55-day high crossed hours before).
     """
+    d1 = d1[-370:]                 # the S1 replay runs every minute: the last year (the daily buffer holds 1400 days)
     if len(d1) < 60:
         return None
     ns = n_series(d1)

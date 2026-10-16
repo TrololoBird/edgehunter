@@ -136,7 +136,7 @@ class ArchiveCoin:
             self.h4 = _group(hl, 4 * HOUR_MS)[-200:]
         dd = int(np.searchsorted(self.d_close, now_ms, side='right'))
         if not self.d1 or (dd and self.d1[-1][0] != self.daily[dd - 1][0]):
-            self.d1 = self.daily[max(0, dd - 370):dd]
+            self.d1 = self.daily[max(0, dd - 1400):dd]          # review V13: as live (fetcher, 1400 days)
             self.w1 = _weeks(self.daily[:dd])[-60:]
 
     def minutes(self, count: int = 600) -> List[List[float]]:

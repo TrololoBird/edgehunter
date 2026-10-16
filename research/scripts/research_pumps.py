@@ -90,7 +90,7 @@ def coin_rows(j: int) -> List[Dict]:
             last_event = t
             a = atr1h(H, L, C, t)
             # the peak until exhaustion: the first close beyond the previous candle's extreme against the move
-            peak, ex = (H[t], None)
+            peak, ex = (H[t] if d > 0 else L[t], None)     # review V14: a dump's low may be the dump bar's own
             for h in range(t + 1, min(n - 1, t + 25)):
                 peak = max(peak, H[h]) if d > 0 else min(peak, L[h])
                 if (C[h] < L[h - 1]) if d > 0 else (C[h] > H[h - 1]):

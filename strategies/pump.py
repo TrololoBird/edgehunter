@@ -129,7 +129,8 @@ def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
         last_event = t
         if t < n - 26:
             continue                                  # too old to be still bouncing
-        trs = [max(h[k], cl[k - 1]) - min(lo[k], cl[k - 1]) for k in range(t - 13, t + 1)]
+        # review V12: research_pumps.atr1h - the 14 hours BEFORE the dump hour (the dump bar's own range left out)
+        trs = [max(h[k], cl[k - 1]) - min(lo[k], cl[k - 1]) for k in range(t - 14, t)]
         atr = sum(trs) / len(trs)
         # audit R05 / N26: a causal automaton - the dump's low is FIXED at the exhaustion close (the first close above
         # the previous hour's high) and the bounce is searched only from that hour on; a dump not exhausted yet has

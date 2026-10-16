@@ -389,6 +389,10 @@ class DemoExecutor:
               for k, v in s.levels.items()}
         # the fill is BingX's own ask (a long) / bid (a short): the trade is judged at that price, not at the plan's
         fill_est = float((quote.get('ask') if d > 0 else quote.get('bid')) or bx_last)
+        n_turtle = (getattr(s, 'plan', None) or {}).get('turtle_n')
+        if n_turtle:
+            # review V05: the Turtles' stop is 2N from the position's OWN entry - BingX's price, not Binance's
+            lv['sl'] = fill_est - d * 2 * n_turtle * ratio
         reject = None
         if d * (fill_est - lv['sl']) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"

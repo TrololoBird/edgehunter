@@ -1432,8 +1432,10 @@ class DataFetcher:
                 async with sem:
                     try:
                         rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                     {'symbol': binance_symbol, 'interval': '1d', 'limit': 370},
-                                                     priority=2, weight=2)
+                                                     # review V13: a 65-week cup needs its prior advance (2x) and
+                                                     # handle: 3 x 455 + 9 days - 1400 (one request, limit <= 1500)
+                                                     {'symbol': binance_symbol, 'interval': '1d', 'limit': 1400},
+                                                     priority=2, weight=10)
                     except Exception as e:
                         errors.report('fetcher.candles_1d', e, f"daily candles failed for {symbol}")
                         return
