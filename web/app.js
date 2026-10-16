@@ -13,7 +13,7 @@ let hours = Number(localStorage.getItem('hours') || 24);
 // ------------------------------------------------------------------------------------------------ formatting
 
 function fp(v) {
-  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   const a = Math.abs(v);
   if (a === 0) return '0';
   if (a >= 1000) return v.toFixed(a >= 1e5 ? 0 : 1);
@@ -22,11 +22,11 @@ function fp(v) {
 }
 // R the same way everywhere: sign, 2 decimals, colored
 function rFmt(v) {
-  if (v === null || v === undefined || Number.isNaN(v)) return '<span class="dim">—</span>';
+  if (v === null || v === undefined || !Number.isFinite(v)) return '<span class="dim">—</span>';
   return `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${v > 0 ? '+' : ''}${v.toFixed(2)}R</span>`;
 }
 function pct(v, d = 2, colored = true) {
-  if (v === null || v === undefined || Number.isNaN(v)) return '<span class="dim">—</span>';
+  if (v === null || v === undefined || !Number.isFinite(v)) return '<span class="dim">—</span>';
   const s = (v >= 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
   if (!colored) return s;
   return `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${s}</span>`;
@@ -58,7 +58,7 @@ function clock(ms) {
   const d = new Date(ms);
   return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const nowSec = () => Date.now() / 1000;
 const dirPill = d => d > 0 ? '<span class="pill long">▲ LONG</span>' : d < 0 ? '<span class="pill short">▼ SHORT</span>' : '<span class="pill muted">↕</span>';
 
@@ -256,6 +256,7 @@ async function api(url, maxAge = 30) {
   const hit = cache[url];
   if (hit && Date.now() - hit.t < maxAge * 1000) return hit.data;
   const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = url.startsWith('/api/stats') ? await res.text() : await res.json();
   cache[url] = { t: Date.now(), data };
   return data;
@@ -267,11 +268,11 @@ function renderHeader() {
   if (!S) return;
   const m = S.market || {};
   let html = '';
-  for (const [k, v] of Object.entries(m)) html += `<span><b>${k}</b>${fp(v.price)} ${pct(v.change_5m)}</span>`;
+  for (const [k, v] of Object.entries(m)) html += `<span><b>${esc(k)}</b>${fp(v.price)} ${pct(v.change_5m)}</span>`;
   const ml = S.ml || {};
   if (ml.regime) html += `<span><b>режим</b><span class="${ml.regime.startsWith('up') ? 'up' : ml.regime.startsWith('down') ? 'down' : ''}">${esc(ml.regime)}</span></span>`;
   const down = Object.entries(S.venues || {}).filter(([, v]) => v.connected === 0 || v.connected === false).map(([k]) => k);
-  html += `<span class="dim">${S.symbols} монет · скан ${S.timing.scan.toFixed(2)}с${down.length ? ' · <span class="down">нет связи: ' + down.join(', ') + '</span>' : ''}</span>`;
+  html += `<span class="dim">${S.symbols} монет · скан ${(S.timing?.scan ?? 0).toFixed(2)}с${down.length ? ' · <span class="down">нет связи: ' + esc(down.join(', ')) + '</span>' : ''}</span>`;
   $('#market').innerHTML = html;
   $('#status').textContent = S.status ? '⏳ ' + S.status : '';
   const cards = S.cards || [];
@@ -314,9 +315,10 @@ function confirmsCell(c) {
 const crowdCell = c => !c.crowd ? '—' : c.crowd >= 5 ? `<span class="pill warn" title="движение всего рынка">${c.crowd}</span>` : String(c.crowd);
 function progressBar(c) {
   const lv = c.levels; if (!lv || !c.price) return '';
-  const d = c.direction, lo = lv.sl, hi = lv.tp3;
+  const lo = lv.sl, hi = lv.tp3 ?? lv.tp2 ?? lv.tp1;
+  if (lo == null || hi == null || hi === lo) return '';
   const pos = v => Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100));
-  const ticks = [lv.entry, lv.tp1, lv.tp2].map(v => `<i style="left:${pos(v)}%"></i>`).join('');
+  const ticks = [lv.entry, lv.tp1, lv.tp2].filter(v => v != null).map(v => `<i style="left:${pos(v)}%"></i>`).join('');
   const color = c.r_now >= 0 ? 'var(--green)' : 'var(--red)';
   return `<div class="bar" title="SL → TP3">${ticks}<b style="left:${pos(c.price)}%;background:${color}"></b></div>`;
 }
@@ -328,10 +330,10 @@ function renderTrade() {
       { k: 'Монета', v: setupCell, s: c => c.name },
       { k: 'Статус', v: c => statusPill(c.status) },
       { k: 'Цена', v: c => fp(c.price), num: true },
-      { k: 'Вход', v: c => fp(c.levels.entry), num: true },
-      { k: 'Стоп', v: c => `${fp(c.levels.sl)}<br><span class="src">${esc(c.levels.sl_src || '')}</span>`, num: true },
-      { k: 'Цели', v: c => targetsCell([c.levels.tp1, c.levels.tp2, c.levels.tp3], [c.levels.tp1_src, c.levels.tp2_src, c.levels.tp3_src]) },
-      { k: 'R:R', v: c => (c.levels.rr_tp1 || 0).toFixed(1), s: c => c.levels.rr_tp1, num: true },
+      { k: 'Вход', v: c => fp(c.levels?.entry), num: true },
+      { k: 'Стоп', v: c => c.levels ? `${fp(c.levels.sl)}<br><span class="src">${esc(c.levels.sl_src || '')}</span>` : '—', num: true },
+      { k: 'Цели', v: c => c.levels ? targetsCell([c.levels.tp1, c.levels.tp2, c.levels.tp3], [c.levels.tp1_src, c.levels.tp2_src, c.levels.tp3_src]) : targetsCell(c.targets, c.target_src) },
+      { k: 'R:R', v: c => (c.levels?.rr_tp1 || 0).toFixed(1), s: c => c.levels?.rr_tp1, num: true },
       { k: 'R сейчас', v: c => `${rFmt(c.r_now)}${c.r_now === null ? '' : progressBar(c)}`, s: c => c.r_now, num: true },
       { k: 'Подтверждения', v: confirmsCell, s: c => Object.values(c.confirms || {}).filter(v => v === true || (typeof v === 'string' && v !== 'n/a')).length, num: true,
         tip: 'на входе: поток тейкеров, спот, открытый интерес, ордерфлоу у экстремума; ★ — обязательное для этой стратегии' },
@@ -476,7 +478,7 @@ function pumpsHtml() {
       { k: 'База → пик', v: r => `${fp(r.base)} → ${fp(r.peak)}` },
       { k: 'Зона отката', v: r => `${fp(r.zone[0])} – ${fp(r.zone[1])}` },
       { k: 'Состояние', v: r => esc(r.state) + (r.levels ? ` · ${r.trade_dir > 0 ? 'лонг' : 'шорт'} ${fp(r.levels.entry)}, стоп ${fp(r.levels.stop)}, цели ${fp(r.levels.tp1)} / ${fp(r.levels.tp2)}` : ''), wrap: true },
-      { k: 'История правила', v: r => `${esc(r.stats.label)}: ${esc(r.stats.verdict)}, ${esc(r.stats.r)}, цель ${esc(r.stats.hit)}`, wrap: true },
+      { k: 'История правила', v: r => r.stats ? `${esc(r.stats.label)}: ${esc(r.stats.verdict)}, ${esc(r.stats.r)}, цель ${esc(r.stats.hit)}` : '—', wrap: true },
     ], rows, { empty: 'Пампов и дампов щитков за 48ч нет.' });
 }
 
@@ -499,7 +501,7 @@ function renderForming() {
     <h3>Формируются <small>фазы набрали часть баллов на закрытой 15m-свече, карточки ещё нет</small></h3>` +
     table('forming', [
       { k: 'Монета', v: r => `<b>${esc(r.name)}</b> ${dirPill(r.direction)}`, s: r => r.name },
-      { k: 'Фазы', v: r => r.phases.map(p => `${p.name} ${p.score}/${p.max}`).join(', '), s: r => Math.max(0, ...r.phases.map(p => p.score)), num: false },
+      { k: 'Фазы', v: r => r.phases.map(p => `${esc(p.name)} ${esc(p.score)}/${esc(p.max)}`).join(', '), s: r => Math.max(0, ...r.phases.map(p => p.score)), num: false },
       { k: 'Цена 5м', v: r => pct(r.sig.price_change_5m), s: r => r.sig.price_change_5m, num: true },
       { k: 'Покупатели', v: r => r.sig.delta_ratio === null ? '—' : ((1 + r.sig.delta_ratio) / 2 * 100).toFixed(0) + '%', s: r => r.sig.delta_ratio, num: true },
       { k: 'Контекст', v: r => esc((r.why || []).join(' · ')), wrap: true },
@@ -539,7 +541,7 @@ function demoHtml(demo) {
     <td class="num">${st.n ? Math.round(st.wins / st.n * 100) : 0}%</td><td class="num">${rFmt(st.r)}</td>
     <td>${barsSpark(st.days.map(d => d[1]))}</td></tr>`).join('');
   return `<h3>Демо-счёт BingX: ${tr.length} сделок, итог ${rFmt(eq)}, макс. просадка ${rFmt(maxDd)}</h3>${svg}
-    <table class="tbl"><thead><tr><th>Стратегия</th><th>Сделок</th><th>В плюс</th><th>R</th><th>R по дням</th></tr></thead><tbody>${rows}</tbody></table>`;
+    <div class="tablewrap"><table class="tbl"><thead><tr><th>Стратегия</th><th>Сделок</th><th>В плюс</th><th>R</th><th>R по дням</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function barsSpark(v) {
   if (!v.length) return '';
@@ -569,10 +571,12 @@ function renderHealth() {
 }
 
 const RENDER = { trade: renderTrade, wait: renderWait, done: renderDone, anom: renderAnom, forming: renderForming, stats: renderStats, health: renderHealth };
+if (!(tab in RENDER)) tab = 'wait';
 let renderSeq = 0;
 async function render() {
   if (!S) { $('#view').innerHTML = '<div class="empty">Подключение к боту…</div>'; return; }
   renderHeader();
+  if (document.activeElement && document.activeElement.tagName === 'SELECT' && document.activeElement.closest('#view')) return;   // an open list closes on re-render
   const seq = ++renderSeq;
   const focus = document.activeElement && document.activeElement.id;
   const pos = focus === 'filter' ? document.activeElement.selectionStart : null;
@@ -580,7 +584,9 @@ async function render() {
   try { html = await RENDER[tab](); } catch (err) { html = `<div class="empty">Ошибка: ${esc(err.message)}</div>`; }
   if (seq !== renderSeq) return;
   const y = window.scrollY;
+  const hs = [...document.querySelectorAll('#view .tablewrap')].map(el => el.scrollLeft);
   $('#view').innerHTML = html;
+  document.querySelectorAll('#view .tablewrap').forEach((el, i) => { if (hs[i]) el.scrollLeft = hs[i]; });
   window.scrollTo(0, y);
   if (focus === 'filter') { const f = $('#filter'); f.focus(); f.setSelectionRange(pos, pos); }
 }
@@ -622,6 +628,9 @@ setInterval(() => {
   const age = lastMsg ? Math.round((Date.now() - lastMsg) / 1000) : null;
   $('#conn').title = age === null ? 'нет связи с ботом' : `связь с ботом · обновлено ${age}с назад`;
   if (age !== null && age > 30) $('#conn').className = 'dot off';
+  const ca = $('#conn-age');   // touch screens have no tooltips: the age as text
+  ca.textContent = age === null ? 'нет связи' : age > 10 ? `${age}с назад` : '';
+  ca.className = age === null || age > 30 ? 'down mono' : 'dim mono';
 }, 1000);
 
 // browser notifications of new trades (opt-in, the bell in the header)
@@ -699,20 +708,23 @@ document.querySelectorAll('.tf').forEach(b => b.addEventListener('click', () => 
   tf = Number(b.dataset.tf); document.querySelectorAll('.tf').forEach(x => x.classList.toggle('active', x === b)); drawCoin(true);
 }));
 
+let coinSeq = 0, htfTimer = null;
 async function loadCoin(fit = false) {
-  const symbol = coin; coinLoaded = Date.now();
+  const symbol = coin, seq = ++coinSeq; coinLoaded = Date.now();
+  clearTimeout(htfTimer);
   try {
     $('#chart').classList.add('loading');
-    const res = await fetch(`/api/coin?symbol=${encodeURIComponent(symbol)}`);
+    const [res, trades] = await Promise.all([fetch(`/api/coin?symbol=${encodeURIComponent(symbol)}`),
+      fetch(`/api/demo?symbol=${encodeURIComponent(symbol)}`).then(r => r.ok ? r.json() : { trades: [] }).then(x => x.trades || []).catch(() => [])]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    demoTrades = await fetch(`/api/demo?symbol=${encodeURIComponent(symbol)}`).then(r => r.ok ? r.json() : { trades: [] }).then(x => x.trades || []).catch(() => []);
-    if (symbol !== coin) return;
+    if (symbol !== coin || seq !== coinSeq) return;
+    demoTrades = trades;
     coinData = data; drawCoin(fit);
     // The 1h / 5m history is loading in the background: ask again shortly
-    if (!data.htf_loaded && !data.note) setTimeout(() => { if (coin === symbol) loadCoin(false); }, 4000);
-  } catch (err) { $('#d-body').innerHTML = `<div class="empty">Ошибка: ${esc(err.message)}</div>`; }
-  finally { if (symbol === coin) $('#chart').classList.remove('loading'); }
+    if (!data.htf_loaded && !data.note) htfTimer = setTimeout(() => { if (coin === symbol) loadCoin(false); }, 4000);
+  } catch (err) { if (symbol === coin && seq === coinSeq) $('#d-body').innerHTML = `<div class="empty">Ошибка: ${esc(err.message)}</div>`; }
+  finally { if (symbol === coin && seq === coinSeq) $('#chart').classList.remove('loading'); }
 }
 
 // The two-sided scenario card (scenarios.py): the reaction zone, resistances above, supports below, a long
@@ -888,8 +900,9 @@ function drawCoin(fit) {
     };
     if (f.a_ts && f.b_ts) {
       const pts = [{ time: t(f.a_ts), value: f.a }, { time: t(f.b_ts), value: f.b }];
-      legLine(pts, 'rgba(201,209,221,.85)');
-      if (f.c !== undefined && card0.entered_at) legLine([{ time: t(f.b_ts), value: f.b }, { time: t(card0.entered_at * 1000), value: f.c }], 'rgba(201,209,221,.5)');
+      const legCol = document.documentElement.dataset.theme === 'light' ? 'rgba(40,50,70,.75)' : 'rgba(201,209,221,.85)';
+      legLine(pts, legCol);
+      if (f.c !== undefined && card0.entered_at) legLine([{ time: t(f.b_ts), value: f.b }, { time: t(card0.entered_at * 1000), value: f.c }], legCol);
     }
     line(f.a, '#7d8590', 'A · начало импульса', 2, 1); line(f.b, '#7d8590', 'B · конец импульса', 2, 1);
     for (const [r, p] of f.retr) {
@@ -986,12 +999,12 @@ function drawCoin(fit) {
       { k: 'От цены', v: z => pct(d.price ? z.price / d.price - 1 : null), s: z => d.price ? z.price / d.price - 1 : 0, num: true },
       { k: 'Сила', v: z => z.strength.toFixed(1), s: z => z.strength, num: true },
       { k: 'Источники', v: z => esc(z.label), wrap: true },
-      { k: 'Тип', v: z => z.kinds.map(k => `<span style="color:${KIND_COLORS[k] || '#888'}">${esc(KIND_NAMES[k] || k)}</span>`).join(', '), wrap: true },
+      { k: 'Тип', v: z => z.kinds.map(k => `<span style="color:${kindColor(k)}">${esc(kindName(k))}</span>`).join(', '), wrap: true },
     ], (d.zones || []).slice().sort((a, b) => b.price - a.price), { empty: 'Карта ещё не построена (нужна история свечей).' }) +
     `<h3>Журнал монеты за 48ч</h3>` +
     table('coin-journal', [
       { k: 'Время', v: r => clock(r.ts_ms), s: r => r.ts_ms },
-      { k: 'Тип', v: r => ({ anomaly: 'аномалия', structured: 'фаза', setup: 'сетап', entry: 'вход', card: 'итог' })[r.kind] || r.kind },
+      { k: 'Тип', v: r => ({ anomaly: 'аномалия', structured: 'фаза', setup: 'сетап', entry: 'вход', card: 'итог' })[r.kind] || esc(r.kind) },
       { k: 'Событие', v: r => `${esc(r.group_key)} ${r.vetoed ? '<span class="dim">✗ ' + esc(vetoRu(r.vetoed)) + '</span>' : ''}${r.reason ? '<br><span class="src">' + esc(reasonRu(r.reason)) + '</span>' : ''}`, wrap: true },
       { k: 'Цена', v: r => fp(r.price), num: true },
       { k: 'Потом 15м', v: r => pct(dirRet(r, '15m')), num: true },
@@ -1057,7 +1070,8 @@ function drawHeat() {
   const canvas = $('#heat'); if (!canvas || !chart) return;
   const box = $('#chart').getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
+  const cw = Math.round(box.width * dpr), ch = Math.round(box.height * dpr);
+  if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }   // assigning reallocates the buffer
   const ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, box.width, box.height);
   // only over the candles' pane (the OI / CVD panes sit below it)
   const pane0 = chart.panes()[0], paneH = pane0 ? pane0.getHeight() : box.height;
@@ -1120,7 +1134,7 @@ $('#flow-on').addEventListener('change', () => drawCoin(false));
 // touch screens show no title tooltips: a tap on a toolbar label's «?» shows its explanation
 document.querySelectorAll('.heat-toggle[title]').forEach(l => {
   const q = document.createElement('button'); q.className = 'ghost q'; q.type = 'button'; q.textContent = '?'; q.setAttribute('aria-label', 'пояснение');
-  q.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const p = $('#pop'); p.textContent = l.title; p.hidden = !p.hidden; });
+  q.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const p = $('#pop'), same = !p.hidden && p.dataset.src === l.title; p.textContent = l.title; p.dataset.src = l.title; p.hidden = same; });
   l.after(q);
 });
 document.addEventListener('click', e => { const p = $('#pop'); if (p && !p.hidden && !e.target.classList.contains('q')) p.hidden = true; });

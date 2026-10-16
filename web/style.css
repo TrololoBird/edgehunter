@@ -104,7 +104,7 @@ pre.rich { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; l
 
 @media (max-width: 700px) {
   header#top { gap: 8px; } .status { text-align: left; } nav#tabs { top: 0; position: static; overflow-x: auto; white-space: nowrap; }
-  #chart { height: 420px; }
+  #chart { height: min(320px, 48vh); }
   .drawer-head { flex-wrap: wrap; } .drawer-tools { flex-wrap: wrap; gap: 4px; }
   .heat-toggle { font-size: 11px; }
 }
@@ -123,7 +123,7 @@ pre.rich { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; l
 .zone-tip { position: absolute; z-index: 3; max-width: 220px; padding: 6px 8px; font-size: 12px; pointer-events: none;
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
 .pop { margin: 4px 14px; padding: 8px 10px; font-size: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; }
-button.q { padding: 0 4px; color: var(--dim); font-size: 11px; }
+button.q { min-width: 28px; min-height: 28px; padding: 4px 8px; color: var(--dim); font-size: 11px; }
 @media (hover: hover) { button.q { display: none; } }
 svg.equity { width: 100%; max-width: 720px; height: auto; display: block; margin: 6px 0 12px; }
 svg.equity .eq { fill: none; stroke: var(--cyan); stroke-width: 1.8; }
