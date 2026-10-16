@@ -1198,6 +1198,8 @@ class Scanner:
         # spread n.s.), the coin's 24h volume rank (reversal after extremes is an illiquid-coin effect)
         risk = getattr(self, 'event_risk', None)
         sig['event_risk'] = risk.of(symbol) if risk is not None else None
+        news = risk.news_of(symbol) if risk is not None else None     # eng-135: shadow (the veto rides event_risk)
+        sig['news'], sig['news_age_h'] = (news['kind'], news['age_h']) if news else (None, None)
         closes = [c[4] for c in list(md.d1)[-365:]]
         price = self._price_of(symbol)
         sig['near52'] = price / max(closes) if len(closes) >= 250 and price and max(closes) > 0 else None
@@ -1503,15 +1505,20 @@ class Scanner:
     # ------------------------------------------------------------------ background loops
 
     async def event_risk_loop(self):
-        """Binance's Monitoring Tag and scheduled perpetual delistings (event_risk.py), hourly, off the loop."""
+        """Binance's Monitoring Tag and scheduled perpetual delistings (event_risk.py), hourly; the Binance / Upbit
+        announcements (eng-135) every 2 minutes; all off the loop."""
         from event_risk import EventRisk
         self.event_risk = getattr(self, 'event_risk', None) or EventRisk()
+        last_full = 0.0
         while self._running:
             try:
-                await asyncio.to_thread(self.event_risk.refresh)
+                if time.time() - last_full >= 3600:
+                    await asyncio.to_thread(self.event_risk.refresh)
+                    last_full = time.time()
+                await asyncio.to_thread(self.event_risk.refresh_news)
             except Exception as e:
                 logger.warning(f"Event risk refresh failed: {e!r}")
-            await asyncio.sleep(3600)
+            await asyncio.sleep(120)
 
     async def pools_loop(self):
         """Per-strategy coin pools (pools.py), rebuilt every CONFIG.pools.refresh_sec off the loop."""

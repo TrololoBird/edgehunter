@@ -120,7 +120,7 @@ pre.rich { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; l
 .scen-short { border-color: #ff5c5c; }
 
 /* audit-80: zone tooltip, touch popover, equity curve, heat scale */
-.zone-tip { position: absolute; z-index: 3; max-width: 220px; padding: 6px 8px; font-size: 12px; pointer-events: none;
+#chart > .zone-tip, .zone-tip { position: absolute; z-index: 3; max-width: 220px; padding: 6px 8px; font-size: 12px; pointer-events: none;
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
 .pop { margin: 4px 14px; padding: 8px 10px; font-size: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; }
 button.q { min-width: 28px; min-height: 28px; padding: 4px 8px; color: var(--dim); font-size: 11px; }

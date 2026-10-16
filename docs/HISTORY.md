@@ -709,3 +709,20 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   minute (getmtime per card showed in watchdog stalls); `tools/coinglass_heatmap.py` - research downloader of
   CoinGlass's keyless order-book heatmap (undocumented endpoint, never a live input). CoinGecko: `/global` and sectors
   were already used; keyless offers nothing else needed.
+- eng-135 (2026-10-16, owner: "decide yourself, implement, update the UI"): exchange announcements in `event_risk.py`,
+  keyless, every 2 minutes. Binance CMS catalogue 161 "Binance Will Delist A, B on <date>" (spot delisting; Alpha /
+  Margin removals ignored) and Upbit "거래지원 종료" (delisting) / "유의 종목 지정" (warning list) now feed
+  `event_risk`, so the eng-53 long veto covers them: Binance until the day after the delisting date, an Upbit delisting
+  until its removal date (>= 14 days), an Upbit warning 14 days unless "유의 종목 지정 해제" lifts it; the veto is kept
+  apart from the newest announcement (a later listing never clears it); Upbit's first_listed_at (edits move listed_at). Before, only the Monitoring Tag and the perpetual's deliveryDate did (the spot delisting of EPIC /
+  QUICK on 2026-10-14 had no flag). Listings (Binance catalogue 48 "Will List", Upbit "KRW 마켓 ... 추가") are journal
+  only: `news` / `news_age_h` (shadow; studies RockawayX / The TIE / Klein Labs: a listing effect fades in 1-2 days, often
+  reverses) - a `pump` trigger from them needs a pre-registered archive test. Only bases of Binance USDT perpetuals;
+  Upbit tickers may name another coin (a false veto costs a card). Dashboard: an "анонсы" item in the header (48h, ⚠ =
+  longs vetoed) and the announcement / veto line in the coin drawer. Token unlocks: no free source (DefiLlama
+  emissions 402, Tokenomist paid). logic_version eng-135; keep_waiting_from unchanged: the veto is checked at the
+  trigger, so a waiting card is judged by the new rule anyway.
+  Same release, dashboard: the BingX demo summary follows the period picker (it summed every trade since 11.10:
+  -30.5R of which -35.4R came from 11-13.10, before the executor fixes of eng-129; since 14.10 +4.9R on 10 trades);
+  the zone tooltip is absolute again (`#chart > div {position: relative}` outranked `.zone-tip`, the shown tip took
+  layout space and the chart jumped under the cursor).

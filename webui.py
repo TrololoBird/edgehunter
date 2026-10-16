@@ -313,6 +313,7 @@ def build_state(scanner) -> Dict:
                                                                                          scanner._pump_cache)],
         'session': {'results': dict(results), 'r': [_num(r) for r in r_list]},
         'logic_version': CONFIG.journal.logic_version,
+        'news': scanner.event_risk.view() if getattr(scanner, 'event_risk', None) else [],
     }
 
 
@@ -598,6 +599,9 @@ class WebUI:
             if detail is None:
                 return self._json({'error': f'no data for {symbol}'})
         detail['journal'] = await asyncio.to_thread(self.reader.history, 'all', 48, symbol, 300)
+        risk = getattr(self.scanner, 'event_risk', None)
+        detail['news'] = risk.news_of(symbol) if risk else None
+        detail['event_risk'] = risk.of(symbol) if risk else None
         # the order-book heatmap older than the ~4h in memory, from the recorder's depth files (4 days, 10-min steps)
         try:
             import time as _time

@@ -75,6 +75,7 @@ const STATUS = {
 };
 const statusPill = st => { const [t, c, tip] = STATUS[st] || [st, 'muted', '']; return `<span class="pill ${c}" title="${esc(tip)}">${esc(t)}</span>`; };
 const VETO = {
+  event_risk: 'риск-событие биржи: метка Monitoring, делистинг Binance / Upbit или предупреждение Upbit — лонги запрещены',
   perp_led: 'движение ведёт перп, спот не подтверждает', no_orderflow: 'нет подтверждения ордерфлоу',
   no_oi: 'открытый интерес не подтверждает (у продолжения должен расти, после снятия стопов — падать)',
   no_flow: 'поток тейкеров против сделки', no_spot: 'спот против сделки',
@@ -271,6 +272,10 @@ function renderHeader() {
   for (const [k, v] of Object.entries(m)) html += `<span><b>${esc(k)}</b>${fp(v.price)} ${pct(v.change_5m)}</span>`;
   const ml = S.ml || {};
   if (ml.regime) html += `<span><b>режим</b><span class="${ml.regime.startsWith('up') ? 'up' : ml.regime.startsWith('down') ? 'down' : ''}">${esc(ml.regime)}</span></span>`;
+  const NEWS = { binance_delist: ['делистинг Binance', 'down'], binance_listing: ['листинг Binance', 'up'],
+    upbit_delist: ['делистинг Upbit', 'down'], upbit_warning: ['предупреждение Upbit', 'down'], upbit_listing: ['листинг Upbit KRW', 'up'], upbit_unwarn: ['Upbit снял предупреждение', 'up'] };
+  const news = (S.news || []).filter(n => n.risk || nowSec() - n.ts < 172800);
+  if (news.length) html += `<span title="${esc(news.map(n => `${n.base}: ${(NEWS[n.kind] || [n.kind])[0]}, ${ago(nowSec() - n.ts)} назад${n.risk ? ' — лонги запрещены' : ''}`).join('\n'))}"><b>анонсы</b>${news.slice(0, 6).map(n => `<span class="${(NEWS[n.kind] || ['', ''])[1]}">${esc(n.base)}${n.risk ? '⚠' : ''}</span>`).join(' ')}${news.length > 6 ? ' …' : ''}</span>`;
   const down = Object.entries(S.venues || {}).filter(([, v]) => v.connected === 0 || v.connected === false).map(([k]) => k);
   html += `<span class="dim">${S.symbols} монет · скан ${(S.timing?.scan ?? 0).toFixed(2)}с${down.length ? ' · <span class="down">нет связи: ' + esc(down.join(', ')) + '</span>' : ''}</span>`;
   $('#market').innerHTML = html;
@@ -524,8 +529,19 @@ async function renderStats() {
 
 // The BingX demo account: equity curve in R with its drawdown, and each strategy's total with a daily-R sparkline
 function demoHtml(demo) {
-  const tr = (demo && demo.trades || []).filter(t => t.r !== null && t.closed_ms);
-  if (!tr.length) return '';
+  // the same period as the stats report (the picker): the all-time total mixed in the executor's first days (stops
+  // missing on BingX, orphans) and setups switched off since
+  const since = Date.now() - hours * 3600e3;
+  const tr = (demo && demo.trades || []).filter(t => t.r !== null && t.closed_ms && t.closed_ms >= since);
+  const open = (demo && demo.trades || []).filter(t => !t.closed_ms).length;
+  if (!tr.length) return `<h3>Демо-счёт BingX: за период закрытых сделок нет${open ? ` · открыто ${open}` : ''}</h3>`;
+  const per = {};
+  for (const t of tr) {
+    const st = per[t.strategy || '?'] = per[t.strategy || '?'] || { strategy: t.strategy || '?', n: 0, wins: 0, r: 0, days: {} };
+    st.n++; st.wins += t.r > 0; st.r += t.r;
+    const day = Math.floor(t.closed_ms / 86400000); st.days[day] = (st.days[day] || 0) + t.r;
+  }
+  const strategies = Object.values(per).map(st => ({ ...st, days: Object.entries(st.days).sort((a, b) => a[0] - b[0]) })).sort((a, b) => a.r - b.r);
   let eq = 0, peak = 0, maxDd = 0;
   const pts = tr.map(t => { eq += t.r; peak = Math.max(peak, eq); maxDd = Math.min(maxDd, eq - peak); return [t.closed_ms, eq, eq - peak]; });
   const w = 720, h = 160, x0 = pts[0][0], x1 = pts[pts.length - 1][0] || x0 + 1;
@@ -538,10 +554,10 @@ function demoHtml(demo) {
     <text x="2" y="${+Y(hi) + 4}" class="tick">${hi.toFixed(1)}R</text><text x="2" y="${+Y(lo) + 4}" class="tick">${lo.toFixed(1)}R</text>
     <polygon points="${X(x0)},${Y(0)} ${dd} ${X(x1)},${Y(0)}" class="dd"/>
     <polyline points="${line}" class="eq"/></svg>`;
-  const rows = (demo.strategies || []).map(st => `<tr><td>${esc(st.strategy)}</td><td class="num">${st.n}</td>
+  const rows = strategies.map(st => `<tr><td>${esc(st.strategy)}</td><td class="num">${st.n}</td>
     <td class="num">${st.n ? Math.round(st.wins / st.n * 100) : 0}%</td><td class="num">${rFmt(st.r)}</td>
     <td>${barsSpark(st.days.map(d => d[1]))}</td></tr>`).join('');
-  return `<h3>Демо-счёт BingX: ${tr.length} сделок, итог ${rFmt(eq)}, макс. просадка ${rFmt(maxDd)}</h3>${svg}
+  return `<h3>Демо-счёт BingX за ${hours >= 48 ? Math.round(hours / 24) + ' дн' : hours + ' ч'}: ${tr.length} сделок, итог ${rFmt(eq)}, макс. просадка ${rFmt(maxDd)}${open ? ` · открыто ${open}` : ''}</h3>${svg}
     <div class="tablewrap"><table class="tbl"><thead><tr><th>Стратегия</th><th>Сделок</th><th>В плюс</th><th>R</th><th>R по дням</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function barsSpark(v) {
@@ -987,6 +1003,9 @@ function drawCoin(fit) {
     ($('#heat-on').checked && d.heatmap ? '<span class="heat-scale" title="яркость = объём корзины к медиане своего бара (лог-шкала)"><i class="hs-bid"></i>bid <i class="hs-ask"></i>ask · ×2 … ×16+ к медиане</span>' : '');
 
   let body = '';
+  const NEWS_RU = { binance_delist: 'Binance объявил делистинг', binance_listing: 'листинг на Binance',
+    upbit_delist: 'Upbit объявил делистинг', upbit_warning: 'Upbit: монета в списке предупреждений', upbit_listing: 'листинг на Upbit (KRW)', upbit_unwarn: 'Upbit снял предупреждение' };
+  if (d.news || d.event_risk) body += `<div class="hint ${d.event_risk ? 'down' : ''}">${d.news ? `Анонс: ${esc(NEWS_RU[d.news.kind] || d.news.kind)}, ${ago(d.news.age_h * 3600)} назад` : ''}${d.event_risk ? `${d.news ? ' · ' : ''}лонги запрещены (${esc(d.event_risk === 'monitoring' ? 'метка Monitoring на Binance' : d.event_risk.startsWith('delisting ') ? 'делистинг фьючерса ' + d.event_risk.slice(10) : NEWS_RU[d.event_risk] || d.event_risk)})` : ''}</div>`;
   for (const c of d.cards || []) {
     body += `<h3>${dirPill(c.direction)} ${esc(c.setup)} <small>${esc((FAMILY[c.strategy] || [''])[0])}</small> ${statusPill(c.status)} <small>${c.finished ? esc(reasonRu(c.finish_reason)) : 'создан ' + ago(nowSec() - c.created) + ' назад'}</small></h3>
       <div class="hint">опора: ${anchorText(c)}</div>
