@@ -91,7 +91,7 @@ aside#drawer.hidden { display: none; }
 .drawer-tools { display: flex; gap: 6px; }
 .tf.active { border-color: var(--cyan); color: var(--cyan); }
 #chart { height: 430px; flex: none; position: relative; }
-#heat { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+#heat { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
 #chart > div { position: relative; z-index: 1; }
 .heat-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; opacity: .85; cursor: pointer; }
 .family { font-size: 11px; opacity: .75; }
