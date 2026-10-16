@@ -257,7 +257,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
             CONFIG.levels.min_rr_tp1_floor > 0 and rrs[0] < CONFIG.levels.min_rr_tp1_floor:
         reason = f"R:R to TP1 {rrs[0]:.2f} < {CONFIG.levels.min_rr_tp1_floor:g}"
     own_tp1 = plan.get('min_rr_tp1')
-    if reason is None and own_tp1 and rrs[0] is not None and rrs[0] < own_tp1:
+    if reason is None and own_tp1 and real[0] and rrs[0] is not None and rrs[0] < own_tp1:
         # audit 2026-10-16 C07: the method's ratio to its FIRST target (Seiden's 3:1 to the opposing zone)
         reason = f"R:R to TP1 {rrs[0]:.2f} < {own_tp1:g} (the method's own)"
     # the averaging add (pump: one more unit at half the way to the stop) makes the position's risk 1.5 units
@@ -629,15 +629,16 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         if exit['stop'][0] == 'price' and not exit.get('own_stop'):
             stop, sl_src = clear_pool(zones, stop, entry, direction, plan.get('symbol'), sl_src)
     risk = direction * (entry - stop)
-    if 0 < risk < floor and not exit.get('own_stop'):   # eng-58: with the pierce model too (stop_levels)
+    cap = exit.get('max_stop_pct')
+    if 0 < risk < floor and not exit.get('own_stop') and not cap:   # eng-58: with the pierce model too (stop_levels)
         # audit C06: a method whose stop IS its rule (exit 'own_stop') is not widened by the common ATR floor
         stop, risk = entry - direction * floor, floor
         sl_src = f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
-    cap = exit.get('max_stop_pct')
-    if cap and risk > cap * entry * (1 + 1e-9):
-        # audit 2026-10-16 C06: the method's own stop limit (O'Neil's 7-8%) is a rule, not a floor the common layer
-        # may widen: a geometry that needs a farther stop is no trade of this method
-        return None
+    if cap and risk > cap * entry:
+        # audit 2026-10-16 C06: the method's own stop limit (O'Neil: sell 7-8% below the BUY point) is a rule the common
+        # layer may not widen (no ATR floor above): measured from the actual entry, a farther stop moves to the limit
+        stop, risk = entry - direction * cap * entry, cap * entry
+        sl_src = f"{int(round(cap * 100))}% below the entry (the method's limit)" 
     if fixed_tp and zones:
         targets, sources = select_targets(zones, entry, direction, atr, 'opposite_liquidity')
         if targets and sources[0] != 'ATR step':

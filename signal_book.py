@@ -650,10 +650,14 @@ class SignalBook:
             minutes = list(candles_of(s.symbol))
             if minutes:
                 done = (int(minutes[-1][0]) + MINUTE_MS) // size * size
-                bars = [b for b in resample(minutes, int(sar['tf_min']), done) if sar['last_ts'] < b[0] and b[0] + size <= done]
+                bars = [b for b in resample(minutes, int(sar['tf_min']), done, min_share=0.9)
+                        if sar['last_ts'] < b[0] and b[0] + size <= done]
                 for b in bars:
+                    # the two-bar limit only with the bar right before this one (not across a dropped bar)
+                    adjacent = int(b[0]) - size == int(sar['last_ts'])
                     nxt, ep, af, stopped = parabolic_sar_step(sar['sar'], sar['ep'], sar['af'], d, b[2], b[3],
-                                                              prev_hi=sar.get('prev_hi'), prev_lo=sar.get('prev_lo'))
+                                                              prev_hi=sar.get('prev_hi') if adjacent else None,
+                                                              prev_lo=sar.get('prev_lo') if adjacent else None)
                     sar.update(sar=nxt, ep=ep, af=af, last_ts=int(b[0]), prev_hi=float(b[2]), prev_lo=float(b[3]))
                     if stopped:
                         break

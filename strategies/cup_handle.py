@@ -11,8 +11,8 @@ Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
 - the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
 - stop below the handle's low; TP1 the pivot + 61% of the depth, TP2 + the full depth (Bulkowski's measure rule); O'Neil's own rule
   (cut losses at 7-8%, take 20-25%) is an exit rule, not an entry filter: the stop is the nearer of the handle's low
-  and 8% below the entry, the minimum R:R to the measured target is 1. The 8% is a hard limit (audit C06): a stop the
-  common ATR floor / pool clearing would push farther rejects the entry instead of widening it.
+  and 8% below the entry, the minimum R:R to the measured target is 1. The 8% is a hard limit from the actual entry
+  (audit C06): the common ATR floor does not widen it.
 """
 from typing import Dict, List, Optional, Sequence
 

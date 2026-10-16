@@ -8,10 +8,11 @@ ATR(14) of the setup's timeframe measured at the PLACEBO's own entry, a random t
 (never within +-48 h of the real trade), the 4h-trend sign and the ATR/price tercile equal to the real entry's; the same
 exit rules and costs (levels.simulate + stats.net_r, as replay.run).
 
-AUDIT 2026-10-16 (R04): what this measures is NARROW - R of a full exit at TP1 (r_tp1) of levels.simulate over the 8h
-CONFIG.levels.trade_ttl_sec window, the same for the real entry and its placebo. It is NOT the cards' full result
-(cards.final_r: the Turtles' channel, Connors' SMA5, BB1's SAR, W / M's band, partials, structural lifetimes). Its
-verdicts are about "the entry with a fixed geometry over 8 hours", never "the strategy's full profitability".
+AUDIT 2026-10-16 (R04 / R07): what this measures is NARROW - R of a full exit at TP1 (r_tp1) of levels.simulate over
+the 8h CONFIG.levels.trade_ttl_sec window, the same for the real entry and its placebo; NOT the cards' full result
+(cards.final_r: the Turtles' channel, Connors' SMA5, BB1's SAR, W / M's band, partials). Its verdicts are about "the
+entry with a fixed geometry over 8 hours". The bootstrap block = 12 NON-EMPTY 4h buckets as the protocol fixed it,
+which is more than 48 calendar hours when signals are rare; changing it needs a protocol amendment before a run.
 
     python research/scripts/research_entries_placebo_eng133.py --run data/replay/eng133 --placebos 100 --seed 133 \
         --boot 5000 --workers 4 --out research/entries_placebo_eng133.md
@@ -287,10 +288,7 @@ def contrast(ts_a, v_a, ts_b, v_b, rng, n_boot, lag):
     disjoint groups); 48 h moving-block bootstrap on the union of the buckets. Returns a dict or None (< 30 buckets)."""
     ua, xa = bucket_series(ts_a, v_a) if len(ts_a) else (np.array([], dtype=np.int64), np.array([]))
     ub, xb = bucket_series(ts_b, v_b) if len(ts_b) else (np.array([], dtype=np.int64), np.array([]))
-    # audit 2026-10-16 R07: the CALENDAR grid of 4h buckets (empty ones included), so a block of 12 is 48 real hours
-    # (the union of non-empty buckets made a block span days when signals were rare)
-    both_u = np.union1d(ua, ub)
-    grid = np.arange(both_u[0], both_u[-1] + 1, dtype=np.int64) if len(both_u) else both_u
+    grid = np.union1d(ua, ub)
     A = np.full(len(grid), np.nan)
     B = np.full(len(grid), np.nan)
     A[np.searchsorted(grid, ua)] = xa
@@ -304,10 +302,6 @@ def contrast(ts_a, v_a, ts_b, v_b, rng, n_boot, lag):
     diff = ma - mb
     d0 = np.nanmean(A) - np.nanmean(B)
     both = np.where(np.isfinite(A) & np.isfinite(B), A - B, np.nan)
-    ok = np.isfinite(diff)                              # a draw of only empty buckets on one side has no mean
-    diff, ma = diff[ok], ma[ok]
-    if not len(diff):
-        return None
     p_boot = float((diff <= 0).mean())                  # one-sided: A > B
     p_nw = newey_west_p(both if np.isfinite(both).sum() >= 30 else (A - np.nanmean(B)), lag)
     return dict(a=float(np.nanmean(A)), b=float(np.nanmean(B)), diff=float(d0), n_b=int(len(ua)),

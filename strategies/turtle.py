@@ -40,7 +40,8 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
     Replays System 1 over the daily history (one hypothetical position at a time, either direction): the result of
     the most recent breakout's trade. None without one.
     Audit 2026-10-16, the Original Turtle Rules: "a losing breakout if the price subsequently moved 2N against the
-    position before a profitable 10 day exit" - False when the 2N stop came first, True when the 10-day exit did;
+    position before a profitable 10 day exit" - True only for a profitable 10-day exit, False for the 2N stop or a
+    10-day exit at a loss;
     N is the one known BEFORE the breakout day (ns[i - 1]: ns[i] held that day's own true range); a breakout still
     open (neither yet) is unknown -> None (was: marked at the last close, a criterion the rules do not use).
     """
@@ -49,7 +50,7 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
     for i in range(21, len(d1)):
         c = d1[i]
         if pos is not None:
-            d, stop = pos['d'], pos['stop']
+            d, entry, stop = pos['d'], pos['entry'], pos['stop']
             lo10 = min(x[3] for x in d1[i - 10:i])
             hi10 = max(x[2] for x in d1[i - 10:i])
             exit_px = None
@@ -62,8 +63,13 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
             elif d < 0 and c[2] >= hi10:
                 exit_px = hi10
             if exit_px is not None:
-                last = exit_px != stop
-                pos = None
+                if exit_px == stop:
+                    last, pos = False, None          # 2N against first: a losing breakout
+                elif d * (exit_px - entry) > 0:
+                    last, pos = True, None           # a profitable 10-day exit first: a winner
+                else:
+                    pos = None                       # a losing 10-day exit: the hypothetical trade is out, but by the
+                    last = False                     # rules' test (2N before a PROFITABLE exit) it is not a winner
             continue
         hi20 = max(x[2] for x in d1[i - 20:i])
         lo20 = min(x[3] for x in d1[i - 20:i])

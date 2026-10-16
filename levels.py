@@ -191,13 +191,15 @@ def reached_after(candles: Sequence[Sequence[float]], end_ts: int, end: float, d
     return max(prices) if direction > 0 else min(prices)
 
 
-def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[float] = None) -> List[List[float]]:
+def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[float] = None,
+             min_share: float = 1.0) -> List[List[float]]:
     """
     1m candles [open_time, open, high, low, close, quote_vol, taker_buy_quote] -> `minutes` candles aligned to
     epoch multiples of `minutes`. Only buckets that have closed by `now_ms` are returned (all of them when None).
     Audit 2026-10-16 C04: a bucket is a candle only when all its `minutes` 1m candles are there (a duplicate or
     out-of-order minute is skipped); a closed bucket with a missing minute is dropped, never filled in. With
-    now_ms None the last bucket may still be forming and is kept.
+    now_ms None the last bucket may still be forming and is kept. min_share < 1 keeps a bucket missing a few minutes
+    (a 4h trailing bar must not vanish for one lost minute; its range is then a lower bound).
     """
     if minutes <= 1:
         return [list(c) for c in candles if now_ms is None or c[0] + MINUTE_MS <= now_ms]
@@ -222,10 +224,10 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
         else:
             out.append([start, c[1], c[2], c[3], c[4], c[5], c[6]])
             count.append(1)
-    n = len(out)
+    n, need = len(out), max(1, int(minutes * min_share + 1e-9))
     if now_ms is not None:
-        return [bar for bar, k in zip(out, count) if bar[0] + size <= now_ms and k >= minutes]
-    return [bar for i, (bar, k) in enumerate(zip(out, count)) if k >= minutes or i == n - 1]
+        return [bar for bar, k in zip(out, count) if bar[0] + size <= now_ms and k >= need]
+    return [bar for i, (bar, k) in enumerate(zip(out, count)) if k >= need or i == n - 1]
 
 
 def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: int,
@@ -303,11 +305,15 @@ def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     """
     if not spring_range:
         return False
-    bars = resample([c for c in minute_candles if since_ms <= c[0] < until_ms], 15, until_ms)
+    window = [c for c in minute_candles if since_ms <= c[0] < until_ms]
+    tf = 15
+    bars = resample(window, 15, until_ms)
+    if not bars:
+        tf, bars = 5, resample(window, 5, until_ms)    # a test shorter than one aligned 15m bar: its 5m bars
     if not bars:
         return False
     avg = sum(b[2] - b[3] for b in bars) / len(bars)
-    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range / max(1.0, spring_minutes / 15) ** 0.5
+    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range / max(1.0, spring_minutes / tf) ** 0.5
 
 
 # eng-124: bps of an executor.max_notional_usd market order walked through each coin's REST book (worst side, from the

@@ -101,6 +101,7 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
                 continue
             ce = (lo + hi) / 2
             return {'setup': 'SILVER BULLET LONG' if d > 0 else 'SILVER BULLET SHORT', 'direction': d,
+                    'session_end_ms': start + 3_600_000,     # audit: not entered in its hour = over (SignalBook)
                     'setup_note': f"ICT Silver Bullet {local:%H}:00-{local.hour + 1:02d}:00 NY: took {pool[1]}'s "
                                   f"{'low' if d > 0 else 'high'} {ref_lo if d > 0 else ref_hi:.6g}, displaced, 5m FVG "
                                   f"{lo:.6g}-{hi:.6g} (CE {ce:.6g}) after a structure shift; target {target:.6g}",
@@ -161,8 +162,8 @@ class SilverBulletStrategy(Strategy):
             # map's nearest opposite liquidity, a target no source names)
             return {'skip': "no draw on liquidity ahead"}
         targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity', first=first)
-        # audit 2026-10-16: formed in a Silver Bullet hour = entered in THAT hour (the card no longer lives on after
-        # it: the common kill-zone check is a shadow and the structural lifetimes have no clock)
+        # audit 2026-10-16: formed in a Silver Bullet hour = entered in THAT hour: a trigger outside it is vetoed
+        # 'off_session' and the card ends at the hour's close (sig session_end_ms)
         session = None
         formed = sig.get('event_ts') or sig.get('anchor_ts')
         if formed:

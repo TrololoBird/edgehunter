@@ -1150,8 +1150,9 @@ class DemoExecutor:
             for f in out:
                 if left <= 0:
                     break
-                kept.append(f)
-                left -= float(f['amount'])
+                amount = float(f['amount'])
+                kept.append(f if amount <= left else {**f, 'amount': left})   # only the part this trade held
+                left -= amount
             out = kept
         return out
 

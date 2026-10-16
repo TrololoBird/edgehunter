@@ -41,7 +41,7 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
     w = london_window(now_ms)
     if w is None:
         return None
-    start, _, a0, a1 = w
+    start, w_end, a0, a1 = w
     asia = [b for b in bars5 if a0 <= b[0] < a1]
     inside = [b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms]
     # audit 2026-10-16: the WHOLE Asian range (20:00-00:00 NY = 48 5m bars; resample drops incomplete bars) - a range
@@ -84,6 +84,7 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
                 continue
             draw = pdh if d > 0 else pdl
             return {'setup': 'PO3 LONG' if d > 0 else 'PO3 SHORT', 'direction': d,
+                    'session_end_ms': w_end,                 # audit: not entered by 05:00 NY = over (SignalBook)
                     'setup_note': f"ICT Power of Three: London open took the Asian {'low' if d > 0 else 'high'} "
                                   f"{a_lo if d > 0 else a_hi:.6g} (Judas swing), shifted structure, 5m FVG "
                                   f"{lo:.6g}-{hi:.6g} (CE {ce:.6g}); target the Asian {'high' if d > 0 else 'low'} "

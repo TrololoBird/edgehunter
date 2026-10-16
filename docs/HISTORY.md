@@ -752,4 +752,17 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   Seiden's opposing zone fresh = not returned to. Not done (needs the primary texts or the owner): the full Turtle /
   Crabel / Connors / Wyckoff / Seiden / ICT (OTE, Silver Bullet, PO3) / Pring rule sets, the Turtle unit risk (eng-91,
   the owner's), the funding rate history per settlement, OI in the archive, order ids binding the demo's fills.
+  Review fixes (same release): the journal's 8h replay reads group_key ('ENTRY RSI2 ...') for no_stop; the Turtle S1
+  filter calls only a PROFITABLE 10-day exit a winner; Silver Bullet / PO3 cards end at their window's close
+  (session_end_ms) and 'off_session' entries stay out of the hit rates; the Cup's 8% is measured from the actual entry
+  (a farther stop moves to the limit, no ATR floor); the dump bounce's volume rank is recomputed while the d1 histories
+  load; a spring test shorter than one 15m bar is judged on its 5m bars; the SAR trail keeps a 4h bar missing <= 10% of
+  its minutes and applies the two-bar limit only to adjacent bars; Silver Bullet / PO3 skip a check across a dropped
+  5m bucket; the eng-133 placebo script keeps its protocol's non-empty-bucket blocks (a calendar grid needs a protocol
+  amendment) and states its 8h TP1 scope. VOID for the new rules (docs/PLAN_server_eng76.md section 2):
+  research/bb1_windows.md (125-bar squeeze window, ddof 1, one-bar SAR), the dip-buy / dump-bounce tables of
+  research_pumps.py (non-causal), every replay before eng-136. Behaviour changes to note: broke_structure without a
+  swing in reach is False (a leg out of price discovery no longer passes the displacement gate); stats' verdicts per
+  strategy since verdict_since (eng-55) now mix the old and new rules of connors / breakout / trendline / cup_handle /
+  bollinger - the owner decides whether to raise verdict_since.
   logic_version eng-136, keep_waiting_from eng-136.
