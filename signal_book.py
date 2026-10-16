@@ -409,7 +409,13 @@ class SignalBook:
         crowd = {d: len({sym for (sym, dd) in self._recent_setups if dd == d}) for d in (1, -1)}
         for direction, sig in directional:
             sig['market_crowd'] = crowd[direction]
+        taken = set()
         for symbol, group_key, strategy, direction, sig, price in candidates:
+            # audit A13: one open card per coin and direction holds within one scan too (two setups of the same
+            # scan both passed the same_side check above, which only sees cards already open): the first one wins
+            if (symbol, direction) in taken:
+                continue
+            taken.add((symbol, direction))
             tracked = TrackedSignal(
                 symbol=symbol, group_key=group_key, direction=direction, mode=strategy.name,
                 created=now, price_at_signal=price, sig=sig, last_seen=now, last_price=price,
@@ -615,7 +621,7 @@ class SignalBook:
         if key is not None:
             self.finished_legs[(s.symbol, s.direction)] = (key, now)
         s.status, s.finished_at = status, now
-        s.finish_reason, s.finish_price = reason or status, s.last_price
+        s.finish_reason, s.finish_price = reason or status, (s.exit_fill if s.exit_fill is not None else s.last_price)
         self.finished_now.append(s)
         label = f"SL after TP{s.best_target}" if status == 'SL' and s.best_target else status
         if status == 'SL' and s.entered_at and s.levels and s.direction * (s.levels['sl'] - s.levels['entry']) > 0:
@@ -640,13 +646,17 @@ class SignalBook:
             # since the signal; the stop follows it (the SAR's own stop-and-reverse touch is the stop order)
             from strategies.maniac import parabolic_sar_step
             size = int(sar['tf_min']) * MINUTE_MS
-            minutes = list(candles_of(s.symbol))
+            # audit A12: as of the minute being managed (s.managed_ms = its end): a bar that closes later must not
+            # move the stop that minute is judged against
+            asof = s.managed_ms or None
+            minutes = [m for m in candles_of(s.symbol) if asof is None or m[0] + MINUTE_MS <= asof]
             if minutes:
                 done = (int(minutes[-1][0]) + MINUTE_MS) // size * size
                 bars = [b for b in resample(minutes, int(sar['tf_min']), done) if sar['last_ts'] < b[0] and b[0] + size <= done]
                 for b in bars:
-                    nxt, ep, af, stopped = parabolic_sar_step(sar['sar'], sar['ep'], sar['af'], d, b[2], b[3])
-                    sar.update(sar=nxt, ep=ep, af=af, last_ts=int(b[0]))
+                    nxt, ep, af, stopped = parabolic_sar_step(sar['sar'], sar['ep'], sar['af'], d, b[2], b[3],
+                                                              prev_hi=sar.get('prev_hi'), prev_lo=sar.get('prev_lo'))
+                    sar.update(sar=nxt, ep=ep, af=af, last_ts=int(b[0]), prev_hi=float(b[2]), prev_lo=float(b[3]))
                     if stopped:
                         break
                 if d * (sar['sar'] - lv['sl']) > 0:
@@ -784,11 +794,15 @@ class SignalBook:
         lv = s.levels or {}
         exit_ms = (s.finished_at or s.last_seen or 0) * 1000
         risk = lv.get('risk0') or (abs(lv['entry'] - lv['sl']) if lv.get('entry') and lv.get('sl') else None)
-        rest = s.exit_fill if (status == 'SL' and s.exit_fill is not None) else             (lv.get('sl') if status == 'SL' else s.last_price)
+        # audit A10: the recorded fill (stop / overlay exit on its 1m candle) is the exit price of EVERY part still
+        # open; the scan's later last_price only when no fill was recorded
+        out = s.exit_fill if s.exit_fill is not None else (lv.get('sl') if status == 'SL' else s.last_price)
+        rest = out
         if s.units or not all(isinstance(lv.get(k), (int, float)) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')):
             gross = s.r_now
-            if status == 'SL' and s.exit_fill is not None and risk and not s.units:
-                gross = s.direction * (s.exit_fill - lv['entry']) / risk
+            if s.exit_fill is not None and risk:
+                gross = (sum(s.direction * (s.exit_fill - u[0]) for u in s.units) if s.units
+                         else s.direction * (s.exit_fill - lv['entry'])) / risk
             if gross is not None and (s.plan or {}).get('p1r_done'):
                 share = CONFIG.executor.partial_share
                 gross = share * CONFIG.executor.partial_r + (1 - share) * gross   # eng-105: the partial at +1R
@@ -1030,7 +1044,8 @@ class SignalBook:
                                                              spring_minute or 0.0):
             reason = 'no_spring_test'
         elif s.group_key in ('SPRING', 'UTAD') and not pullback_spread_ok(minutes, s.zone_since_ms, trigger['time'],
-                                                                         s.sig.get('spring_range')):
+                                                                         s.sig.get('spring_range'),
+                                                                         s.sig.get('spring_tf_min') or 60):
             reason = 'no_spring_test'                # eng-55: the test's spread did not narrow
         confirms = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, trigger['time'], trigger.get('extreme_time')) \
             if confirm_of else {}
@@ -1350,13 +1365,31 @@ class SignalBook:
             # a trade restored from a state saved before eng-58: never judge it on candles before its entry
             s.managed_ms = int(((s.entered_at or 0) // 60 + 1) * 60_000)
         candles = [c for c in (list(candles_of(s.symbol)) if candles_of else []) if c[0] >= s.managed_ms]
+        # audit A08: the exit levels that are price conditions (the Turtles' N-day channel, Bollinger's opposite band)
+        # are checked on every final 1m candle's extremes like the stop - the scan price missed the wicks between scans
+        channel = band = None
+        days = (s.plan or {}).get('trail_days')
+        if candles and days and self.daily_of:
+            from strategies.turtle import trail_level
+            channel = trail_level(self.daily_of(s.symbol) or [], days, d)
+        if candles and (s.plan or {}).get('band_exit') and self.band_of:
+            band = self.band_of(s.symbol, d)
         for c in candles:
             s.managed_ms = int(c[0]) + MINUTE_MS
             o, hi, lo = float(c[1]), float(c[2]), float(c[3])
             if not (s.plan or {}).get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl'])):
                 s.exit_fill = min(o, lv['sl']) if d > 0 else max(o, lv['sl'])
                 return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))
-            for k in ((1,) if (s.plan or {}).get('trail_after_tp1') else (3, 2, 1)):
+            # Faith: out when the price went BEYOND the N-day low / high (a gap through it fills at the open)
+            if channel is not None and ((lo < channel) if d > 0 else (hi > channel)):
+                s.exit_fill = min(o, channel) if d > 0 else max(o, channel)
+                return self._finish(s, 'CLOSED', now, f"exit on the {days}-day {'low' if d > 0 else 'high'} "
+                                                      f"{channel:.6g} (Turtles)")
+            if band is not None and ((hi >= band) if d > 0 else (lo <= band)):
+                s.exit_fill = max(o, band) if d > 0 else min(o, band)
+                return self._finish(s, 'CLOSED', now, f"the opposite Bollinger band {band:.6g} reached (Bollinger)")
+            # audit S10: a plan without targets (no_tp: Turtles, Connors, SAR) never books a TP from its placeholders
+            for k in (() if (s.plan or {}).get('no_tp') else (1,) if (s.plan or {}).get('trail_after_tp1') else (3, 2, 1)):
                 t = lv[f'tp{k}']
                 if k > s.best_target and ((hi >= t * (1 + through)) if d > 0 else (lo <= t * (1 - through))):
                     s.best_target = k
@@ -1411,6 +1444,7 @@ class SignalBook:
             # Bollinger W / M (eng-55): out when price reaches the opposite band as it stands now
             band = self.band_of(s.symbol, d)
             if band is not None and d * (price - band) >= 0:
+                s.exit_fill = price
                 return self._finish(s, 'CLOSED', now, f"the opposite Bollinger band {band:.6g} reached (Bollinger)")
         days = (s.plan or {}).get('trail_days')
         if days and self.daily_of:
@@ -1419,6 +1453,7 @@ class SignalBook:
             # Faith: exited when the price went BEYOND the N-day low / high (a breakout against the position), not on
             # touching it
             if level is not None and d * (price - level) < 0:
+                s.exit_fill = price
                 return self._finish(s, 'CLOSED', now, f"exit on the {days}-day {'low' if d > 0 else 'high'} "
                                                       f"{level:.6g} (Turtles)")
         if self._macro_guard(s, price, now):

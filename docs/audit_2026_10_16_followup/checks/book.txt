@@ -1,0 +1,16 @@
+== base
+A03 next SAR 95.2 (TA-Lib two-bar clamp: 90)
+A08 channel 95, minute low 94, scan 100: status=ENTRY exit_fill=None final_r=None
+A10 stop fill 90, scan 105 -> +0.480R; scan 90 -> -1.020R
+A12 status=SL finished=True sl=109.2 managed_min=3
+A13 same coin / direction in one scan: cards created 2
+S10 no_tp plan, placeholder tp3 103 traded: status=TP3 best_target=3
+A15 rows 5000, newest closed_ms 5000, UNTRACKED in API: False
+== fix
+A03 next SAR 90 (TA-Lib two-bar clamp: 90)
+A08 channel 95, minute low 94, scan 100: status=CLOSED exit_fill=95.0 final_r=-0.26
+A10 stop fill 90, scan 105 -> -1.020R; scan 90 -> -1.020R
+A12 status=ENTRY finished=False sl=99 managed_min=480
+A13 same coin / direction in one scan: cards created 1
+S10 no_tp plan, placeholder tp3 103 traded: status=ENTRY best_target=0
+A15 rows 5000, newest closed_ms 10003, UNTRACKED in API: False

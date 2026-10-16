@@ -275,6 +275,11 @@ def _anomaly_effect(label: str):
 _DEMO_CACHE: Dict = {'t': 0.0, 'by_card': {}}
 
 
+# the close reasons stats.demo_table leaves out of the demo's results (rejected / duplicate / untracked rows)
+DEMO_EXCLUDED = ('ERROR', 'NO_MARKET', 'EARLY_CLOSE', 'OVERLAP', 'INVALID_ENTRY', 'PRICE_GAP', 'LATE_FILL', 'UNTRACKED',
+                 'NO_STOP', 'NOT_FILLED', 'ORPHAN')
+
+
 def _demo_status(scanner, now: float) -> Dict[str, Dict]:
     """card key (symbol|setup|entered_at) -> its newest BingX demo row: the page shows why a card in a trade has no
     position on BingX (no market, the coin held by another card, an error, closed by the exchange). Re-read every 30s
@@ -572,12 +577,15 @@ class WebUI:
         def read():
             conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
             try:
-                where, args = "WHERE r IS NOT NULL", []
+                # audit A15: the rows stats.demo_table counts (not the duplicates / rejects it excludes, whatever their
+                # r), the NEWEST 5000 (oldest-first with LIMIT froze the page at the first 5000), returned in order
+                where = f"WHERE r IS NOT NULL AND COALESCE(close_reason, '') NOT IN ({','.join('?' * len(DEMO_EXCLUDED))})"
+                args = list(DEMO_EXCLUDED)
                 if symbol:
                     where, args = "WHERE entry_fill IS NOT NULL AND symbol = ?", [symbol]
                 rows = conn.execute("SELECT opened_ms, closed_ms, symbol, strategy, setup, direction, entry_fill, exit_avg, sl, "
-                                    f"tp1, r, pnl_usd, close_reason FROM demo_trades {where} ORDER BY COALESCE(closed_ms, opened_ms) "
-                                    "LIMIT 5000", args).fetchall()
+                                    f"tp1, r, pnl_usd, close_reason FROM demo_trades {where} "
+                                    "ORDER BY COALESCE(closed_ms, opened_ms) DESC, id DESC LIMIT 5000", args).fetchall()[::-1]
             finally:
                 conn.close()
             keys = ('opened_ms', 'closed_ms', 'symbol', 'strategy', 'setup', 'direction', 'entry', 'exit', 'sl', 'tp1',

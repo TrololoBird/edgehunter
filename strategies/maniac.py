@@ -352,11 +352,13 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
 
 
 def parabolic_sar_step(sar: float, ep: float, af: float, d: int, hi: float, lo: float,
-                       step: float = 0.02, cap: float = 0.2) -> Tuple[float, float, float, bool]:
+                       step: float = 0.02, cap: float = 0.2, prev_hi: Optional[float] = None,
+                       prev_lo: Optional[float] = None) -> Tuple[float, float, float, bool]:
     """
     One bar of Wilder's Parabolic SAR (New Concepts in Technical Trading Systems, 1978: AF 0.02, +0.02 per new extreme,
     at most 0.20) for a position of side d: (new sar, ep, af, stopped). The bar is first checked against the current
-    SAR (a touch stops the position), then the SAR for the next bar is computed.
+    SAR (a touch stops the position), then the SAR for the next bar is computed. prev_hi / prev_lo: the PREVIOUS
+    bar's extremes - Wilder (and TA-Lib's SAR) keep the SAR outside the last TWO bars' range (audit A03).
     """
     if (d > 0 and lo <= sar) or (d < 0 and hi >= sar):
         return sar, ep, af, True
@@ -365,6 +367,10 @@ def parabolic_sar_step(sar: float, ep: float, af: float, d: int, hi: float, lo: 
     nxt = sar + af * (ep - sar)
     # Wilder: the SAR never moves into the bar's range (here: beyond this bar's extreme against the position)
     nxt = min(nxt, lo) if d > 0 else max(nxt, hi)
+    if d > 0 and prev_lo is not None:
+        nxt = min(nxt, prev_lo)
+    elif d < 0 and prev_hi is not None:
+        nxt = max(nxt, prev_hi)
     return nxt, ep, af, False
 
 
