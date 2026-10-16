@@ -91,6 +91,8 @@ def fvg_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, i
     l = [x[3] for x in ltf]
     c = [x[4] for x in ltf]
     for i in range(start + 2, len(ltf) - 1):
+        if ltf[i][0] - ltf[i - 2][0] != 2 * interval_ms:
+            continue                                       # a bar missing between them (a dropped gapped bucket)
         j = i - 1                                          # the displacement candle
         span = h[j] - l[j]
         if span <= 0 or (c[j] - o[j]) * direction <= 0:     # eng-119: no body share (ours) - the FVG is the displacement
@@ -152,6 +154,8 @@ def fvg_setup(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, int
     if swing is None:
         return None
     for i in range(start + 2, len(ltf)):
+        if ltf[i][0] - ltf[i - 2][0] != 2 * interval_ms:
+            continue                                       # a bar missing between them (a dropped gapped bucket)
         j = i - 1                                          # the displacement candle
         span = h[j] - l[j]
         if span <= 0 or (c[j] - o[j]) * direction <= 0:     # eng-119: no body share (ours) - the FVG is the displacement

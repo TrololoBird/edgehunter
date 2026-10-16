@@ -1,4 +1,4 @@
-== prev (6b771ba)
+== prev
 true result of the fixture: exit 95 for 1.0, exit fee 0.0475, entry fee 0.025*100*1 -> pnl -5.0475 + ...
 A06 order filled 1.0 @95 in full, only a 0.3 fill @110 listed      exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
 A06 the same, order still working (status open)                    exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
@@ -12,12 +12,14 @@ A04 5m bucket of minutes 10-14 lost minute 12 (inner) -> 5m bars 12, bucket at m
 A04 5m bucket 2 lost its first minute 10     -> 5m bars 12, bucket at minute 10 kept: True 
 A04 5m bucket of minutes 10-14 lost its last minute 14 -> 5m bars 12, bucket at minute 10 kept: True 
 A04 5m bucket 2 lost minutes 11, 12          -> 5m bars 12, bucket at minute 10 kept: True 
-== fix (fix)
+FVG all bars           -> None
+FVG bar 11 dropped     -> {'gap_lo': 101.0, 'gap_hi': 103.0, 'ce': 102.0, 'mss': 101.5, 'extreme': 99.0, 'time': 3900000} (a gap 101..103 that bar 11 traded through)
+== fix
 true result of the fixture: exit 95 for 1.0, exit fee 0.0475, entry fee 0.025*100*1 -> pnl -5.0475 + ...
 A06 order filled 1.0 @95 in full, only a 0.3 fill @110 listed      exit, fees, pnl, error = (95.0, 0.0975, -5.0975, None)
 A06 the same, order still working (status open)                    exit, fees, pnl, error = (None, None, None, 'exit fill pending')
 A06 the same, order without a reported fee                         exit, fees, pnl, error = (None, None, None, 'exit fill pending')
-A06 the same, order without an average price                       exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+A06 the same, order without an average price                       exit, fees, pnl, error = (0.0, 0.0975, -100.0975, None)
 SAR      live ('ENTRY', None, 99.0, None)  batch ('ENTRY', None, 99.0, None)  -> SAME
 EMA      live ('TP1', None, 126.4944, None)  batch ('TP1', None, 126.4944, None)  -> SAME
 channel  live ('ENTRY', None, 50.0, None)  batch ('ENTRY', None, 50.0, None)  -> SAME
@@ -26,3 +28,5 @@ A04 5m bucket of minutes 10-14 lost minute 12 (inner) -> 5m bars 12, bucket at m
 A04 5m bucket 2 lost its first minute 10     -> 5m bars 11, bucket at minute 10 kept: False {'patched': 1, 'dropped': 1}
 A04 5m bucket of minutes 10-14 lost its last minute 14 -> 5m bars 11, bucket at minute 10 kept: False {'patched': 1, 'dropped': 2}
 A04 5m bucket 2 lost minutes 11, 12          -> 5m bars 11, bucket at minute 10 kept: False {'patched': 1, 'dropped': 3}
+FVG all bars           -> None
+FVG bar 11 dropped     -> None (a gap 101..103 that bar 11 traded through)

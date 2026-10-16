@@ -189,6 +189,7 @@ def reached_after(candles: Sequence[Sequence[float]], end_ts: int, end: float, d
 _NAN = float('nan')
 # audit A04: inner buckets with missing minutes kept ('patched') / dropped by resample's quality policy, since start
 RESAMPLE_QUALITY: Dict[str, int] = {'patched': 0, 'dropped': 0}
+_QUALITY_SEEN: set = set()      # (minutes, bucket ts, minutes present): each gapped bucket counted once, not per call
 
 
 def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[float] = None,
@@ -230,7 +231,11 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
             continue
         if complete and len(s) < minutes:
             ok = (i > 0 and bar[0] in s and bar[0] + size - MINUTE_MS in s and len(s) >= cover * minutes)
-            if i > 0:                       # the leading bucket of a sliding buffer is partial by construction
+            key = (minutes, bar[0], hash(frozenset(s)))   # coins merged: an approximate count of distinct gaps
+            if i > 0 and key not in _QUALITY_SEEN:   # the leading bucket of a sliding buffer is partial by construction
+                if len(_QUALITY_SEEN) > 200_000:
+                    _QUALITY_SEEN.clear()
+                _QUALITY_SEEN.add(key)
                 RESAMPLE_QUALITY['patched' if ok else 'dropped'] += 1
             if not ok:
                 continue

@@ -127,3 +127,15 @@ for name, gone in (('5m bucket of minutes 10-14 lost minute 12 (inner)', {12}), 
     bars = levels.resample([c for c in base if c[0] // M not in gone], 5, 60 * M)
     print(f"A04 {name:40s} -> 5m bars {len(bars)}, bucket at minute 10 kept: {any(b[0] == 10 * M for b in bars)}",
           getattr(levels, 'RESAMPLE_QUALITY', ''))
+
+# ------------------------------------------------- FVG across a dropped bucket (review of bb73b99, finding 2)
+from strategies.ict import fvg_setup       # noqa: E402
+F = 300_000
+bars = [[k * F, 100., 101., 99., 100.] for k in range(10)]          # flat; swing high 101.5 at bar 5
+bars[5] = [5 * F, 100., 101.5, 99., 100.]
+bars += [[10 * F, 100., 103., 100., 102.5],                          # the displacement
+         [11 * F, 102.5, 104., 100.5, 103.5],                        # bar 11 trades 100.5-104: no gap
+         [12 * F, 103.5, 105., 103., 104.5]]
+dropped = bars[:11] + bars[12:]                                      # bucket 11 dropped (its first minute lost)
+print('FVG all bars           ->', fvg_setup(bars, 1, 8 * F, F))
+print('FVG bar 11 dropped     ->', fvg_setup(dropped, 1, 8 * F, F), '(a gap 101..103 that bar 11 traded through)')

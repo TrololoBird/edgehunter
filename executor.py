@@ -1110,7 +1110,7 @@ class DemoExecutor:
             fills = []
         exits = self._exit_fills(fills, exit_side, trade['opened_ms'], time.time() * 1000)
         qty, entry = float(trade.get('qty') or 0), float(trade.get('entry_fill') or 0)
-        exit_avg = None
+        exit_avg = exit_fees = None
         if exits and qty:
             exit_avg, closed_qty, exit_fees = await self._exit_summary(trade['symbol'], exits, tries=1)   # under the lock
             if exit_avg is not None and not 0.98 * qty <= closed_qty <= 1.02 * qty:
@@ -1175,7 +1175,7 @@ class DemoExecutor:
                 return None, 0.0, None
             filled, avg = float(o.get('filled') or 0), float(o.get('average') or 0)
             fee = o.get('fee') or {}
-            if (o.get('status') not in ('closed', 'canceled', 'expired') or filled <= 0 or avg <= 0
+            if (str(o.get('status') or '').lower() not in ('closed', 'canceled', 'expired')   # ccxt passes BingX's EXPIRED raw or filled <= 0 or avg <= 0
                     or fee.get('cost') is None or fee.get('currency') not in (None, 'USDT', 'VST')):
                 # currency None: BingX swap orders omit feeAsset; their commission is in the USDT margin
                 return None, 0.0, None

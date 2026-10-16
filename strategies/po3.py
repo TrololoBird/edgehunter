@@ -68,6 +68,8 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
             continue
         for i in range(max(raid + 2, 2), len(inside)):
             a, m, c = inside[i - 2], inside[i - 1], inside[i]
+            if c[0] - a[0] != 2 * FIVE_MS:
+                continue                           # a bar dropped between them (resample's gap policy): no FVG
             span = m[2] - m[3]
             if span <= 0 or (m[4] - m[1]) * d <= 0:     # eng-119: no body share (ours)
                 continue
