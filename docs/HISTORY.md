@@ -720,6 +720,11 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   eng-55 research measured the old rule: its +0.14R does not cover the new one); S04 spring test spread scaled by the
   spring's timeframe; S05 Seiden's 3:1 on TP1; S06 Bollinger's min_rr after the stop's padding; S11 the P&F count is a
   filler. keep_waiting_from eng-136 (detection / plans changed).
+  Review of 6b771ba: a demo exit is priced and its fees taken from each exit ORDER (fetch_order: status closed,
+  executedQty, avgPrice, commission), never from a fill list that may be partial; the 1m exit loop judges each minute
+  on the Turtle channel / Bollinger band / EMA trail known at that minute (live and a batch after a restart decide the
+  same); levels.resample_min_coverage 0.8: an inner bucket with minutes missing is kept only with its first and last
+  minute and >= 80% of minutes, else dropped (counted on the Health line).
 - eng-135 (2026-10-16, owner: "decide yourself, implement, update the UI"): exchange announcements in `event_risk.py`,
   keyless, every 2 minutes. Binance CMS catalogue 161 "Binance Will Delist A, B on <date>" (spot delisting; Alpha /
   Margin removals ignored) and Upbit "거래지원 종료" (delisting) / "유의 종목 지정" (warning list) now feed

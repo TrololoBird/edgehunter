@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 from config import CONFIG
 from journal import classify, veto_reason
 from levels import MINUTE_MS, funding_r, ltf_trigger, pullback_spread_ok, pullback_volume_ok, resample, slippage_bps
+HOUR_MS, DAY_MS = 3_600_000, 86_400_000
 from strategies.maniac import in_session
 from strategies.maniac_strategies import MANIAC_STRATEGIES
 
@@ -702,7 +703,9 @@ class SignalBook:
         be = lv['entry'] * (1 + d * BE_COST)
         new = max(lv['sl'], be) if d > 0 else min(lv['sl'], be)
         tf = int((s.plan or {}).get('trigger_minutes') or 5)
-        minutes = list(candles_of(s.symbol))
+        # as of the minute being managed (review of 6b771ba: the whole buffer let later bars move an earlier stop)
+        asof = s.managed_ms or None
+        minutes = [m for m in candles_of(s.symbol) if asof is None or m[0] + MINUTE_MS <= asof]
         bars = resample(minutes, tf, minutes[-1][0] + MINUTE_MS) if minutes else []
         if len(bars) >= 20:
             alpha, ema = 2 / 21, bars[0][4]
@@ -1367,17 +1370,24 @@ class SignalBook:
             s.managed_ms = int(((s.entered_at or 0) // 60 + 1) * 60_000)
         candles = [c for c in (list(candles_of(s.symbol)) if candles_of else []) if c[0] >= s.managed_ms]
         # audit A08: the exit levels that are price conditions (the Turtles' N-day channel, Bollinger's opposite band)
-        # are checked on every final 1m candle's extremes like the stop - the scan price missed the wicks between scans
-        channel = band = None
+        # are checked on every final 1m candle's extremes like the stop - the scan price missed the wicks between scans.
+        # Each minute is judged on the levels known at its OPEN (review of 6b771ba): only the days / 4h bars closed by
+        # then, re-read when a day / 4h boundary is crossed, so a later bar never decides an earlier minute
         days = (s.plan or {}).get('trail_days')
-        if candles and days and self.daily_of:
-            from strategies.turtle import trail_level
-            channel = trail_level(self.daily_of(s.symbol) or [], days, d)
-        if candles and (s.plan or {}).get('band_exit') and self.band_of:
-            band = self.band_of(s.symbol, d)
+        band_on = bool((s.plan or {}).get('band_exit') and self.band_of)
+        d1_all = list(self.daily_of(s.symbol) or []) if candles and days and self.daily_of else []
+        channel_at = band_at = None
+        channel = band = None
         for c in candles:
             s.managed_ms = int(c[0]) + MINUTE_MS
             o, hi, lo = float(c[1]), float(c[2]), float(c[3])
+            if d1_all and channel_at != int(c[0]) // DAY_MS:
+                from strategies.turtle import trail_level
+                channel_at = int(c[0]) // DAY_MS
+                channel = trail_level([b for b in d1_all if int(b[0]) + DAY_MS <= int(c[0])], days, d)
+            if band_on and band_at != int(c[0]) // (4 * HOUR_MS):
+                band_at = int(c[0]) // (4 * HOUR_MS)
+                band = self.band_of(s.symbol, d, int(c[0]))
             if not (s.plan or {}).get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl'])):
                 s.exit_fill = min(o, lv['sl']) if d > 0 else max(o, lv['sl'])
                 return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))

@@ -471,6 +471,11 @@ class LevelsConfig:
     # eng-55 Wyckoff's test also NARROWS the spread (StockCharts Wyckoff tutorial, tradingwyckoff: ranges 40-70%
     # smaller than the spring's): the pullback's average 15m range <= this x the spring candle's range scaled to 15m
     spring_test_spread_ratio: float = 0.6
+    # audit A04, the data-quality policy of a bucket INSIDE a 1m history with minutes missing (a stream reconnect;
+    # the 1m buffer is not backfilled): kept only when its first and last minute are there (open / close exact) and
+    # >= this share of its minutes is (high / low / volume at most understated by the gap); otherwise dropped and
+    # counted (levels.RESAMPLE_QUALITY). A partial LEADING bucket is always dropped
+    resample_min_coverage: float = 0.8
     # Lifetimes: waiting for the pullback, waiting for the trigger inside the zone, managing the trade
     watch_ttl_sec: int = 6 * 3600
     # A new card waits this long for the coin's 1h history / level map before its first plan is taken anyway

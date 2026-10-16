@@ -292,8 +292,8 @@ class Replay:
                 out[tf] = sum(trs) / len(trs)
         return out
 
-    def _band(self, symbol: str, direction: int) -> Optional[float]:
-        closes = [c[4] for c in self.coins[symbol].m15(self.now_ms)[-20:]]
+    def _band(self, symbol: str, direction: int, asof_ms: Optional[int] = None) -> Optional[float]:
+        closes = [c[4] for c in self.coins[symbol].m15(self.now_ms if asof_ms is None else int(asof_ms))[-20:]]
         if len(closes) < 20:
             return None
         mean = sum(closes) / 20

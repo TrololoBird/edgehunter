@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, sys.argv[1])
 from levels import resample, pullback_spread_ok  # noqa: E402
 
-m = [[i * 60_000, 100., 101., 99., 100., 1., .5, .01] for i in range(120) if i != 75]   # minute 75 lost on reconnect
+m = [[i * 60_000, 100., 101., 99., 100., 1., .5, .01] for i in range(120) if i != 77]   # minute 77 lost on reconnect (inside its 15m bucket)
 print('inner gap: 15m bars', len(resample(m, 15, 120 * 60_000)), '(8 buckets, the gapped one kept)')
 print('leading partial: 15m bars', len(resample(m[3:], 15, 120 * 60_000)), '(first bucket dropped)')
 w = [[i * 60_000, 100., 110., 90., 100., 1., .5, .01] for i in range(7, 29)]   # zone 10:07, trigger 10:29, wide bars

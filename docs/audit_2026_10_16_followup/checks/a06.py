@@ -23,7 +23,12 @@ def run(label, fills, orders, closed_ago_h=None):
             if method == 'fetch_order':
                 if a[0] not in orders:
                     raise RuntimeError('order not found')
-                return {'id': a[0], 'filled': orders[a[0]]}
+                # a finished order as BingX reports it (status, executedQty, avgPrice, commission): since the review of
+                # 6b771ba the exit price and fees come from the order, so the fixture states them
+                f = [x for x in fills if x.get('order') == a[0]]
+                avg = sum(x['price'] * x['amount'] for x in f) / sum(x['amount'] for x in f)
+                return {'id': a[0], 'status': 'closed', 'filled': orders[a[0]], 'average': avg,
+                        'fee': {'currency': 'USDT', 'cost': .0005 * avg * orders[a[0]]}}
             raise AssertionError(method)
         ex._call = fake
         if closed_ago_h is None:

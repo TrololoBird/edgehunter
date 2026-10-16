@@ -1112,16 +1112,17 @@ class DemoExecutor:
         qty, entry = float(trade.get('qty') or 0), float(trade.get('entry_fill') or 0)
         exit_avg = None
         if exits and qty:
-            exit_avg, closed_qty = await self._exit_summary(trade['symbol'], exits, tries=1)   # under the lock
-            if exit_avg is not None and closed_qty < 0.98 * qty:
-                # TP1 listed, the final stop / close not yet (audit A06: TP1's price was taken for the whole quantity)
+            exit_avg, closed_qty, exit_fees = await self._exit_summary(trade['symbol'], exits, tries=1)   # under the lock
+            if exit_avg is not None and not 0.98 * qty <= closed_qty <= 1.02 * qty:
+                # TP1 listed, the final stop / close not yet (audit A06: TP1's price was taken for the whole quantity);
+                # more than the position: an order of another trade got in - neither is this trade's result
                 exit_avg = None
         if exit_avg is None or not qty or not entry:
             # the fills list can lag a close (or the API is unreachable): retried by reconcile_loop (_refinalize)
             logger.info(f"Demo {reason} {trade['symbol']}: no exit fill listed yet, recovered by the 5-min pass")
             pnl = fees = None
         else:
-            fees = self._fees(entry, exit_avg, qty, exits)
+            fees = self._fees(entry, qty, exit_fees)
             pnl = d * (exit_avg - entry) * qty - fees
         risk = trade.get('risk_usd') or 0
         if not risk:
@@ -1153,39 +1154,41 @@ class DemoExecutor:
                 and opened_ms - 1_000 < (f.get('timestamp') or 0) <= min(closed_ms + 120_000, (next_open_ms or 1e18) - 1_000)]
 
     async def _exit_summary(self, symbol: str, exits: List[Dict], tries: int = 3) -> tuple:
-        """(exit price, quantity closed) of the listed exit fills in the POSITION's unit: per exit order its filled
-        amount from fetch_order (the unit qty comes from at the entry), priced at its fills' volume-weighted price (one
-        order's fills share one unit). A fill without an order id or an order that cannot be read: (None, 0) - not
-        proven complete (audit A06: an empty / unreadable list was taken as complete)."""
-        by_order: Dict[str, List[Dict]] = {}
+        """(exit price, quantity closed, exit fees in USDT) of the listed exit fills' ORDERS, all three from each order
+        itself (fetch_order): filled = executedQty in the position's unit, average = avgPrice over ALL its fills,
+        fee = commission over all its fills. The fills only name the orders: a fill list missing part of an order no
+        longer prices the whole order at the listed part (review of 6b771ba). Not proven -> (None, 0, None): a fill
+        without an order id, an order not readable, still working (open: more fills may come), without filled /
+        average, or without a reported fee (audit A06: no estimated result)."""
+        oids = []
         for f in exits:
             if not f.get('order'):
-                return None, 0.0
-            by_order.setdefault(str(f['order']), []).append(f)
-        value = closed = 0.0
-        for oid, fs in by_order.items():
+                return None, 0.0, None
+            if str(f['order']) not in oids:
+                oids.append(str(f['order']))
+        value = closed = fees = 0.0
+        for oid in oids:
             try:
                 o = await self._call('fetch_order', oid, symbol, tries=tries)
             except Exception as e:
                 logger.info(f"Demo exit order {symbol} {oid}: {e!r}")
-                return None, 0.0
-            filled = float(o.get('filled') or 0)
-            weight = sum(f['amount'] for f in fs)
-            if filled <= 0 or not weight:
-                return None, 0.0
-            value += filled * sum(f['price'] * f['amount'] for f in fs) / weight
+                return None, 0.0, None
+            filled, avg = float(o.get('filled') or 0), float(o.get('average') or 0)
+            fee = o.get('fee') or {}
+            if (o.get('status') not in ('closed', 'canceled', 'expired') or filled <= 0 or avg <= 0
+                    or fee.get('cost') is None or fee.get('currency') not in (None, 'USDT', 'VST')):
+                # currency None: BingX swap orders omit feeAsset; their commission is in the USDT margin
+                return None, 0.0, None
+            value += filled * avg
             closed += filled
-        return (value / closed if closed else None), closed
+            fees += abs(float(fee['cost']))
+        return value / closed, closed, fees
 
     @staticmethod
-    def _fees(entry: float, exit_avg: float, qty: float, exits: List[Dict]) -> float:
-        """The entry side at the configured taker rate; the exit side from BingX's own fee on the fills when it is
-        reported in USDT (a limit / take-profit exit pays maker), else the configured rate."""
-        half = CONFIG.journal.fee_round_trip / 2
-        paid = [f.get('fee') or {} for f in exits]
-        if paid and all(fe.get('currency') in ('USDT', 'VST') and fe.get('cost') is not None for fe in paid):
-            return half * entry * qty + sum(abs(float(fe['cost'])) for fe in paid)
-        return half * (entry + exit_avg) * qty
+    def _fees(entry: float, qty: float, exit_fees: float) -> float:
+        """The entry side at the configured taker rate (an estimate: the entry order's commission is not stored),
+        the exit side as BingX charged it on the exit orders (_exit_summary)."""
+        return CONFIG.journal.fee_round_trip / 2 * entry * qty + exit_fees
 
     async def _refinalize(self) -> None:
         """Closed trades whose exit fill was not listed at the close (1000PEPE 2026-10-06 11:07, the link failing):
@@ -1216,15 +1219,15 @@ class DemoExecutor:
             exits = self._exit_fills(cache[symbol], side, opened, closed, nxt)
             if not exits or not qty:
                 continue
-            exit_avg, closed_qty = await self._exit_summary(symbol, exits)
-            if exit_avg is None or closed_qty < 0.98 * qty:
+            exit_avg, closed_qty, exit_fees = await self._exit_summary(symbol, exits)
+            if exit_avg is None or not 0.98 * qty <= closed_qty <= 1.02 * qty:
                 # not proven complete: stays FILL_PENDING (no result rather than a partial one), retried for 3 days
                 if time.time() * 1000 - closed > 6 * 3_600_000 and tid not in self._short_warned:
                     self._short_warned.add(tid)
                     logger.warning(f"Demo result recovery {symbol}: exit orders cover {closed_qty:g} of {qty:g} after "
                                    f"6h - result left empty")
                 continue
-            fees = self._fees(entry, exit_avg, qty, exits)
+            fees = self._fees(entry, qty, exit_fees)
             pnl = d * (exit_avg - entry) * qty - fees
             with sqlite3.connect(self.db_path) as c:
                 c.execute("UPDATE demo_trades SET exit_avg = ?, fees_usd = ?, pnl_usd = ?, r = ?, error = NULL WHERE id = ?",

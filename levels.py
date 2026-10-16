@@ -187,6 +187,8 @@ def reached_after(candles: Sequence[Sequence[float]], end_ts: int, end: float, d
 
 
 _NAN = float('nan')
+# audit A04: inner buckets with missing minutes kept ('patched') / dropped by resample's quality policy, since start
+RESAMPLE_QUALITY: Dict[str, int] = {'patched': 0, 'dropped': 0}
 
 
 def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[float] = None,
@@ -194,10 +196,10 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
     """
     1m candles [open_time, open, high, low, close, quote_vol, taker_buy_quote, base_vol] -> `minutes` candles
     aligned to epoch multiples of `minutes`. Only buckets that have closed by `now_ms` are returned (all of them when
-    None), and the FIRST one only when complete: a history that starts mid-bucket is dropped rather than passed off
-    as a full bar (audit A04). A minute missing inside the history (a stream reconnect; the 1m buffer is not
-    backfilled) keeps its bucket: dropping it left holes in the 5m / 15m / 1h series (SAR steps lost, FVGs across
-    the hole, ORB's "first close beyond" not the first). base_vol (coins) is NaN when any minute lacks it (a row
+    None). Data quality (audit A04): a partial FIRST bucket (a history starting mid-bucket) is dropped; an inner
+    bucket with minutes missing is kept only when its first and last minute are present and its coverage is >=
+    CONFIG.levels.resample_min_coverage, else dropped (a hole beats a false bar; dropping every gapped bucket left
+    holes for one lost minute). Counts in RESAMPLE_QUALITY. base_vol (coins) is NaN when any minute lacks it (a row
     of the old 7-column format): never estimated from quote. complete=False keeps partial buckets (the chart's
     forming bar only, never a signal input).
     """
@@ -221,9 +223,19 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
         else:
             out.append([start, c[1], c[2], c[3], c[4], c[5], c[6], base])
             seen.append({int(c[0])})
-    keep = [(i > 0 or len(s) == minutes or not complete) and (now_ms is None or bar[0] + size <= now_ms)
-            for i, (bar, s) in enumerate(zip(out, seen))]
-    return [bar for bar, k in zip(out, keep) if k]
+    cover = CONFIG.levels.resample_min_coverage
+    res = []
+    for i, (bar, s) in enumerate(zip(out, seen)):
+        if now_ms is not None and bar[0] + size > now_ms:
+            continue
+        if complete and len(s) < minutes:
+            ok = (i > 0 and bar[0] in s and bar[0] + size - MINUTE_MS in s and len(s) >= cover * minutes)
+            if i > 0:                       # the leading bucket of a sliding buffer is partial by construction
+                RESAMPLE_QUALITY['patched' if ok else 'dropped'] += 1
+            if not ok:
+                continue
+        res.append(bar)
+    return res
 
 
 def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: int,
