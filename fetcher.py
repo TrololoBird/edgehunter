@@ -245,7 +245,9 @@ class MarketData:
 
     def apply_kline(self, market: str, k: dict):
         if k.get('i') == '1m':
-            candle = [int(k['t']), float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['q']), float(k['Q'])]
+            # [t, o, h, l, c, quote, taker buy quote, BASE volume] - the base volume (review: the VWAP's own weight)
+            candle = [int(k['t']), float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['q']), float(k['Q']),
+                      float(k['v']) if k.get('v') is not None else None]
             target = self.minute_klines if market == 'futures' else self.spot_minute_klines
             if target and target[-1][0] == candle[0]:
                 target[-1] = candle
@@ -254,7 +256,7 @@ class MarketData:
             if k.get('x'):
                 if market == 'futures':
                     self.minute_closed_until = max(self.minute_closed_until, candle[0])
-                self._add_closed_minute(market, candle, float(k['v']))
+                self._add_closed_minute(market, candle, float(k.get('v') or 0.0))
             return
 
         quote_vol = float(k['q'])
@@ -1161,7 +1163,7 @@ class DataFetcher:
         for market, sym, limit in jobs:
             rows = await self._fetch_klines(market, sym, '1m', limit + 1)
             md.seed_minutes(market, [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
-                                      float(k[10])] for k in rows or []], now_ms)
+                                      float(k[10]), float(k[5])] for k in rows or []], now_ms)
             if market == 'futures' and self.streams_started_ms:
                 # Binance's taker flow of the 15 minutes the streams did not see (a minute that closed before they
                 # started): Tier-0's 5m windows are valid at once (the other venues fill in live)
@@ -1447,6 +1449,21 @@ class DataFetcher:
                 await asyncio.gather(*(one(s) for s in symbols))
                 logger.info(f"Daily candles: {sum(1 for s in symbols if len(self.markets.get(s).d1 or []) >= 202) if symbols else 0}"
                             f" of {len(symbols)} coins have >= 202 closed days")
+                # review: what the detectors actually get - closed unique days, gaps, the span (limit 1400)
+                stats = []
+                for s_ in symbols:
+                    d1 = (self.markets.get(s_) or MarketData(symbol=s_)).d1 or []
+                    ts = [int(c[0]) for c in d1]
+                    stats.append((len(ts), len(set(ts)), sum(1 for a_, b_ in zip(ts, ts[1:]) if b_ - a_ != 86_400_000),
+                                  ts[0] if ts else None, ts[-1] if ts else None))
+                if stats:
+                    lens = sorted(x[0] for x in stats)
+                    longest = max(stats, key=lambda x: x[0])
+                    logger.info(f"Daily candles: length min {lens[0]} / median {lens[len(lens) // 2]} / max {lens[-1]}, "
+                                f"{sum(1 for x in stats if x[0] >= 1400)} coins with 1400, duplicates in "
+                                f"{sum(1 for x in stats if x[1] != x[0])}, gaps in {sum(1 for x in stats if x[2])}; "
+                                f"longest {time.strftime('%Y-%m-%d', time.gmtime(longest[3] / 1000)) if longest[3] else '-'}"
+                                f" .. {time.strftime('%Y-%m-%d', time.gmtime(longest[4] / 1000)) if longest[4] else '-'}")
             await asyncio.sleep(300)
 
     async def _dominance_loop(self):

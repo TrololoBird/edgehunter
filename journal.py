@@ -200,7 +200,7 @@ EXTRA_COLUMNS = {
     # eng-135 shadow: the coin's newest Binance / Upbit announcement (event_risk.news_of) and its age in hours
     'kimchi_prem': 'REAL', 'news': 'TEXT', 'news_age_h': 'REAL',
     # iceberg.py: hidden limit orders refilled at one price over the last 5 minutes (bid - ask USD, count)
-    'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'btc_bias': 'REAL', 'vpin': 'REAL', 'vol_entropy': 'REAL', 'lead_venue': 'TEXT', 'lead_corr': 'REAL', 'card_r': 'REAL', 'card_id': 'TEXT',
+    'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'btc_bias': 'REAL', 'vpin': 'REAL', 'vol_entropy': 'REAL', 'lead_venue': 'TEXT', 'lead_corr': 'REAL', 'card_r': 'REAL', 'card_id': 'TEXT', 'funding_hours': 'REAL',
     'prem_1h': 'REAL', 'prem_z': 'REAL', 'funding_1h': 'REAL', 'oi_vol': 'REAL', 'er_1h': 'REAL', 'chop_1h': 'REAL',
     'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
@@ -552,6 +552,7 @@ class SignalJournal:
             'tier2': int(bool(sig.get('tier2_active'))), 'rvol_1m': sig.get('rvol_1m', 0.0),
             'oi_change_5m': sig.get('oi_change_5m', 0.0), 'price_change_5m': sig.get('price_change_5m', 0.0),
             'delta_ratio': sig.get('delta_ratio', 0.0), 'funding_8h': sig.get('funding_rate', 0.0),
+            'funding_hours': sig.get('funding_interval_h'),           # review V09: the contract's funding interval
             'whale_net_5m': sig.get('whale_net_5m', 0.0), 'logic_version': CONFIG.journal.logic_version,
         }
         row.update(_features(sig))
@@ -1023,7 +1024,7 @@ class SignalJournal:
                 # eng-102: simulate reads limit_entry / volume_24h - without them every resting-limit entry was
                 # replayed as a market fill (next minute's open + slippage) at the default liquidity's slippage
                 f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h, "
-                f"limit_entry, volume_24h FROM signals "
+                f"funding_hours, limit_entry, volume_24h FROM signals "
                 f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
                 (*[due[label] for label in HORIZONS], limit),
             )
@@ -1099,7 +1100,8 @@ class SignalJournal:
             updates['mae_4h'] = min(float(k[3]) for k in window) / price - 1
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
             # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
-            updates.update(simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h')))
+            updates.update(simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h'),
+                                    funding_hours=row.get('funding_hours')))
             if row.get('tp1') is None and updates.get('outcome') in ('SL', 'OPEN'):
                 # eng-84: a method without targets (Bollinger's band, Crabel's session close, the Turtles' channel) can
                 # only read 'SL' / 'OPEN' here - its winners never showed (BB / ORB: 0 TP of 60). Its result is the

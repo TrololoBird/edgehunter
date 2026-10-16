@@ -37,7 +37,7 @@ MINUTE_MS = 60_000
 QUARTER_MS = 900_000
 HOUR_MS = 3_600_000
 DAY_MS = 86_400_000
-STREAM_COLS = [0, 1, 2, 3, 4, 6, 7]                  # the stream format [t, o, h, l, c, quote, taker buy quote]
+STREAM_COLS = [0, 1, 2, 3, 4, 6, 7, 5]               # the stream format [t, o, h, l, c, quote, taker buy quote, base]
 
 
 def _bucket_list(rows: np.ndarray, ms: int) -> List[List[float]]:
@@ -432,6 +432,7 @@ def _entry_row(e, now_ms: int) -> Dict:
             'tp2': lv.get('tp2'), 'tp3': lv.get('tp3'), 'rr_tp1': lv.get('rr_tp1'), 'sl_src': lv.get('sl_src'),
             'limit_entry': lv.get('limit_entry'), 'volume_24h': (e.sig or {}).get('volume_24h'),
             'funding': (e.sig or {}).get('funding_rate'),
+            'funding_hours': (e.sig or {}).get('funding_interval_h'),     # review V09: the contract's interval
             # eng-133 research columns (written only): the setup's timeframe and its ATR(14) at the entry, the shadow
             # tags (strings are not picked up by f_*), the logic version
             'tf': (e.plan or {}).get('tf'), 'atr_tf': (e.plan or {}).get('tf_atr'),
@@ -495,7 +496,8 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
         a = int(np.searchsorted(c.m_ts, e['ts'], side='left'))
         b = int(np.searchsorted(c.m_ts, e['ts'] + ttl, side='left'))
         lv = {k: e.get(k) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3', 'limit_entry', 'volume_24h', 'symbol')}
-        res = simulate(lv, e['direction'], c.fut[a:b, :6].tolist(), funding_8h=e.get('funding'))
+        res = simulate(lv, e['direction'], c.fut[a:b, :6].tolist(), funding_8h=e.get('funding'),
+                       funding_hours=e.get('funding_hours'))
         e['outcome'] = res.get('outcome')
         for col in ('r_tp1', 'r_tp2', 'r_be'):
             e[col] = net_r({col: res.get(col), 'entry': lv['entry'], 'entry_fill': res.get('entry_fill'),

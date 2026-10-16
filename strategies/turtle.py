@@ -61,7 +61,7 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
             elif d < 0 and c[2] >= hi10:
                 exit_px = hi10
             if exit_px is not None:
-                last = None if pos.get('ambiguous') else d * (exit_px - entry) > 0
+                last = 'ambiguous' if pos.get('ambiguous') else d * (exit_px - entry) > 0
                 pos = None
             continue
         hi20 = max(x[2] for x in d1[i - 20:i])
@@ -75,7 +75,8 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
             pos = {'d': -1, 'entry': lo20, 'stop': lo20 + 2 * n}
         if pos is not None and ((pos['d'] > 0 and c[3] <= pos['stop']) or (pos['d'] < 0 and c[2] >= pos['stop'])):
             # review V06: the entry day also traded through the 2N stop - the OHLC does not tell which came first, so
-            # this breakout's result is unknown (never a winner that skips the next S1); it stays the open hypothetical
+            # this breakout's result is unknown ('ambiguous': S1 is skipped as after a winner - unknown is never a
+            # permission; S2 still trades); it stays the open hypothetical
             pos['ambiguous'] = True
     return last
 
@@ -98,7 +99,8 @@ def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: fl
         return None
     hi20, lo20 = max(c[2] for c in d1[-20:]), min(c[3] for c in d1[-20:])
     hi55, lo55 = max(c[2] for c in d1[-55:]), min(c[3] for c in d1[-55:])
-    skip = _last_s1_was_winner(d1, ns)
+    last_s1 = _last_s1_was_winner(d1, ns)
+    skip = last_s1 is True or last_s1 == 'ambiguous'      # review: an unknown result does not allow S1
     for d, level20, level55, crossed20, crossed55 in (
             (1, hi20, hi55, price_hi > hi20 and (before_hi is None or before_hi <= hi20),
              price_hi > hi55 and (before_hi is None or before_hi <= hi55)),
@@ -117,7 +119,9 @@ def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: fl
                 'setup_note': f"Turtle System {system}: price {'above' if d > 0 else 'below'} the {days}-day "
                               f"{'high' if d > 0 else 'low'} {level:.6g} (N {n:.6g}; stop 2N, exit on the "
                               f"{exit_days}-day {'low' if d > 0 else 'high'})"
-                              + ('; S1 skipped: the last S1 breakout won' if system == 2 and skip else ''),
+                              + (('; S1 skipped: the last S1 breakout won' if last_s1 is True else
+                                  '; S1 skipped: the last S1 breakout is undecidable on daily bars (stop on its entry day)')
+                                 if system == 2 and skip else ''),
                 'anchor_level': level, 'anchor_extreme': level - d * 2 * n, 'anchor_label': f'{days}-day channel',
                 'anchor_ts': int(d1[-days][0]), 'anchor_close': level, 'turtle_n': n, 'turtle_system': system,
                 'trail_days': exit_days, 'range_hi': hi20 if system == 1 else hi55,

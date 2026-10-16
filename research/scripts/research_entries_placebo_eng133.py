@@ -117,7 +117,7 @@ class CoinStates:
         return s['atr'][j], int(s['terc'][j]), int(s['trend'][j])
 
 
-def sim_net(m, ts, d, entry_px, sl, tps, limit, vol, symbol, funding, ttl):
+def sim_net(m, ts, d, entry_px, sl, tps, limit, vol, symbol, funding, ttl, funding_hours=None):
     from levels import simulate
     from stats import net_r
     a = int(np.searchsorted(m[:, 0], ts, side='left'))
@@ -126,7 +126,7 @@ def sim_net(m, ts, d, entry_px, sl, tps, limit, vol, symbol, funding, ttl):
         return None
     lv = {'entry': entry_px, 'sl': sl, 'tp1': tps[0], 'tp2': tps[1], 'tp3': tps[2], 'limit_entry': limit,
           'volume_24h': vol, 'symbol': symbol}
-    res = simulate(lv, d, m[a:b, :6].tolist(), funding_8h=funding)
+    res = simulate(lv, d, m[a:b, :6].tolist(), funding_8h=funding, funding_hours=funding_hours)
     if res.get('r_tp1') is None:
         return None
     return net_r({'r_tp1': res['r_tp1'], 'entry': entry_px, 'entry_fill': res.get('entry_fill'), 'sl': sl}, 'r_tp1')
@@ -220,7 +220,8 @@ def process_symbol(job):
             atr_p = sp['atr'][j]
             sl_p = px - d * k_sl * atr_p
             tps = [px + d * k * atr_p if k is not None else None for k in k_tp]
-            x = sim_net(m, tp_, d, px, sl_p, tps, r['limit_entry'], r['volume_24h'], symbol, r['funding'], ttl)
+            x = sim_net(m, tp_, d, px, sl_p, tps, r['limit_entry'], r['volume_24h'], symbol, r['funding'], ttl,
+                        r.get('funding_hours'))
             if x is None:
                 continue
             pl_rows.append({'_i': r['_i'], 'copy': c, 'r': x})
@@ -455,6 +456,8 @@ def main():
 
     jobs = []
     cols = ['_i', 'ts', 'setup', 'direction', 'entry', 'sl', 'tp1', 'tp2', 'tp3', 'tf', 'limit_entry', 'volume_24h', 'funding']
+    if 'funding_hours' in e.columns:
+        cols.append('funding_hours')                     # review V09: the same funding interval for real and placebo
     for sym, g in e.filter(pl.col('half') != 'purged').group_by('symbol'):
         jobs.append((sym[0], g.select(cols).to_dicts(), args.placebos, args.seed, start, end, args.rate))
     if args.workers > 1:
@@ -600,6 +603,9 @@ def main():
         for st in sorted(full_r):
             out.append(f"| {st} | {full_r[st][0]} | {fmt(full_r[st][1])} |")
         out.append("")
+    out.append("**Connors (RSI2 / RSI2X):** real and placebo alike are judged with a reference stop at 1 R over 8 hours; "
+               "the book's system has NO stop and exits on a daily close above the SMA5, so these rows do not test "
+               "Connors' method - only the entry timing under a stop it does not use.\n")
     out.append("## Families (8h TP1 surrogate net R; real minus placebo; 90% intervals)\n")
     out.append("| Setup | part | n | buckets | mean R [90%] | placebo mean | P90 placebo | real - placebo [90%] | q (holdout) | verdict |")
     out.append("|---|---|---:|---:|---|---:|---:|---|---:|---|")

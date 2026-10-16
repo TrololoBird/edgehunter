@@ -168,7 +168,11 @@ def _leg_levels(df: pl.DataFrame, impulse: Dict[str, float], far_side: Optional[
     out += [RawLevel(fib_price(impulse, 1.0 - r), 'fib', f"fib ext {r:g}") for r in cfg.continuation_targets if r > 1.0]
     if far_side:
         out.append(RawLevel(far_side, 'range', 'range edge'))
-    rows = df.select(['timestamp', 'open', 'high', 'low', 'close', 'quote_volume']).rows()
+    cols = ['timestamp', 'open', 'high', 'low', 'close', 'quote_volume']
+    if 'volume' in df.columns:
+        rows = [list(r[:6]) + [None, r[6]] for r in df.select(cols + ['volume']).rows()]     # [.., quote, -, base]
+    else:
+        rows = df.select(cols).rows()
     out += vwap(rows, impulse['start_ts'], 'VWAP leg')
     return out
 
@@ -212,9 +216,11 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
             bar[4] = c[4]
             bar[5] += c[5]
             bar[6] += c[6]
+            if len(bar) > 7:
+                bar[7] = None if bar[7] is None or len(c) < 8 or c[7] is None else bar[7] + c[7]
             count[-1] += 1
         else:
-            out.append([start, c[1], c[2], c[3], c[4], c[5], c[6]])
+            out.append([start, c[1], c[2], c[3], c[4], c[5], c[6]] + ([c[7]] if len(c) > 7 else []))
             count.append(1)
     if now_ms is not None:
         need = minutes if minutes <= 60 else int(minutes * 0.98)
@@ -366,7 +372,7 @@ def funding_r(funding_8h: Optional[float], direction: int, entry: float, risk: f
 
 
 def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_fill: bool = True,
-             funding_8h: Optional[float] = None) -> Dict:
+             funding_8h: Optional[float] = None, funding_hours: Optional[float] = None) -> Dict:
     """
     Replay 1m candles [open_time, open, high, low, close, ...] after an entry. With use_fill the trade is entered at
     fill_price (manual execution) and R is measured from there; otherwise at levels['entry'] (the trigger close).
@@ -453,7 +459,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         result['outcome'] = f"TP{best_target}" if best_target else 'OPEN'
 
     mark = direction * (float(candles[-1][4]) - entry) / risk
-    result['r_tp1'] = (exits[1] if exits[1] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[1])
-    result['r_tp2'] = (exits[2] if exits[2] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[2])
-    result['r_be'] = be_result - funding_r(funding_8h, direction, entry, risk, t_open, be_t)
+    result['r_tp1'] = (exits[1] if exits[1] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[1], funding_hours)
+    result['r_tp2'] = (exits[2] if exits[2] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[2], funding_hours)
+    result['r_be'] = be_result - funding_r(funding_8h, direction, entry, risk, t_open, be_t, funding_hours)
     return result

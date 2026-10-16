@@ -466,17 +466,20 @@ def observed_liquidations(events: Iterable[Tuple[float, float, float, int]], atr
 
 
 def vwap(candles: Sequence[Sequence[float]], since_ms: int, label: str) -> List[RawLevel]:
-    """VWAP of [ts, o, h, l, c, quote_vol, ...] candles opened at or after since_ms: sum(price x base) / sum(base).
-    audit C02: the candles carry the QUOTE volume (= price x base), so base = quote / price and the VWAP is
-    sum(quote) / sum(quote / typical) - weighting the price by the quote volume again (sum(tp x quote) / sum(quote))
-    over-weighted the dearer bars (100 and 200 one coin each: 166.67 instead of 150)."""
+    """VWAP of [ts, o, h, l, c, quote_vol, taker, base_vol] candles opened at or after since_ms: sum(quote) /
+    sum(base) - exact (every trade's price x quantity over the quantity). audit C02 / review: the base volume is the
+    exchange's own (Binance's kline volume, carried as the candle's 8th field); a candle without it falls back to
+    quote / HLC3 (an approximation: one bar of trades at 100 and 200 reads 166.67, not 150)."""
     num = den = 0.0
     for c in candles:
         if c[0] >= since_ms and c[5]:
-            typical = (c[2] + c[3] + c[4]) / 3
-            if typical > 0:
+            base = c[7] if len(c) > 7 and c[7] else None
+            if base is None:
+                typical = (c[2] + c[3] + c[4]) / 3
+                base = c[5] / typical if typical > 0 else None
+            if base:
                 num += c[5]
-                den += c[5] / typical
+                den += base
     return [RawLevel(num / den, 'vwap', label)] if den else []
 
 

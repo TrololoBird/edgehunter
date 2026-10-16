@@ -291,7 +291,19 @@ def test_turtle_entry_day_stop_is_ambiguous():
     d1.append([40 * DAY, 100, 101, 95, 100.8, 1e6])                 # breakout and the 2N stop on the same day
     d1 += [[(41 + i) * DAY, 101 + i, 102 + i, 100 + i, 101.5 + i, 1e6] for i in range(15)]   # runs up
     d1.append([56 * DAY, 116, 116, 104, 105, 1e6])                  # out on the 10-day low, far above the entry
-    assert _last_s1_was_winner(d1, n_series(d1)) is None
+    assert _last_s1_was_winner(d1, n_series(d1)) == 'ambiguous'      # unknown, not a winner and not 'none'
+
+
+def test_turtle_ambiguous_s1_does_not_allow_s1():
+    from strategies.turtle import turtle_breakout
+    d1 = [[i * DAY, 100, 100.5, 99.5, 100, 1e6] for i in range(40)]
+    d1.append([40 * DAY, 100, 101, 95, 100.8, 1e6])
+    d1 += [[(41 + i) * DAY, 101 + i, 102 + i, 100 + i, 101.5 + i, 1e6] for i in range(15)]
+    d1.append([56 * DAY, 116, 116, 104, 105, 1e6])
+    d1 += [[(57 + i) * DAY, 105, 106, 104, 105, 1e6] for i in range(12)]
+    hi20 = max(c[2] for c in d1[-20:])
+    found = turtle_breakout(d1, hi20 + 0.5, 104, 69 * DAY + 60_000, before_hi=hi20 - 0.1)
+    assert found is None or found['turtle_system'] == 2
 
 
 def test_sd_opposing_zone_touched_by_a_wick_is_not_fresh():
@@ -321,3 +333,62 @@ def test_linear_v_is_no_cup():
         bars.append([(261 + k) * DAY, 98, 99, 96, 97, 5e5])
     bars.append([269 * DAY, 97, 104, 97, 103, 3e6])                 # breakout on volume
     assert cup_handle(bars, '1d', DAY) is None
+
+
+def test_dump_bounce_rank_gate():
+    from strategies.loopside import LoopDetectors
+    md = SimpleNamespace(h1=_dump_path(True))
+    results = {}
+    for rank in (None, 10, 50):
+        ld = LoopDetectors(lambda s: [], lambda s: [])
+        ld.volume_rank = lambda s, r=rank: r
+        results[rank] = ld._dump_bounce('X/USDT:USDT', md, 192 * H)
+    assert results[None] is None and results[10] is None            # unknown / top-30: not the studied class
+    assert results[50] is not None and results[50]['setup'] == 'DUMP BOUNCE SHORT'
+
+
+def _cup(shape):
+    import math
+    bars = []
+    for i in range(200):                                            # prior advance 60 -> 100
+        p = 60 + 40 * i / 199
+        bars.append([i * DAY, p, p * 1.004, p * 0.996, p, 1e6])
+    L = 60
+    for k in range(1, L + 1):
+        x = k / L
+        dip = (1 - abs(2 * x - 1)) if shape == 'v' else math.sin(math.pi * x) ** 0.5
+        p = 100 - 25 * dip
+        bars.append([(199 + k) * DAY, p, p * 1.003, p * 0.997, p, 1e6])
+    bars[-1][2] = 100.6                                             # the right rim, a pivot
+    for k in range(8):                                              # handle in the upper half, drying volume
+        bars.append([(260 + k) * DAY, 98, 99, 96, 97, 5e5])
+    bars.append([268 * DAY, 97, 104, 97, 103, 3e6])                 # breakout on volume
+    return bars
+
+
+def test_cup_shape_u_passes_v_fails():
+    from strategies.cup_handle import cup_handle
+    assert cup_handle(_cup('v'), '1d', DAY) is None
+    found = cup_handle(_cup('u'), '1d', DAY)
+    assert found is not None and found['setup'] == 'CUP HANDLE'
+
+
+def test_vwap_uses_the_exchange_base_volume():
+    from zones import vwap
+    # one bar of two trades, 1 coin at 100 and 1 at 200 (O/L 100, H/C 200, quote 300, base 2): the exact VWAP is 150
+    assert vwap([[0, 100, 200, 100, 200, 300.0, 0.0, 2.0]], 0, 'x')[0].price == pytest.approx(150.0)
+
+
+def test_resample_carries_the_base_volume():
+    from levels import resample
+    bars = resample([[k * 60_000, 1, 1, 1, 1, 10.0, 5.0, 2.0] for k in range(5)], 5, 300_000)
+    assert bars[0][7] == pytest.approx(10.0)
+
+
+def test_simulate_uses_the_funding_interval():
+    from levels import simulate
+    lv = {'entry': 100.0, 'sl': 90.0, 'tp1': 200.0, 'tp2': 300.0, 'tp3': 400.0}
+    flat = [[H + k * 60_000, 100, 100.1, 99.9, 100] for k in range(240)]          # 01:00-05:00 UTC
+    r8 = simulate(lv, 1, flat, use_fill=False, funding_8h=0.002)['r_tp1']
+    r4 = simulate(lv, 1, flat, use_fill=False, funding_8h=0.002, funding_hours=4)['r_tp1']
+    assert r8 - r4 == pytest.approx(0.01)                          # the 04:00 settlement of a 4h contract
