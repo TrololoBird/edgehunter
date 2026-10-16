@@ -350,15 +350,17 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
     return ctx
 
 
-PART_COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'quote_volume', 'taker_delta', 'atr']
+PART_COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'quote_volume', 'taker_delta', 'volume', 'atr']
 
 
 def part_candles(part) -> Tuple[List[List[float]], Optional[float]]:
-    """A symbol's closed 15m frame (Polars) -> candles [ts, o, h, l, c, quote_vol, taker_buy] and its latest ATR."""
+    """A symbol's closed 15m frame (Polars) -> candles [ts, o, h, l, c, quote_vol, taker_buy, base_vol] and its latest
+    ATR (base_vol NaN where the frame has none: never estimated from quote)."""
     if part is None or part.is_empty():
         return [], None
-    rows = part.select(['timestamp', 'open', 'high', 'low', 'close', 'quote_volume', 'taker_delta']).rows()
-    candles = [[ts, o, h, l, c, qv or 0.0, ((qv or 0.0) + (td or 0.0)) / 2] for ts, o, h, l, c, qv, td in rows]
+    rows = part.select(['timestamp', 'open', 'high', 'low', 'close', 'quote_volume', 'taker_delta', 'volume']).rows()
+    candles = [[ts, o, h, l, c, qv or 0.0, ((qv or 0.0) + (td or 0.0)) / 2, float('nan') if v is None else v]
+               for ts, o, h, l, c, qv, td, v in rows]
     atr = part['atr'][-1] if 'atr' in part.columns else None
     return candles, atr
 

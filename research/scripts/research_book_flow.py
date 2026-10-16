@@ -166,7 +166,7 @@ def features(t, d, ext_off, m1, books, trades):
             out['delta_ext_with'] = d * (2 * seg[:, 7] - seg[:, 6]).sum() > 0
         since = max(t - ext_off, since)
     hour = m1[int(np.searchsorted(m1[:, 0], t - 3_600_000)):b]
-    candles = hour[:, [0, 1, 2, 3, 4, 6, 7]].tolist()
+    candles = hour[:, [0, 1, 2, 3, 4, 6, 7, 5]].tolist()
     atr = minute_atr_15m(candles, t)
     if atr:
         out['absorption'] = absorption_in(candles, since, t, d, atr)

@@ -37,14 +37,14 @@ MINUTE_MS = 60_000
 QUARTER_MS = 900_000
 HOUR_MS = 3_600_000
 DAY_MS = 86_400_000
-STREAM_COLS = [0, 1, 2, 3, 4, 6, 7]                  # the stream format [t, o, h, l, c, quote, taker buy quote]
+STREAM_COLS = [0, 1, 2, 3, 4, 6, 7, 5]               # the stream format [t, o, h, l, c, quote, taker buy quote, base]
 
 
 def _bucket_list(rows: np.ndarray, ms: int) -> List[List[float]]:
-    """Complete candles of `ms` from 1m rows [ts, o, h, l, c, v, qv, tbq] as [ts, o, h, l, c, qv, tbq]."""
+    """Complete candles of `ms` from 1m rows [ts, o, h, l, c, v, qv, tbq] as [ts, o, h, l, c, qv, tbq, v]."""
     from pretrain import _bucket
     out = _bucket(rows, ms)
-    return [[int(r[0]), r[1], r[2], r[3], r[4], r[6], r[7]] for r in out]
+    return [[int(r[0]), r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in out]
 
 
 class ArchiveCoin:
@@ -92,7 +92,7 @@ class ArchiveCoin:
         self.fut_ind = self.fut_all.select('timestamp', 'ret_std', 'oi_std', 'atr').to_numpy()
         self.h1_all = _bucket_list(self.fut, HOUR_MS)
         self.h1_close = np.array([c[0] + HOUR_MS for c in self.h1_all]) if self.h1_all else np.empty(0)
-        self.c15_all = [[int(r[0]), r[1], r[2], r[3], r[4], r[6], r[7]] for r in c15]
+        self.c15_all = [[int(r[0]), r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in c15]
         self.c15_close = np.array([c[0] + QUARTER_MS for c in self.c15_all]) if self.c15_all else np.empty(0)
         self.oi_pts = [(float(t), float(v)) for t, v in zip(self.met['ts'], self.met['oi']) if v]
         self.oi_ts = np.asarray([p[0] for p in self.oi_pts]) if self.oi_pts else np.empty(0)

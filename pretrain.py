@@ -224,9 +224,9 @@ def process_coin(job: tuple) -> Optional[Dict]:
     oi_ts = np.asarray([p[0] for p in oi_pts]) if oi_pts else np.empty(0)
     fut_ind = fut_all.select('timestamp', 'ret_std', 'oi_std', 'atr').to_numpy()
     h1 = _bucket(fut, HOUR_MS)
-    h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in h1]
+    h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in h1]
     h1_close_ts = h1[:, 0] + HOUR_MS if len(h1) else np.empty(0)
-    c15_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in c15]
+    c15_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in c15]
 
     seasons: Dict[int, Optional[Dict]] = {}
 

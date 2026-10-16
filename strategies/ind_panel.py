@@ -81,8 +81,11 @@ def pct_rank(x: np.ndarray, n: int) -> np.ndarray:
 
 
 def indicators(k: np.ndarray) -> dict:
-    """k: [open_ms, o, h, l, c, quote_volume]. Arrays aligned with k (value at candle i uses candles <= i)."""
+    """k: [open_ms, o, h, l, c, quote_volume(, taker_buy_quote, base_volume)]. Arrays aligned with k (value at
+    candle i uses candles <= i). MFI (Quong & Soudack) and OBV (Granville) weight by the traded AMOUNT: base_volume
+    (audit A16: typical x quote weighted price twice, 80 instead of 66.7); NaN without it - the rule reads None."""
     h, l, c, v = k[:, 2], k[:, 3], k[:, 4], k[:, 5]
+    base = k[:, 7] if k.shape[1] > 7 else np.full(len(k), np.nan)
     prev_c = np.concatenate(([c[0]], c[:-1]))
     tr = np.maximum(h - l, np.maximum(abs(h - prev_c), abs(l - prev_c)))
     up, dn = h - np.concatenate(([h[0]], h[:-1])), np.concatenate(([l[0]], l[:-1])) - l
@@ -106,13 +109,13 @@ def indicators(k: np.ndarray) -> dict:
     pctb = (c - (mid - 2 * sd)) / np.maximum(4 * sd, 1e-12)
     bbw = 4 * sd / np.maximum(mid, 1e-12)
     tp = (h + l + c) / 3
-    mf = tp * v
+    mf = tp * base
     # Quong & Soudack / TA-Lib: an unchanged typical price is neither positive nor negative flow (it was negative)
     tp_diff = np.diff(tp, prepend=tp[0])
     tp_diff[np.abs(tp_diff) <= 1e-12 * np.abs(tp)] = 0.0      # (h + l + c) / 3 rounding noise of equal prices
     pos, neg = sma(np.where(tp_diff > 0, mf, 0.0), 14), sma(np.where(tp_diff < 0, mf, 0.0), 14)
     mfi = 100 - 100 / (1 + pos / np.maximum(neg, 1e-12))
-    obv = np.cumsum(np.sign(delta) * v)
+    obv = np.cumsum(np.sign(delta) * base)
     # Lambert: the mean deviation of the window's typical prices from the CURRENT window's mean (each deviation from
     # its own window's mean read cci_extreme differently in 11% of cases - research/talib_check.md)
     tp_sma = sma(tp, 20)
@@ -199,7 +202,7 @@ def panel(candles, direction: int, key=None) -> dict:
     hit = _IND_CACHE.get(ck) if ck is not None else None
     if hit is not None:
         return dict(hit)
-    k = np.asarray([row[:6] for row in candles], dtype=np.float64)
+    k = np.asarray([list(row[:8]) + [np.nan] * (8 - len(row[:8])) for row in candles], dtype=np.float64)
     ind = indicators(k)
     out = {}
     for name, arr in rules(ind, direction).items():

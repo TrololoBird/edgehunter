@@ -70,7 +70,7 @@ def replay_coin(job: tuple):
     idx_by_ts = {int(t): i for i, t in enumerate(fut_all['timestamp'].to_list())}
     m_ts = fut[:, 0]
     minutes_all = fut[:, STREAM_COLS]
-    to_list = lambda arr: [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in arr]  # noqa: E731
+    to_list = lambda arr: [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in arr]  # noqa: E731
     c15_list = to_list(c15)
     h1_list = to_list(_bucket(fut, HOUR_MS))
     h1_close = np.asarray([c[0] + HOUR_MS for c in h1_list])

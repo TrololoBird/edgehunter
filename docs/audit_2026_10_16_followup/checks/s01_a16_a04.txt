@@ -1,0 +1,14 @@
+== base
+S01 VWAP (true 150): [166.6667]
+S01 VWAP old 7-col row (no base): [166.6667]
+A16 MFI (classic on base 66.667): 80.0 OBV last: 151000.0
+A04 one-minute 4h bucket -> [[0, 100.0, 101.0, 99.0, 100.0, 1.0, 0.5]]
+IndexError: list index out of range
+== fix
+S01 VWAP (true 150): [150.0]
+S01 VWAP old 7-col row (no base): []
+A16 MFI (classic on base 66.667): 66.667 OBV last: 10.0
+A04 one-minute 4h bucket -> []
+A04 full 4h bucket -> [[0, 240.0, 2.399999999999993]]
+A04 4h bucket missing minute 100 -> []
+chart (complete=False) keeps it: 1

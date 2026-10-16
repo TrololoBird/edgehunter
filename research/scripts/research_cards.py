@@ -37,7 +37,7 @@ MINUTE_MS = 60_000
 QUARTER_MS = 900_000
 HOUR_MS = 3_600_000
 H4_MS = 4 * HOUR_MS
-STREAM_COLS = [0, 1, 2, 3, 4, 6, 7]          # [t, o, h, l, c, quote, taker buy quote]
+STREAM_COLS = [0, 1, 2, 3, 4, 6, 7, 5]       # [t, o, h, l, c, quote, taker buy quote, base]
 
 
 # Entry execution of the replay: 'market' (the journal's manual fill: the next full minute's open + slippage, taker
@@ -124,12 +124,12 @@ def replay_events(job: tuple) -> List[Dict]:
     placebo = make_placebo(m_ts, key)
     minutes_all = fut[:, STREAM_COLS]
     h1 = _bucket(fut, HOUR_MS)
-    h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in h1]
+    h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in h1]
     h1_close = h1[:, 0] + HOUR_MS if len(h1) else np.empty(0)
     c5 = _bucket(fut, 5 * MINUTE_MS)
-    c5_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in c5]
+    c5_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in c5]
     c5_close = c5[:, 0] + 5 * MINUTE_MS if len(c5) else np.empty(0)
-    c15_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in c15]
+    c15_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in c15]
     oi_ts, oi_v = np.asarray(met['ts']), np.asarray(met['oi'])
     oi_hour = [(int(t), float(v)) for t, v in zip(oi_ts, oi_v) if int(t) % HOUR_MS == 0 and v]
     oi_hour_ts = np.asarray([t for t, _ in oi_hour]) if oi_hour else np.empty(0)
@@ -246,12 +246,12 @@ def replay_phases(job: tuple) -> List[Dict]:
     placebo = make_placebo(m_ts, key)
     minutes_all = fut[:, STREAM_COLS]
     h1 = _bucket(fut, HOUR_MS)
-    h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in h1]
+    h1_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in h1]
     h1_close = h1[:, 0] + HOUR_MS if len(h1) else np.empty(0)
     c5 = _bucket(fut, 5 * MINUTE_MS)
-    c5_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in c5]
+    c5_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in c5]
     c5_close = c5[:, 0] + 5 * MINUTE_MS if len(c5) else np.empty(0)
-    c15_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7]] for r in c15]
+    c15_list = [[r[0], r[1], r[2], r[3], r[4], r[6], r[7], r[5]] for r in c15]
     c15_close = c15[:, 0] + QUARTER_MS
     btc15 = _bucket(btc, QUARTER_MS)
     btc_close_ts, btc_close = btc15[:, 0] + QUARTER_MS, btc15[:, 4]

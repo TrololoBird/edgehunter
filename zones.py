@@ -466,14 +466,19 @@ def observed_liquidations(events: Iterable[Tuple[float, float, float, int]], atr
 
 
 def vwap(candles: Sequence[Sequence[float]], since_ms: int, label: str) -> List[RawLevel]:
-    """VWAP of [ts, o, h, l, c, quote_vol, ...] candles opened at or after since_ms."""
-    num = den = 0.0
+    """
+    VWAP of [ts, o, h, l, c, quote_vol, taker_buy_quote, base_vol] candles opened at or after since_ms: the exact
+    sum(quote) / sum(base), i.e. every trade's price weighted by its size (audit S01: quote-weighted typical prices
+    weighted price twice). No level when any candle of the window lacks base_vol (no quote / typical estimate).
+    """
+    quote = base = 0.0
     for c in candles:
-        if c[0] >= since_ms and c[5]:
-            typical = (c[2] + c[3] + c[4]) / 3
-            num += typical * c[5]
-            den += c[5]
-    return [RawLevel(num / den, 'vwap', label)] if den else []
+        if c[0] >= since_ms:
+            if len(c) < 8 or not c[7] == c[7]:            # missing / NaN base volume: not computable exactly
+                return []
+            quote += c[5]
+            base += c[7]
+    return [RawLevel(quote / base, 'vwap', label)] if base > 0 else []
 
 
 def _usd(v: float) -> str:

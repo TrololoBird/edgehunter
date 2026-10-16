@@ -156,11 +156,12 @@ class MarketData:
             self.spot_minute_klines.append(cur)
             cur = None
         if cur is None:
-            cur = self._alt_minute = [minute, price, price, price, price, 0.0, 0.0]
+            cur = self._alt_minute = [minute, price, price, price, price, 0.0, 0.0, 0.0]
         elif minute < cur[0]:
             return
         cur[2], cur[3], cur[4] = max(cur[2], price), min(cur[3], price), price
         cur[5] += usd
+        cur[7] += usd / price if price else 0.0
         if side > 0:
             cur[6] += usd
     def frame(self, market: str) -> Optional[pl.DataFrame]:
@@ -245,7 +246,8 @@ class MarketData:
 
     def apply_kline(self, market: str, k: dict):
         if k.get('i') == '1m':
-            candle = [int(k['t']), float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['q']), float(k['Q'])]
+            candle = [int(k['t']), float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['q']), float(k['Q']),
+                      float(k.get('v', 'nan'))]                   # base volume (coins), NaN if absent
             target = self.minute_klines if market == 'futures' else self.spot_minute_klines
             if target and target[-1][0] == candle[0]:
                 target[-1] = candle
@@ -1149,7 +1151,7 @@ class DataFetcher:
         for market, sym, limit in jobs:
             rows = await self._fetch_klines(market, sym, '1m', limit + 1)
             md.seed_minutes(market, [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
-                                      float(k[10])] for k in rows or []], now_ms)
+                                      float(k[10]), float(k[5])] for k in rows or []], now_ms)
             if market == 'futures' and self.streams_started_ms:
                 # Binance's taker flow of the 15 minutes the streams did not see (a minute that closed before they
                 # started): Tier-0's 5m windows are valid at once (the other venues fill in live)
@@ -1222,11 +1224,11 @@ class DataFetcher:
             errors.report('fetcher.load_htf', e, f"1h history failed for {symbol}")
             md.htf_loaded = time.time() - CONFIG.zones.htf_refresh_sec + 300  # retry in 5 min
             return False
-        md.htf_klines = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
+        md.htf_klines = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10]), float(k[5])]
                          for k in self._closed_only(klines or [])]
         # OI in COINS: in USD a rally with no new contract read as "positions opened" (phantom liquidation clusters)
         md.htf_oi = [(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in (oi or [])]
-        md.htf_5m = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
+        md.htf_5m = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10]), float(k[5])]
                      for k in self._closed_only(k5 or [])]
         md.htf_1d = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
                      for k in self._closed_only(k1d or [])]
@@ -1248,7 +1250,7 @@ class DataFetcher:
         except Exception as e:
             errors.report('fetcher.chart_candles', e, f"Chart candles failed for {symbol}")
             return None
-        rows = lambda ks: [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10])]
+        rows = lambda ks: [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10]), float(k[5])]
                            for k in ks or []]
         c15 = rows(k15)
         return {'symbol': symbol, 'price': c15[-1][4] if c15 else None, 'atr': None, 'candles_15m': c15,
@@ -1335,7 +1337,7 @@ class DataFetcher:
                 if not binance_symbol or md is None:
                     return
                 parse = lambda rows: [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
-                                       float(k[10])] for k in self._closed_only(rows or [])]
+                                       float(k[10]), float(k[5])] for k in self._closed_only(rows or [])]
                 async with sem:
                     try:
                         # limit 499 weighs 2 like 200 did: the long history of crypto_maniac's 1h systems
@@ -1657,7 +1659,7 @@ class DataFetcher:
                 async with sem:
                     rows = await self._fetch_klines('futures', symbol, '1h', 672)
                 md.season = seasonal_factors([[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]),
-                                               float(k[7]), float(k[10])] for k in self._closed_only(rows or [])])
+                                               float(k[7]), float(k[10]), float(k[5])] for k in self._closed_only(rows or [])])
 
             await asyncio.gather(*(one(s) for s in list(self.markets)))
             logger.info(f"Seasonal profiles: {sum(1 for md in self.markets.values() if md.season)} of "

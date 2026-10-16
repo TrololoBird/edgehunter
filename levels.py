@@ -168,7 +168,7 @@ def _leg_levels(df: pl.DataFrame, impulse: Dict[str, float], far_side: Optional[
     out += [RawLevel(fib_price(impulse, 1.0 - r), 'fib', f"fib ext {r:g}") for r in cfg.continuation_targets if r > 1.0]
     if far_side:
         out.append(RawLevel(far_side, 'range', 'range edge'))
-    rows = df.select(['timestamp', 'open', 'high', 'low', 'close', 'quote_volume']).rows()
+    rows = df.select(['timestamp', 'open', 'high', 'low', 'close', 'quote_volume', 'taker_delta', 'volume']).rows()
     out += vwap(rows, impulse['start_ts'], 'VWAP leg')
     return out
 
@@ -186,17 +186,27 @@ def reached_after(candles: Sequence[Sequence[float]], end_ts: int, end: float, d
     return max(prices) if direction > 0 else min(prices)
 
 
-def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[float] = None) -> List[List[float]]:
+_NAN = float('nan')
+
+
+def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[float] = None,
+             complete: bool = True) -> List[List[float]]:
     """
-    1m candles [open_time, open, high, low, close, quote_vol, taker_buy_quote] -> `minutes` candles aligned to
-    epoch multiples of `minutes`. Only buckets that have closed by `now_ms` are returned (all of them when None).
+    1m candles [open_time, open, high, low, close, quote_vol, taker_buy_quote, base_vol] -> `minutes` candles
+    aligned to epoch multiples of `minutes`. Only buckets that have closed by `now_ms` are returned (all of them when
+    None), and only COMPLETE ones: a bucket with a minute missing (a history that starts mid-bucket, a stream gap) is
+    dropped rather than passed off as a full bar (audit A04). base_vol (coins) is NaN when any minute lacks it (a row
+    of the old 7-column format): never estimated from quote. complete=False keeps partial buckets (the chart's
+    forming bar only, never a signal input).
     """
     if minutes <= 1:
-        return [list(c) for c in candles if now_ms is None or c[0] + MINUTE_MS <= now_ms]
+        return [list(c) + [_NAN] * (8 - len(c)) for c in candles if now_ms is None or c[0] + MINUTE_MS <= now_ms]
     size = minutes * MINUTE_MS
     out: List[List[float]] = []
+    seen: List[set] = []
     for c in candles:
         start = int(c[0]) // size * size
+        base = c[7] if len(c) > 7 else _NAN
         if out and out[-1][0] == start:
             bar = out[-1]
             bar[2] = max(bar[2], c[2])
@@ -204,11 +214,13 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
             bar[4] = c[4]
             bar[5] += c[5]
             bar[6] += c[6]
+            bar[7] += base
+            seen[-1].add(int(c[0]))
         else:
-            out.append([start, c[1], c[2], c[3], c[4], c[5], c[6]])
-    if now_ms is not None:
-        out = [bar for bar in out if bar[0] + size <= now_ms]
-    return out
+            out.append([start, c[1], c[2], c[3], c[4], c[5], c[6], base])
+            seen.append({int(c[0])})
+    keep = [(len(s) == minutes or not complete) and (now_ms is None or bar[0] + size <= now_ms) for bar, s in zip(out, seen)]
+    return [bar for bar, k in zip(out, keep) if k]
 
 
 def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: int,

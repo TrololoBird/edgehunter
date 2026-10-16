@@ -1442,7 +1442,7 @@ class Scanner:
         from webui import card_view
         now = time.time()
         # 5m: the 4-day REST history (level-map input) extended by the live 1m stream
-        stream_5m = resample(list(md.minute_klines), 5)
+        stream_5m = resample(list(md.minute_klines), 5, complete=False)   # display: the forming bar too
         history_5m = [c for c in md.htf_5m if not stream_5m or c[0] < stream_5m[0][0]]
         candles_5m = history_5m + stream_5m
         # 1h: 4 days, so a leg of hours or days is visible whole
