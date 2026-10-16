@@ -1371,7 +1371,8 @@ class SignalBook:
             if why:
                 s.exit_fill = float(c[4])
                 return self._finish(s, 'CLOSED', now, why)
-        if d * (price - lv['sl']) <= 0:
+        # Connors (no_stop): 'sl' only sizes R, the trade ends on its own exit rule - the scan price must not stop it
+        if not (s.plan or {}).get('no_stop') and d * (price - lv['sl']) <= 0:
             s.exit_fill = price
             return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))
         if s.best_target == 3:

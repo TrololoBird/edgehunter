@@ -635,10 +635,10 @@ class DemoExecutor:
         try:
             o = await ex.fetch_order(p['order_id'], p['symbol'])
         except Exception as e:
-            logger.warning(f"Demo limit {p['symbol']}: state unknown after the cancel ({e!r}), retried next minute")
+            logger.warning(f"Demo limit {p['symbol']}: state unknown after the cancel ({e!r}), retried in 10s")
             return
         if o.get('status') not in ('canceled', 'cancelled', 'closed', 'expired', 'rejected'):
-            logger.warning(f"Demo limit {p['symbol']}: still {o.get('status')} after the cancel, retried next minute")
+            logger.warning(f"Demo limit {p['symbol']}: still {o.get('status')} after the cancel, retried in 10s")
             return
         filled = float(o.get('filled') or 0)
         self.pending.pop(key, None)
@@ -1064,18 +1064,20 @@ class DemoExecutor:
                     self.open.setdefault(trade['card_id'], trade)
                     self.alert(f"⚠️ Демо {symbol}: закрытие ({reason}) не прошло ({str(e)[:120]}), стоп на месте, повтор")
                     raise
-        # eng-132: the cancel-all only after a second empty answer (the exchange's stop is the last protection)
-        # eng-132: BingX's position endpoint may serve a cached snapshot for a few seconds after the fill: three reads
-        # (2s, then 3s apart) must all show a position before it counts as "reappeared"
-        await asyncio.sleep(2)
-        reappeared = await self._position_qty(symbol) != 0
-        for _ in range(2):
-            if not reappeared:
+        # eng-132: the cancel-all only after a confirmed flat. BingX's position endpoint may serve a cached snapshot for
+        # a few seconds: flat = two empty reads in a row (one empty read between two positions - 0, 1, 0 - is not);
+        # anything else keeps the stops and the trade tracked, the reconcile loop judges it again
+        seen: List[bool] = []
+        for wait in (2, 2, 2, 2):
+            await asyncio.sleep(wait)
+            seen.append(await self._position_qty(symbol) != 0)
+            if seen[-2:] == [False, False] or seen[-3:] == [True, True, True]:
                 break
-            await asyncio.sleep(3)
-            reappeared = await self._position_qty(symbol) != 0
-        if reappeared:
-            logger.warning(f"Demo {symbol}: position reappeared after a flat read: stops kept, trade stays tracked")
+        if seen[-2:] != [False, False]:
+            logger.warning(f"Demo {symbol}: position not confirmed flat after the close (reads {seen}): stops kept, "
+                           f"trade stays tracked")
+            # the reconcile loop closes it again with THIS reason / journal R (not as an ORPHAN held 24h for a limit)
+            trade['close_pending'] = [reason, journal_r]
             self.open.setdefault(trade['card_id'], trade)
             return
         try:
@@ -1130,12 +1132,15 @@ class DemoExecutor:
     FILL_PENDING = 'exit fill pending'
 
     @staticmethod
-    def _exit_fills(fills: List[Dict], side: str, opened_ms: float, closed_ms: float) -> List[Dict]:
+    def _exit_fills(fills: List[Dict], side: str, opened_ms: float, closed_ms: float,
+                    next_open_ms: Optional[float] = None) -> List[Dict]:
         """eng-91: only exit-side fills after this trade's entry (the 1s margin covers BingX's clock; the 5s fetch
         margin let the previous trade's exit on the same coin in) and not after its close (+2 min for a fill listed
-        late): _refinalize retried for 3 days and took the NEXT trades' exits on the coin into this one's result."""
+        late): _refinalize retried for 3 days and took the NEXT trades' exits on the coin into this one's result; the +2 min
+        ends before the next trade on the coin opened (_refinalize passes its opened_ms - 14s; with this 1s margin, 15s:
+        its entry fill is on the same side when it is the opposite direction)."""
         return [f for f in fills if f.get('side') == side and f.get('price') and f.get('amount')
-                and opened_ms - 1_000 < (f.get('timestamp') or 0) <= closed_ms + 120_000]
+                and opened_ms - 1_000 < (f.get('timestamp') or 0) <= min(closed_ms + 120_000, (next_open_ms or 1e18) - 1_000)]
 
     @staticmethod
     def _fees(entry: float, exit_avg: float, qty: float, exits: List[Dict]) -> float:
@@ -1167,7 +1172,13 @@ class DemoExecutor:
                 except Exception as e:
                     logger.warning(f"Demo result recovery {symbol}: {e!r}")
                     cache[symbol] = []
-            exits = self._exit_fills(cache[symbol], side, opened, closed)
+            with sqlite3.connect(self.db_path) as c:
+                # trades with an entry fill only; 15s before the row's opened_ms: a limit's opened_ms is when
+                # check_limits SAW the fill (polled every 10s), a market entry's after fetch_order's retries
+                nxt = c.execute("SELECT MIN(opened_ms) FROM demo_trades WHERE symbol = ? AND opened_ms > ? "
+                                "AND entry_fill IS NOT NULL", (symbol, closed)).fetchone()[0]
+            nxt = nxt - 14_000 if nxt else None
+            exits = self._exit_fills(cache[symbol], side, opened, closed, nxt)
             weight = sum(f['amount'] for f in exits)
             if not weight:
                 continue
@@ -1182,15 +1193,19 @@ class DemoExecutor:
     async def reconcile_loop(self, running) -> None:
         """Finalize demo trades the exchange closed on its own (stop / last target)."""
         while running():
-            await asyncio.sleep(60)
+            # resting limits every 10s: a filled limit has no stop until check_limits sees the fill (was up to 60s)
+            for _ in range(6):
+                await asyncio.sleep(10)
+                if self.enabled and self.pending:
+                    async with self._lock:
+                        try:
+                            await self.check_limits()
+                        except Exception as e:
+                            if time.time() - getattr(self, '_limits_warned', 0) > 60:   # once a minute, not every 10s
+                                self._limits_warned = time.time()
+                                logger.warning(f"Demo limits: {e!r}")
             if not self.enabled:
                 continue
-            if self.pending:
-                async with self._lock:
-                    try:
-                        await self.check_limits()
-                    except Exception as e:
-                        logger.warning(f"Demo limits: {e!r}")
             if time.time() - getattr(self, '_untracked_at', 0) > 300:
                 self._untracked_at = time.time()
                 async with self._lock:
@@ -1212,6 +1227,10 @@ class DemoExecutor:
                 for trade in list(self.open.values()):
                     try:
                         age_ms = time.time() * 1000 - trade['opened_ms']
+                        if trade.get('close_pending'):
+                            # a close not confirmed flat (_close): again, its own reason, no limit hold
+                            await self._close(trade, *trade['close_pending'])
+                            continue
                         if age_ms > 120_000 and not self.card_is_open(trade['card_id']):
                             if (trade.get('from_limit') or str(trade.get('card_id', '')).rsplit('|', 1)[-1].startswith('c')) \
                                     and age_ms < ORPHAN_LIMIT_HOLD_MS:
