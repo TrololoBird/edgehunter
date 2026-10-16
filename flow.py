@@ -323,16 +323,24 @@ class FlowStore:
         total = vol.sum()
         if total <= 0:
             return out
+        # audit N11: EQUAL volume buckets (Easley / Lopez de Prado / O'Hara): a second's volume is split across a bucket
+        # boundary pro rata - an approximation (the order inside a second is lost by the per-second sums, assumed
+        # uniform); the old edges by searchsorted kept a large second whole and dropped duplicated edges (90 + 10 in
+        # 10 buckets read 0.5 instead of 0.9)
         size = total / buckets
-        cum = np.cumsum(vol)
-        edges = np.searchsorted(cum, np.arange(1, buckets) * size)
         imb = []
-        prev = 0
-        for e in list(edges) + [window]:
-            v = vol[prev:e + 1].sum()
-            if v > 0:
-                imb.append(abs(buy[prev:e + 1].sum() - sell[prev:e + 1].sum()) / v)
-            prev = e + 1
+        fill = b_acc = s_acc = 0.0
+        for k in np.nonzero(vol > 0)[0]:
+            v, fb = vol[k], buy[k] / vol[k]
+            while v > 1e-12 * size:
+                take = min(v, size - fill)
+                b_acc += take * fb
+                s_acc += take * (1 - fb)
+                fill += take
+                v -= take
+                if fill >= size * (1 - 1e-9):
+                    imb.append(abs(b_acc - s_acc) / size)
+                    fill = b_acc = s_acc = 0.0
         out['vpin'] = float(np.mean(imb)) if imb else None
         per_min = vol[:window // 60 * 60].reshape(-1, 60).sum(axis=1)
         p = per_min[per_min > 0] / per_min.sum()
@@ -620,10 +628,11 @@ class Footprint:
     def finished_auction(self, symbol: str, since_ms: int, until_ms: Optional[int], direction: int,
                          share: float = 0.02) -> bool:
         """
-        A finished auction at the extreme (footprint reading, ATAS / Market Profile: "a zero on the bid at the low"):
-        at the window's lowest price (almost) no taker SOLD - the low was printed by buyers lifting offers, sellers
-        were no longer hitting bids there: the sell auction ended. Mirrored at the highest price for shorts (no
-        taker buys at the high). `share`: the limit of that side as a share of the price bucket's volume.
+        A finished auction at the extreme (footprint convention, ATAS Bid/Ask: the Ask column = market BUYS, the Bid
+        column = market SELLS). audit N10: a finished low has a zero ASK - at the window's lowest price (almost) no
+        taker BOUGHT, the sellers met no buyers below and the auction ran out there; a finished high has a zero BID
+        (no taker sells at the high). The old check read the opposite sides. `share`: the limit of that side as a
+        share of the price bucket's volume.
         """
         levels = self.merged(symbol, since_ms, until_ms)
         if len(levels) < 3:
@@ -633,7 +642,7 @@ class Footprint:
         total = buy + sell
         if total <= 0:
             return False
-        late = sell if direction > 0 else buy        # the side that would have continued the auction
+        late = buy if direction > 0 else sell        # the zero side of a finished low (ask) / high (bid)
         return late <= share * total
 
 

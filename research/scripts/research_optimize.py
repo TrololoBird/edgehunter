@@ -92,7 +92,9 @@ def simulate(path: np.ndarray, d: int, entry: float, stop0: float, tp_plan: floa
         # stop first)
         hit_half = fav >= 1.0
         i_half = int(np.argmax(hit_half)) if hit_half.any() else n
-        if i_half < n and i_half < i_s:
+        # audit N28: and not after the trade already ended at its full target (a TP of 0.5R on bar 0, +1R on bar 1
+        # booked 0.75R); a bar reaching the full target and +1R together: the full exit (target <= 1R) decides
+        if i_half < n and i_half < i_s and (i_half < i_t or (i_half == i_t and target_r is not None and target_r > 1.0)):
             half_r = 1.0
     if i_s < n and i_s <= i_t:                         # a bar touching both: the stop first (conservative)
         # a gap through the stop fills at the open

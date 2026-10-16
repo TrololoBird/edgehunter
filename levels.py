@@ -190,12 +190,20 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
     """
     1m candles [open_time, open, high, low, close, quote_vol, taker_buy_quote] -> `minutes` candles aligned to
     epoch multiples of `minutes`. Only buckets that have closed by `now_ms` are returned (all of them when None).
+    audit C04: a repeated minute counts once (the last copy), and a CLOSED bucket is returned only when its minutes are
+    all there (up to 2% missing for bars over an hour) - two minutes 00:00 and 00:04 were a 'closed 5m candle', its
+    FVG / MSS / touches built on three minutes that never arrived. Missing minutes are never interpolated.
     """
+    seen: Dict[int, Sequence[float]] = {}
+    for c in candles:
+        seen[int(c[0])] = c                      # a re-delivered minute replaces its copy instead of adding to it
+    rows = [seen[t] for t in sorted(seen)]
     if minutes <= 1:
-        return [list(c) for c in candles if now_ms is None or c[0] + MINUTE_MS <= now_ms]
+        return [list(c) for c in rows if now_ms is None or c[0] + MINUTE_MS <= now_ms]
     size = minutes * MINUTE_MS
     out: List[List[float]] = []
-    for c in candles:
+    count: List[int] = []
+    for c in rows:
         start = int(c[0]) // size * size
         if out and out[-1][0] == start:
             bar = out[-1]
@@ -204,10 +212,13 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
             bar[4] = c[4]
             bar[5] += c[5]
             bar[6] += c[6]
+            count[-1] += 1
         else:
             out.append([start, c[1], c[2], c[3], c[4], c[5], c[6]])
+            count.append(1)
     if now_ms is not None:
-        out = [bar for bar in out if bar[0] + size <= now_ms]
+        need = minutes if minutes <= 60 else int(minutes * 0.98)
+        out = [bar for bar, n in zip(out, count) if bar[0] + size <= now_ms and n >= need]
     return out
 
 
@@ -262,33 +273,36 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
 
 
 def pullback_volume_ok(minute_candles: Sequence[Sequence[float]], since_ms: int, until_ms: int,
-                       reference_minute_usd: float) -> bool:
+                       reference_minute_usd: float) -> Optional[bool]:
     """
     Wyckoff "test" of a spring: the pullback after the spring trades on lower volume (supply dried up). The average
     1m quote volume in [since_ms, until_ms) must be <= spring_test_volume_ratio x the spring candle's average minute.
+    audit C08: None when it cannot be observed (no reference / no pullback minutes) - an unobserved test is not a
+    passed one.
     """
     if not reference_minute_usd:
-        return True
+        return None
     window = [c[5] for c in minute_candles if since_ms <= c[0] < until_ms]
     if not window:
-        return True
+        return None
     return sum(window) / len(window) <= CONFIG.levels.spring_test_volume_ratio * reference_minute_usd
 
 
 def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int, until_ms: int,
-                       spring_range_1h: Optional[float]) -> bool:
+                       spring_range: Optional[float], spring_minutes: int = 60) -> Optional[bool]:
     """
     eng-55: Wyckoff's test also NARROWS the spread (StockCharts Wyckoff tutorial; tradingwyckoff: test ranges 40-70%
-    smaller than the spring's). The pullback's 15m candles average a range <= spring_test_spread_ratio x the 1h spring
-    candle's range scaled to 15m (/ 2: ranges grow ~ sqrt(time)).
+    smaller than the spring's). The pullback's 15m candles average a range <= spring_test_spread_ratio x the spring
+    candle's range scaled to 15m by sqrt(time) - audit: sqrt(spring_minutes / 15), i.e. / 4 for the 4h spring the
+    detector runs on (the old / 2 was the 1h case). None when it cannot be observed (audit C08).
     """
-    if not spring_range_1h:
-        return True
+    if not spring_range:
+        return None
     bars = resample([c for c in minute_candles if since_ms <= c[0] < until_ms], 15, until_ms)
     if not bars:
-        return True
+        return None
     avg = sum(b[2] - b[3] for b in bars) / len(bars)
-    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range_1h / 2
+    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range / (max(spring_minutes, 15) / 15) ** 0.5
 
 
 # eng-124: bps of an executor.max_notional_usd market order walked through each coin's REST book (worst side, from the
@@ -334,15 +348,21 @@ def fill_price(levels: Dict[str, float], direction: int, candles: List[List]) ->
 FUNDING_MS = 8 * 3_600_000
 
 
-def funding_r(funding_8h: Optional[float], direction: int, entry: float, risk: float, t0: float, t1: float) -> float:
+def funding_r(funding_8h: Optional[float], direction: int, entry: float, risk: float, t0: float, t1: float,
+              interval_h: Optional[float] = None) -> float:
     """
-    Funding the position pays over (t0, t1] in R: rate x the settlements crossed (every 8h at 00 / 08 / 16 UTC,
-    Binance's default; coins settling every 4h pay about twice this) x entry / risk. Longs pay a positive rate.
+    Funding the position pays over (t0, t1] in R: the rate per settlement x the settlements crossed x entry / risk.
+    Longs pay a positive rate. audit C12: the contract's OWN interval (interval_h: 8 / 4 / 1 h, settlements at its
+    multiples from 00 UTC) - a 4h contract held 01:00-05:00 settled at 04:00 and paid; the 8h grid counted none. The
+    rate is the 8h-normalized one (fetcher), so one settlement of an h-hour contract is rate x h / 8. Still a model:
+    one rate for the whole hold, not the actual settled rates (those are the exchange's ledger - executor).
     """
     if not funding_8h or not risk:
         return 0.0
-    settlements = int(t1 // FUNDING_MS) - int(t0 // FUNDING_MS)
-    return direction * funding_8h * max(0, settlements) * entry / risk
+    hours = interval_h if interval_h and interval_h > 0 else 8
+    step = hours * 3_600_000
+    settlements = int(t1 // step) - int(t0 // step)
+    return direction * funding_8h * hours / 8 * max(0, settlements) * entry / risk
 
 
 def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_fill: bool = True,

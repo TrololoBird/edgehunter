@@ -5,8 +5,9 @@ research/PROTOCOL_entries_vs_placebo_eng133.md, written BEFORE the run; every nu
 Input: replay.py output (data/replay/<run>/group_*/entries.parquet; needs the eng-133 columns tf / shadow_veto written by
 replay.py). The placebo is rebuilt from the 1m archive: the same coin and direction, stop / targets in units of the
 ATR(14) of the setup's timeframe measured at the PLACEBO's own entry, a random time shifted by 3..14 days either way
-(never within +-48 h of the real trade), the 4h-trend sign and the ATR/price tercile equal to the real entry's; the same
-exit rules and costs (levels.simulate + stats.net_r, as replay.run).
+(never within +-48 h of the real trade), the 4h-trend sign and the ATR/price tercile equal to the real entry's; one
+8-hour surrogate exit and the same costs for both (levels.simulate + stats.net_r, as replay.run) - NOT the strategies'
+own exits (audit R04: the cards' final_r is reported beside it, descriptive only).
 
     python research/scripts/research_entries_placebo_eng133.py --run data/replay/eng133 --placebos 100 --seed 133 \
         --boot 5000 --workers 4 --out research/entries_placebo_eng133.md
@@ -41,7 +42,7 @@ MIN = 60_000
 TF_MS = {'5m': 5 * MIN, '15m': 15 * MIN, '1h': HOUR, '4h': 4 * HOUR, '1d': DAY}
 SHIFT_LO, SHIFT_HI, EXCL = 3 * DAY, 14 * DAY, 48 * HOUR
 HORIZONS = (4, 8, 12, 24)
-BLOCK = 12                                   # 48 h of 4h buckets
+BLOCK = 12                                   # 48 CALENDAR hours: 12 consecutive 4h buckets, empty ones included (audit R07)
 TRADFI = {'xau': 'XAUUSDT', 'oil': 'CLUSDT', 'spy': 'SPYUSDT', 'qqq': 'QQQUSDT'}
 
 
@@ -282,7 +283,10 @@ def contrast(ts_a, v_a, ts_b, v_b, rng, n_boot, lag):
     disjoint groups); 48 h moving-block bootstrap on the union of the buckets. Returns a dict or None (< 30 buckets)."""
     ua, xa = bucket_series(ts_a, v_a) if len(ts_a) else (np.array([], dtype=np.int64), np.array([]))
     ub, xb = bucket_series(ts_b, v_b) if len(ts_b) else (np.array([], dtype=np.int64), np.array([]))
-    grid = np.union1d(ua, ub)
+    # audit R07: the calendar grid of 4h buckets (empty ones NaN) - over the non-empty buckets only, 12 'buckets' of
+    # rare signals spanned days, not the 48 hours the block is meant to cover
+    both_b = np.union1d(ua, ub)
+    grid = np.arange(both_b.min(), both_b.max() + 1, dtype=np.int64) if len(both_b) else both_b
     A = np.full(len(grid), np.nan)
     B = np.full(len(grid), np.nan)
     A[np.searchsorted(grid, ua)] = xa
@@ -290,6 +294,7 @@ def contrast(ts_a, v_a, ts_b, v_b, rng, n_boot, lag):
     if min(len(ua), len(ub)) < 30:
         return None
     idx = boot_idx(len(grid), rng, n_boot)
+    idx = idx[np.isfinite(A[idx]).any(axis=1) & np.isfinite(B[idx]).any(axis=1)] if len(idx) else idx
     with np.errstate(all='ignore'):
         ma = np.nanmean(A[idx], axis=1)
         mb = np.nanmean(B[idx], axis=1)
@@ -395,7 +400,10 @@ class Macro:
         f1, f3 = self._etf_vis(self.etf, t) if self.etf else (None, None)
         out['etf_flow_1d'] = np.nan if f1 is None else f1
         out['etf_flow_3d'] = np.nan if f3 is None else f3
-        days = [d for d in self.dxy_days if d < day]
+        # audit N06: only H.10 values RELEASED by t (macro.available_ms), not every value dated before the day
+        from macro import available_ms
+        days = [d for d in self.dxy_days
+                if available_ms('dxy', datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp() * 1000) <= ts_ms]
         out['dxy_chg_1d'] = ((self.dxy[days[-1]] / self.dxy[days[-2]] - 1) * 100) if len(days) >= 2 else np.nan
         return out
 
@@ -486,10 +494,27 @@ def main():
     d = d.filter(pl.Series(keep))
     PM = PM[keep]
     ts_all = d['ts'].to_numpy()
+    # audit R04: R is the 8h surrogate (levels.simulate over trade_ttl: full exit at TP1 / stop) for the real entries
+    # AND the placebos alike - it is NOT the cards' own lifecycle (Turtle channel, Connors SMA5, SAR, bands, partials).
+    # The cards' full result (final_r) is reported beside it per setup, never mixed into the contrast
     R = d['r_tp1'].to_numpy().astype(float)
     pl_mean = PM.mean(axis=1)
     half_arr = d['half'].to_numpy()
-    lifetime_b = max(BLOCK, math.ceil(0.9 * ttl / H4))
+    cards = [pl.read_parquet(p) for p in sorted(glob.glob(os.path.join(args.run, 'group_*', 'cards.parquet')))]
+    cards = pl.concat(cards, how='diagonal_relaxed') if cards else None
+    held = None
+    if cards is not None and {'entered_ms', 'finished_ms'} <= set(cards.columns):
+        h = cards.filter(pl.col('entered_ms').is_not_null() & pl.col('finished_ms').is_not_null())
+        if h.height:
+            held = (h['finished_ms'] - h['entered_ms']).to_numpy().astype(float)
+    # the Newey-West lag: the MEASURED p90 holding time of the replayed cards (the protocol's wording), else 0.9 x TTL
+    p90_hold = float(np.percentile(held, 90)) if held is not None and len(held) else 0.9 * ttl
+    lifetime_b = max(BLOCK, math.ceil(p90_hold / H4))
+    full_r = {}
+    if cards is not None and 'final_r' in cards.columns:
+        for (st,), g in cards.filter(pl.col('final_r').is_not_null()).group_by(['setup']):
+            v = g['final_r'].to_numpy().astype(float)
+            full_r[st] = (len(v), float(v.mean()))
 
     # ---- families
     out = []
@@ -563,8 +588,19 @@ def main():
     out.append(f"Run `{args.run}`; {len(d)} entries with a placebo ({e.height} usable, "
                f"{int((half_arr == 'dev').sum())} dev / {int((half_arr == 'holdout').sum())} holdout after the purge), "
                f"split {datetime.fromtimestamp(mid / 1000, timezone.utc):%Y-%m-%d}; K = {K} copies, seed {args.seed}, "
-               f"{args.boot} bootstrap draws, block = {BLOCK} buckets (48 h); lifetime lag for Newey-West = {lifetime_b}.\n")
-    out.append("## Families (net R at TP1 with the replay's exits; real minus placebo; 90% intervals)\n")
+               f"{args.boot} bootstrap draws, block = {BLOCK} calendar 4h buckets (48 h); lifetime lag for Newey-West = "
+               f"{lifetime_b} buckets (p90 holding {p90_hold / HOUR:.1f} h).\n")
+    out.append("**What this measures (audit R04):** the entry with a FIXED geometry over 8 hours (levels.simulate: out at "
+               "TP1 / the stop / the TTL), for the real entries and the placebos alike. It is NOT the cards' full "
+               "result: the Turtle channel, Connors' SMA5, Bollinger's SAR / band and the partial exits are not in it. "
+               "The cards' own mean final_r is listed separately below and is not part of any test.\n")
+    if full_r:
+        out.append("| Setup | cards with a result | mean final_r (full lifecycle, descriptive) |")
+        out.append("|---|---:|---:|")
+        for st in sorted(full_r):
+            out.append(f"| {st} | {full_r[st][0]} | {fmt(full_r[st][1])} |")
+        out.append("")
+    out.append("## Families (8h TP1 surrogate net R; real minus placebo; 90% intervals)\n")
     out.append("| Setup | part | n | buckets | mean R [90%] | placebo mean | P90 placebo | real - placebo [90%] | q (holdout) | verdict |")
     out.append("|---|---|---:|---:|---|---:|---:|---|---:|---|")
     for setup, res in fam_rows:

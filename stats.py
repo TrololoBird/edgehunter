@@ -1053,7 +1053,8 @@ def demo_table(console: Console, db: str = 'demo_trades.db', journal_db: str = C
         return
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
-        raw = conn.execute("SELECT strategy, close_reason, r, symbol, direction, opened_ms FROM demo_trades").fetchall()
+        raw = conn.execute("SELECT strategy, close_reason, r, symbol, direction, opened_ms, card_id, setup "
+                           "FROM demo_trades").fetchall()
     finally:
         conn.close()
     rows = []
@@ -1061,13 +1062,19 @@ def demo_table(console: Console, db: str = 'demo_trades.db', journal_db: str = C
     if jconn is not None:
         jconn.row_factory = sqlite3.Row
     try:
-        for strategy, reason, r, symbol, direction, opened in raw:
+        has_id = jconn is not None and 'card_id' in {c[1] for c in jconn.execute("PRAGMA table_info(signals)")}
+        for strategy, reason, r, symbol, direction, opened, card_id, setup in raw:
             card = None
             if jconn is not None and r is not None and opened:
-                row = jconn.execute(
-                    "SELECT * FROM signals WHERE kind = 'card' AND symbol = ? AND direction = ? AND card_r IS NOT NULL "
-                    "AND ts_ms BETWEEN ? AND ? ORDER BY ts_ms LIMIT 1",
-                    (symbol, direction, opened, opened + 40 * 86_400_000)).fetchone()
+                # audit N24: the exact card by its id; older rows without one: the same SETUP (not any card of the
+                # coin and side) finished after the entry
+                row = jconn.execute("SELECT * FROM signals WHERE kind = 'card' AND card_id = ? AND card_r IS NOT NULL "
+                                    "LIMIT 1", (card_id,)).fetchone() if has_id and card_id else None
+                if row is None and setup:
+                    row = jconn.execute(
+                        "SELECT * FROM signals WHERE kind = 'card' AND symbol = ? AND direction = ? AND card_r IS NOT NULL "
+                        "AND group_key LIKE ? AND ts_ms BETWEEN ? AND ? ORDER BY ts_ms LIMIT 1",
+                        (symbol, direction, '% ' + setup, opened, opened + 40 * 86_400_000)).fetchone()
                 card = card_r_net(row) if row is not None else None
             rows.append((strategy, reason, r, card))
     finally:
@@ -1101,7 +1108,8 @@ def cards_table(console: Console, rows: List):
         return
     table = Table(title="Finished cards: what price did afterwards (in the card's direction)",
                   header_style="bold magenta", border_style="blue")
-    for name in ("Card", "N", "after 15m", "after 1h", "after 4h", "vetoed triggers"):
+    # audit N24: one header per horizon from HORIZONS (4 values with 8h were printed under 3 headers)
+    for name in ("Card", "N", *(f"after {label}" for label in HORIZONS), "vetoed triggers"):
         table.add_column(name, justify="left" if name == "Card" else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in cards:

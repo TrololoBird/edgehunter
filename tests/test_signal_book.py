@@ -41,6 +41,9 @@ def _shift_entry(monkeypatch):
     from strategies.leg import LegContinuation
     monkeypatch.setattr(config_mod.CONFIG, 'strategies',
                         dataclasses.replace(config_mod.CONFIG.strategies, smt_session=()))
+    # audit (ICT OTE): TP1 is now the prior high; the fixture's shift entry at 111.4 sits above the OTE band (R:R to the
+    # prior high < 1) - these tests exercise the lifecycle, so the R:R floor is lowered here
+    monkeypatch.setattr(config_mod.CONFIG, 'levels', dataclasses.replace(config_mod.CONFIG.levels, min_rr_tp1=0.3))
     orig = LegContinuation.plan
     monkeypatch.setattr(LegContinuation, 'plan', lambda self, x: (
         lambda p: {**p, 'trigger': 'shift', 'trail_after_tp1': False} if p and not p.get('skip') else p)(orig(self, x)))
@@ -73,6 +76,9 @@ def test_continuation_lifecycle_with_orderflow_confirm(rally_frame, monkeypatch)
     _, entries = book.update([], Frames(rally_frame), pf, cf, now, confirm_of=confirm)
     assert entries == [s] and s.status == 'ENTRY' and s.levels['entry'] == 111.4 and s.of_confirm == 'imbalance'
     assert s.confirms['orderflow'] == 'imbalance'
+    # the fixture's 1.272 / 1.618 extensions are out of reach, so all three targets sit on the prior high: spaced here
+    # (the test is about the lifecycle)
+    s.levels['tp2'], s.levels['tp3'] = s.levels['tp1'] + 2, s.levels['tp1'] + 4
     # eng-58: targets / stops on the final 1m candles' extremes (a target traded 2 bps through)
     t = s.managed_ms
     tp1, sl = s.levels['tp1'], s.levels['sl']

@@ -162,7 +162,7 @@ class SilverBulletStrategy(Strategy):
         targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity', first=first)
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
-        return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
+        plan = base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
@@ -174,3 +174,7 @@ class SilverBulletStrategy(Strategy):
                                else 'the nearest opposite liquidity'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
                          key=(sig['anchor_ts'], d))
+        if plan and not plan.get('skip'):
+            # audit: ICT (the Silver Bullet lecture, 11:24): a NEW entry only inside the hour; a trade may run past it
+            plan['entry_until_ms'] = int(sig['anchor_ts']) + 3_600_000
+        return plan

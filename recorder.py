@@ -167,13 +167,33 @@ def compact(root: str, before_sec: float) -> int:
         if start + 3600 <= before_sec:
             hours.setdefault(os.path.join(folder, f"{name[:2]}.parquet"), []).append(f)
     for target, files in hours.items():
+        manifest = target + '.merged'
+        if os.path.exists(manifest):
+            # audit N08: a previous run replaced the hour file but failed removing its minute files: those already
+            # are in it - removed now, never merged a second time
+            with open(manifest, encoding='utf-8') as fh:
+                stamp, *names = fh.read().split('\n')
+            st = os.stat(target) if os.path.exists(target) else None
+            # the replace happened only if the hour file IS the merged one (same size / mtime as when it was written);
+            # else the crash came before it and the minute files are still the only copy
+            done = set(names) if st is not None and stamp == f"{st.st_size} {st.st_mtime_ns}" else set()
+            for f in [f for f in files if os.path.basename(f) in done]:
+                os.remove(f)
+            files = [f for f in files if os.path.basename(f) not in done]
+            os.remove(manifest)
+            if not files:
+                continue
         parts = [pl.read_parquet(f) for f in sorted(files)]
         if os.path.exists(target):
             parts.insert(0, pl.read_parquet(target))
         pl.concat(parts, how='diagonal_relaxed').write_parquet(target + '.tmp', compression='zstd')
+        st = os.stat(target + '.tmp')
+        with open(manifest, 'w', encoding='utf-8') as fh:       # written BEFORE the replace: the merged file + inputs
+            fh.write('\n'.join([f"{st.st_size} {st.st_mtime_ns}"] + [os.path.basename(f) for f in files]))
         os.replace(target + '.tmp', target)
         for f in files:
             os.remove(f)
+        os.remove(manifest)
     return len(hours)
 
 

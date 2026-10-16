@@ -481,6 +481,27 @@ def week_boot(vals: np.ndarray, weeks: np.ndarray, boot: int = 2000, seed: int =
     return float(vals.mean()), float(lo), float(hi), float((means <= 0).mean())
 
 
+def week_boot_diff(va: np.ndarray, wa: np.ndarray, vb: np.ndarray, wb: np.ndarray, boot: int = 2000, seed: int = 11):
+    """audit N36: (mean(A) - mean(B), lo, hi, p one-sided diff<=0): the DIFFERENCE of two group means, each recomputed
+    in every bootstrap draw of the same calendar weeks (concat(A, -B) averaged both groups together: (mean A - mean B)/2
+    for equal sizes, another weighting otherwise)."""
+    if len(va) < 10 or len(vb) < 10:
+        return np.nan, np.nan, np.nan, np.nan
+    uw = np.union1d(wa, wb)
+    if len(uw) < 5:
+        return float(va.mean() - vb.mean()), np.nan, np.nan, np.nan
+    ia, ib = np.searchsorted(uw, wa), np.searchsorted(uw, wb)
+    sa, ca = np.bincount(ia, weights=va, minlength=len(uw)), np.bincount(ia, minlength=len(uw))
+    sb, cb = np.bincount(ib, weights=vb, minlength=len(uw)), np.bincount(ib, minlength=len(uw))
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(uw), size=(boot, len(uw)))
+    with np.errstate(all='ignore'):
+        diffs = sa[idx].sum(axis=1) / ca[idx].sum(axis=1) - sb[idx].sum(axis=1) / cb[idx].sum(axis=1)
+    diffs = diffs[np.isfinite(diffs)]
+    lo, hi = np.quantile(diffs, [0.05, 0.95]) if len(diffs) else (np.nan, np.nan)
+    return float(va.mean() - vb.mean()), float(lo), float(hi), float((diffs <= 0).mean()) if len(diffs) else np.nan
+
+
 def bh(p: List[float]) -> List[float]:
     p = np.asarray(p, float)
     q = np.full_like(p, np.nan)

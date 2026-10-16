@@ -200,7 +200,7 @@ EXTRA_COLUMNS = {
     # eng-135 shadow: the coin's newest Binance / Upbit announcement (event_risk.news_of) and its age in hours
     'kimchi_prem': 'REAL', 'news': 'TEXT', 'news_age_h': 'REAL',
     # iceberg.py: hidden limit orders refilled at one price over the last 5 minutes (bid - ask USD, count)
-    'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'btc_bias': 'REAL', 'vpin': 'REAL', 'vol_entropy': 'REAL', 'lead_venue': 'TEXT', 'lead_corr': 'REAL', 'card_r': 'REAL',
+    'iceberg_net_5m': 'REAL', 'iceberg_n_5m': 'REAL', 'daily_bias': 'REAL', 'weekly_bias': 'REAL', 'btc_bias': 'REAL', 'vpin': 'REAL', 'vol_entropy': 'REAL', 'lead_venue': 'TEXT', 'lead_corr': 'REAL', 'card_r': 'REAL', 'card_id': 'TEXT',
     'prem_1h': 'REAL', 'prem_z': 'REAL', 'funding_1h': 'REAL', 'oi_vol': 'REAL', 'er_1h': 'REAL', 'chop_1h': 'REAL',
     'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
@@ -324,11 +324,21 @@ def crowded(sig: Dict, direction: int) -> bool:
         (prem is not None and prem < -cfg.crowded_premium_short)
 
 
+def present(*values):
+    """audit N12: the first value that was OBSERVED (not None / NaN) - a measured 0 is a value, not a missing one
+    (`a or b` replaced a cancelled-out aggregate flow of 0 by Binance's one-venue flow)."""
+    for v in values:
+        if v is not None and v == v:
+            return v
+    return None
+
+
 def perp_flow_5m(sig: Dict) -> float:
     """5m perp taker flow: all futures venues when several report, else Binance."""
-    if (sig.get('venues_active') or 0) >= 2 and sig.get('agg_cvd_5m'):
+    if (sig.get('venues_active') or 0) >= 2 and present(sig.get('agg_cvd_5m')) is not None:
         return sig['agg_cvd_5m']
-    return sig.get('futures_cvd_5m') or sig.get('futures_cvd') or 0.0
+    v = present(sig.get('futures_cvd_5m'), sig.get('futures_cvd'))
+    return 0.0 if v is None else v
 
 
 def one_venue(sig: Dict) -> bool:
@@ -466,7 +476,7 @@ def _features(sig: Dict) -> Dict:
         v = sig.get(col)
         out[col] = None if v is None or v != v else float(v)
     vol = sig.get('volume_24h') or 0
-    fut = sig.get('agg_cvd_5m') or sig.get('futures_cvd_5m')
+    fut = present(sig.get('agg_cvd_5m'), sig.get('futures_cvd_5m'))
     out['flow_pct_5m'] = float(fut) / vol if vol and fut is not None else None
     out['spot_flow_pct_5m'] = float(sig['spot_cvd_5m']) / vol if vol and sig.get('spot_cvd_5m') is not None else None
     return out
@@ -525,10 +535,12 @@ class SignalJournal:
     def _insert(self, rows: List[Dict]):
         if not rows:
             return
-        columns = list(rows[0])
+        # audit N16: the union of the batch's columns, a row's missing field NULL - the first row's columns lost the
+        # setups' reason after an anomaly row, and an anomaly after a setup failed the whole batch (KeyError: reason)
+        columns = list(dict.fromkeys(c for r in rows for c in r))
         self.conn.executemany(
             f"INSERT INTO signals ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
-            [tuple(r[c] for c in columns) for r in rows],
+            [tuple(r.get(c) for c in columns) for r in rows],
         )
 
     @staticmethod
@@ -553,6 +565,7 @@ class SignalJournal:
         now_ms = int(time.time() * 1000)
         cooldown_ms = CONFIG.journal.cooldown_sec * 1000
         rows = []
+        logged = {}
         with self._lock:
             for symbol, sig in signals:
                 price = prices.get(symbol)
@@ -560,10 +573,10 @@ class SignalJournal:
                     continue
                 kind, group_key, direction = classify(sig)
                 family, rank = event_family(group_key)
-                last_ts, last_rank = self._last_logged.get((symbol, family), (0, -1))
+                last_ts, last_rank = logged.get((symbol, family)) or self._last_logged.get((symbol, family), (0, -1))
                 if now_ms - last_ts < cooldown_ms and rank <= last_rank:
                     continue
-                self._last_logged[(symbol, family)] = (now_ms, rank)
+                logged[(symbol, family)] = (now_ms, rank)
                 row = self._base_row(now_ms, symbol, kind, group_key, direction, price, sig)
                 # card_veto: the setup did not become a card (no qualifying leg, its leg already played)
                 row['vetoed'] = sig.get('card_veto') if 'card_veto' in sig else veto_reason(group_key, sig)
@@ -577,6 +590,8 @@ class SignalJournal:
             if rows:
                 self._insert(rows)
                 self.conn.commit()
+                # the cooldown only after the rows are saved: a failed batch is retried, not suppressed
+                self._last_logged.update(logged)
         if rows:
             logger.info(f"Journal: logged {len(rows)} new signals")
         return len(rows)
@@ -656,6 +671,8 @@ class SignalJournal:
                     # the card's own result in R: the lifecycle's exit (a trailing channel, pyramided units) - the 8h
                     # replay cannot see a Turtle or Connors trade that lives for days
                     'card_r': tracked.final_r, 'units': float(len(getattr(tracked, 'units', None) or [])) or None,
+                    # audit N24: the executor's own card id (symbol|setup|entered_at s) - the demo trade's exact card
+                    'card_id': f"{tracked.symbol}|{tracked.group_key}|{int(tracked.entered_at)}" if tracked.entered_at else None,
                     # the furthest target the card reached (0 = none) - the TP1 / TP2 / TP3 hit rates of stats.py
                     'best_tp': int(tracked.best_target or 0) if tracked.entered_at else None})
         if not tracked.entered_at and plan.get('zone_lo') is not None and plan.get('zone_hi') is not None:
@@ -891,7 +908,7 @@ class SignalJournal:
 
     def refresh_hit_rates(self) -> int:
         """
-        p(TP1 before the stop) per strategy from the replayed entries of the last 30 days (passed and vetoed: the
+        p(TP1 before the stop) per SETUP (audit C09) from the replayed entries of the last 30 days (passed and vetoed: the
         replay is the same), decided ones (TP1 / TP2 / TP3 vs SL) -> strategies.geometry.HIT_RATE (p, n, p_upper), which
         turns the entry check from a fixed R:R into the expectancy: an entry is vetoed only when it is negative even at
         the upper end of p's 95% Wilson interval (proven, not a small sample's noise).
@@ -900,9 +917,10 @@ class SignalJournal:
         since = int((time.time() - 30 * 86400) * 1000)
         with self._lock:
             rows = self.conn.execute(
-                "SELECT strategy, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
+                "SELECT group_key, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
                 "outcome IN ('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL AND tp1 IS NOT NULL AND "
-                "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', 'tl_em_shadow', 'oi_shadow', 'cascade_shadow')",
+                "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', "
+                "'tl_em_shadow', 'oi_shadow', 'cascade_shadow', 'rsi2_crossback_shadow', 'connors_short_shadow')",
                 (since,)).fetchall()
         # eng-102: only entries WITH a TP1 (a target-less system - Bollinger / ORB / breakout rows with tp1 NULL - only
         # ever ends 'SL' here: Bollinger measured p 0% and every entry was vetoed 'expectancy -1.00R') and of the
@@ -1030,6 +1048,8 @@ class SignalJournal:
                     await asyncio.to_thread(self.maintenance)
                 if time.time() - last_regime_stats >= 3600:
                     last_regime_stats = time.time()
+                    # audit N17: the measured p(TP1) follows the new outcomes (was computed once at the start)
+                    await asyncio.to_thread(self.refresh_hit_rates)
                     await asyncio.to_thread(self.refresh_regime_stats)
                     await asyncio.to_thread(self.refresh_confirm_stats)
                     await asyncio.to_thread(self.refresh_anomaly_effects)

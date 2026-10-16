@@ -6,7 +6,6 @@ Cached for a day in models/sectors.json. Used by the per-strategy coin pools (`p
 import errors
 import json
 import os
-import re
 import time
 import urllib.error
 import urllib.request
@@ -28,7 +27,11 @@ def base_of(symbol: str) -> str:
     base = symbol.split('/')[0]
     if base.endswith('USDT') and '/' not in symbol:
         base = base[:-4]
-    return re.sub(r'^(1000000|1000|1M|1MB|10000|100)', '', base.upper()) or base.upper()
+    # audit N05: the one tested parser (symbols.split_base, longest prefix first) - this regex tried 1000 before 10000
+    # / 100000: 10000WEN -> 0WEN, 100000TOKEN -> 00TOKEN
+    from symbols import split_base
+    coin, _ = split_base(base.upper())
+    return coin or base.upper()
 
 
 def _fetch(category: str, pages: int = 2) -> list:

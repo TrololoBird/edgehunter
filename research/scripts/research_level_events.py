@@ -484,7 +484,7 @@ def run_coin(job) -> Dict:
     symbol, start, end, with_oi = job
     import polars as pl
     if os.path.exists(os.path.join(OUT_DIR, f'{symbol}.parquet')):
-        return {'symbol': symbol, 'rows': -1}          # done by an earlier (interrupted) run: resume
+        return {'symbol': symbol, 'rows': -1}          # done by an earlier (interrupted) run of the same options (main)
     from history import Archive
     arch = Archive(rate_bytes=4e6)
     s, e = date.fromisoformat(start), date.fromisoformat(end)
@@ -526,6 +526,25 @@ def main():
     start = end - timedelta(days=30 * args.months)
     coins = select_coins(Archive(rate_bytes=4e7), start, end, args.min_volume)[:args.limit]
     jobs = [(f, start.isoformat(), end.isoformat(), not args.no_oi) for _, f, _, _ in coins]
+    # audit R08: a resume only within the SAME options - the per-symbol files carry no dates / OI flag / code version,
+    # so a run with other options must not reuse them (it moves them aside)
+    import hashlib
+    import json
+    import shutil
+    manifest = {'start': start.isoformat(), 'end': end.isoformat(), 'oi': not args.no_oi,
+                'code': hashlib.sha256(open(__file__, 'rb').read()).hexdigest()[:16]}
+    mpath = os.path.join(OUT_DIR, '_run.json')
+    old = None
+    if os.path.exists(mpath):
+        with open(mpath, encoding='utf-8') as fh:
+            old = json.load(fh)
+    if os.path.isdir(OUT_DIR) and old != manifest and any(f.endswith('.parquet') for f in os.listdir(OUT_DIR)):
+        stale = f"{OUT_DIR}_stale_{int(datetime.now(timezone.utc).timestamp())}"
+        shutil.move(OUT_DIR, stale)
+        logging.info(f"events: the cached rows were made with other options ({old}): moved to {stale}")
+    os.makedirs(OUT_DIR, exist_ok=True)
+    with open(mpath, 'w', encoding='utf-8') as fh:
+        json.dump(manifest, fh)
     if args.workers > 1:
         from concurrent.futures import ProcessPoolExecutor
         with ProcessPoolExecutor(args.workers) as pool:

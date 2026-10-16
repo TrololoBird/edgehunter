@@ -63,9 +63,9 @@ def block_mean_ci(values: np.ndarray, ts: np.ndarray, direction: np.ndarray, see
 
 
 def auc(y: np.ndarray, p: np.ndarray) -> float:
-    order = np.argsort(p, kind='mergesort')
-    ranks = np.empty(len(p))
-    ranks[order] = np.arange(1, len(p) + 1)
+    """Mann-Whitney AUC with MID-ranks for ties (audit N29: ordinal ranks gave y=[0,1], p=[.5,.5] an AUC of 1)."""
+    from scipy.stats import rankdata
+    ranks = rankdata(p, method='average')
     pos = y == 1
     n1, n0 = pos.sum(), (~pos).sum()
     return float((ranks[pos].sum() - n1 * (n1 + 1) / 2) / (n1 * n0)) if n1 and n0 else float('nan')
@@ -213,11 +213,15 @@ def main():
     m_reg, lo_reg, hi_reg = block_mean_ci(rt[pr > 1e-9], tt[pr > 1e-9], dt[pr > 1e-9]) if (pr > 1e-9).any() else (0, -1, -1)
 
     m_sel, lo_sel, hi_sel = block_mean_ci(rt[p_gb >= thr], tt[p_gb >= thr], dt[p_gb >= thr])
+    # audit N30: the model that passed is the one saved - the regressor's interval could pass the verdict while the
+    # classifier (which failed) was exported
+    winner = 'classifier'
     if lo_reg > lo_sel:
         m_sel, lo_sel, hi_sel = m_reg, lo_reg, hi_reg
+        winner = 'regressor'
     passed = lo_sel > 0
     lines += ['', f"## Verdict: {'PASSED' if passed else 'NOT PASSED'}", '',
-              f"The trades the model would take on the holdout: mean net R {m_sel:+.3f} [{lo_sel:+.3f}..{hi_sel:+.3f}]. "
+              f"The trades the {winner} would take on the holdout: mean net R {m_sel:+.3f} [{lo_sel:+.3f}..{hi_sel:+.3f}]. "
               + ("Its 90% interval is above 0: worth shipping in shadow (shown on cards, journaled, never a filter) and "
                  "judging live." if passed else
                  "Its 90% interval is not above 0: the model does not turn the strategies' trades into a profitable "
@@ -229,9 +233,15 @@ def main():
     print(text)
     if passed and args.save:
         os.makedirs(args.save, exist_ok=True)
-        gbm.booster_.save_model(os.path.join(args.save, 'meta_card.txt'))
+        # audit N30: the winner with ITS rule - the classifier with its probability threshold, the regressor with
+        # 'predicted net R > 0' (no consumer loads this yet: the package names its own type)
+        model = reg if winner == 'regressor' else gbm
+        model.booster_.save_model(os.path.join(args.save, 'meta_card.txt'))
         with open(os.path.join(args.save, 'meta_card.json'), 'w') as fh:
-            json.dump({'features': names, 'categories': cats, 'threshold': thr}, fh)
+            json.dump({'model': winner, 'features': names, 'categories': cats,
+                       'threshold': 1e-9 if winner == 'regressor' else thr,
+                       'rule': 'predicted net R > threshold' if winner == 'regressor' else 'p(win) >= threshold',
+                       'holdout_mean_r': m_sel, 'holdout_lo90': lo_sel}, fh)
 
 
 if __name__ == '__main__':

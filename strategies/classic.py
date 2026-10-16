@@ -35,10 +35,20 @@ NY = ZoneInfo('America/New_York')
 # ------------------------------------------------------------------------------------------------ value area
 
 def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets: int = 60, tpo: bool = False):
-    """(VAL, POC, VAH) of the candles' volume spread evenly over each candle's range, else None. tpo: each candle
-    weighs one time unit instead of its volume (Market Profile's TPO value area, Dalton - eng-58)."""
+    """(VAL, POC, VAH) of the candles' volume spread evenly over each candle's range, else None. tpo: Market Profile's
+    TPO value area (Dalton - eng-58): the candles are merged into 30-minute brackets and every price row a bracket
+    visited gets ONE mark (audit C03: a wide candle's single unit was spread thinly over its rows, so a few narrow
+    bars at one price made a 70% 'profile' there)."""
     if not candles:
         return None
+    if tpo:
+        brackets: Dict[int, list] = {}
+        for c in candles:
+            k = int(c[0]) // (30 * 60_000)
+            b = brackets.get(k)
+            brackets[k] = [c[0], c[1], c[2], c[3], c[4], 0.0] if b is None else \
+                [b[0], b[1], max(b[2], c[2]), min(b[3], c[3]), c[4], 0.0]
+        candles = [brackets[k] for k in sorted(brackets)]
     hi, lo = max(c[2] for c in candles), min(c[3] for c in candles)
     if hi <= lo:
         return None
@@ -47,7 +57,7 @@ def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets:
     for c in candles:
         a = min(buckets - 1, int((c[3] - lo) / size))
         b = min(buckets - 1, int((c[2] - lo) / size))
-        part = (1.0 if tpo else (c[5] or 0.0)) / (b - a + 1)
+        part = 1.0 if tpo else (c[5] or 0.0) / (b - a + 1)
         for k in range(a, b + 1):
             vol[k] += part
     total = sum(vol)
@@ -313,38 +323,38 @@ def failed_auction_event(base: str, m15: Sequence[Sequence[float]], cut: int) ->
 
 def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, price_hi: float, price_lo: float,
                 fired: set, symbol: str, d1: Sequence[Sequence[float]] = ()) -> Optional[Dict]:
-    """Crabel's ORB on a running session (eng-109): the first 5m close beyond the session's open +- the Stretch, once
-    per session. `minutes`: final 1m candles (price_hi / price_lo: unused since eng-105's close confirmation)."""
-    n = 0                                          # eng-109: no opening-range wait - Crabel's levels exist at the open
+    """Crabel's ORB on a running session. audit: Crabel, "Playing the Opening Range Breakout" Part 8 (Stocks &
+    Commodities, p. 36) - the opening range of the first minutes (30 seconds to 5 minutes; 5 here), a buy stop the
+    Stretch (the 10-day SMA of min(High - Open, Open - Low)) above its high and a sell stop the Stretch below its low;
+    the first level TRADED through is the entry (a stop order fills on the touch, at the level or a gap's open), the
+    other one the stop. Was: the session's open +- Stretch and a 5m CLOSE beyond (eng-105), another reference and
+    moment. `minutes`: final 1m candles; the break is read on them (a minute late at most, the level is the price)."""
+    or_minutes = 5
     for name, open_ms, close_ms in orb_sessions(base, now_ms):
         if (symbol, open_ms) in fired:
             continue
-        # eng-109, Crabel's own levels (the 30-minute range was community practice, not his): the session's OPEN +-
-        # the Stretch (the 10-day SMA of min(High - Open, Open - Low) of the daily candles); the first one closed
-        # beyond is the trade, the other level its stop
         s = stretch(list(d1), CONFIG.strategies.orb_stretch_days) if d1 else None
-        first = next((c for c in minutes if c[0] >= open_ms), None)
-        if s and first is not None and first[0] < open_ms + 60_000:
-            hi, lo = first[1] + s, first[1] - s
-        else:
-            continue                                   # no stretch / no session open: no Crabel ORB
-        # eng-105, the owner: a break is a CLOSED 5m candle beyond the range, not a wick / tick through it (Crabel's
-        # resting stop orders took every 1m poke through the level that came back: demo 6 trades, 1 winner, -4.0R)
-        from levels import resample
-        last_end = int(minutes[-1][0]) + 60_000 if minutes else now_ms
-        bars = [b for b in resample([c for c in minutes if c[0] >= open_ms + n * 60_000], 5, last_end)]
-        closes = [(b, 1 if b[4] > hi else -1 if b[4] < lo else 0) for b in bars]
-        broke = [(b, s) for b, s in closes if s]
-        if not broke:
+        opening = [c for c in minutes if open_ms <= c[0] < open_ms + or_minutes * 60_000]
+        if not s or len(opening) < or_minutes or opening[0][0] != open_ms:
+            continue                                   # no stretch / the opening range is incomplete: no Crabel ORB
+        hi = max(c[2] for c in opening) + s
+        lo = min(c[3] for c in opening) - s
+        after = [c for c in minutes if c[0] >= open_ms + or_minutes * 60_000 and c[0] < close_ms]
+        hit = next(((c, 1 if c[2] >= hi else -1) for c in after if c[2] >= hi or c[3] <= lo), None)
+        if hit is None:
             continue
-        b, side = broke[0]
-        if b is not bars[-1] or bars[-1][0] + 300_000 < last_end - 60_000:
-            fired.add((symbol, open_ms))           # the first 5m close beyond was earlier: the first break only
+        b, side = hit
+        if b[2] >= hi and b[3] <= lo:
+            fired.add((symbol, open_ms))           # both stops in one minute: the order is unknown - no trade
+            continue
+        if b is not minutes[-1]:
+            fired.add((symbol, open_ms))           # the first touch was earlier: the first break only
             continue
         level, other = (hi, lo) if side > 0 else (lo, hi)
         fired.add((symbol, open_ms))
         return {'setup': 'ORB UP' if side > 0 else 'ORB DOWN', 'direction': side,
-                'setup_note': f"{name} session: a 5m close {b[4]:.6g} beyond its open +- Crabel's Stretch {lo:.6g}-{hi:.6g} "
+                'setup_note': f"{name} session: traded through the {or_minutes}-minute opening range +- Crabel's Stretch "
+                              f"{lo:.6g}-{hi:.6g} "
                               f"{'up' if side > 0 else 'down'}, out at the session's close",
                 'anchor_level': level, 'anchor_extreme': other, 'anchor_label': f'{name} opening range',
                 'anchor_ts': open_ms, 'anchor_close': level, 'orb_hi': hi, 'orb_lo': lo, 'orb_session': name,
@@ -395,11 +405,13 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     if prev is None or math.isnan(prev):
         return None
     if first == 'orig':
-        # eng-106, Connors' own entry (shadow 'RSI2X'): the FIRST close with RSI(2) beyond the extreme, above (below)
-        # the SMA200 - no waiting for the cross back out (our eng-84 rule)
-        if c > sma200 and r < cfg.connors_rsi_low <= prev:
+        # audit: Connors / Alvarez, Short Term Trading Strategies That Work (2008), ch. 9 p. 62 - above the SMA200, a
+        # CLOSE with RSI(2) < 5, buy on the close (RSI2X, traded); no 'first close into the extreme' condition (a run
+        # of oversold days is one trade because the card / position stays open). The mirrored short is not in the
+        # book's four rules: journaled in shadow (signal_book.SHADOW_SETUPS)
+        if c > sma200 and r < cfg.connors_rsi_low:
             side = 1
-        elif c < sma200 and r > cfg.connors_rsi_high >= prev:
+        elif c < sma200 and r > cfg.connors_rsi_high:
             side = -1
         else:
             return None

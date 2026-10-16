@@ -106,7 +106,9 @@ def indicators(k: np.ndarray) -> dict:
     pctb = (c - (mid - 2 * sd)) / np.maximum(4 * sd, 1e-12)
     bbw = 4 * sd / np.maximum(mid, 1e-12)
     tp = (h + l + c) / 3
-    mf = tp * v
+    # audit N35: raw money flow = typical price x BASE volume; v is the quote volume (already price x base), so it IS
+    # the money flow - tp x quote multiplied the price in twice
+    mf = v
     # Quong & Soudack / TA-Lib: an unchanged typical price is neither positive nor negative flow (it was negative)
     tp_diff = np.diff(tp, prepend=tp[0])
     tp_diff[np.abs(tp_diff) <= 1e-12 * np.abs(tp)] = 0.0      # (h + l + c) / 3 rounding noise of equal prices

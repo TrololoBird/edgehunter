@@ -39,6 +39,9 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
     """
     Replays System 1 over the daily history (one hypothetical position at a time, either direction): the result of
     the most recent breakout's trade (True = it exited above its entry for a long). None without one.
+    audit: the N of a hypothetical entry is the one known BEFORE its day (ns[i - 1]: ns[i] holds day i's own true
+    range), and a breakout whose hypothetical trade is still open has no result yet - the last COMPLETED one decides
+    (the open trade marked at the last close was taken as a final winner).
     """
     pos = None
     last = None
@@ -63,16 +66,13 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
             continue
         hi20 = max(x[2] for x in d1[i - 20:i])
         lo20 = min(x[3] for x in d1[i - 20:i])
-        n = ns[i]
+        n = ns[i - 1]
         if not n:
             continue
         if c[2] > hi20:
             pos = {'d': 1, 'entry': hi20, 'stop': hi20 - 2 * n}
         elif c[3] < lo20:
             pos = {'d': -1, 'entry': lo20, 'stop': lo20 + 2 * n}
-    if pos is not None:
-        # the last breakout's trade is still open: marked at the last close
-        last = pos['d'] * (d1[-1][4] - pos['entry']) > 0
     return last
 
 

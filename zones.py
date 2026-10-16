@@ -466,13 +466,17 @@ def observed_liquidations(events: Iterable[Tuple[float, float, float, int]], atr
 
 
 def vwap(candles: Sequence[Sequence[float]], since_ms: int, label: str) -> List[RawLevel]:
-    """VWAP of [ts, o, h, l, c, quote_vol, ...] candles opened at or after since_ms."""
+    """VWAP of [ts, o, h, l, c, quote_vol, ...] candles opened at or after since_ms: sum(price x base) / sum(base).
+    audit C02: the candles carry the QUOTE volume (= price x base), so base = quote / price and the VWAP is
+    sum(quote) / sum(quote / typical) - weighting the price by the quote volume again (sum(tp x quote) / sum(quote))
+    over-weighted the dearer bars (100 and 200 one coin each: 166.67 instead of 150)."""
     num = den = 0.0
     for c in candles:
         if c[0] >= since_ms and c[5]:
             typical = (c[2] + c[3] + c[4]) / 3
-            num += typical * c[5]
-            den += c[5]
+            if typical > 0:
+                num += c[5]
+                den += c[5] / typical
     return [RawLevel(num / den, 'vwap', label)] if den else []
 
 

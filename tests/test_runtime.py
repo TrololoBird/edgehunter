@@ -105,6 +105,7 @@ def test_aggregated_oi_change_weighted_by_usd():
         st = f.venue_derivs.setdefault(key, {}).setdefault(venue, VenueDeriv())
         st.samples.extend([(now - 310_000, start), (now - 1000, end)])
         st.oi_usd, st.ts, st.funding_8h = end, now, 0.0001 if venue == 'binance' else 0.0003
+        st.oi_ts = st.funding_ts = now
     snap = f.deriv_snapshot(key, now)
     assert snap['agg_oi_change_5m'] == pytest.approx((0.01 * 1010) / (1010 + 3000))
     assert snap['agg_funding_8h'] == pytest.approx((0.0001 * 1010 + 0.0003 * 3000) / 4010)

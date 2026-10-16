@@ -78,11 +78,22 @@ def _windows(x: np.ndarray, n: int):
     return sliding_window_view(x, n) if len(x) >= n else None
 
 
+def _base_volume(bars) -> np.ndarray:
+    """audit: the bars' BASE volume (quote volume / typical price) for the volume indicators (Intraday Intensity)."""
+    out = []
+    for b in bars:
+        tp = (b[2] + b[3] + b[4]) / 3
+        out.append(float(b[5]) / tp if len(b) > 5 and b[5] is not None and tp > 0 else 0.0)
+    return np.asarray(out)
+
+
 def rolling_std(x: np.ndarray, n: int) -> np.ndarray:
     out = np.full_like(x, np.nan)
     w = _windows(x, n)
     if w is not None:
-        out[n - 1:] = w.std(axis=1, ddof=1)
+        # audit: Bollinger's bands use the POPULATION sigma (ddof=0, bollingerbands.com); ddof=1 widened every band
+        # by sqrt(20/19) - 2.6% - and the live exit (ddof=0) used other bands than the entry
+        out[n - 1:] = w.std(axis=1, ddof=0)
     return out
 
 
@@ -328,9 +339,11 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
             continue
         value = lambda j: line['p1'] + line['slope'] * (j - line['i1'])
         d = 1 if kind == 'resistance' else -1
-        if not all(d * (c[j] - value(j)) >= pct * c[j] for j in (n - 2, n - 1)):
+        # audit: the 3% is of the LINE's price at the break (Edwards & Magee / Murphy's example: line 100 -> 103 /
+        # 97), not of the close (103.09 / 97.09)
+        if not all(d * (c[j] - value(j)) >= pct * value(j) for j in (n - 2, n - 1)):
             continue
-        if d * (c[n - 3] - value(n - 3)) >= pct * c[n - 3]:
+        if d * (c[n - 3] - value(n - 3)) >= pct * value(n - 3):
             continue                                   # the decisive break happened earlier: the first one only
         avg_v = v[n - 22:n - 2].mean() if n >= 22 else 0.0
         # Edwards & Magee: "activity should always be expected to rise notably on a genuine UP-side breakout" - the
@@ -343,6 +356,7 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
                               f" on {(v[n - 2] / avg_v) if avg_v else 0:.1f}x volume (Edwards & Magee, a line through"
                               f" the last two reaction points)",
                 'line_p1': line['p1'], 'line_slope': line['slope'], 'line_ts1': int(window[line['i1']][0]),
+                'line_period_ms': period_ms,
                 'line_value': value(i), 'atr_line': atr,
                 'anchor_level': value(i), 'anchor_extreme': l[i] if d > 0 else h[i],
                 'anchor_label': 'trendline (E&M)', 'anchor_ts': int(window[line['i1']][0]),
@@ -352,7 +366,8 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
 
 
 def parabolic_sar_step(sar: float, ep: float, af: float, d: int, hi: float, lo: float,
-                       step: float = 0.02, cap: float = 0.2) -> Tuple[float, float, float, bool]:
+                       step: float = 0.02, cap: float = 0.2, prev_hi: Optional[float] = None,
+                       prev_lo: Optional[float] = None) -> Tuple[float, float, float, bool]:
     """
     One bar of Wilder's Parabolic SAR (New Concepts in Technical Trading Systems, 1978: AF 0.02, +0.02 per new extreme,
     at most 0.20) for a position of side d: (new sar, ep, af, stopped). The bar is first checked against the current
@@ -363,8 +378,11 @@ def parabolic_sar_step(sar: float, ep: float, af: float, d: int, hi: float, lo: 
     if (d > 0 and hi > ep) or (d < 0 and lo < ep):
         ep, af = (hi if d > 0 else lo), min(cap, af + step)
     nxt = sar + af * (ep - sar)
-    # Wilder: the SAR never moves into the bar's range (here: beyond this bar's extreme against the position)
-    nxt = min(nxt, lo) if d > 0 else max(nxt, hi)
+    # Wilder (TA-Lib ta_SAR.c): the SAR never moves into the range of THIS or the PREVIOUS bar
+    if d > 0:
+        nxt = min(nxt, lo, prev_lo) if prev_lo is not None else min(nxt, lo)
+    else:
+        nxt = max(nxt, hi, prev_hi) if prev_hi is not None else max(nxt, hi)
     return nxt, ep, af, False
 
 
@@ -387,7 +405,7 @@ def bb_method1_event(bars: Sequence[Sequence[float]], period_ms: int = 4 * HOUR_
     if n < 20 + 125 + 1:
         return None
     h, l, c = _arr(bars, 2), _arr(bars, 3), _arr(bars, 4)
-    v = np.asarray([float(b[5]) if len(b) > 5 and b[5] is not None else 0.0 for b in bars])
+    v = _base_volume(bars)
     ma, sd = rolling_mean(c, 20), rolling_std(c, 20)
     upper, lower = ma + 2 * sd, ma - 2 * sd
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -438,7 +456,7 @@ def bb_method3_event(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_M
     if n < 45:
         return None
     o, h, l, c = _arr(bars, 1), _arr(bars, 2), _arr(bars, 3), _arr(bars, 4)
-    v = np.asarray([float(b[5]) if len(b) > 5 and b[5] is not None else 0.0 for b in bars])
+    v = _base_volume(bars)
     ma, sd = rolling_mean(c, 20), rolling_std(c, 20)
     upper, lower = ma + 2 * sd, ma - 2 * sd
     rng = h - l
@@ -495,7 +513,10 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_
     width = upper - lower
     pb = np.where(width > 0, (c - lower) / np.where(width > 0, width, 1), np.nan)
     # Accumulation Distribution (Williams / Chaikin): the volume-weighted close location, cumulated
-    vol = [float(x[5]) if len(x) > 5 and x[5] is not None else None for x in c15]
+    # audit: volume in BASE units (quote / typical price) - Williams / Chaikin weight the close location by the traded
+    # quantity; the quote volume re-weighted dearer bars by their price
+    vol = [float(x[5]) / ((x[2] + x[3] + x[4]) / 3) if len(x) > 5 and x[5] is not None and (x[2] + x[3] + x[4]) > 0
+           else None for x in c15]
     ad: List[Optional[float]] = []
     acc = 0.0
     for k in range(n):

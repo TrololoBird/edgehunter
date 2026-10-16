@@ -45,7 +45,6 @@ def replay_coin(job: tuple):
     from levels import ltf_trigger, resample, simulate
     from pretrain import _asof, _bucket, _raw_frame
     from strategies import strategy_of
-    from strategies.auction_engine import ENGINES
     from strategies.base import PlanInput
     from strategies.geometry import entry_levels
     from strategies.structure import Context, maniac_events, recent_atr
@@ -81,7 +80,6 @@ def replay_coin(job: tuple):
     oi_ts, oi_v = np.asarray(met['ts']), np.asarray(met['oi'])
     oi_hour = [(int(t), float(v)) for t, v in zip(oi_ts, oi_v) if int(t) % HOUR_MS == 0 and v]
     oi_hour_ts = np.asarray([t for t, _ in oi_hour]) if len(oi_hour) else np.empty(0)
-    ENGINES.pop(key, None)
     rng = random.Random(hash(key) & 0xffffffff)
 
     def placebo(entered_ms):
@@ -147,7 +145,6 @@ def replay_coin(job: tuple):
         from zones import bars_of
         for event in maniac_events(key, m15, h1, corr, cut, bars_of(h1, 4), bars_of(h1, 24)):
             run_event(event, now_ms, q)
-    ENGINES.pop(key, None)
     return out
 
 
@@ -223,6 +220,10 @@ def main():
     if args.limit:
         coins = coins[:args.limit]
     jobs = [(k, f, s, start.isoformat(), end.isoformat(), days) for k, f, s, days in coins]
+    # audit N32: the detector interface is imported HERE, before the pool - a missing module (strategies.auction_engine
+    # was deleted in eng-127) failed every coin inside the pool and the run reported an empty sample as 'no signals'
+    from strategies.structure import maniac_events  # noqa: F401
+    from strategies.base import PlanInput  # noqa: F401
     rows: List[Dict] = []
     started = time.time()
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
@@ -230,6 +231,8 @@ def main():
         for n, fut in enumerate(as_completed(futures), 1):
             try:
                 rows += fut.result()
+            except (ImportError, AttributeError, TypeError, NameError):
+                raise                                # a code error is no 'coin without data': stop the run
             except Exception as e:
                 logger.warning(f"maniac: {futures[fut]} failed ({type(e).__name__} {e})")
             logger.info(f"maniac: {n}/{len(jobs)} coins in {time.time() - started:.0f}s ({len(rows)} cards)")

@@ -118,11 +118,10 @@ class LegContinuation(Strategy):
         near, far = (level_hi + half, level_lo - half) if d > 0 else (level_lo - half, level_hi + half)
         lo_ratio = max(0.0, retracement_of(impulse, near))
         hi_ratio = min(1.0, retracement_of(impulse, far))
-        # the trend-based extension from the pullback's expected extreme (the zone's deep edge) until the real one is
-        # known at the entry (geometry.entry_levels re-measures from it)
-        c_est = fib_price(impulse, hi_ratio)
+        # audit: ICT's OTE objectives - the prior high (the impulse's end) and the leg's 1.272 / 1.618 extensions, all
+        # measured on the leg A->B from A (fixed by the impulse, the same at the entry)
         leg = impulse['end'] - impulse['start']
-        extensions = [c_est + k * leg for k in cfg.continuation_targets]
+        extensions = [impulse['start'] + k * leg for k in cfg.continuation_targets]
         worst_entry = fib_price(impulse, lo_ratio)
         # targets spaced in the ATR of the leg's own timeframe (15m ATR steps put TP1 inside a 1h / 4h leg's noise)
         targets, sources = select_targets(zones, worst_entry, d, impulse['atr'], 'extension', extensions, 'fib ext')

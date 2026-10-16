@@ -16,6 +16,9 @@ class LoopDetectors:
     def __init__(self, minutes_of: Callable[[str], List], m15_of: Callable[[str], List]):
         self.minutes_of = minutes_of
         self.m15_of = m15_of
+        # audit (dump bounce): the coin's rank by 24h quote volume among the markets (1 = the largest), None unknown;
+        # set by the scanner / the replay - the research measured small caps OUTSIDE the top 30, not 'not one of 5'
+        self.volume_rank: Callable[[str], Optional[int]] = lambda symbol: None
         self._connors_checked: Dict[str, int] = {}   # symbol -> the daily close Connors' RSI(2) was checked at
         self._turtle_checked: Dict[str, int] = {}    # symbol -> the last final minute the Turtle channel was checked on
         self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
@@ -223,6 +226,9 @@ class LoopDetectors:
         from strategies.pump import MAJORS, dump_bounce
         if symbol.split('/')[0] in MAJORS:
             return None                           # measured on small caps (research_pumps: majors apart)
+        rank = self.volume_rank(symbol)
+        if rank is not None and rank <= 30:
+            return None                           # research_pumps: non-majors ranked <= 30 by volume were excluded
         found = dump_bounce(h1, now_ms)
         if found is None or (symbol, found['anchor_ts']) in self._dump_fired:
             return None

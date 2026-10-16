@@ -131,17 +131,23 @@ def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
             continue                                  # too old to be still bouncing
         trs = [max(h[k], cl[k - 1]) - min(lo[k], cl[k - 1]) for k in range(t - 13, t + 1)]
         atr = sum(trs) / len(trs)
-        peak = lo[t]
+        # audit R05 / N26: a causal automaton - the dump's low is FIXED at the exhaustion close (the first close above
+        # the previous hour's high) and the bounce is searched only from that hour on; a dump not exhausted yet has
+        # no low and no trade (searching from t+1 placed earlier touches against a low found later)
+        peak, ex = lo[t], None
         for k in range(t + 1, min(n, t + 25)):
             peak = min(peak, lo[k])
             if cl[k] > h[k - 1]:
+                ex = k
                 break
+        if ex is None:
+            continue
         size = base - peak
         if size <= 0:
             continue
         lo_r, hi_r = peak + 0.382 * size, peak + 0.618 * size
         touched, pull = False, None
-        for k in range(t + 1, min(n, t + 25)):
+        for k in range(ex, min(n, t + 25)):
             if not touched:
                 if h[k] >= lo_r:
                     touched, pull = True, h[k]
@@ -181,8 +187,12 @@ class DumpBounceStrategy(Strategy):
         sig = x.sig
         if sig.get('dump_low') is None:
             return None
+        # audit: the research's exits - TP1 the dump's low, TP2 its 1.618 extension (dump_ext was computed, never
+        # used) and its own stop 0.25 ATR above the bounce, not widened / moved by the shared floor (own_stop)
         exit = {'stop': ['price', sig['dump_stop']], 'stop_src': 'above the bounce + 0.25 ATR(1h)',
-                'tp': ['level', sig['dump_low'], 0.0, None], 'tp_src': "the dump's low", 'atr': x.atr}
+                'tp': ['level', sig['dump_low'], 0.0, None], 'tp_src': "the dump's low", 'atr': x.atr,
+                'tp2': ['level', sig.get('dump_ext') or sig['dump_low'], 0.0, None], 'own_targets': True,
+                'own_stop': True}
         plan = _confirm_plan(x, self.name, '1h', exit, 'first bounce after a dump, 1h close below the previous low')
         if plan and not plan.get('skip'):
             plan['key'] = (sig['anchor_ts'], 'dump')

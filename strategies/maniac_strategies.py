@@ -79,7 +79,7 @@ class SupplyDemandStrategy(_System):
     def arrival(h1, since_ms: int, d: int) -> int:
         bars = [b for b in h1 if b[0] >= since_ms]
         if len(bars) < 5:
-            return 1
+            return 0                     # audit C08: an arrival not observable yet earns no point (was 1)
         k = 2 if d > 0 else 3
         vals = [b[k] for b in bars]
         for i in range(2, len(vals) - 2):
@@ -113,6 +113,8 @@ class SupplyDemandStrategy(_System):
         plan = base_plan(x, self.name, _anchor(sig, '4h'), '4h', entry='pullback', trigger='touch', single_touch=True,
                          zone_lo=lo, zone_hi=hi,
                          zone_src=f"{sig.get('anchor_label', 'zone')}: odds {score}/10 (strength "
+                                  # R:R 2: granted here, ENFORCED by min_rr = 3 to TP1 (the nearest opposing zone,
+                                  # geometry.finish_levels, audit C07) - a plan below it is rejected, not scored
                                   f"{sig.get('sd_strength')}, time {sig.get('sd_time')}, fresh 2, R:R 2, big picture "
                                   f"{big}, arrival {arrival})",
                          invalid=far, fix_invalid=True, missable=False, stop_ref=far,
@@ -225,6 +227,11 @@ class TrendlineStrategy(_System):
             # eng-58, practice (Edwards & Magee; break -> retest -> move): the entry is a resting limit at the broken
             # line, retested from the other side, not the second close's price; first touch only
             line = sig['anchor_level']
+            if sig.get('line_slope') is not None and sig.get('line_ts1') is not None:
+                # audit: the retest is of the SAME sloped line, extended to now (Murphy: the broken line keeps its
+                # slope as it changes role) - not the horizontal price the line had at the break
+                bars = (now_ms - int(sig['line_ts1'])) / float(sig.get('line_period_ms') or 3_600_000)
+                line = sig['line_p1'] + sig['line_slope'] * bars
             # eng-84 (breakout-retest write-ups: retest + a confirming candle, not a resting limit; the owner's review):
             # the retest area is the line to half an hour-ATR beyond it on the broken side; the entry is a 15m
             # structure shift with agreeing taker flow there

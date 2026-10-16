@@ -60,14 +60,22 @@ def scan(candles_1h: Sequence[Sequence[float]]) -> Optional[Dict]:
     t, d, base, move = event
     a = _atr(c, t)
     peak = c[t][2] if d > 0 else c[t][3]
+    ex = None
     for h in range(t + 1, min(n, t + 25)):
         peak = max(peak, c[h][2]) if d > 0 else min(peak, c[h][3])
         if (c[h][4] < c[h - 1][3]) if d > 0 else (c[h][4] > c[h - 1][2]):
+            ex = h
             break
+    if ex is None:
+        # audit N26: the extreme is not confirmed yet (no exhaustion close): no zone drawn from a provisional peak
+        return {'kind': 'pump' if d > 0 else 'dump', 'direction': d, 'event_ts': int(c[t][0]), 'move': move,
+                'base': base, 'peak': peak, 'zone': None, 'state': 'ждём истощение (экстремум не подтверждён)',
+                'levels': None, 'trade_dir': d, 'stats': STATS['pump' if d > 0 else 'dump']}
     size = abs(peak - base)
     near, far = peak - d * 0.382 * size, peak - d * 0.618 * size
     state, pull, levels = 'ждём откат в зону', None, None
-    for h in range(t + 1, n):
+    # audit N26: the pullback is searched from the exhaustion on (the extreme's confirmation), not from t+1
+    for h in range(ex, n):
         if h - t > 24 and pull is None:
             state = 'откат не пришёл за 24ч'
             break

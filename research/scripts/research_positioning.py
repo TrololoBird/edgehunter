@@ -132,9 +132,8 @@ def main():
                 # spread per week: mean(bottom) - mean(top)
                 wk_b = (b['ts'].to_numpy() // (7 * 86_400_000)).astype(int)
                 wk_t = (t['ts'].to_numpy() // (7 * 86_400_000)).astype(int)
-                vals = np.concatenate([b[hz].to_numpy(), -t[hz].to_numpy()])
-                wks = np.concatenate([wk_b, wk_t])
-                m, lo, hi, _ = rh.week_boot(vals, wks)
+                # audit N36: the difference of the two decile means (as labelled), not the mean of concat(b, -t)
+                m, lo, hi, _ = rh.week_boot_diff(b[hz].to_numpy(), wk_b, t[hz].to_numpy(), wk_t)
                 lines.append(f"| {half} | {hz[4:]} | {b[hz].mean() * 100:+.2f}% | {mmid[hz].mean() * 100:+.2f}% | "
                              f"{t[hz].mean() * 100:+.2f}% | {m * 100:+.2f}% [{lo * 100:+.2f}..{hi * 100:+.2f}] |")
         lines.append('')

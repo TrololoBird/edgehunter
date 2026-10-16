@@ -651,8 +651,17 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
         os.remove(old)
     part: List[Dict] = []
     parts = 0
+    # audit N15: a label is learned only once it EXISTS - ret_4h of a row at T is known at T + 4h. predict(T) ->
+    # learn(ret_4h(T)) -> predict(T + 1 min) put four future hours into the next prediction (p_before / prequential)
+    import heapq
+    maturing: List[tuple] = []          # (available_at ms, seq, row, label)
+    seq = 0
     for sig in rows_df.iter_rows(named=True):
         ts, key, kind, group_key = sig.pop('ts'), sig.pop('symbol'), sig.pop('kind'), sig.pop('group_key')
+        while maturing and maturing[0][0] <= ts:
+            _, _, old_row, old_label = heapq.heappop(maturing)
+            success.learn(old_row, old_label)
+            learned += 1
         direction, price, r4 = sig.pop('direction'), sig.pop('price'), sig.pop('ret_4h')
         last_closed = (ts - 5_000) // QUARTER_MS * QUARTER_MS - QUARTER_MS      # the candle that just closed
         sig['mkt_1h'], sig['mkt_4h'] = at('mkt_1h', last_closed), at('mkt_4h', last_closed)
@@ -679,8 +688,8 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
         part.append({'ts_ms': ts, 'symbol': key, 'kind': kind, 'group_key': group_key, 'direction': direction,
                      'ret_4h': r4, 'baseline_4h': baseline, 'baseline_mean_4h': baseline_mean, 'label': bool(label),
                      'p_before': success.predict(row), **SuccessModel.features(row)})
-        success.learn(row, label)
-        learned += 1
+        heapq.heappush(maturing, (ts + 4 * 3_600_000, seq, row, label))
+        seq += 1
         if baseline_mean is not None:
             edges.setdefault(group_key, []).append(direction * (r4 - baseline_mean))
         if len(part) >= 50_000:
@@ -688,6 +697,11 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
             parts, part = parts + 1, []
     if part:
         pl.DataFrame(part, infer_schema_length=None).write_parquet(os.path.join(out_dir, f"part-{parts:04d}.parquet"))
+    # the offline fit before the live start: every label of the finished past is learned (no prediction after it)
+    while maturing:
+        _, _, old_row, old_label = heapq.heappop(maturing)
+        success.learn(old_row, old_label)
+        learned += 1
 
     summary = {g: (len(v), statistics.fmean(v)) for g, v in edges.items()}
     state = {

@@ -106,6 +106,7 @@ class ArchiveCoin:
         self.w1: List = []
         self.tier0: Dict = {}
         self.oi_samples: deque = deque(maxlen=64)
+        self.oi_5m: deque = deque(maxlen=300)
         self.minute_closed_until = 0
         self.quote_volume_24h = 0.0
         self.j = 0                                         # minutes closed so far
@@ -119,6 +120,15 @@ class ArchiveCoin:
         self.quote_volume_24h = float(self.qv_cum[self.j] - self.qv_cum[self.j - n]) if n else 0.0
         k = int(np.searchsorted(self.oi_ts, now_ms, side='right')) if len(self.oi_ts) else 0
         self.oi_samples = deque(self.oi_pts[max(0, k - 13):k], maxlen=64)
+        # audit R07: the OI robot's 5-minute OI over the last day (MarketData.oi_5m), one sample per 5-minute bucket -
+        # without it the OI BUILD family never ran in the replay
+        if k != getattr(self, '_oi5_k', None):
+            self._oi5_k = k
+            buckets: Dict[int, tuple] = {}
+            for t, v in self.oi_pts[max(0, k - 2000):k]:
+                if t > now_ms - 300 * 300_000:
+                    buckets[int(t) // 300_000] = (t, v)
+            self.oi_5m = deque((buckets[b] for b in sorted(buckets)), maxlen=300)
         h = int(np.searchsorted(self.h1_close, now_ms, side='right'))
         if not self.h1 or (h and self.h1[-1][0] != self.h1_all[h - 1][0]):
             self.h1 = self.h1_all[max(0, h - 200):h]
@@ -129,8 +139,9 @@ class ArchiveCoin:
             self.d1 = self.daily[max(0, dd - 370):dd]
             self.w1 = _weeks(self.daily[:dd])[-60:]
 
-    def minutes(self, count: int = 240) -> List[List[float]]:
-        """FINAL 1m futures candles in the stream format (the scanner's _minute_candles)."""
+    def minutes(self, count: int = 600) -> List[List[float]]:
+        """FINAL 1m futures candles in the stream format (the scanner's _minute_candles). audit R02: 600 as the live
+        buffer (MarketData.minute_klines) - 240 left PO3 21 of its 24 required Asian 5m bars at 02:15 NY."""
         return self.fut[max(0, self.j - count):self.j][:, STREAM_COLS].tolist()
 
     def spot_minutes(self, now_ms: int, count: int = 60) -> Optional[List[List[float]]]:
@@ -252,6 +263,8 @@ class Replay:
         profiles.select = lambda strategy, regime: (None, None)
         self.detector = LiveDetector()
         self.loopside = LoopDetectors(self._minutes_of, lambda s: self.coins[s].m15(self.now_ms))
+        self.loopside.volume_rank = lambda s: 1 + sum(1 for c in self.coins.values()
+                                                      if c.quote_volume_24h > self.coins[s].quote_volume_24h)
         self.raw: Dict[str, list] = {}
         self.ctx_sig: Dict[str, int] = {}
         b = self.book
@@ -293,7 +306,11 @@ class Replay:
         return out
 
     def _band(self, symbol: str, direction: int) -> Optional[float]:
-        closes = [c[4] for c in self.coins[symbol].m15(self.now_ms)[-20:]]
+        """audit R03: the live exit's band (Scanner._opposite_band) - BB(20, 2) of the closed 4h candles built from
+        the closed 1h ones; was the last 20 15m closes (5 hours instead of 80)."""
+        from strategies.structure import bars_4h
+        h1 = list(self.coins[symbol].h1)
+        closes = [c[4] for c in bars_4h(h1, int(h1[-1][0]) + 3_600_000)[-20:]] if h1 else []
         if len(closes) < 20:
             return None
         mean = sum(closes) / 20
@@ -343,7 +360,9 @@ class Replay:
                          np.asarray(c.m15(now_ms), dtype=np.float64),
                          np.asarray(c.h1_all[max(0, int(np.searchsorted(c.h1_close, now_ms, side='right')) - 499):
                                              int(np.searchsorted(c.h1_close, now_ms, side='right'))], dtype=np.float64),
-                         list(c.d1)[-60:], list(c.h4), list(c.w1)))
+                         # audit R01: the whole causal daily history (<= 370, as live) - 60 days never reached the
+                         # cup detector's 120-day gate, the family was untested
+                         list(c.d1), list(c.h4), list(c.w1)))
         for s, (raw, ctx) in build_maps(jobs, corr).items():
             self.raw[s] = raw
             self.detector.set_context(s, ctx, now_ms)
