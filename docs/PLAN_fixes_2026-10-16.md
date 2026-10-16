@@ -16,6 +16,16 @@ Each item: what was seen (verified / hypothesis), the change, who decides. Nothi
 4. **Slippage columns.** Journal R vs demo R differ by up to 0.58R (ETH). Add `entry_slip_bp`, `exit_slip_bp` to
    demo_trades (fill vs plan / exit_ref) and a line in /trades.
 
+**Status 2026-10-16:** items 1-2 were already fixed by eng-132 (b6a2c12 / d2a2da6 / b3281f7, live since the
+15.10 20:09 restart): every XAU / XAG / CL 101414 (00:16, 07:30, 14:05) and the HYPE / UNI / XPL false flat (10:04)
+happened before it; since then TradFi -> NO_MARKET, flat needs 2 reconcile reads + 3 reads in `_close`, re-tracking
+of a position seen after a finalize. Watch: no new 101414 / UNTRACKED. Item 4 needs no schema change: entry_plan,
+entry_fill, exit_avg, exit_ref are journaled; slippage = direction * (fill - plan) / plan, shown by /trades
+(24h median entry ~+17 bp against us, max ZK pyramid 257 bp). Item 3 waits for the owner's fills output
+(MARSCOIN: entry slip 9 bp, exit_avg 0.07906 vs exit_ref 0.07338 = -774 bp, i.e. better than the stop: likely a
+fill of a different order / side mixed in).
+Items 6-7 done: `docs/DATA_COVERAGE.md` (all four columns null by design).
+
 Checked, no change needed: the 2.5-2.8% "BingX price" refusals (ETH, JTO) were the VST demo quote lagging Binance
 (Binance 2359 = plan, VST 2424): the 2% guard worked. Turtle UNI / XPL risk $190-203 = 2 units (pyramid). PHA without
 an exchange stop = Connors by design. depth_imb empty for 83% = books only for hot coins. Event-loop stalls after
