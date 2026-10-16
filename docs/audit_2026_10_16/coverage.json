@@ -1,0 +1,2804 @@
+[
+  {
+    "path": ".claude/agents/planner.md",
+    "bytes": 1387,
+    "sha256": "40c85900911a0cbdf0c80393bd3219a47a597059b52711166251b2343a3628bf",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": ".claude/agents/reviewer.md",
+    "bytes": 1441,
+    "sha256": "0b6141196adbd0c6436a2ab1a6973e8267874117dd63dfc48d9c361841c4b552",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": ".claude/settings.json",
+    "bytes": 1050,
+    "sha256": "ee8d2519a59d0bc1e557c36d817184a749dadbb81d2f6e15fabf65ce1e98525d",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": ".claude/skills/research-findings/SKILL.md",
+    "bytes": 12147,
+    "sha256": "2a95626044e3bb92e2f7fcb03636b94daa96a97b72e3d6f0603ee460d63fdb3b",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": ".gitattributes",
+    "bytes": 39,
+    "sha256": "376a332513df51680f935e78540968c289d7c9ce9799f099c36b6bad9e98c27a",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": ".github/workflows/ci.yml",
+    "bytes": 345,
+    "sha256": "7856745dc32a218ea53547af57d5cba9812534440032de8cbbec9e63c4da025d",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": ".gitignore",
+    "bytes": 722,
+    "sha256": "11efe3445b40bc3a189f323113ad0d9bc5fff392873d68fda70d916f30b8be22",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "AUDIT_PLAN.md",
+    "bytes": 5257,
+    "sha256": "ceb718b4b095860c1ad8b3fc9b349086b4fafd5fbf9e31f9e59ea7f59894776d",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "CLAUDE.md",
+    "bytes": 14490,
+    "sha256": "8c712d3c24239504b30f0c051a2292ab943fcb34405a9afe96739381392778fc",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "CLOUD_RETRAIN.md",
+    "bytes": 4148,
+    "sha256": "408e799d309acf24b4da59d0fb317bcc42ab8cb24f12a0904b9c2fdcc8a3d696",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "HANDOFF.md",
+    "bytes": 25928,
+    "sha256": "3de669207e287103d072574ac0e5e0db07823b35a4252a6b5ed1131b3501b7a1",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "PLAN_NEXT.md",
+    "bytes": 6924,
+    "sha256": "e8904a89cddb5a9e337836a88218a82466f994c0611e3be1869375e3bf1b69cb",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "briefing.py",
+    "bytes": 57009,
+    "sha256": "b0ec4de39d19e3f2e893c0652e3d0f4fd22333e1f871421c8b17efe11d24c062",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "briefing_chart.py",
+    "bytes": 24466,
+    "sha256": "ecd2ea6068ba55313931861d838b39b9acb2e323a164d6aa5ab97e192bd48e34",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "config.py",
+    "bytes": 76438,
+    "sha256": "a9b811ad023d2ee5826770390069694f271ff0cf469e1f97d6545da883932c0f",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/README.md",
+    "bytes": 4454,
+    "sha256": "c561cdf9a6439790b7ae28720ded51a95790fd7012f522a2ecb83a9846cf5ef0",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/harden.sh",
+    "bytes": 2302,
+    "sha256": "41a4296a5c386891b0df16cd2a9df299a48824a2b338b9783cd03dbc4281c841",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/install.sh",
+    "bytes": 2265,
+    "sha256": "0bce3cdecc34ac3a287438b3bd9d7785008c734e453ee3eff995cf56ac9daca7",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/mark_dup_untracked.py",
+    "bytes": 745,
+    "sha256": "e9ebd1476b04b227320b2b65db86d4255244d89c483fa40fef55a5b72adb3e3c",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/precheck.sh",
+    "bytes": 703,
+    "sha256": "0d6533e98927581a84bd502ecfcd91c582a268ef0dc9f43ff33d1c22e343a33d",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/pump-bot.service",
+    "bytes": 857,
+    "sha256": "cd59a822059545d6a0dbad0c12287d08bf3d82f925f35446048a3110ab4a500a",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/pump-farside.service",
+    "bytes": 445,
+    "sha256": "31be0b6bf4dbb3d87f970ea7ec661858c907ff0ed0286b678358ff319b2c73e1",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/pump-farside.timer",
+    "bytes": 230,
+    "sha256": "64a73d176c34d94a10d52fd02253ad322755193f38405f25c8b9a6b5c5ee4ce4",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/setup_server.sh",
+    "bytes": 1565,
+    "sha256": "882063275740d9f4d033988564ed3626341bcda59b6a8de8eccad500100ee30a",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "deploy/web_access.sh",
+    "bytes": 1676,
+    "sha256": "07bebc29276a31cec5592f98f1ea2f609859494b5a48b6315b8333c470001388",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "depth.py",
+    "bytes": 26966,
+    "sha256": "da6b684d99b8b4163c80a219091502c2f267bdd3f9103cc61752edba2013919e",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/ARCHITECTURE.md",
+    "bytes": 36757,
+    "sha256": "991a8e7b724de8460f78f87f10898a082a4affc2e77e9c779bf2f434cb3c628e",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/AUDIT_full.md",
+    "bytes": 12257,
+    "sha256": "f87949810855590d921cee78bc9646061681ea52a753603111dba32f61099c7e",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/AUDIT_parameters.md",
+    "bytes": 34164,
+    "sha256": "db3e045f7981c0256eec96159c7338ca1865d0953eb261887246c2176d7254c8",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/AUDIT_round2.md",
+    "bytes": 29111,
+    "sha256": "24e010e529e68e25fb325896881a037d7f9f41a826ede4ade3afa295d89e6907",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/AUDIT_round3.md",
+    "bytes": 7590,
+    "sha256": "866c18e02ceae6c292fa44f2dac75b41eba5882fec9d02ee02674a10604a1320",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/AUDIT_strategies.md",
+    "bytes": 33232,
+    "sha256": "d99f4e97bbfec532ccb1d15fe15ed1327cdee40844d6875b6c6bdd393df059fc",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/CLOUD_OPTIMIZE.md",
+    "bytes": 5177,
+    "sha256": "f4292c94b9e2618d45a6c192d55e46e38867aabb666d1a982a6bde3c260b21b0",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/CLOUD_RESEARCH.md",
+    "bytes": 3820,
+    "sha256": "1d8497fe3548bd89b9dc48d6ef02b14333d4d18dc315f0f3eb212f6d604a47bc",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/CLOUD_RETRAIN.md",
+    "bytes": 3142,
+    "sha256": "b6c45d67f2effc78eccda1d4b16e3c5f80a072e71e98123acbd04b0193e0cc4b",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/CLOUD_TASKS.md",
+    "bytes": 9378,
+    "sha256": "a4e4602e431a933e6c0af6a13b28001fd6340f054e795a1bdef0fbc8117f6584",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/CLOUD_eng133_placebo.md",
+    "bytes": 3858,
+    "sha256": "e940f82da755e0789188b314df5798383831536f25d59df96da8d6fdfd1e7e94",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/DATA_COVERAGE.md",
+    "bytes": 1583,
+    "sha256": "cc13c738543c792049ee1c1b25d6a862d0638603ec5d1963f74d50d44b846792",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/HANDOFF_2026-10-12_exits.md",
+    "bytes": 14058,
+    "sha256": "ff34dc9e5cdbfb40f163c7cc7edcd7f329d1678d9ff2be1771accc5f459435d8",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/HANDOFF_eng75.md",
+    "bytes": 14142,
+    "sha256": "be34df4dbac8a629a921d2704651baf4d30e35b6357334a99f70e28cfa614405",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/HISTORY.md",
+    "bytes": 89579,
+    "sha256": "d18d349e433b4f5668804aff2bd01c3ee471f7b7d2be5f4bf61872baa60153c7",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/PLAN_after_audit.md",
+    "bytes": 26766,
+    "sha256": "9a995494f3ac185a3e8c4302e5dece16cae1f357c3b10eaa802c32b68b35e0e6",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/PLAN_fixes_2026-10-16.md",
+    "bytes": 4663,
+    "sha256": "07de33f2cccd59942a15fd0421e9032e24582a2b9d73b447be8e59dcf160b8fa",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/PLAN_server_eng76.md",
+    "bytes": 30097,
+    "sha256": "932415281ea335767f02133eb7d1c7ff6912286510062330f0b27172a5b2d8aa",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "docs/STRATEGY_PRACTICE.md",
+    "bytes": 21769,
+    "sha256": "6f90050124864a2946595bf457725d7b3c568b4643e801950d46c7048ae80462",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "errors.py",
+    "bytes": 1579,
+    "sha256": "a3696d2a87890f028eaa612a1c473d4c31719f2a5780795d9d46f239e66eee6e",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "event_risk.py",
+    "bytes": 10787,
+    "sha256": "ab6d9311c7b163e4e23bd0ef1299c025213734d48cf2dc4e4eef15a5f98b2739",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "executor.py",
+    "bytes": 84312,
+    "sha256": "a7cf86f5710647a7605d64d0a613da45aacf9ca02051e019e843288c8c29d46f",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "extdata.py",
+    "bytes": 18237,
+    "sha256": "717831f801443a1d5f4edf9a66a2c08c2133ddd213ed981c96895c9661030851",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "fetcher.py",
+    "bytes": 130819,
+    "sha256": "f76ebc7f3321d321bfebb0b94d2bcf6e160450bceb12a09601af49ce9baf8afa",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "flow.py",
+    "bytes": 36480,
+    "sha256": "b97b610e4ae282d148ae6843cbfffc0b10224c2b7587546ddb1c93e49a33fbad",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "history.py",
+    "bytes": 13593,
+    "sha256": "f1c11e83c268fc4e02bf354c64cb9d0adcb916cef0f34af86efafb677d1995df",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "iceberg.py",
+    "bytes": 5972,
+    "sha256": "a2e6cb859944fa807c5e2abed22e3ea91ac9369b8f35b5ac8f039058498204e8",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "indicators.py",
+    "bytes": 19416,
+    "sha256": "da070cda0e021213245008127b7c98815067cfb2ff27b06f35e107d8f9ea2b4d",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "journal.py",
+    "bytes": 65851,
+    "sha256": "6493f0d977dfff2918c43ba671613d02208a99284bad292d163f96e737c3db1d",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "levels.py",
+    "bytes": 22613,
+    "sha256": "52fe66d5152be6f55e171311918847e3822193d216a8e7011d54b07edb3f12b6",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "macro.py",
+    "bytes": 4072,
+    "sha256": "2ffe93bbe200297adcf3ab268b74025455eb961175ba4044ef2e9725be234597",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "macro_calendar.py",
+    "bytes": 2580,
+    "sha256": "95d89d1914d2fa245b7577c2816349d7c3531fc66f0f8e3c657fc20830e480e2",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "main.py",
+    "bytes": 12328,
+    "sha256": "d95b8af95002bd64f75f98d3d17b40ff7d2c3424a2816ea4149d36b9491ab168",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "memreport.py",
+    "bytes": 7176,
+    "sha256": "95eb37becfc0532490094e5e63e6b0f0e1a0fb4e7751de618c0032244f2864c8",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "ml.py",
+    "bytes": 26817,
+    "sha256": "2022891cdc6f319ea5a09cb8e51176a7139b8aff55d0f3faaba49135c1310684",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "ml_eval.py",
+    "bytes": 9684,
+    "sha256": "da5def5a63cf87795827e5572451478f1fba31edc47f3a41ef6da4dd53376808",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "models/exit_overlays.json",
+    "bytes": 258,
+    "sha256": "bd0cac7b0ccce44c6a32a1d81f65ea07063273a641a838d1f954e24e93b18a0f",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "models/htf_filters.json",
+    "bytes": 2,
+    "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "models/level_weights.json",
+    "bytes": 4167,
+    "sha256": "d61e0b2a4b7c0a3dc4543976bb401c0b6341b9a1a50351e29a7378dcad3b73bc",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "models/overshoot.json",
+    "bytes": 80033,
+    "sha256": "d27d2d5dcb330a0b6024c4237a343c736d818160a47d65958871ec814d0548f0",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "models/pretrained.eng-7.pkl",
+    "bytes": 1144188,
+    "sha256": "8df809f5013d3ef454d2ac19e75acc5e6ac9694c3e1a01d6bc4dc7dd75332622",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "pickle opcode parse PASS (190858 ops); not deserialized for validation",
+    "format_check": "Pickle opcode parse PASS, NOT executed",
+    "checks_complete": true
+  },
+  {
+    "path": "models/profiles.json",
+    "bytes": 1291,
+    "sha256": "d0da6da31d2274d845d67d9fb507c2512ac676c7ec5b13360a8b90234a0bdf95",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "models/profiles_regime.json",
+    "bytes": 1521,
+    "sha256": "1c5651684efec2e89b731caebdc1f130049e53676a42315ad3552fb70366abe1",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "models/scenario_prob.pkl",
+    "bytes": 1419062,
+    "sha256": "9dcbe3bed38c61d6403b0a64b1e66e234779d090154c6939a3dfb34e219fcd14",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "pickle opcode parse PASS (586 ops); not deserialized for validation",
+    "format_check": "Pickle opcode parse PASS, NOT executed",
+    "checks_complete": true
+  },
+  {
+    "path": "netstate.py",
+    "bytes": 2465,
+    "sha256": "9a276f5b7676d9625201063b38802b16d2322ebc1e0c08d4d391618ee35622ba",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "notifier.py",
+    "bytes": 10186,
+    "sha256": "f299850df6b1201e2ccc5a5e9bbf8a2d092cf409e31cfbdb59aa65deef002b49",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "pierce.py",
+    "bytes": 3272,
+    "sha256": "cda5119d9352a5ed0bb10b8f14c4e97d7631a994e69e93ac2bdfc94308d8272d",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "pools.py",
+    "bytes": 6854,
+    "sha256": "13aaf959b1683b6e45e585c15ce90395f7dbb7d083de9cd10fd68f17b77fb2b0",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "positioning.py",
+    "bytes": 17894,
+    "sha256": "fe6be2736980f6b032f9c5f1bc70711f4f5089b519e72b540f47607c77bcdf1e",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "pretrain.py",
+    "bytes": 41976,
+    "sha256": "e97191e725853855975515290ef5d99871bd778b8f6b717e760b39c50ae787d3",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "pumps.py",
+    "bytes": 6005,
+    "sha256": "bdc687dabdb0a8d8147a32772d3fc97ff32a01eac0d4166216bfc217ff94fb58",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "ratelimit.py",
+    "bytes": 5840,
+    "sha256": "f4b7c824003fa3e2346194397ee16ebaff6c7692585406032fcec1ec1e1d29ee",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "recorder.py",
+    "bytes": 14727,
+    "sha256": "192533c191e6e658af69a433ba9092a2c4dfedabc7971b90d70a21b751112898",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "replay.py",
+    "bytes": 29337,
+    "sha256": "804adb22057d32453d18afe576fd41dab25009e951ef5d37792d223c194d4899",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "requirements-dev.txt",
+    "bytes": 230,
+    "sha256": "365f32483e39258b5595c29d25e3f9fcfaaee134f039cd437090de11e659b406",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "requirements.txt",
+    "bytes": 1640,
+    "sha256": "819d158f8fa8000d2dc132f4ace9c5ac38e5d4ee684b80301e24817caeb8d296",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/CLOUD_SUMMARY.md",
+    "bytes": 11639,
+    "sha256": "4840b7c62499d7a4881fe1b0706e00a82a918b4579ec5b1cdbc8323fcf870df2",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/PROTOCOL_entries_vs_placebo_eng133.md",
+    "bytes": 6966,
+    "sha256": "d521142e904431a2006a9972ac5d8c992617cb7ca32c34b3241176a455222b10",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/adaptive_params.md",
+    "bytes": 1469,
+    "sha256": "a34c2ece8192ff52effc14e3725206cb581495b73e51693f3c91439e0fdfb593",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/algo_whales.md",
+    "bytes": 1520,
+    "sha256": "d2d672abcb2ac230a52fdedc4e425d6008d07552e1e2ae80da4a3a9cfe29e748",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/atr_volbars.md",
+    "bytes": 1723,
+    "sha256": "e762a5849e27d6e6f00e129891904638e0f64e4dff0b2f76fe1e32e34f505860",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/bb1_windows.md",
+    "bytes": 2360,
+    "sha256": "59d5f39ea64fb02708e385e4e2b9f1f3ee83e392d18b908ccc2c2471686e79d6",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/bias.md",
+    "bytes": 2188,
+    "sha256": "df6509c5fea55ccd51131230ab3c6a605dac0152d63920cd5872982a66df06ce",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/bias_eng72.md",
+    "bytes": 3034,
+    "sha256": "120225d42ee60701a8033d82238ed9497595a401e7be2e6e77c3ec7ba2d00097",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/book_flow_archive.md",
+    "bytes": 4666,
+    "sha256": "0160e4cd019e74f8dd9e264f9b09ea86e03ea28f2bd443a06ecd94d54d382be0",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/cards_12m.md",
+    "bytes": 6076,
+    "sha256": "7c28170ad0d737fe801ce149bee7c0c454dd194e4e455e39c748bea8d345d53d",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/cards_6m.md",
+    "bytes": 2593,
+    "sha256": "c9d1bb217b6ebcff78039e9cf7095ed72a591f8adcdd37ec8b06ae495424882a",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/cards_fixed_12m.md",
+    "bytes": 6059,
+    "sha256": "c1dff4cd6391c357bb4b8347b9b3a4199ebac53c7be5eb3786b6a287e67b082c",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/cards_holdout.md",
+    "bytes": 5956,
+    "sha256": "20ec52a0a2658f99f8bd90de1e0f0debb12a0579a5c87a6ec65183b11d32cc63",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/channels.md",
+    "bytes": 4196,
+    "sha256": "18f776eb129dc0a83d4e3ecb51209682102d9c71b01b5b5bcf97f969aab2b92a",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/compass_check.md",
+    "bytes": 5084,
+    "sha256": "a51fbfb1c3c8047fcc77af685742ecb16f168d2f90631d5fee393b80e01833b9",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/confluence.md",
+    "bytes": 849,
+    "sha256": "a756b52074a5f99f87cd7032b4fc4cfc13390d8f45028c8988c34a192c5a1c3d",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/connors_crypto.md",
+    "bytes": 2880,
+    "sha256": "2c20806b0cf9d1bef7d020a725b13152d2f67565faf9a9c653afc6c22e0dda4c",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/daily_methods.md",
+    "bytes": 1918,
+    "sha256": "d7205125db3fe2cf647d43eb3ad8e38a8c857357618b9af43ac81da169cb0b38",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/demo_gap.md",
+    "bytes": 3488,
+    "sha256": "bf00ea07ca4882194a0d4b94a469a7c1729fc37e7560eb0389c853bda1db0494",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/edges_12m.md",
+    "bytes": 3181,
+    "sha256": "0cd3d0594c9b662df4ae93325082204fec2cb2e739d0f6e8a79f6f7bd0884250",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/edges_6m.md",
+    "bytes": 3150,
+    "sha256": "acb9f99cedaeb2647f8c3f22d50705bdfda1cc1f1b75c06bb0858fa3ef27e3db",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/eng72_vs_eng59.md",
+    "bytes": 15823,
+    "sha256": "494ce7c2bd2741094a4e837d1e14761b7a2b7400c3d17d8e516cd39c969b3d4f",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/ensemble_trend.md",
+    "bytes": 3573,
+    "sha256": "12943ccd41d96f5bb5c0ec06591c2f0a8eb8b04b19b51836d6672b706bc66c0c",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/entry_edge.md",
+    "bytes": 4599,
+    "sha256": "18d4f22c6107746c53485a0ad75fbebb10ff61d631f6dfbeba634c2320cd4041",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/entry_edge_eng72.md",
+    "bytes": 5921,
+    "sha256": "239693998e9c30b07816fa3b7661321db6d675b659c372291acb71a9b7aebfb6",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/eqh.md",
+    "bytes": 9176,
+    "sha256": "ec6eff411c8a06c67fdbbf5b117955c75b07e49ba4f6d26a8ee76a1c231f0e54",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/etf_flows_2026-10-15.json",
+    "bytes": 14605,
+    "sha256": "ea977fa922ba6d4160875cd638f29cc53cbcf87e83bb66424df0166177684e24",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/audit.py",
+    "bytes": 8001,
+    "sha256": "7a78ce5c59f12ce67aa5d500dcb002acc2875c94f369871a416c64c76aba2c51",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/audit_ict.py",
+    "bytes": 3687,
+    "sha256": "91e9b9e8909a66936cf9efa6fd74a13d33352f3e124960c34a1aa50101e5d22c",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/bt.py",
+    "bytes": 12427,
+    "sha256": "1f9850cbe2587f4ab19ff460540f99332684cf692487a4cc7c8ec46c0fc0f0dd",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/charts.py",
+    "bytes": 3538,
+    "sha256": "b0ace0407308cb647d04e908bd5cace37a73d24201355829afb2388c92f9c50a",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/demo_be.py",
+    "bytes": 4682,
+    "sha256": "c20ab8a88d136330a6150970546c4b9a55be677f22d0292dfe9b3f2516be537d",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/fetch.py",
+    "bytes": 1371,
+    "sha256": "62733cbede932cf64f8ec1bcd89f49b62e24ccee29c16bcd54d44ea89606f53c",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/fetch5.py",
+    "bytes": 1347,
+    "sha256": "94bbc76fa5a9b27f6370a8cbf95c9e2d66a9ff9e09cc6c8a986890ba1f9b18fc",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/majors.py",
+    "bytes": 1092,
+    "sha256": "ceda84c4af7635732e5352067c584f842578106d31a62fdbf104aed4842ba968",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report.md",
+    "bytes": 4612,
+    "sha256": "10eb90ffb6a9b882d3ff5a23f03bfd250956b79eb5da21bb05ff9c6a5598f9ff",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_audit_bb.md",
+    "bytes": 573,
+    "sha256": "d945e22eae2fa217982162dfad6afb4eae3bb6bf80655e0de9ae263e77c05605",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_audit_bb_va_rsi2_wyckoff_c0.002.md",
+    "bytes": 1627,
+    "sha256": "7ec7af5da5fd4eb574703d8c5029187e7871c568fd443157e7e88d3b389b3f97",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_audit_bb_va_rsi2_wyckoff_c0.md",
+    "bytes": 1611,
+    "sha256": "c6a244e5177630bf6445a96711a32e3afa6894766a1d54ebc7aa6663fb52d3a1",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_audit_ict.md",
+    "bytes": 3746,
+    "sha256": "67038db793c02e42a0af475e58073a29f1cab32bd94a9f6c7e344cc6f9ff2b7e",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_audit_rsi2.md",
+    "bytes": 383,
+    "sha256": "be2c33089d1248b920dd612067ded5969c7ef020fe44a5c60f38ca66ac722670",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_audit_va.md",
+    "bytes": 569,
+    "sha256": "4c92eb0f4bd994cf407131711dc999729ce4ed691378520aec5a65e169702a30",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_audit_wyckoff.md",
+    "bytes": 541,
+    "sha256": "61176cce43946d15a43c97dc9c6de12c8d97fbb19cd35fece15d4720a1089622",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_demo_be.md",
+    "bytes": 5252,
+    "sha256": "46086abae649647e8db46344aa160a9ec21839462bee8a8cefa6a13d26491eb5",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_majors.md",
+    "bytes": 10123,
+    "sha256": "3f47cb6e7bd96cccfc2ff8fb663905447ec12d35230edeabe5ae4b8b35c6ff51",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_sessions.md",
+    "bytes": 1730,
+    "sha256": "ed070ff27e9cd27b1dd67fc1a01d0c9e63f5be82f1161ff4375a6820c85372d6",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_tf.md",
+    "bytes": 3335,
+    "sha256": "472c41e84aad92517ad09d446392f9c2195306ea224f647bc5581850080091bc",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/report_wide.md",
+    "bytes": 7225,
+    "sha256": "073ea2153e6003d04220c9a8e27b47e2c27c002f7d5115fe9720c8bf5ddb53a6",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/sessions.py",
+    "bytes": 3214,
+    "sha256": "d01b511c15ac2a29e972412cf8c45b4080380b6a74a3f0fc6894938e14259a89",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/tf.py",
+    "bytes": 3772,
+    "sha256": "5fa9a4b2701e17f24c1db81e76a5122766c32cab8fb4e41d5654c324c0e4e2c7",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exit_bt/wide.py",
+    "bytes": 4177,
+    "sha256": "65f0a12ffac7d52089ac2935b35e9cf604d88bbc262a095e35296f483e249a02",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exits_12m.md",
+    "bytes": 13674,
+    "sha256": "d8ae7b25066d800c372b4104e7a1bd6cab868ff37621190db5f7c84113e9cfbe",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/exits_all_12m.md",
+    "bytes": 13840,
+    "sha256": "ef7c7acdc538948e1c06a42130783662e1732c9bb093951b9e63d6855ba25346",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/funding_holdout.md",
+    "bytes": 962,
+    "sha256": "df228b182de288880f8904e8bb373d2fd75534633f6480392b3cb1ce9830f015",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/geometry_audit.md",
+    "bytes": 7948,
+    "sha256": "57c66522ecea7bdf6aef30fe83a4571a1fd5385333f2b581f1df1d68110a1d2d",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/geometry_audit_eng72.md",
+    "bytes": 9824,
+    "sha256": "6352f24d81ff58d93b020d306abe104f2c50043167e2fd1bc1a8fe4cdb3ebbc7",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/htf_filter.md",
+    "bytes": 5022,
+    "sha256": "5764534495fa8f3b534f657c3645be53c7048ec0460cd27ab33d2dac2962845b",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/htf_phases.md",
+    "bytes": 14673,
+    "sha256": "71e33ec850caf4f35b04b7e68f993617cac4460ada83170e880f4776a07a4452",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/indicator_confirms.md",
+    "bytes": 2962,
+    "sha256": "9aa679b0c9a0e1767c07e047784746ce5fbe440fb1ae0d053e8ee519d7ab47a9",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/indicator_confirms.parquet",
+    "bytes": 40160,
+    "sha256": "829239fdde1ff276163d623d1748923cd408d5c9a8f6615c923ec0c586440ccf",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "pending schema/data inspection",
+    "format_check": "Parquet full decode PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/level_factors.md",
+    "bytes": 22348,
+    "sha256": "afdf55d4e4c4e24af0a36242a55f5fbb7cb60c50c67e687a8eafc868cc6668ec",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/level_mechanics.md",
+    "bytes": 5073,
+    "sha256": "18d108b5a15e18c1b96ee4a975de3aebc3851a458c34bf59103b7266c5d5463a",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/level_triggers.md",
+    "bytes": 8775,
+    "sha256": "b57bddf7a275183f1dda188f939818a170923a7bce312b15aa6e916b6756c077",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/level_weights.md",
+    "bytes": 1375,
+    "sha256": "bc1a34e122eed1b81f47e8e5f8005570e5ccce4f03b4ab92f59a68fb1e7567c6",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/maker_12m.md",
+    "bytes": 6169,
+    "sha256": "3ac92c54ee3fc3fc5ec6a5968fe1a4fcd9a222fe56a180a2814af4ba95bcf4f1",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/meta_12m.md",
+    "bytes": 4108,
+    "sha256": "9b92ef40e2dedbb1f1171651e6bd9bbc1101a52df7a005b797d1fa900411a1e7",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/meta_replay.md",
+    "bytes": 1170,
+    "sha256": "d5f834097aca90a71b27c1e8ab27f7ddc8167679d739ad04e578e3dd752a39f5",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/ml_eval_12m.txt",
+    "bytes": 3055,
+    "sha256": "3edd2648f886e75ffbe98fc328c40a00a197ed976fe4c8fab7a854662e695111",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/ml_eval_6m.txt",
+    "bytes": 2925,
+    "sha256": "8f4fa819e0600d3d8613e112fd4c00be97dfa9808fe397ac5545efb1a6b45706",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/optimize.md",
+    "bytes": 1988,
+    "sha256": "ac92799201104df54ab8ba3901bfa6217a2de0c3a5c1d77b1d94e0177bc39f92",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/optimize.parquet",
+    "bytes": 4804,
+    "sha256": "0ecfcf12031c5eeea1519a1a27551b57a4b72ca72ae34e6394d67cfc93cc3f0f",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "pending schema/data inspection",
+    "format_check": "Parquet full decode PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/optimize_matrix.npz",
+    "bytes": 3021732,
+    "sha256": "c02ce6dc7b90ba33bc4cf320cb24bf6ce72010a0ed79f12e9c55f1a4b1318768",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "format_check": "NPZ PASS (allow_pickle=False)",
+    "checks_complete": true
+  },
+  {
+    "path": "research/optimize_regime.md",
+    "bytes": 3396,
+    "sha256": "2c7a000ff44c0bb2615013bcbea0a58e5a08aa0977b35ad852925c79b74a60f1",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/optimize_robust.md",
+    "bytes": 1950,
+    "sha256": "8a4e5b1b2157a004951d5de4a0fbc6f737dbd7c6a5734932c28148405f729463",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/optimize_robust_picks.json",
+    "bytes": 772,
+    "sha256": "f488fa42085dd758ee51da3e9d18de0004f7abe088fb3a9289af554f39451d26",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/ours_placebo_6m.md",
+    "bytes": 6269,
+    "sha256": "4015d25779a09f7680be85ecf96dbcf55f5c6f6f5e32bfa948eb4448935c11a3",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/overlays.md",
+    "bytes": 12778,
+    "sha256": "57f2d4f704e0e5c66c5eaa040addf1a7c400167e4e92e412b4d25425b21275c8",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/overshoot.md",
+    "bytes": 859,
+    "sha256": "4239f629e4b9867a0720b14bfd44541972a8ee83420745b33c406f6cbd290320",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/phases_6m.md",
+    "bytes": 4415,
+    "sha256": "8e4334fb7e9110953163470a6d00265fd9d3c763d3c5e7e2b78082478d0387f3",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/pools.md",
+    "bytes": 5475,
+    "sha256": "8af3ebc6a80d0d6f190da348bb57e12bcb4f9a1ebcf73f6bef75c1456212516c",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/positioning.md",
+    "bytes": 3771,
+    "sha256": "8fb696f6a8c5e8cfa20acdb1efa0cfd93b0b5ee54cecfc616629755ade8b5131",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/profile_trades.md",
+    "bytes": 956,
+    "sha256": "6a4ca34f13c2464b26d61bc368cf825a573affece110e1bbf7c0b51871c60a56",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/pumps.md",
+    "bytes": 2893,
+    "sha256": "b6a4e16e0041622ad8759e89084eafb02e3e5a6515140720c1ddb5730df734e0",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/pumps_by_size.md",
+    "bytes": 3117,
+    "sha256": "94e692549499427404e499312fc60d6479da3623839ab5c41d1eaca70b165063",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/pumps_holdout.md",
+    "bytes": 2291,
+    "sha256": "5c26b2bec502d78a299611e9deb1e3a1ff3418b68c532881cdeb173ebcbaaf8d",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/regimes_hmm.md",
+    "bytes": 527,
+    "sha256": "d96f0e5eacf171b5edb298572fe9f379a8e5657e5910fc4b3de54fb5e82efb2c",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/replay.md",
+    "bytes": 5736,
+    "sha256": "f1e0594c9b6429dea19f462de57bad8ada767c81805b11c204d4e4742f25bf4c",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/replay_eng72.md",
+    "bytes": 4918,
+    "sha256": "f3493f807814a57984f70bf118b56dc6a85f996d4219874919f5871f910bc78b",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/replay_missing.md",
+    "bytes": 5045,
+    "sha256": "93cd9ccaa3bebf96b1a789269979f1378ffea49b0c470a64cabf9d67eb419996",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/replay_summary.parquet",
+    "bytes": 2484844,
+    "sha256": "3972630625245fc62e894d644876d3b18f3369acd972a2586f27992e67bb789c",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "pending schema/data inspection",
+    "format_check": "Parquet full decode PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/replay_summary_eng59.parquet",
+    "bytes": 2484844,
+    "sha256": "3972630625245fc62e894d644876d3b18f3369acd972a2586f27992e67bb789c",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "pending schema/data inspection",
+    "format_check": "Parquet full decode PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/replay_summary_eng72.parquet",
+    "bytes": 19997386,
+    "sha256": "466d00763b358eb300a4ff9e4a1123ff50fa8980bbcd6ba38fc7502db2443835",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "pending schema/data inspection",
+    "format_check": "Parquet full decode PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scenario_model.md",
+    "bytes": 1790,
+    "sha256": "9101ab979adc1dc221c10a43b10ac341d641217bd0f302852467ecf85acf2eb2",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_adaptive.py",
+    "bytes": 6971,
+    "sha256": "48b78c568a562ae1385545a7bcdebd4d0525bd5673d6daa5fdbd4160d3cc5f0d",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_algo_whales.py",
+    "bytes": 7495,
+    "sha256": "053cc4f076ba633ea5496c807b65080c2b536cc0149e6185a6354d2033fc63e4",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_atr_volbars.py",
+    "bytes": 5773,
+    "sha256": "209e550c5132c34235bc76e2557a2634b1a93f7087ba625db1b05abf44410a19",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_bb1_windows.py",
+    "bytes": 10206,
+    "sha256": "b2318c43c4b91af06f725c6d1f7cabbf1cdb3bb53ebcf1e9b6ee5b80a0de6000",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_bias.py",
+    "bytes": 6530,
+    "sha256": "a88731cc691d8137ffa945d55a8d54b31be712497c2a35dbf0adb3a436820bb0",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_book_flow.py",
+    "bytes": 20068,
+    "sha256": "43f3b91e276d86671d54588cba67bb7395c375bfbb854038ea387010e347065e",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_cards.py",
+    "bytes": 51731,
+    "sha256": "976bc7c99c3e871b95e001a0bf14e94b6cb291bbf686c57be15dedd94ad3b97b",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_channels.py",
+    "bytes": 11022,
+    "sha256": "ad5d7be3e0a023ab3ab4c933aab695589b535e674971e08955b427e12dc8a991",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_compass.py",
+    "bytes": 10574,
+    "sha256": "f0afa95f748c2cffd09efa3fb7b1a6a9b4143fdc73096cd2b54610d01cd3209e",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_confluence.py",
+    "bytes": 8276,
+    "sha256": "1c48003a9e4ab21355930408dcdb4dbe76cd712f4e895f60fd2c0423d607c72c",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_connors.py",
+    "bytes": 6122,
+    "sha256": "4a9b9f7e0a4ca31e85c74d32caedaf5c6c5dd012a9455a225805bb1968e7b09d",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_daily_methods.py",
+    "bytes": 9332,
+    "sha256": "af85c9046a00edc8a931178e18663d40e546a6dbd99dc8d53953abbacd91cea8",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_edges.py",
+    "bytes": 10323,
+    "sha256": "1a76732527fb6940cb6ceb037fc3f4960190a6b64b9d37f3f2ae3023e35c8867",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_eng72_vs_eng59.py",
+    "bytes": 5774,
+    "sha256": "a0e2ff8619aa0a2d3e3c76274f6db96a2304daa03a004a56a86e4b48f666259c",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_ensemble.py",
+    "bytes": 12741,
+    "sha256": "64f5cf774404c6ac261db97e45c057c1ea48656b619ccefe2343ab51185a1262",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_entries_placebo_eng133.py",
+    "bytes": 32537,
+    "sha256": "1e7a63fc42a59509739d494fda44e6868766fb4d162b8be3e2488fba9673aa5d",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_entry_edge.py",
+    "bytes": 5716,
+    "sha256": "78551bb9e8a046a4d2f477947878f2eef4bc52ba76c31d348203a24e2cd81f57",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_eqh.py",
+    "bytes": 9404,
+    "sha256": "a63c332a4b44f7fffe55597e88ba5c15441388ef1529078d73b1cd04abd97fe7",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_exits.py",
+    "bytes": 6137,
+    "sha256": "2c655dd2611ff3045027dc21222b6e2ed4a459501de103abcd9b2a6fa4aa9e47",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_fetch5m.py",
+    "bytes": 1233,
+    "sha256": "b6dec764e2b4282dfbe3804327e47c2a1fe3b307f7cfb03070f8deac3e81b8f9",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_funding.py",
+    "bytes": 5535,
+    "sha256": "a26a5859abd0c0f1b47256babe1a695009753578e612ddcbe8245a9bf37999c4",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_geometry_audit.py",
+    "bytes": 6349,
+    "sha256": "8fcf13be9fcee2d8e492e47d9aefc0647829243043785144dcdb613adf73df87",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_htf.py",
+    "bytes": 27194,
+    "sha256": "2627891f9d8a3dfccf41d3430c0f03b59eef931a41facf9f3decd5a55ea3b22b",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_htf_filter.py",
+    "bytes": 7459,
+    "sha256": "331eba5fd70160f1244053beb28ed95e871ed8602db4dd2c67e6e2c2c6d9bfa4",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_indicator_confirms.py",
+    "bytes": 10272,
+    "sha256": "46e8d35b78b0468ca4c7e7d8095a3a5cb84e3f084ddfb983162534d83a815d86",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_level_events.py",
+    "bytes": 27744,
+    "sha256": "afa2059d52b29a1331a3c7a1918f1359815145d637fb91c9d297b17998eddb9d",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_level_factors.py",
+    "bytes": 11615,
+    "sha256": "cd746bbf4617e80758b69b37515b9ae4531deeeba1c21f08beccc61f6bf00952",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_level_mechanics.py",
+    "bytes": 14463,
+    "sha256": "03c88522a7164a0e49ff73f75680edf9dd3f4c577220830fcc63d7e3843b1fe5",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_level_triggers.py",
+    "bytes": 12201,
+    "sha256": "63efb91027987da62b8955db8c871b16b0373162fddf3de29d4fd1710a159f3e",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_level_weights.py",
+    "bytes": 11892,
+    "sha256": "7b0235351f15f7b35f08ccb78f5c1f1f1b99e9858861c5a7aa5c0742cbbe555c",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_maniac.py",
+    "bytes": 14207,
+    "sha256": "227e4891d52cbe3ce273cc0ec1f0f71c48ebd0b3ce07d7d29376953a3f68d0be",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_meta.py",
+    "bytes": 13873,
+    "sha256": "3e2142c9950afeade4e47c6492440bf2e5f962fcf5f9c59f0bd030a91d33636b",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_meta_replay.py",
+    "bytes": 9319,
+    "sha256": "36f07c283d2123b45900439e52a32c48bb000c55269d53710f0291d95c0ba5e0",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_optimize.py",
+    "bytes": 13913,
+    "sha256": "09b337c98bf235bdad1d93cdc946b2c91f4a0634fcbc72807849959d5cbd3fd6",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_optimize_regime.py",
+    "bytes": 5963,
+    "sha256": "d269f19afa8227dc1034a33b9266d044d85fa574f84852687053212577d9f138",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_optimize_robust.py",
+    "bytes": 3910,
+    "sha256": "59248eb9c120dd2e66a970967258af2b578d1e46845ec00ca23b2006b27e8b23",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_overlays.py",
+    "bytes": 10246,
+    "sha256": "1d400c7758696b2feef86b7d88b7b5dd17fb4aa44a5432caea5c74c8dc1613be",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_overshoot.py",
+    "bytes": 11384,
+    "sha256": "11acccb74e3566394adcd2af830d60dae89a2d652ad5582587f66a2ca8c40fce",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_pools.py",
+    "bytes": 10213,
+    "sha256": "25af155e9761adb29a15769cf77940ccb07d2e528ab7b2203f50db059c0ea7f9",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_positioning.py",
+    "bytes": 7577,
+    "sha256": "0fba73831e77b9f5522026b06a8723a87685343d63be5fae0be4a63e4df82f98",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_profile_trades.py",
+    "bytes": 5579,
+    "sha256": "d5c30f4f0489b8e362d1f9d10249aa75087f520ae9590f3ee0434fce1b62c69c",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_pumps.py",
+    "bytes": 14486,
+    "sha256": "e6b29db3d31823e113bf8206ad111e27136700c68bc753ab5f0954090cf693e8",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_regimes_hmm.py",
+    "bytes": 6040,
+    "sha256": "5636147a719f3cb2d01d6daa622141704bc178cda7a22461d9e7844cad33f997",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_replay_report.py",
+    "bytes": 6259,
+    "sha256": "2275650a1d7af0b64cbedee1cba08180fdad9b20c84f93587dc1894898dcb1b3",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_replay_summary.py",
+    "bytes": 1140,
+    "sha256": "fbfb67f75065922ed946f9d93231b871667842ad4cf08ad209ff083885fb2365",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_sessions.py",
+    "bytes": 7330,
+    "sha256": "07b3cf174d44df5b0de68d9f3c69ee3c73964a540f574dda3b0c2bc3bdea0ce6",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_sr.py",
+    "bytes": 10007,
+    "sha256": "7ceb5ac06b38dbdae196fccd118309a54a90395f8af6255bc5c04c3ad539444c",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_talib_check.py",
+    "bytes": 8989,
+    "sha256": "759975b0e0fc8d85b0bfc6d99b4f10db6500aaa0c4552a45c367eb255e9f565e",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_tier0.py",
+    "bytes": 3472,
+    "sha256": "16805375be08d9a5bba9c35f3cb5cfe46f88ae574a03a5049ca1520b76b474d6",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_trend_daily.py",
+    "bytes": 10380,
+    "sha256": "2cdd9eeb5263371c1a58d7188cdfa9339a9bde8b10a4997a3990829c11e23bf6",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/scripts/research_turtle.py",
+    "bytes": 5890,
+    "sha256": "76a2df8851951b95bd0ab1690125bec3027c51c9fffd6e66cfb0acde98c0bbbb",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/sessions_leaders.md",
+    "bytes": 1983,
+    "sha256": "2259949d955e1c974d009219716d5991b76cbfdbab0956b363aae6c7d0c67a43",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/sr_zones.md",
+    "bytes": 1171,
+    "sha256": "08d4ee7346549625fb1e865d593c196ecb30863a8f8dbe3cf1951828977344d6",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/talib_check.md",
+    "bytes": 6751,
+    "sha256": "441558adf196bba33cd6a44960f2824e51a9054cd15b446fe97b21685f04e149",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/talib_check_data.md",
+    "bytes": 5373,
+    "sha256": "d7a8e2a79aa9babfa1a3d3789addc5d3af57828a0911bf23624e91686e9fdf9d",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/tier0_thresholds.md",
+    "bytes": 2025,
+    "sha256": "fb7fd81c8ec197e9a6ec7458050645c8977299d64e47e2996dbd6cabaefdef8f",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/trend_daily.md",
+    "bytes": 1389,
+    "sha256": "a4ca84a28c75971b034c3448d8b6b3d95b04a3a72ebafde907eb08b1102e4b08",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "research/turtle.md",
+    "bytes": 672,
+    "sha256": "7be63771f3d2062083236878005a4783a60e6bc50366d1d662d0194155ad1bbc",
+    "review": "documentary",
+    "notes": "UTF-8, headings/version/claims screening; active source contracts cross-checked selectively. Historical numeric results not reproduced or certified.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "ruff.toml",
+    "bytes": 561,
+    "sha256": "10988b7584dd10131e8d8c15fd094f48af8b1f1079902c21f0741e99c0ce1080",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "scanner.py",
+    "bytes": 113868,
+    "sha256": "5598bc039cfd1e4073b71b6ff6177ba33123f083489281bb355bb29863fa5480",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "scenarios.py",
+    "bytes": 15410,
+    "sha256": "d2d9f6de4a680bb0edadffe7879c00e688fdb506b49e7e96547b9033b4e7ab5e",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "scorer.py",
+    "bytes": 30672,
+    "sha256": "f1fc61c20bb739424d1e0e41bb88a6bb237fcf0c7a67793e5b9beeb97adfe83f",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "sectors.py",
+    "bytes": 3538,
+    "sha256": "32938f9bf3fca9fa32410f827f78fbf65ac402eba0768e614c54bb4221ea38ee",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "signal_book.py",
+    "bytes": 98518,
+    "sha256": "035706067c62b4806f26454933d89241d95b46860781bbd02d844a0f9131ee2e",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "sr.py",
+    "bytes": 8027,
+    "sha256": "c6ce770e8aecb23017b607a2192237d855407df80bce94ab0d3aa7ca1bb37587",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "stats.py",
+    "bytes": 70335,
+    "sha256": "f2b6b1213387adeef1ebdf0670b864b70c627b7052e5f63387d9f1dd15aedec1",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "storage.py",
+    "bytes": 1029,
+    "sha256": "13dce2860ed9c17fe6d5710848b18bc70c83277ec284d93aa1cd36e96f51041f",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/__init__.py",
+    "bytes": 5181,
+    "sha256": "6e8e4b3def9eae565f69a0ba478592ab5948c3e225e73e121350cf2294bea0c4",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/base.py",
+    "bytes": 9279,
+    "sha256": "df9582f56836409c20fc8d7fe222e8a9bacf559b1f6cc6103ed82c2df61d135f",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/bias.py",
+    "bytes": 6767,
+    "sha256": "5341ad68c0c0b0326155fd1794528ad3766574e94c6b85b49936e7ceb207fecb",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/breakout.py",
+    "bytes": 6678,
+    "sha256": "da03429e03d9ece40b064ce0599151a0b26ae582fb65f70c42d5be4ed436ef75",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/cascade.py",
+    "bytes": 9848,
+    "sha256": "a13734410d7d228c4250567a135bdf4fba7449ed97bd605c253730cb31c92a39",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/classic.py",
+    "bytes": 23919,
+    "sha256": "2aa0f875d61384a98cf89d2605c8178486e8d365a8eb915624ef99055cb3e21c",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/classic_strategies.py",
+    "bytes": 6568,
+    "sha256": "162fb5ca19dfe6352424f2b30116082376fa59d18ff03bfcc1868a809ef8e25d",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/confirm.py",
+    "bytes": 9967,
+    "sha256": "6b1844963bf6d7398d01b3d29937b639dd70acf5e490c87045cb1385380c0df5",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/cup_handle.py",
+    "bytes": 6975,
+    "sha256": "21c3be342bae9d9784106f31fea259b1212e840dbd563f3c1534458b2a518599",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/detect.py",
+    "bytes": 3868,
+    "sha256": "e0a1e7891deb4fb0824ba0b0aa84a7531769240484787990812386c39c192755",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/geometry.py",
+    "bytes": 44365,
+    "sha256": "03db307f03aa7146f33d12f119e0db3c738da4f23adf979f2d08d9027e64da4b",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/ict.py",
+    "bytes": 10598,
+    "sha256": "eddf01db6b2b2cd083ea9caa4b9223096536b9f60c3c29eb2bdcf01c7625e1d1",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/ind_panel.py",
+    "bytes": 10037,
+    "sha256": "5530ec0f40262550ce3300a171d62fc36aa971cc46c2936f538a4ec4de56ca4b",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/leg.py",
+    "bytes": 8519,
+    "sha256": "4d3defa2f701791b180f336bcf8b0213a9a454c30a08a8b00e5751b9e449a2f7",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/level.py",
+    "bytes": 12842,
+    "sha256": "9d4502b42853904031f650db03710fa713f60d09f4eabbf5b2e90cc60fb98361",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/loopside.py",
+    "bytes": 14114,
+    "sha256": "8b4de7461537046fac5801413388f63ec45399baff2c9323bdaaabbc74e6798f",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/maniac.py",
+    "bytes": 31919,
+    "sha256": "fd992198cda4d42111f0c686ae7fcc47a15cdf111023ed3bc08f138e2b7bd100",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/maniac_strategies.py",
+    "bytes": 16574,
+    "sha256": "3933251fad659f839a75f03134f82780dd9c7d10092e544775a9ec7eaa8b0aee",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/oi_build.py",
+    "bytes": 4783,
+    "sha256": "8542a37417e8226d775ba04eb655e8bff22a7ca074f3850e5aaefbfbbf800e28",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/po3.py",
+    "bytes": 8825,
+    "sha256": "1bf17c84e5e52eaaa68274f82180c51d07102cabe3acb5b1558cc74f158e72f5",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/profiles.py",
+    "bytes": 8862,
+    "sha256": "2021c50d4fd3000777467fd9f80784e15c6e614162c625c82058a60c66554a68",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/pump.py",
+    "bytes": 14366,
+    "sha256": "6223e92ce7134b1dffcc0e3ff218c011d57814b717f83eeb38beb3e52d78b9d2",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/regime.py",
+    "bytes": 5321,
+    "sha256": "c8af296196040aa34bac833b18494936eeb67086a78db203d2171d924579aeb9",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/silver_bullet.py",
+    "bytes": 10758,
+    "sha256": "93bb320c1220ce11cf14997aaaec2efd1004caf5073819366a0710b660707594",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/structure.py",
+    "bytes": 24224,
+    "sha256": "a09ed5041311ce93cbe1590972e2acc55a29ec5f52441da67a9f4f0846e08f1d",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/turtle.py",
+    "bytes": 6390,
+    "sha256": "a989fcaaba44a39546559a928fcdc70fadcd31693f76d9aed5010cb00b69c789",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/vsa.py",
+    "bytes": 3685,
+    "sha256": "bd81408f41dffc5538db75329d67595512e76f5fca73e158725b66654642d682",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "strategies/wyckoff_range.py",
+    "bytes": 13459,
+    "sha256": "f3d66d15b2721446a97b43e0e518694617f905e9b8d8abc225c54a8924c24f56",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "symbols.py",
+    "bytes": 9354,
+    "sha256": "6eec264d2e74915f91412dce4a8a21b6c1b7d287c372edbbbb4eab0f5ce629ea",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/conftest.py",
+    "bytes": 3738,
+    "sha256": "3322d1b37cc671fb433a7558526a746d7edbb30f151821f65f98ea946dae5deb",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/fixtures/ws_samples.json",
+    "bytes": 296855,
+    "sha256": "92b79f155029e89408ac4b9755cc4fad9c0d4be87dc1453c2fbaf37401ed196e",
+    "review": "artifact",
+    "notes": "Full format decode / schema or opcode review; PKL not executed; artifact performance and model training not re-run.",
+    "static": "JSON parse PASS",
+    "format_check": "JSON PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/test_audit.py",
+    "bytes": 4616,
+    "sha256": "8e4dd4c81b8ff7b5632a225f8b2dcb63101265993658861b937f5e735f84f095",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/test_flow.py",
+    "bytes": 4565,
+    "sha256": "b6129e634a03dc984229d93237fbc721fc5a5c61109f1c75d016b945b36c0d38",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/test_infra.py",
+    "bytes": 12383,
+    "sha256": "51029fe94a13f814aeee4c563f8107f390824771cba1c387335fb06b3fcbb438",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/test_levels.py",
+    "bytes": 5234,
+    "sha256": "168143ccb2e1f3d9c3535fddfb24dc8283d50d6c2bc088db5861896e24dbd3b2",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/test_runtime.py",
+    "bytes": 10645,
+    "sha256": "b036f9f0e30ba2014a9de72f42dbe138bd55846df1d4d6197b4010d8061cd6a3",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/test_scorer.py",
+    "bytes": 8974,
+    "sha256": "bdcb7203ee10c96991e28e3022e7cda87e4574e390f86904fb42328ea65b8dee",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/test_signal_book.py",
+    "bytes": 9909,
+    "sha256": "86b997b95797f3f82440a5b8f64d4ee7949fee8b8f93095344faa086140db710",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tests/test_venues.py",
+    "bytes": 7006,
+    "sha256": "83efe2bd9a3285cf78ca716e15afad436d316b0e10d4195f5fe1f7c80ac3f082",
+    "review": "test",
+    "notes": "AST/ruff, all 75 existing tests executed on Python 3.12 and 3.14; passing tests do not cover all strategy semantics.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tools/coinglass_heatmap.py",
+    "bytes": 2439,
+    "sha256": "300fefdfd5545523866c0640277f83988733fa38a0ceff36f3411bfa069c8f36",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tools/farside_flows.py",
+    "bytes": 6049,
+    "sha256": "504c51b7b6315e69604bf3c9fa9b0b687629452f407a63e7b33550f19e7f980f",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "tools/vmmap.py",
+    "bytes": 699,
+    "sha256": "a819201219468a076744ddc5165db2055c861df15b054c2ea315dfb15e0f8ae3",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "train_scenarios.py",
+    "bytes": 11281,
+    "sha256": "71009dfef339d854d6a6983292256f77964a7c7363c96d14629d587ed7ff7019",
+    "review": "structural",
+    "notes": "Whole-file AST/ruff/pylint or text syntax inspection; functions/imports/risk expressions indexed. No complete manual semantic proof or archive rerun.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "venues.py",
+    "bytes": 34545,
+    "sha256": "5f1897a2f306900227d504deb29b47c2f7a7e21aa6dae8cd24d19bd5c6dddaa8",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "watchdog.py",
+    "bytes": 9148,
+    "sha256": "13b028956d71428133dbd5ce5bd47a601c1bce5b125ee3cb6cc4c66b9255b1f4",
+    "review": "manual",
+    "notes": "Manual first pass plus AST/ruff/static checks; only confirmed defects reported; not a proof of absence of bugs.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "web/app.js",
+    "bytes": 101041,
+    "sha256": "50dd543be8b24abc01572eb6426a38dc8f15a6562e90d672dd142afb5b17b00a",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "web/index.html",
+    "bytes": 5012,
+    "sha256": "0df139460bbdbea4bfa41464cd96cc0ba5b93c84a9f0858c63c81f0fdb4ea1af",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "web/lightweight-charts.5.0.8.js",
+    "bytes": 180427,
+    "sha256": "bcdca2a528db7c9b386918c99c544bde3eda3f0204ec2d23a64411d4cb4686c9",
+    "review": "vendor",
+    "notes": "node syntax PASS; SHA256 byte-for-byte match to unpkg lightweight-charts@5.0.8 standalone.production.js. Integration only, no independent vendor algorithm audit.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "web/style.css",
+    "bytes": 9039,
+    "sha256": "3eb98a210b444e13e27d6ddb4d2ef1c069a7e54b8cb6fabebd934325fefc5a67",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "format_check": "UTF-8 PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "webui.py",
+    "bytes": 41698,
+    "sha256": "f79f34cf9fa14cba983e1fbeb99235afcb0c86db51f20242666ca960b4f0804b",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  },
+  {
+    "path": "zones.py",
+    "bytes": 47083,
+    "sha256": "38d58a440f33fd7160ea742b561b1be542e5a5bdd337febcb45bce15195838ab",
+    "review": "targeted",
+    "notes": "Targeted source/contract review plus format/static checks. Live execution, rendering and full archive reruns not performed.",
+    "static": "AST parse PASS; repository ruff PASS",
+    "format_check": "Python AST PASS",
+    "checks_complete": true
+  }
+]

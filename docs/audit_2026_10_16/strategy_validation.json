@@ -1,0 +1,37 @@
+{
+  "generated_utc": "2026-10-16T21:02:31.380334+00:00",
+  "commit": "f386ec3b9e34131ff45b1e65721a7fe3f48542e2",
+  "registered_classes": 20,
+  "families": 14,
+  "setups": 40,
+  "setups_disabled": 2,
+  "setups_forced_shadow": 8,
+  "strategy_files": 28,
+  "parameters": 155,
+  "source_ids": 30,
+  "original_files_sha256_checked": 293,
+  "original_files_changed": [],
+  "diagnostic_runs": {
+    "3.12": {
+      "exit_code": 0,
+      "examples": 10,
+      "stdout": "S01 VWAP: quote-weighted=166.666667; quantity-weighted=150\nS02 Turtle: channel=100 N=5 entry=110 SL=90.0; distance=4N\nS04 Wyckoff: test range=2 accepted; own 4h sqrt-time threshold=1.2\nS05 SupplyDemand: score=10; TP1 RR=0.264421; blend=3.418655; low_rr=False\nS06 Bollinger: entry=100 bareSL=99 target=102 effectiveSL=95.0; RR=0.363818; low_rr=False\nS07 Cup: requestedSL=92; effectiveSL=88.0; loss=12%\nS08 Cup: strictly linear V-shape accepted: 1d cup with handle: rims 100.2 / 100.2, depth 20% over 36 candles, handle 6 candles to 95.8; closed above the pivot 100.2 on 1.7x volume (O'Neil)\nS09 Dump: inverse threshold=15.00%; ordinary decline=13.043478%\nS10 no_tp=True/no_stop=True, placeholder TP3 still finishes card: TP3\nS11 Wyckoff: plan targets=[110.0, 140.0, 140.0]; entry targets=[109.66867469879519, 109.66867469879519, 109.66867469879519]\nPASS: 10 offline counterexamples. S03 is a static chronology finding, not an executed example.\n"
+    },
+    "3.14": {
+      "exit_code": 0,
+      "examples": 10,
+      "stdout": "S01 VWAP: quote-weighted=166.666667; quantity-weighted=150\nS02 Turtle: channel=100 N=5 entry=110 SL=90.0; distance=4N\nS04 Wyckoff: test range=2 accepted; own 4h sqrt-time threshold=1.2\nS05 SupplyDemand: score=10; TP1 RR=0.264421; blend=3.418655; low_rr=False\nS06 Bollinger: entry=100 bareSL=99 target=102 effectiveSL=95.0; RR=0.363818; low_rr=False\nS07 Cup: requestedSL=92; effectiveSL=88.0; loss=12%\nS08 Cup: strictly linear V-shape accepted: 1d cup with handle: rims 100.2 / 100.2, depth 20% over 36 candles, handle 6 candles to 95.8; closed above the pivot 100.2 on 1.7x volume (O'Neil)\nS09 Dump: inverse threshold=15.00%; ordinary decline=13.043478%\nS10 no_tp=True/no_stop=True, placeholder TP3 still finishes card: TP3\nS11 Wyckoff: plan targets=[110.0, 140.0, 140.0]; entry targets=[109.66867469879519, 109.66867469879519, 109.66867469879519]\nPASS: 10 offline counterexamples. S03 is a static chronology finding, not an executed example.\n"
+    }
+  },
+  "diagnostic_lint": "All checks passed!",
+  "existing_tests": {
+    "3.12": "........................................................................ [ 96%]\n...                                                                      [100%]\n75 passed in 8.67s",
+    "3.14": "........................................................................ [ 96%]\n...                                                                      [100%]\n75 passed in 13.56s"
+  },
+  "scope_limits": [
+    "No historical profitability rerun",
+    "No exchange fills or VPS validation",
+    "ICT original video content and some exact author rules remain unverified"
+  ],
+  "broken_local_links": []
+}

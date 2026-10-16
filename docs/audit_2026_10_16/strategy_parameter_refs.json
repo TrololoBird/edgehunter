@@ -1,0 +1,1251 @@
+{
+  "levels.htf_lookback_candles": [],
+  "levels.leg_lookback_hours": [],
+  "levels.impulse_min_atr": [
+    {
+      "file": "levels.py",
+      "line": 38
+    }
+  ],
+  "levels.impulse_min_candles": [
+    {
+      "file": "levels.py",
+      "line": 90
+    }
+  ],
+  "levels.impulse_min_move": [
+    {
+      "file": "levels.py",
+      "line": 46
+    }
+  ],
+  "levels.cost_guard": [
+    {
+      "file": "levels.py",
+      "line": 46
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 245
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 577
+    }
+  ],
+  "levels.continuation_zone": [
+    {
+      "file": "strategies/leg.py",
+      "line": 112
+    }
+  ],
+  "levels.continuation_invalid": [
+    {
+      "file": "strategies/leg.py",
+      "line": 140
+    }
+  ],
+  "levels.macro_before_min": [
+    {
+      "file": "macro_calendar.py",
+      "line": 56
+    }
+  ],
+  "levels.macro_after_min": [
+    {
+      "file": "macro_calendar.py",
+      "line": 56
+    }
+  ],
+  "levels.macro_guard_min": [
+    {
+      "file": "signal_book.py",
+      "line": 1446
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1449
+    }
+  ],
+  "levels.continuation_targets": [
+    {
+      "file": "levels.py",
+      "line": 168
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 703
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 709
+    },
+    {
+      "file": "strategies/leg.py",
+      "line": 125
+    },
+    {
+      "file": "webui.py",
+      "line": 228
+    }
+  ],
+  "levels.reversal_zone_max": [
+    {
+      "file": "strategies/cascade.py",
+      "line": 140
+    }
+  ],
+  "levels.reversal_targets": [
+    {
+      "file": "levels.py",
+      "line": 38
+    },
+    {
+      "file": "levels.py",
+      "line": 46
+    },
+    {
+      "file": "strategies/cascade.py",
+      "line": 138
+    }
+  ],
+  "levels.ltf_break_lookback": [
+    {
+      "file": "research/scripts/research_cards.py",
+      "line": 761
+    }
+  ],
+  "levels.ltf_flow_candles": [
+    {
+      "file": "levels.py",
+      "line": 257
+    }
+  ],
+  "levels.stop_buffer_atr": [
+    {
+      "file": "strategies/cascade.py",
+      "line": 136
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 416
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 508
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 609
+    },
+    {
+      "file": "strategies/level.py",
+      "line": 154
+    }
+  ],
+  "levels.min_stop_atr": [
+    {
+      "file": "levels.py",
+      "line": 38
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 91
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 423
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 569
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 630
+    }
+  ],
+  "levels.max_stop_pct": [
+    {
+      "file": "strategies/geometry.py",
+      "line": 82
+    }
+  ],
+  "levels.zone_buffer_atr": [
+    {
+      "file": "strategies/geometry.py",
+      "line": 376
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 504
+    }
+  ],
+  "levels.min_rr_tp1": [
+    {
+      "file": "executor.py",
+      "line": 395
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 277
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 752
+    }
+  ],
+  "levels.veto_low_rr": [
+    {
+      "file": "research/scripts/research_cards.py",
+      "line": 619
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1054
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1092
+    }
+  ],
+  "levels.fill_delay_sec": [],
+  "levels.slippage_bps": [
+    {
+      "file": "fetcher.py",
+      "line": 2253
+    },
+    {
+      "file": "levels.py",
+      "line": 45
+    },
+    {
+      "file": "levels.py",
+      "line": 310
+    },
+    {
+      "file": "research/scripts/research_cards.py",
+      "line": 814
+    },
+    {
+      "file": "research/scripts/research_edges.py",
+      "line": 181
+    },
+    {
+      "file": "research/scripts/research_htf.py",
+      "line": 52
+    },
+    {
+      "file": "research/scripts/research_maniac.py",
+      "line": 161
+    },
+    {
+      "file": "research/scripts/research_trend_daily.py",
+      "line": 33
+    },
+    {
+      "file": "scenarios.py",
+      "line": 264
+    }
+  ],
+  "levels.slippage_ref_volume": [],
+  "levels.slippage_max_bps": [
+    {
+      "file": "levels.py",
+      "line": 313
+    }
+  ],
+  "levels.slippage_notional_usd": [
+    {
+      "file": "levels.py",
+      "line": 312
+    }
+  ],
+  "levels.slippage_half_spread_bps": [
+    {
+      "file": "levels.py",
+      "line": 313
+    }
+  ],
+  "levels.slippage_impact_sigma": [
+    {
+      "file": "levels.py",
+      "line": 312
+    }
+  ],
+  "levels.target_through_bps": [
+    {
+      "file": "levels.py",
+      "line": 381
+    },
+    {
+      "file": "research/scripts/research_cards.py",
+      "line": 815
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1348
+    }
+  ],
+  "levels.spring_test_volume_ratio": [
+    {
+      "file": "levels.py",
+      "line": 275
+    }
+  ],
+  "levels.spring_test_spread_ratio": [
+    {
+      "file": "levels.py",
+      "line": 291
+    }
+  ],
+  "levels.watch_ttl_sec": [
+    {
+      "file": "signal_book.py",
+      "line": 843
+    },
+    {
+      "file": "signal_book.py",
+      "line": 844
+    },
+    {
+      "file": "strategies/base.py",
+      "line": 133
+    }
+  ],
+  "levels.plan_wait_sec": [
+    {
+      "file": "signal_book.py",
+      "line": 849
+    }
+  ],
+  "levels.zone_ttl_sec": [
+    {
+      "file": "strategies/base.py",
+      "line": 133
+    }
+  ],
+  "levels.trade_ttl_sec": [
+    {
+      "file": "replay.py",
+      "line": 469
+    },
+    {
+      "file": "research/scripts/research_book_flow.py",
+      "line": 244
+    },
+    {
+      "file": "research/scripts/research_entries_placebo_eng133.py",
+      "line": 195
+    },
+    {
+      "file": "research/scripts/research_entries_placebo_eng133.py",
+      "line": 437
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1489
+    },
+    {
+      "file": "strategies/base.py",
+      "line": 133
+    }
+  ],
+  "levels.min_rr_tp1_floor": [
+    {
+      "file": "strategies/geometry.py",
+      "line": 257
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 258
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 590
+    }
+  ],
+  "levels.finished_display_sec": [
+    {
+      "file": "signal_book.py",
+      "line": 433
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1532
+    }
+  ],
+  "strategies.enabled": [
+    {
+      "file": "briefing.py",
+      "line": 765
+    },
+    {
+      "file": "briefing.py",
+      "line": 871
+    },
+    {
+      "file": "executor.py",
+      "line": 61
+    },
+    {
+      "file": "executor.py",
+      "line": 184
+    },
+    {
+      "file": "executor.py",
+      "line": 536
+    },
+    {
+      "file": "executor.py",
+      "line": 831
+    },
+    {
+      "file": "executor.py",
+      "line": 862
+    },
+    {
+      "file": "executor.py",
+      "line": 913
+    },
+    {
+      "file": "executor.py",
+      "line": 1199
+    },
+    {
+      "file": "executor.py",
+      "line": 1207
+    },
+    {
+      "file": "fetcher.py",
+      "line": 563
+    },
+    {
+      "file": "fetcher.py",
+      "line": 723
+    },
+    {
+      "file": "fetcher.py",
+      "line": 748
+    },
+    {
+      "file": "fetcher.py",
+      "line": 1874
+    },
+    {
+      "file": "main.py",
+      "line": 195
+    },
+    {
+      "file": "notifier.py",
+      "line": 84
+    },
+    {
+      "file": "notifier.py",
+      "line": 87
+    },
+    {
+      "file": "notifier.py",
+      "line": 130
+    },
+    {
+      "file": "notifier.py",
+      "line": 156
+    },
+    {
+      "file": "pools.py",
+      "line": 43
+    },
+    {
+      "file": "scanner.py",
+      "line": 240
+    },
+    {
+      "file": "scanner.py",
+      "line": 245
+    },
+    {
+      "file": "scanner.py",
+      "line": 252
+    },
+    {
+      "file": "scanner.py",
+      "line": 766
+    },
+    {
+      "file": "signal_book.py",
+      "line": 368
+    },
+    {
+      "file": "strategies/base.py",
+      "line": 137
+    }
+  ],
+  "strategies.shadow_vetoes": [
+    {
+      "file": "signal_book.py",
+      "line": 144
+    },
+    {
+      "file": "signal_book.py",
+      "line": 958
+    }
+  ],
+  "strategies.disabled_setups": [
+    {
+      "file": "signal_book.py",
+      "line": 368
+    }
+  ],
+  "strategies.holy_grail_adx": [],
+  "strategies.archive_negative": [
+    {
+      "file": "webui.py",
+      "line": 338
+    }
+  ],
+  "strategies.h1_candles": [
+    {
+      "file": "fetcher.py",
+      "line": 1353
+    }
+  ],
+  "strategies.h1_refresh_sec": [
+    {
+      "file": "fetcher.py",
+      "line": 1329
+    }
+  ],
+  "strategies.close_event_max_age_sec": [
+    {
+      "file": "strategies/structure.py",
+      "line": 324
+    }
+  ],
+  "strategies.tide_btc_against": [
+    {
+      "file": "strategies/leg.py",
+      "line": 89
+    }
+  ],
+  "strategies.trend_ema": [
+    {
+      "file": "research/scripts/research_entries_placebo_eng133.py",
+      "line": 69
+    },
+    {
+      "file": "strategies/structure.py",
+      "line": 54
+    },
+    {
+      "file": "strategies/structure.py",
+      "line": 56
+    }
+  ],
+  "strategies.trend_slope_bars": [
+    {
+      "file": "research/scripts/research_entries_placebo_eng133.py",
+      "line": 69
+    },
+    {
+      "file": "strategies/structure.py",
+      "line": 54
+    },
+    {
+      "file": "strategies/structure.py",
+      "line": 60
+    }
+  ],
+  "strategies.trend_w_ema": [
+    {
+      "file": "fetcher.py",
+      "line": 1638
+    },
+    {
+      "file": "strategies/structure.py",
+      "line": 74
+    }
+  ],
+  "strategies.recent_atr_candles": [
+    {
+      "file": "strategies/structure.py",
+      "line": 46
+    }
+  ],
+  "strategies.sweep_swing_hours": [
+    {
+      "file": "strategies/structure.py",
+      "line": 126
+    }
+  ],
+  "strategies.sweep_pool_min_age_sec": [
+    {
+      "file": "strategies/level.py",
+      "line": 72
+    }
+  ],
+  "strategies.sweep_round_pools": [
+    {
+      "file": "strategies/level.py",
+      "line": 74
+    }
+  ],
+  "strategies.cup_target_share": [
+    {
+      "file": "strategies/cup_handle.py",
+      "line": 79
+    },
+    {
+      "file": "strategies/cup_handle.py",
+      "line": 107
+    }
+  ],
+  "strategies.sweep_min_depth_atr": [
+    {
+      "file": "strategies/level.py",
+      "line": 69
+    }
+  ],
+  "strategies.sweep_max_depth_atr": [
+    {
+      "file": "strategies/level.py",
+      "line": 69
+    }
+  ],
+  "strategies.sweep_min_rvol": [
+    {
+      "file": "pretrain.py",
+      "line": 348
+    },
+    {
+      "file": "research/scripts/research_cards.py",
+      "line": 138
+    },
+    {
+      "file": "strategies/level.py",
+      "line": 67
+    }
+  ],
+  "strategies.sweep_sessions": [
+    {
+      "file": "zones.py",
+      "line": 229
+    }
+  ],
+  "strategies.sweep_ttl": [],
+  "strategies.absorption_min_rvol": [
+    {
+      "file": "strategies/level.py",
+      "line": 195
+    }
+  ],
+  "strategies.absorption_level_atr": [
+    {
+      "file": "strategies/level.py",
+      "line": 199
+    }
+  ],
+  "strategies.absorption_min_strength": [],
+  "strategies.absorption_min_move_atr": [
+    {
+      "file": "strategies/level.py",
+      "line": 205
+    }
+  ],
+  "strategies.exhaustion_pre_minutes": [
+    {
+      "file": "strategies/cascade.py",
+      "line": 86
+    }
+  ],
+  "strategies.exhaustion_min_leg_atr": [
+    {
+      "file": "strategies/cascade.py",
+      "line": 99
+    }
+  ],
+  "strategies.exhaustion_ttl": [
+    {
+      "file": "strategies/cascade.py",
+      "line": 68
+    }
+  ],
+  "strategies.breakout_range_candles": [
+    {
+      "file": "strategies/breakout.py",
+      "line": 23
+    }
+  ],
+  "strategies.breakout_min_width_atr": [
+    {
+      "file": "strategies/breakout.py",
+      "line": 34
+    }
+  ],
+  "strategies.breakout_max_width_atr": [
+    {
+      "file": "strategies/breakout.py",
+      "line": 34
+    }
+  ],
+  "strategies.breakout_min_rvol": [
+    {
+      "file": "strategies/breakout.py",
+      "line": 44
+    }
+  ],
+  "strategies.breakout_ttl": [],
+  "strategies.long_history_candles": [
+    {
+      "file": "fetcher.py",
+      "line": 1344
+    },
+    {
+      "file": "fetcher.py",
+      "line": 1347
+    },
+    {
+      "file": "research/scripts/research_maniac.py",
+      "line": 38
+    }
+  ],
+  "strategies.sd_ttl": [],
+  "strategies.classic_ttl": [],
+  "strategies.silver_bullet_ttl": [],
+  "strategies.po3_ttl": [],
+  "strategies.pump_start_min_pct": [
+    {
+      "file": "strategies/loopside.py",
+      "line": 72
+    },
+    {
+      "file": "strategies/pump.py",
+      "line": 44
+    }
+  ],
+  "strategies.pump_start_z": [
+    {
+      "file": "strategies/pump.py",
+      "line": 44
+    }
+  ],
+  "strategies.pump_start_rvol": [
+    {
+      "file": "strategies/pump.py",
+      "line": 46
+    }
+  ],
+  "strategies.pump_top_min_pct": [
+    {
+      "file": "strategies/loopside.py",
+      "line": 82
+    },
+    {
+      "file": "strategies/pump.py",
+      "line": 77
+    }
+  ],
+  "strategies.pump_ttl": [],
+  "strategies.cup_ttl": [],
+  "strategies.connors_ttl": [],
+  "strategies.structural_lifetimes": [
+    {
+      "file": "signal_book.py",
+      "line": 883
+    },
+    {
+      "file": "signal_book.py",
+      "line": 889
+    },
+    {
+      "file": "signal_book.py",
+      "line": 910
+    },
+    {
+      "file": "signal_book.py",
+      "line": 974
+    },
+    {
+      "file": "signal_book.py",
+      "line": 977
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1479
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1593
+    }
+  ],
+  "strategies.be_after_1r": [
+    {
+      "file": "signal_book.py",
+      "line": 552
+    }
+  ],
+  "strategies.ema_trail_after_tp1": [
+    {
+      "file": "signal_book.py",
+      "line": 554
+    },
+    {
+      "file": "signal_book.py",
+      "line": 556
+    }
+  ],
+  "strategies.time_stop_bars": [
+    {
+      "file": "signal_book.py",
+      "line": 1506
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1508
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 225
+    }
+  ],
+  "strategies.crowd_max": [
+    {
+      "file": "executor.py",
+      "line": 573
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1469
+    }
+  ],
+  "strategies.optimized_profiles": [
+    {
+      "file": "signal_book.py",
+      "line": 1145
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1149
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1206
+    }
+  ],
+  "strategies.time_after_tp1": [
+    {
+      "file": "signal_book.py",
+      "line": 1509
+    },
+    {
+      "file": "strategies/geometry.py",
+      "line": 225
+    }
+  ],
+  "strategies.time_stop_min_sec": [
+    {
+      "file": "signal_book.py",
+      "line": 1506
+    }
+  ],
+  "strategies.turtle_add_n": [
+    {
+      "file": "signal_book.py",
+      "line": 1389
+    }
+  ],
+  "strategies.turtle_max_units": [
+    {
+      "file": "executor.py",
+      "line": 438
+    },
+    {
+      "file": "executor.py",
+      "line": 440
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1388
+    }
+  ],
+  "strategies.turtle_max_direction_units": [
+    {
+      "file": "signal_book.py",
+      "line": 1216
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1392
+    }
+  ],
+  "strategies.turtle_unit_risk": [],
+  "strategies.orb_stretch_days": [
+    {
+      "file": "strategies/classic.py",
+      "line": 139
+    },
+    {
+      "file": "strategies/classic.py",
+      "line": 325
+    }
+  ],
+  "strategies.orb_bases": [
+    {
+      "file": "strategies/classic.py",
+      "line": 429
+    },
+    {
+      "file": "strategies/loopside.py",
+      "line": 182
+    }
+  ],
+  "strategies.connors_rsi_low": [
+    {
+      "file": "strategies/classic.py",
+      "line": 400
+    },
+    {
+      "file": "strategies/classic.py",
+      "line": 406
+    },
+    {
+      "file": "strategies/classic.py",
+      "line": 417
+    }
+  ],
+  "strategies.connors_rsi_high": [
+    {
+      "file": "strategies/classic.py",
+      "line": 402
+    },
+    {
+      "file": "strategies/classic.py",
+      "line": 408
+    },
+    {
+      "file": "strategies/classic.py",
+      "line": 417
+    }
+  ],
+  "strategies.dump_min_move": [
+    {
+      "file": "strategies/pump.py",
+      "line": 123
+    }
+  ],
+  "strategies.dump_vol_x": [
+    {
+      "file": "strategies/pump.py",
+      "line": 127
+    }
+  ],
+  "strategies.wide_min_volume": [
+    {
+      "file": "scanner.py",
+      "line": 867
+    }
+  ],
+  "strategies.oi_build_ttl": [],
+  "strategies.require_displacement": [
+    {
+      "file": "strategies/leg.py",
+      "line": 105
+    }
+  ],
+  "strategies.smt_main_bars": [],
+  "strategies.smt_with_trend_only": [],
+  "strategies.smt_ref_window": [],
+  "strategies.smt_ifvg_min_atr": [
+    {
+      "file": "strategies/maniac.py",
+      "line": 574
+    }
+  ],
+  "strategies.smt_ifvg_search_back": [
+    {
+      "file": "strategies/maniac.py",
+      "line": 576
+    }
+  ],
+  "strategies.smt_session": [
+    {
+      "file": "executor.py",
+      "line": 527
+    },
+    {
+      "file": "signal_book.py",
+      "line": 74
+    },
+    {
+      "file": "signal_book.py",
+      "line": 956
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1044
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1045
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1048
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1246
+    }
+  ],
+  "strategies.smt_min_correlation": [
+    {
+      "file": "strategies/structure.py",
+      "line": 379
+    }
+  ],
+  "strategies.tl_lookback": [
+    {
+      "file": "strategies/maniac.py",
+      "line": 316
+    }
+  ],
+  "strategies.tl_pivot": [],
+  "strategies.tl_min_span": [
+    {
+      "file": "strategies/maniac.py",
+      "line": 318
+    }
+  ],
+  "strategies.tl_min_touches": [],
+  "strategies.tl_touch_atr": [],
+  "strategies.tl_touch_gap": [],
+  "strategies.tl_violation_atr": [],
+  "strategies.tl_max_dist_atr": [],
+  "strategies.tl_flat_deg": [],
+  "strategies.tl_min_pivot_touches": [],
+  "strategies.tl_pivot_tol_atr": [],
+  "strategies.tl_max_deg": [],
+  "strategies.tl_last_touch_age": [],
+  "strategies.tl_confirm_atr": [],
+  "strategies.tl_min_body_atr": [],
+  "strategies.tl_max_depth_atr": [],
+  "strategies.tl_close_pos_max": [],
+  "strategies.trendline_ttl": [],
+  "strategies.bollinger_ttl": [],
+  "orderflow.perp_led_spot_share": [
+    {
+      "file": "journal.py",
+      "line": 418
+    },
+    {
+      "file": "scorer.py",
+      "line": 116
+    }
+  ],
+  "orderflow.veto_perp_led": [
+    {
+      "file": "journal.py",
+      "line": 409
+    }
+  ],
+  "orderflow.crowded_funding_long": [
+    {
+      "file": "journal.py",
+      "line": 320
+    },
+    {
+      "file": "scorer.py",
+      "line": 262
+    }
+  ],
+  "orderflow.crowded_funding_short": [
+    {
+      "file": "journal.py",
+      "line": 323
+    }
+  ],
+  "orderflow.crowded_cb_discount": [
+    {
+      "file": "journal.py",
+      "line": 322
+    }
+  ],
+  "orderflow.crowded_premium_long": [
+    {
+      "file": "journal.py",
+      "line": 321
+    }
+  ],
+  "orderflow.crowded_premium_short": [
+    {
+      "file": "journal.py",
+      "line": 324
+    }
+  ],
+  "orderflow.crowded_oi_1h": [
+    {
+      "file": "journal.py",
+      "line": 313
+    }
+  ],
+  "orderflow.footprint_bucket_pct": [
+    {
+      "file": "fetcher.py",
+      "line": 2161
+    }
+  ],
+  "orderflow.imbalance_ratio": [
+    {
+      "file": "flow.py",
+      "line": 673
+    }
+  ],
+  "orderflow.stacked_levels": [
+    {
+      "file": "fetcher.py",
+      "line": 2171
+    },
+    {
+      "file": "research/scripts/research_book_flow.py",
+      "line": 178
+    }
+  ],
+  "orderflow.absorption_percentile": [
+    {
+      "file": "flow.py",
+      "line": 662
+    },
+    {
+      "file": "strategies/level.py",
+      "line": 193
+    }
+  ],
+  "orderflow.absorption_max_move_atr": [
+    {
+      "file": "flow.py",
+      "line": 667
+    },
+    {
+      "file": "strategies/level.py",
+      "line": 195
+    }
+  ],
+  "orderflow.require_orderflow_confirm": [
+    {
+      "file": "strategies/confirm.py",
+      "line": 57
+    }
+  ],
+  "orderflow.divergence_lookback_min": [
+    {
+      "file": "strategies/confirm.py",
+      "line": 101
+    }
+  ],
+  "orderflow.required_confirmations": [
+    {
+      "file": "strategies/confirm.py",
+      "line": 56
+    }
+  ],
+  "orderflow.confirm_exempt": [
+    {
+      "file": "strategies/confirm.py",
+      "line": 71
+    }
+  ],
+  "orderflow.promote_confirmations": [
+    {
+      "file": "journal.py",
+      "line": 934
+    }
+  ],
+  "orderflow.promote_min_clusters": [
+    {
+      "file": "journal.py",
+      "line": 950
+    }
+  ],
+  "orderflow.min_confirmations": [
+    {
+      "file": "strategies/confirm.py",
+      "line": 74
+    }
+  ],
+  "executor.touch_confirm_close": [
+    {
+      "file": "executor.py",
+      "line": 520
+    },
+    {
+      "file": "journal.py",
+      "line": 609
+    },
+    {
+      "file": "signal_book.py",
+      "line": 1007
+    }
+  ],
+  "executor.partial_r": [
+    {
+      "file": "executor.py",
+      "line": 313
+    },
+    {
+      "file": "signal_book.py",
+      "line": 675
+    },
+    {
+      "file": "signal_book.py",
+      "line": 677
+    },
+    {
+      "file": "signal_book.py",
+      "line": 794
+    },
+    {
+      "file": "signal_book.py",
+      "line": 808
+    }
+  ],
+  "executor.partial_share": [
+    {
+      "file": "executor.py",
+      "line": 311
+    },
+    {
+      "file": "executor.py",
+      "line": 317
+    },
+    {
+      "file": "signal_book.py",
+      "line": 675
+    },
+    {
+      "file": "signal_book.py",
+      "line": 793
+    },
+    {
+      "file": "signal_book.py",
+      "line": 807
+    }
+  ],
+  "executor.risk_pct": [
+    {
+      "file": "executor.py",
+      "line": 414
+    },
+    {
+      "file": "executor.py",
+      "line": 441
+    },
+    {
+      "file": "executor.py",
+      "line": 597
+    },
+    {
+      "file": "webui.py",
+      "line": 206
+    }
+  ]
+}

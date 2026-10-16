@@ -1,0 +1,12 @@
+A01 TPO POC at wrong peak: (102.0, 109.5, 110.0)
+A05 stored entry_plan absent after restart: ['card_id', 'direction', 'entry_fill', 'id', 'no_stop', 'opened_ms', 'qty', 'risk_usd', 'sl', 'strategy', 'symbol']
+A06 half exit accepted as complete (exit,pnl,error): (110.0, 9.895, None)
+A03 SAR: 95.2 (two-bar clamp would be 90)
+A04 one minute accepted as a full 4h bar: [[0, 100.0, 101.0, 99.0, 100.0, 1.0, 0.5]]
+A10 same stop fill=90, scan=105 / scan=90: 0.48 -1.02
+A08 channel95 crossed at94, trade stays: ENTRY
+A13 same coin/direction, same scan: created 2
+A11 live 4h / replay 15m opposite band: 227.13025037868317 220.2581406486677
+A12 false stop in minute3 using later 4h bar: 109.2 100.0
+A16 MFI quote/base volume: 80.0 66.66666666666666
+A18 no exhaustion, emitted: DUMP BOUNCE SHORT dump_low: 49.0

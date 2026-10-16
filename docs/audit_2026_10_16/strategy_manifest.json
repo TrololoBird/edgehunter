@@ -1,0 +1,2252 @@
+{
+  "commit": "f386ec3",
+  "classes": [
+    {
+      "class": "MomentumStrategy",
+      "family": "continuation",
+      "file": "strategies/leg.py",
+      "line": 147,
+      "setups": {
+        "IMPULSE UP": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "IMPULSE DOWN": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": null,
+      "ttl_key": null,
+      "requires": [
+        "spot"
+      ],
+      "time_exit": "bars"
+    },
+    {
+      "class": "SweepStrategy",
+      "family": "sweep",
+      "file": "strategies/level.py",
+      "line": 107,
+      "setups": {
+        "SWEEP LOW": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "SWEEP HIGH": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": null,
+      "ttl_key": "sweep_ttl",
+      "requires": [],
+      "time_exit": "bars"
+    },
+    {
+      "class": "SilverBulletStrategy",
+      "family": "sweep",
+      "file": "strategies/silver_bullet.py",
+      "line": 118,
+      "setups": {
+        "SILVER BULLET LONG": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "SILVER BULLET SHORT": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 2.0,
+      "ttl_key": "silver_bullet_ttl",
+      "requires": [],
+      "time_exit": "fixed"
+    },
+    {
+      "class": "ExhaustionStrategy",
+      "family": "wyckoff",
+      "file": "strategies/cascade.py",
+      "line": 112,
+      "setups": {
+        "FLUSH REVERSAL": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": true
+        },
+        "SQUEEZE REVERSAL": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": true
+        }
+      },
+      "min_rr": null,
+      "ttl_key": "exhaustion_ttl",
+      "requires": [],
+      "time_exit": "bars"
+    },
+    {
+      "class": "WyckoffRangeStrategy",
+      "family": "wyckoff",
+      "file": "strategies/wyckoff_range.py",
+      "line": 200,
+      "setups": {
+        "SPRING": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "UTAD": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": null,
+      "ttl_key": null,
+      "requires": [],
+      "time_exit": "bars"
+    },
+    {
+      "class": "BreakoutStrategy",
+      "family": "breakout",
+      "file": "strategies/breakout.py",
+      "line": 91,
+      "setups": {
+        "BREAKOUT UP": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "BREAKOUT DOWN": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": null,
+      "ttl_key": "breakout_ttl",
+      "requires": [],
+      "time_exit": "fixed"
+    },
+    {
+      "class": "SupplyDemandStrategy",
+      "family": "supply_demand",
+      "file": "strategies/maniac_strategies.py",
+      "line": 57,
+      "setups": {
+        "SD DEMAND": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "SD SUPPLY": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 3.0,
+      "ttl_key": "sd_ttl",
+      "requires": [],
+      "time_exit": "fixed"
+    },
+    {
+      "class": "AuctionStrategy",
+      "family": "market_profile",
+      "file": "strategies/maniac_strategies.py",
+      "line": 130,
+      "setups": {
+        "AUCTION LONG": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "AUCTION SHORT": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 1.0,
+      "ttl_key": "classic_ttl",
+      "requires": [],
+      "time_exit": "session"
+    },
+    {
+      "class": "TrendlineStrategy",
+      "family": "trendline",
+      "file": "strategies/maniac_strategies.py",
+      "line": 197,
+      "setups": {
+        "TL EM UP": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "TL EM DOWN": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": null,
+      "ttl_key": "trendline_ttl",
+      "requires": [],
+      "time_exit": "bars"
+    },
+    {
+      "class": "BollingerStrategy",
+      "family": "bollinger",
+      "file": "strategies/maniac_strategies.py",
+      "line": 240,
+      "setups": {
+        "BB W-BOTTOM": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "BB M-TOP": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        },
+        "BB3 BUY": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": true
+        },
+        "BB3 SELL": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": true
+        }
+      },
+      "min_rr": 1.0,
+      "ttl_key": "bollinger_ttl",
+      "requires": [],
+      "time_exit": "bars"
+    },
+    {
+      "class": "BollingerSqueezeStrategy",
+      "family": "breakout",
+      "file": "strategies/maniac_strategies.py",
+      "line": 272,
+      "setups": {
+        "BB1 UP": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "BB1 DOWN": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 0.0,
+      "ttl_key": "bollinger_ttl",
+      "requires": [],
+      "time_exit": "fixed"
+    },
+    {
+      "class": "ValueAreaStrategy",
+      "family": "market_profile",
+      "file": "strategies/classic_strategies.py",
+      "line": 11,
+      "setups": {
+        "VA80 LONG": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "VA80 SHORT": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 1.0,
+      "ttl_key": "classic_ttl",
+      "requires": [],
+      "time_exit": "session"
+    },
+    {
+      "class": "OrbStrategy",
+      "family": "orb",
+      "file": "strategies/classic_strategies.py",
+      "line": 35,
+      "setups": {
+        "ORB UP": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "ORB DOWN": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 0.0,
+      "ttl_key": "classic_ttl",
+      "requires": [],
+      "time_exit": "session"
+    },
+    {
+      "class": "ConnorsStrategy",
+      "family": "connors",
+      "file": "strategies/classic_strategies.py",
+      "line": 84,
+      "setups": {
+        "RSI2 LONG": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "RSI2 SHORT": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        },
+        "RSI2X LONG": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": true
+        },
+        "RSI2X SHORT": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": true
+        }
+      },
+      "min_rr": 0.0,
+      "ttl_key": "connors_ttl",
+      "requires": [],
+      "time_exit": "fixed"
+    },
+    {
+      "class": "PumpStartStrategy",
+      "family": "pump",
+      "file": "strategies/pump.py",
+      "line": 192,
+      "setups": {
+        "PUMP START": {
+          "direction": 1,
+          "disabled": true,
+          "shadow": false
+        }
+      },
+      "min_rr": 1.0,
+      "ttl_key": "pump_ttl",
+      "requires": [],
+      "time_exit": "bars"
+    },
+    {
+      "class": "PumpTopStrategy",
+      "family": "pump",
+      "file": "strategies/pump.py",
+      "line": 232,
+      "setups": {
+        "PUMP TOP": {
+          "direction": -1,
+          "disabled": true,
+          "shadow": false
+        }
+      },
+      "min_rr": null,
+      "ttl_key": "pump_ttl",
+      "requires": [],
+      "time_exit": "bars"
+    },
+    {
+      "class": "DumpBounceStrategy",
+      "family": "pump",
+      "file": "strategies/pump.py",
+      "line": 167,
+      "setups": {
+        "DUMP BOUNCE SHORT": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 0.0,
+      "ttl_key": "pump_ttl",
+      "requires": [],
+      "time_exit": "bars"
+    },
+    {
+      "class": "CupHandleStrategy",
+      "family": "cup_handle",
+      "file": "strategies/cup_handle.py",
+      "line": 91,
+      "setups": {
+        "CUP HANDLE": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 1.0,
+      "ttl_key": "cup_ttl",
+      "requires": [],
+      "time_exit": "fixed"
+    },
+    {
+      "class": "Po3Strategy",
+      "family": "po3",
+      "file": "strategies/po3.py",
+      "line": 100,
+      "setups": {
+        "PO3 LONG": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": false
+        },
+        "PO3 SHORT": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": false
+        }
+      },
+      "min_rr": 1.0,
+      "ttl_key": "po3_ttl",
+      "requires": [],
+      "time_exit": "fixed"
+    },
+    {
+      "class": "OiBuildStrategy",
+      "family": "oi_build",
+      "file": "strategies/oi_build.py",
+      "line": 77,
+      "setups": {
+        "OI BUILD LONG": {
+          "direction": 1,
+          "disabled": false,
+          "shadow": true
+        },
+        "OI BUILD SHORT": {
+          "direction": -1,
+          "disabled": false,
+          "shadow": true
+        }
+      },
+      "min_rr": null,
+      "ttl_key": "oi_build_ttl",
+      "requires": [],
+      "time_exit": "fixed"
+    }
+  ],
+  "helpers": [
+    {
+      "file": "strategies/__init__.py",
+      "sha256": "6e8e4b3def9eae565f69a0ba478592ab5948c3e225e73e121350cf2294bea0c4",
+      "functions": [
+        {
+          "name": "strategy_of",
+          "line": 64,
+          "end_line": 65
+        },
+        {
+          "name": "unknown_names",
+          "line": 71,
+          "end_line": 79
+        }
+      ]
+    },
+    {
+      "file": "strategies/base.py",
+      "sha256": "df9582f56836409c20fc8d7fe222e8a9bacf559b1f6cc6103ed82c2df61d135f",
+      "functions": [
+        {
+          "name": "base_plan",
+          "line": 140,
+          "end_line": 169
+        },
+        {
+          "name": "atr",
+          "line": 75,
+          "end_line": 80
+        },
+        {
+          "name": "recent_atr",
+          "line": 83,
+          "end_line": 84
+        },
+        {
+          "name": "has_data",
+          "line": 99,
+          "end_line": 100
+        },
+        {
+          "name": "session_end",
+          "line": 111,
+          "end_line": 113
+        },
+        {
+          "name": "plan",
+          "line": 115,
+          "end_line": 116
+        },
+        {
+          "name": "gate_key",
+          "line": 118,
+          "end_line": 121
+        },
+        {
+          "name": "context_veto",
+          "line": 123,
+          "end_line": 125
+        },
+        {
+          "name": "ttls",
+          "line": 127,
+          "end_line": 133
+        },
+        {
+          "name": "enabled",
+          "line": 136,
+          "end_line": 137
+        }
+      ]
+    },
+    {
+      "file": "strategies/bias.py",
+      "sha256": "5341ad68c0c0b0326155fd1794528ad3766574e94c6b85b49936e7ceb207fecb",
+      "functions": [
+        {
+          "name": "_trend",
+          "line": 40,
+          "end_line": 45
+        },
+        {
+          "name": "_adx",
+          "line": 48,
+          "end_line": 67
+        },
+        {
+          "name": "state",
+          "line": 70,
+          "end_line": 85
+        },
+        {
+          "name": "bias_of",
+          "line": 92,
+          "end_line": 105
+        },
+        {
+          "name": "gate",
+          "line": 108,
+          "end_line": 123
+        },
+        {
+          "name": "range_mid",
+          "line": 126,
+          "end_line": 130
+        },
+        {
+          "name": "describe",
+          "line": 133,
+          "end_line": 135
+        },
+        {
+          "name": "closed",
+          "line": 138,
+          "end_line": 140
+        },
+        {
+          "name": "rma",
+          "line": 57,
+          "end_line": 63
+        }
+      ]
+    },
+    {
+      "file": "strategies/breakout.py",
+      "sha256": "da03429e03d9ece40b064ce0599151a0b26ae582fb65f70c42d5be4ed436ef75",
+      "functions": [
+        {
+          "name": "breakout_at_close",
+          "line": 19,
+          "end_line": 57
+        },
+        {
+          "name": "breakout_donchian",
+          "line": 64,
+          "end_line": 88
+        },
+        {
+          "name": "gate_key",
+          "line": 103,
+          "end_line": 104
+        },
+        {
+          "name": "plan",
+          "line": 106,
+          "end_line": 120
+        }
+      ]
+    },
+    {
+      "file": "strategies/cascade.py",
+      "sha256": "a13734410d7d228c4250567a135bdf4fba7449ed97bd605c253730cb31c92a39",
+      "functions": [
+        {
+          "name": "cascade_leg",
+          "line": 33,
+          "end_line": 47
+        },
+        {
+          "name": "__init__",
+          "line": 53,
+          "end_line": 54
+        },
+        {
+          "name": "forget",
+          "line": 56,
+          "end_line": 57
+        },
+        {
+          "name": "active",
+          "line": 59,
+          "end_line": 61
+        },
+        {
+          "name": "check",
+          "line": 63,
+          "end_line": 109
+        },
+        {
+          "name": "gate_key",
+          "line": 121,
+          "end_line": 122
+        },
+        {
+          "name": "plan",
+          "line": 124,
+          "end_line": 159
+        }
+      ]
+    },
+    {
+      "file": "strategies/classic.py",
+      "sha256": "2aa0f875d61384a98cf89d2605c8178486e8d365a8eb915624ef99055cb3e21c",
+      "functions": [
+        {
+          "name": "value_area",
+          "line": 37,
+          "end_line": 68
+        },
+        {
+          "name": "_day_candles",
+          "line": 71,
+          "end_line": 72
+        },
+        {
+          "name": "value_area_event",
+          "line": 75,
+          "end_line": 111
+        },
+        {
+          "name": "stretch",
+          "line": 116,
+          "end_line": 120
+        },
+        {
+          "name": "narrow_range",
+          "line": 123,
+          "end_line": 128
+        },
+        {
+          "name": "orb_event",
+          "line": 131,
+          "end_line": 160
+        },
+        {
+          "name": "orb_sessions",
+          "line": 176,
+          "end_line": 192
+        },
+        {
+          "name": "_session_times",
+          "line": 195,
+          "end_line": 198
+        },
+        {
+          "name": "previous_session",
+          "line": 201,
+          "end_line": 216
+        },
+        {
+          "name": "session_va_event",
+          "line": 219,
+          "end_line": 260
+        },
+        {
+          "name": "failed_auction_event",
+          "line": 263,
+          "end_line": 311
+        },
+        {
+          "name": "session_orb",
+          "line": 314,
+          "end_line": 352
+        },
+        {
+          "name": "rsi",
+          "line": 357,
+          "end_line": 371
+        },
+        {
+          "name": "connors_event",
+          "line": 374,
+          "end_line": 421
+        },
+        {
+          "name": "classic_events",
+          "line": 424,
+          "end_line": 432
+        },
+        {
+          "name": "inside",
+          "line": 93,
+          "end_line": 94
+        }
+      ]
+    },
+    {
+      "file": "strategies/classic_strategies.py",
+      "sha256": "162fb5ca19dfe6352424f2b30116082376fa59d18ff03bfcc1868a809ef8e25d",
+      "functions": [
+        {
+          "name": "session_end",
+          "line": 19,
+          "end_line": 21
+        },
+        {
+          "name": "plan",
+          "line": 23,
+          "end_line": 32
+        },
+        {
+          "name": "context_veto",
+          "line": 46,
+          "end_line": 52
+        },
+        {
+          "name": "session_end",
+          "line": 54,
+          "end_line": 57
+        },
+        {
+          "name": "plan",
+          "line": 59,
+          "end_line": 81
+        },
+        {
+          "name": "plan",
+          "line": 92,
+          "end_line": 113
+        }
+      ]
+    },
+    {
+      "file": "strategies/confirm.py",
+      "sha256": "6b1844963bf6d7398d01b3d29937b639dd70acf5e490c87045cb1385380c0df5",
+      "functions": [
+        {
+          "name": "positive",
+          "line": 48,
+          "end_line": 50
+        },
+        {
+          "name": "required",
+          "line": 53,
+          "end_line": 60
+        },
+        {
+          "name": "missing",
+          "line": 63,
+          "end_line": 76
+        },
+        {
+          "name": "delta",
+          "line": 79,
+          "end_line": 81
+        },
+        {
+          "name": "oi_change",
+          "line": 84,
+          "end_line": 92
+        },
+        {
+          "name": "cvd_divergence",
+          "line": 95,
+          "end_line": 115
+        },
+        {
+          "name": "evaluate",
+          "line": 118,
+          "end_line": 162
+        }
+      ]
+    },
+    {
+      "file": "strategies/cup_handle.py",
+      "sha256": "21c3be342bae9d9784106f31fea259b1212e840dbd563f3c1534458b2a518599",
+      "functions": [
+        {
+          "name": "_pivots_high",
+          "line": 21,
+          "end_line": 22
+        },
+        {
+          "name": "cup_handle",
+          "line": 25,
+          "end_line": 88
+        },
+        {
+          "name": "plan",
+          "line": 99,
+          "end_line": 110
+        }
+      ]
+    },
+    {
+      "file": "strategies/detect.py",
+      "sha256": "e0a1e7891deb4fb0824ba0b0aa84a7531769240484787990812386c39c192755",
+      "functions": [
+        {
+          "name": "__init__",
+          "line": 16,
+          "end_line": 22
+        },
+        {
+          "name": "set_context",
+          "line": 24,
+          "end_line": 38
+        },
+        {
+          "name": "state",
+          "line": 40,
+          "end_line": 42
+        },
+        {
+          "name": "load_state",
+          "line": 44,
+          "end_line": 47
+        },
+        {
+          "name": "forget",
+          "line": 49,
+          "end_line": 53
+        },
+        {
+          "name": "wants",
+          "line": 55,
+          "end_line": 64
+        },
+        {
+          "name": "scan",
+          "line": 66,
+          "end_line": 81
+        }
+      ]
+    },
+    {
+      "file": "strategies/geometry.py",
+      "sha256": "03db307f03aa7146f33d12f119e0db3c738da4f23adf979f2d08d9027e64da4b",
+      "functions": [
+        {
+          "name": "cost_of",
+          "line": 23,
+          "end_line": 32
+        },
+        {
+          "name": "stop_pierce",
+          "line": 38,
+          "end_line": 53
+        },
+        {
+          "name": "kind_at",
+          "line": 56,
+          "end_line": 63
+        },
+        {
+          "name": "kind_of_label",
+          "line": 66,
+          "end_line": 75
+        },
+        {
+          "name": "stop_too_far",
+          "line": 78,
+          "end_line": 86
+        },
+        {
+          "name": "stop_floor",
+          "line": 89,
+          "end_line": 91
+        },
+        {
+          "name": "_near",
+          "line": 94,
+          "end_line": 95
+        },
+        {
+          "name": "_zone_rank",
+          "line": 107,
+          "end_line": 121
+        },
+        {
+          "name": "htf_zones",
+          "line": 124,
+          "end_line": 130
+        },
+        {
+          "name": "_ltf_prices",
+          "line": 133,
+          "end_line": 135
+        },
+        {
+          "name": "map_fill",
+          "line": 138,
+          "end_line": 154
+        },
+        {
+          "name": "is_synthetic",
+          "line": 157,
+          "end_line": 162
+        },
+        {
+          "name": "finish_levels",
+          "line": 170,
+          "end_line": 271
+        },
+        {
+          "name": "_min_rr",
+          "line": 274,
+          "end_line": 277
+        },
+        {
+          "name": "select_targets",
+          "line": 283,
+          "end_line": 369
+        },
+        {
+          "name": "zone_pad",
+          "line": 372,
+          "end_line": 382
+        },
+        {
+          "name": "stop_levels",
+          "line": 385,
+          "end_line": 424
+        },
+        {
+          "name": "exit_stop",
+          "line": 427,
+          "end_line": 439
+        },
+        {
+          "name": "exit_target",
+          "line": 442,
+          "end_line": 480
+        },
+        {
+          "name": "structure_stop",
+          "line": 483,
+          "end_line": 516
+        },
+        {
+          "name": "clear_pool",
+          "line": 522,
+          "end_line": 544
+        },
+        {
+          "name": "system_levels",
+          "line": 547,
+          "end_line": 667
+        },
+        {
+          "name": "_ext_label",
+          "line": 670,
+          "end_line": 682
+        },
+        {
+          "name": "entry_levels",
+          "line": 685,
+          "end_line": 743
+        },
+        {
+          "name": "cap_for_rr",
+          "line": 746,
+          "end_line": 757
+        }
+      ]
+    },
+    {
+      "file": "strategies/ict.py",
+      "sha256": "eddf01db6b2b2cd083ea9caa4b9223096536b9f60c3c29eb2bdcf01c7625e1d1",
+      "functions": [
+        {
+          "name": "protected_swing",
+          "line": 19,
+          "end_line": 37
+        },
+        {
+          "name": "dealing_range",
+          "line": 40,
+          "end_line": 66
+        },
+        {
+          "name": "range_position",
+          "line": 69,
+          "end_line": 76
+        },
+        {
+          "name": "fvg_trigger",
+          "line": 79,
+          "end_line": 125
+        },
+        {
+          "name": "fvg_setup",
+          "line": 128,
+          "end_line": 171
+        },
+        {
+          "name": "touch_trigger",
+          "line": 174,
+          "end_line": 188
+        },
+        {
+          "name": "touch_confirm",
+          "line": 191,
+          "end_line": 210
+        }
+      ]
+    },
+    {
+      "file": "strategies/ind_panel.py",
+      "sha256": "5530ec0f40262550ce3300a171d62fc36aa971cc46c2936f538a4ec4de56ca4b",
+      "functions": [
+        {
+          "name": "ema",
+          "line": 12,
+          "end_line": 32
+        },
+        {
+          "name": "rma",
+          "line": 35,
+          "end_line": 43
+        },
+        {
+          "name": "sma",
+          "line": 46,
+          "end_line": 50
+        },
+        {
+          "name": "rolling_std",
+          "line": 53,
+          "end_line": 56
+        },
+        {
+          "name": "rolling_max",
+          "line": 59,
+          "end_line": 63
+        },
+        {
+          "name": "rolling_min",
+          "line": 66,
+          "end_line": 70
+        },
+        {
+          "name": "pct_rank",
+          "line": 73,
+          "end_line": 80
+        },
+        {
+          "name": "indicators",
+          "line": 83,
+          "end_line": 127
+        },
+        {
+          "name": "lag",
+          "line": 130,
+          "end_line": 131
+        },
+        {
+          "name": "any_last",
+          "line": 134,
+          "end_line": 139
+        },
+        {
+          "name": "rules",
+          "line": 142,
+          "end_line": 183
+        },
+        {
+          "name": "panel",
+          "line": 190,
+          "end_line": 212
+        }
+      ]
+    },
+    {
+      "file": "strategies/leg.py",
+      "sha256": "4d3defa2f701791b180f336bcf8b0213a9a454c30a08a8b00e5751b9e449a2f7",
+      "functions": [
+        {
+          "name": "_leg_anchor",
+          "line": 23,
+          "end_line": 25
+        },
+        {
+          "name": "_rows",
+          "line": 28,
+          "end_line": 29
+        },
+        {
+          "name": "_ema_of_tf",
+          "line": 32,
+          "end_line": 44
+        },
+        {
+          "name": "broke_structure",
+          "line": 47,
+          "end_line": 57
+        },
+        {
+          "name": "displacement",
+          "line": 60,
+          "end_line": 69
+        },
+        {
+          "name": "gate_key",
+          "line": 78,
+          "end_line": 80
+        },
+        {
+          "name": "context_veto",
+          "line": 82,
+          "end_line": 91
+        },
+        {
+          "name": "plan",
+          "line": 93,
+          "end_line": 144
+        }
+      ]
+    },
+    {
+      "file": "strategies/level.py",
+      "sha256": "9d4502b42853904031f650db03710fa713f60d09f4eabbf5b2e90cc60fb98361",
+      "functions": [
+        {
+          "name": "reached_since",
+          "line": 28,
+          "end_line": 31
+        },
+        {
+          "name": "_level_anchor",
+          "line": 34,
+          "end_line": 36
+        },
+        {
+          "name": "pool_rank",
+          "line": 41,
+          "end_line": 49
+        },
+        {
+          "name": "sweep_tf",
+          "line": 52,
+          "end_line": 56
+        },
+        {
+          "name": "sweep_at_close",
+          "line": 59,
+          "end_line": 104
+        },
+        {
+          "name": "absorption_at",
+          "line": 180,
+          "end_line": 212
+        },
+        {
+          "name": "ttls",
+          "line": 113,
+          "end_line": 118
+        },
+        {
+          "name": "gate_key",
+          "line": 120,
+          "end_line": 121
+        },
+        {
+          "name": "context_veto",
+          "line": 123,
+          "end_line": 130
+        },
+        {
+          "name": "plan",
+          "line": 132,
+          "end_line": 175
+        }
+      ]
+    },
+    {
+      "file": "strategies/loopside.py",
+      "sha256": "8b4de7461537046fac5801413388f63ec45399baff2c9323bdaaabbc74e6798f",
+      "functions": [
+        {
+          "name": "__init__",
+          "line": 16,
+          "end_line": 36
+        },
+        {
+          "name": "_skip",
+          "line": 38,
+          "end_line": 42
+        },
+        {
+          "name": "scan",
+          "line": 44,
+          "end_line": 55
+        },
+        {
+          "name": "_pumps",
+          "line": 57,
+          "end_line": 87
+        },
+        {
+          "name": "_silver_bullet",
+          "line": 89,
+          "end_line": 115
+        },
+        {
+          "name": "_po3",
+          "line": 117,
+          "end_line": 137
+        },
+        {
+          "name": "_turtle_breakout",
+          "line": 139,
+          "end_line": 175
+        },
+        {
+          "name": "_orb_touch",
+          "line": 177,
+          "end_line": 193
+        },
+        {
+          "name": "_oi_build",
+          "line": 195,
+          "end_line": 211
+        },
+        {
+          "name": "_dump_bounce",
+          "line": 213,
+          "end_line": 230
+        },
+        {
+          "name": "_connors_daily",
+          "line": 232,
+          "end_line": 243
+        }
+      ]
+    },
+    {
+      "file": "strategies/maniac.py",
+      "sha256": "fd992198cda4d42111f0c686ae7fcc47a15cdf111023ed3bc08f138e2b7bd100",
+      "functions": [
+        {
+          "name": "_arr",
+          "line": 38,
+          "end_line": 39
+        },
+        {
+          "name": "true_range",
+          "line": 42,
+          "end_line": 44
+        },
+        {
+          "name": "wilder",
+          "line": 47,
+          "end_line": 55
+        },
+        {
+          "name": "ema",
+          "line": 58,
+          "end_line": 65
+        },
+        {
+          "name": "rolling_mean",
+          "line": 68,
+          "end_line": 73
+        },
+        {
+          "name": "_windows",
+          "line": 76,
+          "end_line": 78
+        },
+        {
+          "name": "rolling_std",
+          "line": 81,
+          "end_line": 86
+        },
+        {
+          "name": "rolling_max",
+          "line": 89,
+          "end_line": 94
+        },
+        {
+          "name": "rolling_min",
+          "line": 97,
+          "end_line": 102
+        },
+        {
+          "name": "is_bull_pinbar",
+          "line": 105,
+          "end_line": 112
+        },
+        {
+          "name": "is_bear_pinbar",
+          "line": 115,
+          "end_line": 120
+        },
+        {
+          "name": "in_session",
+          "line": 123,
+          "end_line": 136
+        },
+        {
+          "name": "_boring",
+          "line": 141,
+          "end_line": 143
+        },
+        {
+          "name": "_exciting",
+          "line": 146,
+          "end_line": 148
+        },
+        {
+          "name": "_sd_bases",
+          "line": 151,
+          "end_line": 191
+        },
+        {
+          "name": "sd_zone_events",
+          "line": 194,
+          "end_line": 235
+        },
+        {
+          "name": "sd_opposing",
+          "line": 238,
+          "end_line": 261
+        },
+        {
+          "name": "find_pivots",
+          "line": 266,
+          "end_line": 273
+        },
+        {
+          "name": "_em_line",
+          "line": 276,
+          "end_line": 303
+        },
+        {
+          "name": "trendline_em_event",
+          "line": 306,
+          "end_line": 351
+        },
+        {
+          "name": "parabolic_sar_step",
+          "line": 354,
+          "end_line": 368
+        },
+        {
+          "name": "bb_method1_event",
+          "line": 371,
+          "end_line": 420
+        },
+        {
+          "name": "bb_method3_event",
+          "line": 423,
+          "end_line": 476
+        },
+        {
+          "name": "bollinger_wm_event",
+          "line": 479,
+          "end_line": 552
+        },
+        {
+          "name": "ifvg_trigger",
+          "line": 557,
+          "end_line": 592
+        },
+        {
+          "name": "pinbar_trigger",
+          "line": 595,
+          "end_line": 611
+        },
+        {
+          "name": "strong",
+          "line": 460,
+          "end_line": 463
+        }
+      ]
+    },
+    {
+      "file": "strategies/maniac_strategies.py",
+      "sha256": "3933251fad659f839a75f03134f82780dd9c7d10092e544775a9ec7eaa8b0aee",
+      "functions": [
+        {
+          "name": "_anchor",
+          "line": 17,
+          "end_line": 19
+        },
+        {
+          "name": "_finish",
+          "line": 22,
+          "end_line": 30
+        },
+        {
+          "name": "_confirm_plan",
+          "line": 33,
+          "end_line": 45
+        },
+        {
+          "name": "structural_stop",
+          "line": 157,
+          "end_line": 175
+        },
+        {
+          "name": "_pivot_stop",
+          "line": 178,
+          "end_line": 194
+        },
+        {
+          "name": "gate_key",
+          "line": 51,
+          "end_line": 52
+        },
+        {
+          "name": "arrival",
+          "line": 79,
+          "end_line": 89
+        },
+        {
+          "name": "plan",
+          "line": 91,
+          "end_line": 125
+        },
+        {
+          "name": "session_end",
+          "line": 140,
+          "end_line": 141
+        },
+        {
+          "name": "plan",
+          "line": 143,
+          "end_line": 150
+        },
+        {
+          "name": "plan",
+          "line": 205,
+          "end_line": 235
+        },
+        {
+          "name": "plan",
+          "line": 248,
+          "end_line": 269
+        },
+        {
+          "name": "plan",
+          "line": 281,
+          "end_line": 292
+        }
+      ]
+    },
+    {
+      "file": "strategies/oi_build.py",
+      "sha256": "8542a37417e8226d775ba04eb655e8bff22a7ca074f3850e5aaefbfbbf800e28",
+      "functions": [
+        {
+          "name": "_oi_change",
+          "line": 21,
+          "end_line": 31
+        },
+        {
+          "name": "_close_at",
+          "line": 34,
+          "end_line": 41
+        },
+        {
+          "name": "oi_build",
+          "line": 44,
+          "end_line": 74
+        },
+        {
+          "name": "gate_key",
+          "line": 85,
+          "end_line": 86
+        },
+        {
+          "name": "plan",
+          "line": 88,
+          "end_line": 95
+        }
+      ]
+    },
+    {
+      "file": "strategies/po3.py",
+      "sha256": "1bf17c84e5e52eaaa68274f82180c51d07102cabe3acb5b1558cc74f158e72f5",
+      "functions": [
+        {
+          "name": "london_window",
+          "line": 27,
+          "end_line": 35
+        },
+        {
+          "name": "po3",
+          "line": 38,
+          "end_line": 92
+        },
+        {
+          "name": "gate_key",
+          "line": 110,
+          "end_line": 111
+        },
+        {
+          "name": "context_veto",
+          "line": 113,
+          "end_line": 117
+        },
+        {
+          "name": "plan",
+          "line": 119,
+          "end_line": 152
+        }
+      ]
+    },
+    {
+      "file": "strategies/profiles.py",
+      "sha256": "2021c50d4fd3000777467fd9f80784e15c6e614162c625c82058a60c66554a68",
+      "functions": [
+        {
+          "name": "load",
+          "line": 21,
+          "end_line": 29
+        },
+        {
+          "name": "profile",
+          "line": 32,
+          "end_line": 33
+        },
+        {
+          "name": "masks",
+          "line": 36,
+          "end_line": 50
+        },
+        {
+          "name": "failed",
+          "line": 53,
+          "end_line": 58
+        },
+        {
+          "name": "apply_pm",
+          "line": 61,
+          "end_line": 87
+        },
+        {
+          "name": "regime_profiles",
+          "line": 95,
+          "end_line": 103
+        },
+        {
+          "name": "select",
+          "line": 110,
+          "end_line": 119
+        },
+        {
+          "name": "btc_regime",
+          "line": 125,
+          "end_line": 136
+        },
+        {
+          "name": "regime_labels",
+          "line": 139,
+          "end_line": 166
+        },
+        {
+          "name": "exit_overlays",
+          "line": 175,
+          "end_line": 186
+        },
+        {
+          "name": "overlay_filters",
+          "line": 189,
+          "end_line": 195
+        },
+        {
+          "name": "rma",
+          "line": 147,
+          "end_line": 154
+        }
+      ]
+    },
+    {
+      "file": "strategies/pump.py",
+      "sha256": "6223e92ce7134b1dffcc0e3ff218c011d57814b717f83eeb38beb3e52d78b9d2",
+      "functions": [
+        {
+          "name": "pump_start",
+          "line": 30,
+          "end_line": 64
+        },
+        {
+          "name": "pump_top",
+          "line": 67,
+          "end_line": 90
+        },
+        {
+          "name": "dump_bounce",
+          "line": 96,
+          "end_line": 164
+        },
+        {
+          "name": "gate_key",
+          "line": 176,
+          "end_line": 177
+        },
+        {
+          "name": "plan",
+          "line": 179,
+          "end_line": 189
+        },
+        {
+          "name": "gate_key",
+          "line": 203,
+          "end_line": 204
+        },
+        {
+          "name": "plan",
+          "line": 206,
+          "end_line": 229
+        },
+        {
+          "name": "gate_key",
+          "line": 240,
+          "end_line": 241
+        },
+        {
+          "name": "plan",
+          "line": 243,
+          "end_line": 261
+        }
+      ]
+    },
+    {
+      "file": "strategies/regime.py",
+      "sha256": "c8af296196040aa34bac833b18494936eeb67086a78db203d2171d924579aeb9",
+      "functions": [
+        {
+          "name": "_ema",
+          "line": 29,
+          "end_line": 35
+        },
+        {
+          "name": "direction",
+          "line": 38,
+          "end_line": 54
+        },
+        {
+          "name": "adx",
+          "line": 57,
+          "end_line": 76
+        },
+        {
+          "name": "state",
+          "line": 79,
+          "end_line": 95
+        },
+        {
+          "name": "verdict",
+          "line": 98,
+          "end_line": 107
+        },
+        {
+          "name": "label",
+          "line": 110,
+          "end_line": 114
+        },
+        {
+          "name": "rma",
+          "line": 67,
+          "end_line": 72
+        }
+      ]
+    },
+    {
+      "file": "strategies/silver_bullet.py",
+      "sha256": "93bb320c1220ce11cf14997aaaec2efd1004caf5073819366a0710b660707594",
+      "functions": [
+        {
+          "name": "window_of",
+          "line": 25,
+          "end_line": 31
+        },
+        {
+          "name": "silver_bullet",
+          "line": 34,
+          "end_line": 110
+        },
+        {
+          "name": "gate_key",
+          "line": 130,
+          "end_line": 131
+        },
+        {
+          "name": "context_veto",
+          "line": 133,
+          "end_line": 139
+        },
+        {
+          "name": "plan",
+          "line": 141,
+          "end_line": 176
+        }
+      ]
+    },
+    {
+      "file": "strategies/structure.py",
+      "sha256": "a09ed5041311ce93cbe1590972e2acc55a29ec5f52441da67a9f4f0846e08f1d",
+      "functions": [
+        {
+          "name": "true_ranges",
+          "line": 41,
+          "end_line": 42
+        },
+        {
+          "name": "recent_atr",
+          "line": 45,
+          "end_line": 47
+        },
+        {
+          "name": "coin_trend",
+          "line": 50,
+          "end_line": 65
+        },
+        {
+          "name": "weekly_ref",
+          "line": 68,
+          "end_line": 85
+        },
+        {
+          "name": "trend_w_of",
+          "line": 88,
+          "end_line": 93
+        },
+        {
+          "name": "_swings_with_ts",
+          "line": 96,
+          "end_line": 115
+        },
+        {
+          "name": "liquidity_pools",
+          "line": 118,
+          "end_line": 158
+        },
+        {
+          "name": "pools_before",
+          "line": 161,
+          "end_line": 167
+        },
+        {
+          "name": "merge_candles",
+          "line": 170,
+          "end_line": 175
+        },
+        {
+          "name": "hours_from",
+          "line": 178,
+          "end_line": 192
+        },
+        {
+          "name": "bars_4h",
+          "line": 195,
+          "end_line": 217
+        },
+        {
+          "name": "maniac_events",
+          "line": 220,
+          "end_line": 288
+        },
+        {
+          "name": "smt_divergence",
+          "line": 291,
+          "end_line": 306
+        },
+        {
+          "name": "build_context",
+          "line": 309,
+          "end_line": 350
+        },
+        {
+          "name": "part_candles",
+          "line": 356,
+          "end_line": 363
+        },
+        {
+          "name": "pick_correlate",
+          "line": 366,
+          "end_line": 396
+        },
+        {
+          "name": "build_maps",
+          "line": 399,
+          "end_line": 448
+        },
+        {
+          "name": "vol_ratio",
+          "line": 37,
+          "end_line": 38
+        },
+        {
+          "name": "run",
+          "line": 229,
+          "end_line": 241
+        }
+      ]
+    },
+    {
+      "file": "strategies/turtle.py",
+      "sha256": "a989fcaaba44a39546559a928fcdc70fadcd31693f76d9aed5010cb00b69c789",
+      "functions": [
+        {
+          "name": "true_ranges",
+          "line": 20,
+          "end_line": 21
+        },
+        {
+          "name": "n_series",
+          "line": 24,
+          "end_line": 35
+        },
+        {
+          "name": "_last_s1_was_winner",
+          "line": 38,
+          "end_line": 76
+        },
+        {
+          "name": "turtle_breakout",
+          "line": 79,
+          "end_line": 121
+        },
+        {
+          "name": "trail_level",
+          "line": 124,
+          "end_line": 129
+        }
+      ]
+    },
+    {
+      "file": "strategies/vsa.py",
+      "sha256": "bd81408f41dffc5538db75329d67595512e76f5fca73e158725b66654642d682",
+      "functions": [
+        {
+          "name": "close_location",
+          "line": 19,
+          "end_line": 22
+        },
+        {
+          "name": "signs",
+          "line": 25,
+          "end_line": 58
+        },
+        {
+          "name": "confirm",
+          "line": 65,
+          "end_line": 77
+        }
+      ]
+    },
+    {
+      "file": "strategies/wyckoff_range.py",
+      "sha256": "f3d66d15b2721446a97b43e0e518694617f905e9b8d8abc225c54a8924c24f56",
+      "functions": [
+        {
+          "name": "_phase_a",
+          "line": 35,
+          "end_line": 95
+        },
+        {
+          "name": "pnf_count",
+          "line": 98,
+          "end_line": 118
+        },
+        {
+          "name": "weis_waves",
+          "line": 121,
+          "end_line": 136
+        },
+        {
+          "name": "weis_ratio",
+          "line": 139,
+          "end_line": 148
+        },
+        {
+          "name": "wyckoff_events",
+          "line": 151,
+          "end_line": 173
+        },
+        {
+          "name": "_event",
+          "line": 176,
+          "end_line": 197
+        },
+        {
+          "name": "gate_key",
+          "line": 205,
+          "end_line": 206
+        },
+        {
+          "name": "context_veto",
+          "line": 208,
+          "end_line": 213
+        },
+        {
+          "name": "plan",
+          "line": 215,
+          "end_line": 237
+        }
+      ]
+    }
+  ],
+  "config": {
+    "levels": {
+      "htf_lookback_candles": 48,
+      "leg_lookback_hours": 96,
+      "impulse_min_atr": 0.0,
+      "impulse_min_candles": 4,
+      "impulse_min_move": 0.0,
+      "cost_guard": 1.0,
+      "continuation_zone": [
+        0.62,
+        0.79
+      ],
+      "continuation_invalid": 1.0,
+      "macro_before_min": 10,
+      "macro_after_min": 45,
+      "macro_guard_min": 0,
+      "continuation_targets": [
+        1.0,
+        1.2,
+        1.272,
+        1.618
+      ],
+      "reversal_zone_max": 0.236,
+      "reversal_targets": [
+        0.382,
+        0.5,
+        0.618
+      ],
+      "ltf_break_lookback": 5,
+      "ltf_flow_candles": 3,
+      "stop_buffer_atr": 0.3,
+      "min_stop_atr": 1.0,
+      "max_stop_pct": 0.0,
+      "zone_buffer_atr": 0.0,
+      "min_rr_tp1": 1.0,
+      "veto_low_rr": true,
+      "fill_delay_sec": 30,
+      "slippage_bps": 5.0,
+      "slippage_ref_volume": 500000000.0,
+      "slippage_max_bps": 25.0,
+      "slippage_notional_usd": 10000.0,
+      "slippage_half_spread_bps": 1.0,
+      "slippage_impact_sigma": 0.04,
+      "target_through_bps": 2.0,
+      "spring_test_volume_ratio": 1.0,
+      "spring_test_spread_ratio": 0.6,
+      "watch_ttl_sec": 21600,
+      "plan_wait_sec": 180,
+      "zone_ttl_sec": 10800,
+      "trade_ttl_sec": 28800,
+      "min_rr_tp1_floor": 0.0,
+      "finished_display_sec": 1800
+    },
+    "strategies": {
+      "enabled": [
+        "continuation",
+        "wyckoff",
+        "sweep",
+        "breakout",
+        "supply_demand",
+        "market_profile",
+        "trendline",
+        "bollinger",
+        "orb",
+        "connors",
+        "pump",
+        "cup_handle",
+        "po3",
+        "oi_build"
+      ],
+      "shadow_vetoes": [
+        "against_bias",
+        "against_trend",
+        "not_in_pool",
+        "h4_against",
+        "regime_flat",
+        "regime_trend",
+        "alts_vs_btc",
+        "profile",
+        "regime",
+        "no_confirmation",
+        "no_*",
+        "htf_bias",
+        "htf_conflict",
+        "rg_breakout_in_range",
+        "rg_countertrend",
+        "killzone",
+        "no_htf_poi",
+        "premium",
+        "discount",
+        "perp_led",
+        "low_rvol",
+        "against_vwap",
+        "btc_against",
+        "against_htf",
+        "against_day"
+      ],
+      "disabled_setups": [
+        "BULL E",
+        "BULL A",
+        "PUMP TOP",
+        "PUMP START"
+      ],
+      "holy_grail_adx": 30.0,
+      "archive_negative": [
+        "BULL A",
+        "BULL B",
+        "BEAR C",
+        "BULL E",
+        "BULL F",
+        "BEAR D",
+        "IMPULSE UP"
+      ],
+      "h1_candles": 200,
+      "h1_refresh_sec": 3600,
+      "close_event_max_age_sec": 900,
+      "tide_btc_against": 0.005,
+      "trend_ema": 20,
+      "trend_slope_bars": 4,
+      "trend_w_ema": 20,
+      "recent_atr_candles": 14,
+      "sweep_swing_hours": 100000,
+      "sweep_pool_min_age_sec": 0,
+      "sweep_round_pools": false,
+      "cup_target_share": 0.61,
+      "sweep_min_depth_atr": 0.1,
+      "sweep_max_depth_atr": 1.0,
+      "sweep_min_rvol": 0.0,
+      "sweep_sessions": [
+        [
+          "Asia",
+          "Asia/Tokyo",
+          9,
+          18
+        ],
+        [
+          "London",
+          "Europe/London",
+          8,
+          17
+        ],
+        [
+          "New York",
+          "America/New_York",
+          8,
+          17
+        ]
+      ],
+      "sweep_ttl": [
+        7200,
+        7200,
+        28800
+      ],
+      "absorption_min_rvol": 3.0,
+      "absorption_level_atr": 0.3,
+      "absorption_min_strength": 2.0,
+      "absorption_min_move_atr": 1.5,
+      "exhaustion_pre_minutes": 30,
+      "exhaustion_min_leg_atr": 0.0,
+      "exhaustion_ttl": [
+        3600,
+        3600,
+        21600
+      ],
+      "breakout_range_candles": 8,
+      "breakout_min_width_atr": 0.8,
+      "breakout_max_width_atr": 3.0,
+      "breakout_min_rvol": 1.5,
+      "breakout_ttl": [
+        3600,
+        3600,
+        7776000
+      ],
+      "long_history_candles": 499,
+      "sd_ttl": [
+        604800,
+        86400,
+        259200
+      ],
+      "classic_ttl": [
+        3600,
+        3600,
+        43200
+      ],
+      "silver_bullet_ttl": [
+        3600,
+        3600,
+        14400
+      ],
+      "po3_ttl": [
+        10800,
+        10800,
+        43200
+      ],
+      "pump_start_min_pct": 0.03,
+      "pump_start_z": 4.0,
+      "pump_start_rvol": 5.0,
+      "pump_top_min_pct": 0.1,
+      "pump_ttl": [
+        3600,
+        3600,
+        43200
+      ],
+      "cup_ttl": [
+        86400,
+        86400,
+        5184000
+      ],
+      "connors_ttl": [
+        3600,
+        3600,
+        5184000
+      ],
+      "structural_lifetimes": true,
+      "be_after_1r": false,
+      "ema_trail_after_tp1": false,
+      "time_stop_bars": 24,
+      "crowd_max": 6,
+      "optimized_profiles": false,
+      "time_after_tp1": 3.0,
+      "time_stop_min_sec": 14400,
+      "turtle_add_n": 0.5,
+      "turtle_max_units": 4,
+      "turtle_max_direction_units": 6,
+      "turtle_unit_risk": 0.01,
+      "orb_stretch_days": 10,
+      "orb_bases": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "BNB",
+        "XRP",
+        "XAU",
+        "XAG",
+        "CL",
+        "BZ"
+      ],
+      "connors_rsi_low": 5.0,
+      "connors_rsi_high": 95.0,
+      "dump_min_move": 0.15,
+      "dump_vol_x": 3.0,
+      "wide_min_volume": 3000000,
+      "oi_build_ttl": [
+        900,
+        900,
+        14400
+      ],
+      "require_displacement": true,
+      "smt_main_bars": 500,
+      "smt_with_trend_only": false,
+      "smt_ref_window": 60,
+      "smt_ifvg_min_atr": 0.03,
+      "smt_ifvg_search_back": 40,
+      "smt_session": [
+        "America/New_York",
+        "02:00",
+        "05:00",
+        "07:00",
+        "10:00"
+      ],
+      "smt_min_correlation": 0.7,
+      "tl_lookback": 400,
+      "tl_pivot": 3,
+      "tl_min_span": 40,
+      "tl_min_touches": 3,
+      "tl_touch_atr": 0.25,
+      "tl_touch_gap": 5,
+      "tl_violation_atr": 0.1,
+      "tl_max_dist_atr": 3.0,
+      "tl_flat_deg": 0.0,
+      "tl_min_pivot_touches": 3,
+      "tl_pivot_tol_atr": 0.2,
+      "tl_max_deg": 35.0,
+      "tl_last_touch_age": 40,
+      "tl_confirm_atr": 0.15,
+      "tl_min_body_atr": 0.35,
+      "tl_max_depth_atr": 1.2,
+      "tl_close_pos_max": 0.4,
+      "trendline_ttl": [
+        86400,
+        86400,
+        172800
+      ],
+      "bollinger_ttl": [
+        14400,
+        14400,
+        259200
+      ]
+    },
+    "orderflow": {
+      "perp_led_spot_share": 0.25,
+      "veto_perp_led": true,
+      "crowded_funding_long": 0.0003,
+      "crowded_funding_short": -0.0001,
+      "crowded_cb_discount": 0.0005,
+      "crowded_premium_long": 0.0006,
+      "crowded_premium_short": 0.0004,
+      "crowded_oi_1h": 0.005,
+      "footprint_bucket_pct": 0.0005,
+      "imbalance_ratio": 3.0,
+      "stacked_levels": 3,
+      "absorption_percentile": 0.9,
+      "absorption_max_move_atr": 0.2,
+      "require_orderflow_confirm": false,
+      "divergence_lookback_min": 60,
+      "required_confirmations": [],
+      "confirm_exempt": [
+        "breakout"
+      ],
+      "promote_confirmations": true,
+      "promote_min_clusters": 30,
+      "min_confirmations": 0
+    }
+  },
+  "executor_policy": {
+    "touch_confirm_close": true,
+    "partial_r": 1.0,
+    "partial_share": 0.0,
+    "risk_pct": 1.0
+  }
+}

@@ -1,0 +1,11 @@
+S01 VWAP: quote-weighted=166.666667; quantity-weighted=150
+S02 Turtle: channel=100 N=5 entry=110 SL=90.0; distance=4N
+S04 Wyckoff: test range=2 accepted; own 4h sqrt-time threshold=1.2
+S05 SupplyDemand: score=10; TP1 RR=0.264421; blend=3.418655; low_rr=False
+S06 Bollinger: entry=100 bareSL=99 target=102 effectiveSL=95.0; RR=0.363818; low_rr=False
+S07 Cup: requestedSL=92; effectiveSL=88.0; loss=12%
+S08 Cup: strictly linear V-shape accepted: 1d cup with handle: rims 100.2 / 100.2, depth 20% over 36 candles, handle 6 candles to 95.8; closed above the pivot 100.2 on 1.7x volume (O'Neil)
+S09 Dump: inverse threshold=15.00%; ordinary decline=13.043478%
+S10 no_tp=True/no_stop=True, placeholder TP3 still finishes card: TP3
+S11 Wyckoff: plan targets=[110.0, 140.0, 140.0]; entry targets=[109.66867469879519, 109.66867469879519, 109.66867469879519]
+PASS: 10 offline counterexamples. S03 is a static chronology finding, not an executed example.

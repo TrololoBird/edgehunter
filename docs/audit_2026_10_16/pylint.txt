@@ -1,0 +1,7 @@
+************* Module research_level_mechanics
+research/scripts/research_level_mechanics.py:129:21: E0606: Possibly using variable 'accept' before assignment (possibly-used-before-assignment)
+************* Module research_turtle
+research/scripts/research_turtle.py:72:27: E0606: Possibly using variable 'level' before assignment (possibly-used-before-assignment)
+
+------------------------------------
+Your code has been rated at 10.00/10
