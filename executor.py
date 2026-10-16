@@ -89,13 +89,15 @@ class DemoExecutor:
             c.execute("CREATE INDEX IF NOT EXISTS idx_demo_pending ON demo_trades(error, closed_ms)")
             # columns added after the first schema: migrated once here (was an ALTER TABLE on every trade)
             have = {r[1] for r in c.execute("PRAGMA table_info(demo_trades)")}
-            for col, kind in (('basis', 'REAL'), ('exit_ref', 'REAL'), ('no_stop', 'INTEGER')):
+            for col, kind in (('basis', 'REAL'), ('exit_ref', 'REAL'), ('no_stop', 'INTEGER'), ('scale', 'REAL')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
+            # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
+            # without it a restored trade's new stop went out at scale 1); rows from before the column: entry_plan
             for row in c.execute("SELECT id, card_id, symbol, direction, opened_ms, entry_fill, qty, sl, risk_usd, no_stop, "
-                                 "strategy FROM demo_trades WHERE closed_ms IS NULL"):
+                                 "strategy, entry_plan, scale FROM demo_trades WHERE closed_ms IS NULL"):
                 self.open[row[1]] = dict(zip(('id', 'card_id', 'symbol', 'direction', 'opened_ms', 'entry_fill',
-                                              'qty', 'sl', 'risk_usd', 'no_stop', 'strategy'), row))
+                                              'qty', 'sl', 'risk_usd', 'no_stop', 'strategy', 'entry_plan', 'scale'), row))
 
     # ------------------------------------------------------------------ exchange
 
@@ -496,7 +498,8 @@ class DemoExecutor:
             return
         plan = getattr(s, 'plan', None) or {}
         trade['id'] = self._insert(trade)
-        trade['unit_qty'], trade['scale'] = qty, scale          # in memory only (the pyramid's unit, BingX's price scale)
+        trade['unit_qty'], trade['scale'] = qty, scale          # the pyramid's unit (memory), BingX's price scale (+ db)
+        self._set_scale(trade['id'], scale)
         self._set_basis(trade['id'], basis)
         self.open[card_id] = trade
         await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(plan.get('trail_after_tp1')),
@@ -704,6 +707,7 @@ class DemoExecutor:
                  'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * (abs(fill - lv['sl']) + float(p.get('fee') or 0))}
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, p['scale']
+        self._set_scale(trade['id'], p['scale'])
         trade['from_limit'] = True
         self._set_basis(trade['id'], p['basis'])
         return trade
@@ -1097,7 +1101,8 @@ class DemoExecutor:
         # one attempt: this runs under the executor's lock, and the old 4 x 5s retries held every entry / restop up
         # to 20s per close; a fill not listed yet is FILL_PENDING and _refinalize picks it up within 5 minutes
         try:
-            fills = await self._call('fetch_my_trades', trade['symbol'], since=trade['opened_ms'] - 5_000)
+            # from 2 min before the open: a limit's entry fill precedes opened_ms (_exits_complete weighs it)
+            fills = await self._call('fetch_my_trades', trade['symbol'], since=trade['opened_ms'] - 120_000)
         except Exception as e:
             # the API failing must not lose the close: the row is marked FILL_PENDING below, _refinalize retries
             logger.warning(f"Demo {reason} {trade['symbol']}: fills unavailable: {e!r}")
@@ -1106,6 +1111,10 @@ class DemoExecutor:
         qty, entry = float(trade.get('qty') or 0), float(trade.get('entry_fill') or 0)
         weight = sum(f['amount'] for f in exits)
         exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight if weight else None
+        if exit_avg is not None and not self._exits_complete(
+                fills, exits, d, self._entry_window_start(trade['symbol'], trade['opened_ms']), time.time() * 1000):
+            # TP1 listed, the final stop / close not yet: TP1's price was taken for the whole quantity
+            exit_avg = None
         if exit_avg is None or not qty or not entry:
             # the fills list can lag a close (or the API is unreachable): retried by reconcile_loop (_refinalize)
             logger.info(f"Demo {reason} {trade['symbol']}: no exit fill listed yet, recovered by the 5-min pass")
@@ -1142,6 +1151,23 @@ class DemoExecutor:
         return [f for f in fills if f.get('side') == side and f.get('price') and f.get('amount')
                 and opened_ms - 1_000 < (f.get('timestamp') or 0) <= min(closed_ms + 120_000, (next_open_ms or 1e18) - 1_000)]
 
+    def _entry_window_start(self, symbol: str, opened_ms: float) -> float:
+        """2 min before opened_ms (a limit's fill precedes it), not before the previous trade on the coin closed (its
+        exit is this trade's entry side when it was the opposite direction)."""
+        with sqlite3.connect(self.db_path) as c:
+            prev = c.execute("SELECT MAX(closed_ms) FROM demo_trades WHERE symbol = ? AND closed_ms < ? AND opened_ms < ?",
+                             (symbol, opened_ms, opened_ms)).fetchone()[0]
+        return max(opened_ms - 120_000, (prev or 0) + 1_000)
+
+    @staticmethod
+    def _exits_complete(fills: List[Dict], exits: List[Dict], d: int, from_ms: float, until_ms: float) -> bool:
+        """The listed exit fills cover the entry fills in [from_ms, until_ms] (both in BingX's own amount unit - ccxt
+        reports it 100x the position, the same factor on both sides). No entry fill listed: nothing to compare."""
+        side = 'buy' if d > 0 else 'sell'
+        entered = sum(f['amount'] for f in fills if f.get('side') == side and f.get('amount')
+                      and from_ms <= (f.get('timestamp') or 0) <= until_ms)
+        return not entered or sum(f['amount'] for f in exits) >= 0.98 * entered
+
     @staticmethod
     def _fees(entry: float, exit_avg: float, qty: float, exits: List[Dict]) -> float:
         """The entry side at the configured taker rate; the exit side from BingX's own fee on the fills when it is
@@ -1166,7 +1192,7 @@ class DemoExecutor:
             side = 'sell' if d > 0 else 'buy'
             if symbol not in cache:
                 # one request per coin (the earliest open of its pending rows), one failing coin does not stop the rest
-                since = min(r[3] for r in rows if r[1] == symbol) - 5_000
+                since = min(r[3] for r in rows if r[1] == symbol) - 120_000
                 try:
                     cache[symbol] = await self._call('fetch_my_trades', symbol, since=since)
                 except Exception as e:
@@ -1182,6 +1208,12 @@ class DemoExecutor:
             weight = sum(f['amount'] for f in exits)
             if not weight:
                 continue
+            if not self._exits_complete(cache[symbol], exits, d, self._entry_window_start(symbol, opened),
+                                        min(closed + 120_000, nxt or 1e18)):
+                if time.time() * 1000 - closed < 6 * 3_600_000:
+                    continue                          # the rest of the exit not listed yet
+                logger.warning(f"Demo result recovery {symbol}: exit fills still short of the entry after 6h, "
+                               f"result from the listed ones")
             exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight
             fees = self._fees(entry, exit_avg, qty, exits)
             pnl = d * (exit_avg - entry) * qty - fees
@@ -1265,6 +1297,10 @@ class DemoExecutor:
                         import ccxt
                         transient = isinstance(e, (ccxt.NetworkError, ccxt.ExchangeNotAvailable)) or '109400' in str(e)
                         logger.warning(f"Demo reconcile {trade['symbol']}: {e!r}", exc_info=not transient)
+
+    def _set_scale(self, trade_id: int, scale: Optional[float]) -> None:
+        with sqlite3.connect(self.db_path) as c:
+            c.execute("UPDATE demo_trades SET scale = ? WHERE id = ?", (scale, trade_id))
 
     def _set_basis(self, trade_id: int, basis: float) -> None:
         """BingX vs Binance at the entry (journaled: the venue gap the demo trades through)."""
