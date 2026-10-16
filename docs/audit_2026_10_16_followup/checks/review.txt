@@ -1,0 +1,3 @@
+inner gap: 15m bars 8 (8 buckets, the gapped one kept)
+leading partial: 15m bars 7 (first bucket dropped)
+pullback 10:07-10:29, wide test bars: ok = False

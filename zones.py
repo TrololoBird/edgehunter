@@ -474,7 +474,7 @@ def vwap(candles: Sequence[Sequence[float]], since_ms: int, label: str) -> List[
     quote = base = 0.0
     for c in candles:
         if c[0] >= since_ms:
-            if len(c) < 8 or not c[7] == c[7]:            # missing / NaN base volume: not computable exactly
+            if len(c) < 8 or c[5] is None or c[7] is None or not c[7] == c[7]:   # missing / NaN base: not exact
                 return []
             quote += c[5]
             base += c[7]

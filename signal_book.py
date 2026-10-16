@@ -414,6 +414,7 @@ class SignalBook:
             # audit A13: one open card per coin and direction holds within one scan too (two setups of the same
             # scan both passed the same_side check above, which only sees cards already open): the first one wins
             if (symbol, direction) in taken:
+                sig['card_veto'] = 'same_scan'
                 continue
             taken.add((symbol, direction))
             tracked = TrackedSignal(

@@ -1112,7 +1112,7 @@ class DemoExecutor:
         qty, entry = float(trade.get('qty') or 0), float(trade.get('entry_fill') or 0)
         exit_avg = None
         if exits and qty:
-            exit_avg, closed_qty = await self._exit_summary(trade['symbol'], exits)
+            exit_avg, closed_qty = await self._exit_summary(trade['symbol'], exits, tries=1)   # under the lock
             if exit_avg is not None and closed_qty < 0.98 * qty:
                 # TP1 listed, the final stop / close not yet (audit A06: TP1's price was taken for the whole quantity)
                 exit_avg = None
@@ -1152,7 +1152,7 @@ class DemoExecutor:
         return [f for f in fills if f.get('side') == side and f.get('price') and f.get('amount')
                 and opened_ms - 1_000 < (f.get('timestamp') or 0) <= min(closed_ms + 120_000, (next_open_ms or 1e18) - 1_000)]
 
-    async def _exit_summary(self, symbol: str, exits: List[Dict]) -> tuple:
+    async def _exit_summary(self, symbol: str, exits: List[Dict], tries: int = 3) -> tuple:
         """(exit price, quantity closed) of the listed exit fills in the POSITION's unit: per exit order its filled
         amount from fetch_order (the unit qty comes from at the entry), priced at its fills' volume-weighted price (one
         order's fills share one unit). A fill without an order id or an order that cannot be read: (None, 0) - not
@@ -1165,7 +1165,7 @@ class DemoExecutor:
         value = closed = 0.0
         for oid, fs in by_order.items():
             try:
-                o = await self._call('fetch_order', oid, symbol)
+                o = await self._call('fetch_order', oid, symbol, tries=tries)
             except Exception as e:
                 logger.info(f"Demo exit order {symbol} {oid}: {e!r}")
                 return None, 0.0

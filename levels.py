@@ -194,8 +194,10 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
     """
     1m candles [open_time, open, high, low, close, quote_vol, taker_buy_quote, base_vol] -> `minutes` candles
     aligned to epoch multiples of `minutes`. Only buckets that have closed by `now_ms` are returned (all of them when
-    None), and only COMPLETE ones: a bucket with a minute missing (a history that starts mid-bucket, a stream gap) is
-    dropped rather than passed off as a full bar (audit A04). base_vol (coins) is NaN when any minute lacks it (a row
+    None), and the FIRST one only when complete: a history that starts mid-bucket is dropped rather than passed off
+    as a full bar (audit A04). A minute missing inside the history (a stream reconnect; the 1m buffer is not
+    backfilled) keeps its bucket: dropping it left holes in the 5m / 15m / 1h series (SAR steps lost, FVGs across
+    the hole, ORB's "first close beyond" not the first). base_vol (coins) is NaN when any minute lacks it (a row
     of the old 7-column format): never estimated from quote. complete=False keeps partial buckets (the chart's
     forming bar only, never a signal input).
     """
@@ -219,7 +221,8 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
         else:
             out.append([start, c[1], c[2], c[3], c[4], c[5], c[6], base])
             seen.append({int(c[0])})
-    keep = [(len(s) == minutes or not complete) and (now_ms is None or bar[0] + size <= now_ms) for bar, s in zip(out, seen)]
+    keep = [(i > 0 or len(s) == minutes or not complete) and (now_ms is None or bar[0] + size <= now_ms)
+            for i, (bar, s) in enumerate(zip(out, seen))]
     return [bar for bar, k in zip(out, keep) if k]
 
 
@@ -297,7 +300,8 @@ def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     """
     if not spring_range_1h:
         return True
-    bars = resample([c for c in minute_candles if since_ms <= c[0] < until_ms], 15, until_ms)
+    # complete=False: the pullback window starts mid-bucket by design (its first 15m bar is the zone's part of it)
+    bars = resample([c for c in minute_candles if since_ms <= c[0] < until_ms], 15, until_ms, complete=False)
     if not bars:
         return True
     avg = sum(b[2] - b[3] for b in bars) / len(bars)

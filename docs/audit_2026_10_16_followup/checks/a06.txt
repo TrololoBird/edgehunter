@@ -1,0 +1,9 @@
+Demo result recovery X: exit orders cover 0.5 of 1 after 6h - result left empty
+audit case: only TP1 listed, no entry fill                 exit, pnl, error = (None, None, 'exit fill pending')
+entry fill outside the window, only TP1 listed             exit, pnl, error = (None, None, 'exit fill pending')
+TP1 + stop listed, fills 100x the position                 exit, pnl, error = (100.0, -0.1, None)
+one market close, fills 100x                               exit, pnl, error = (90.0, -10.095, None)
+exit fill without an order id                              exit, pnl, error = (None, None, 'exit fill pending')
+exit order unreadable                                      exit, pnl, error = (None, None, 'exit fill pending')
+_refinalize after 7h, only TP1 listed                      exit, pnl, error = (None, None, 'exit fill pending')
+_refinalize after 7h, TP1 + stop                           exit, pnl, error = (100.0, -0.1, None)
