@@ -32,7 +32,7 @@ header#top { position: sticky; top: 0; z-index: 5; display: flex; align-items: c
 .market span b { margin-right: 4px; }
 .status { color: var(--yellow); flex: 1; text-align: right; }
 
-nav#tabs { position: sticky; top: 41px; z-index: 4; display: flex; gap: 4px; padding: 8px 16px; background: var(--bg);
+nav#tabs { position: sticky; top: var(--hdr-h, 41px); z-index: 4; display: flex; gap: 4px; padding: 8px 16px; background: var(--bg);
   border-bottom: 1px solid var(--line); overflow-x: auto; }
 nav#tabs button { white-space: nowrap; background: transparent; border-color: transparent; }
 nav#tabs button.active { background: var(--panel2); border-color: var(--line); font-weight: 600; }

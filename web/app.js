@@ -221,8 +221,8 @@ function table(id, cols, rows, opts = {}) {
       rows = rows.slice().sort((a, b) => {
         const x = col.s(a), y = col.s(b);
         if (x === y) return 0;
-        if (x === null || x === undefined) return 1;
-        if (y === null || y === undefined) return -1;
+        if (x === null || x === undefined || Number.isNaN(x)) return 1;
+        if (y === null || y === undefined || Number.isNaN(y)) return -1;
         return (x < y ? -1 : 1) * (st.asc ? 1 : -1);
       });
     }
@@ -274,6 +274,7 @@ function renderHeader() {
   const down = Object.entries(S.venues || {}).filter(([, v]) => v.connected === 0 || v.connected === false).map(([k]) => k);
   html += `<span class="dim">${S.symbols} монет · скан ${(S.timing?.scan ?? 0).toFixed(2)}с${down.length ? ' · <span class="down">нет связи: ' + esc(down.join(', ')) + '</span>' : ''}</span>`;
   $('#market').innerHTML = html;
+  document.documentElement.style.setProperty('--hdr-h', $('#top').offsetHeight + 'px');   // the header wraps on narrow screens
   $('#status').textContent = S.status ? '⏳ ' + S.status : '';
   const cards = S.cards || [];
   $('#n-trade').textContent = cards.filter(c => c.entered_at && !c.finished).length;
@@ -600,7 +601,10 @@ document.addEventListener('change', e => {
   if (e.target.id === 'fstrat') { filterStrat = e.target.value; localStorage.setItem('fstrat', filterStrat); render(); }
 });
 document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => {
-  tab = b.dataset.tab; localStorage.setItem('tab', tab); setActiveTab(); render();
+  if (tab === b.dataset.tab) return;
+  tab = b.dataset.tab; localStorage.setItem('tab', tab); setActiveTab();
+  if (['done', 'anom', 'stats'].includes(tab)) $('#view').innerHTML = '<div class="empty">Загрузка…</div>';
+  render();
 }));
 function setActiveTab() { document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); }
 
@@ -677,6 +681,7 @@ const tzShift = -new Date().getTimezoneOffset() * 60;
 
 function openCoin(symbol, leg) {
   coin = symbol;
+  if ($('#zone-tip')) $('#zone-tip').hidden = true;
   // The chart matches the card's leg: 1h candles for a 1h / 4h leg (the whole leg visible), 5m for the minute legs of
   // momentum / sweep / exhaustion / absorption / range setups, 15m otherwise
   tf = leg === '1h' || leg === '4h' || leg === '1d' || leg === '1w' ? 60 : leg === '1m' || leg === '5m' ? 5 : 15;
@@ -818,8 +823,10 @@ function zoneTip(param) {
   const z = price === null ? null : (coinData.zones || []).find(z => price >= z.lo && price <= z.hi);
   if (!z) { tip.hidden = true; return; }
   tip.innerHTML = `<b>${fp(z.lo)} – ${fp(z.hi)}</b> · сила ${z.strength ?? '—'}<br>${(z.kinds || []).map(k => esc(kindName(k))).join(', ')}`;
-  tip.style.left = Math.min(param.point.x + 14, $('#chart').clientWidth - 220) + 'px'; tip.style.top = (param.point.y + 14) + 'px';
   tip.hidden = false;
+  const box = $('#chart');
+  tip.style.left = Math.max(4, Math.min(param.point.x + 14, box.clientWidth - 224)) + 'px';
+  tip.style.top = Math.max(4, Math.min(param.point.y + 14, box.clientHeight - tip.offsetHeight - 8)) + 'px';
 }
 
 function drawCoin(fit) {
