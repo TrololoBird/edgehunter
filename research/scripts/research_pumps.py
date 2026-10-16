@@ -123,10 +123,13 @@ def coin_rows(j: int) -> List[Dict]:
                 entry = O[e]
                 stop = peak + d * 0.25 * a
                 trades.append(('FADE', -d, e, entry, stop, [peak - d * 0.5 * size, base]))
-            # dip-buy: retrace to 38.2-61.8% of the pump within 24h, then a close beyond the previous candle
+            # dip-buy: retrace to 38.2-61.8% of the pump within 24h, then a close beyond the previous candle.
+            # Audit 2026-10-16 R05: causal - the peak (and with it the zone and the targets) is only known once the
+            # exhaustion candle confirmed it, so the search starts AFTER it (was t + 1: a trade entered before the
+            # exhaustion took its targets from a peak set after its entry)
             lo_r, hi_r = peak - d * 0.382 * size, peak - d * 0.618 * size
             touched, pull = False, None
-            for h in range(t + 1, min(n - 1, t + 25)):
+            for h in (range(ex + 1, min(n - 1, t + 25)) if ex is not None else ()):
                 if not touched:
                     if (L[h] <= lo_r) if d > 0 else (H[h] >= lo_r):
                         touched, pull = True, L[h] if d > 0 else H[h]

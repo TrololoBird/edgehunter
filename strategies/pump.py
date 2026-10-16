@@ -131,17 +131,20 @@ def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
             continue                                  # too old to be still bouncing
         trs = [max(h[k], cl[k - 1]) - min(lo[k], cl[k - 1]) for k in range(t - 13, t + 1)]
         atr = sum(trs) / len(trs)
-        peak = lo[t]
+        # audit 2026-10-16: causal - the low is known only once the exhaustion close confirmed it; the bounce is
+        # searched AFTER that close (was t + 1: a bounce before the exhaustion took a low set later)
+        peak, ex = lo[t], None
         for k in range(t + 1, min(n, t + 25)):
             peak = min(peak, lo[k])
             if cl[k] > h[k - 1]:
+                ex = k
                 break
         size = base - peak
-        if size <= 0:
+        if size <= 0 or ex is None:
             continue
         lo_r, hi_r = peak + 0.382 * size, peak + 0.618 * size
         touched, pull = False, None
-        for k in range(t + 1, min(n, t + 25)):
+        for k in range(ex + 1, min(n, t + 25)):
             if not touched:
                 if h[k] >= lo_r:
                     touched, pull = True, h[k]
@@ -182,7 +185,9 @@ class DumpBounceStrategy(Strategy):
         if sig.get('dump_low') is None:
             return None
         exit = {'stop': ['price', sig['dump_stop']], 'stop_src': 'above the bounce + 0.25 ATR(1h)',
-                'tp': ['level', sig['dump_low'], 0.0, None], 'tp_src': "the dump's low", 'atr': x.atr}
+                'tp': ['level', sig['dump_low'], 0.0, None], 'tp_src': "the dump's low", 'atr': x.atr, 'own_stop': True,
+                # audit: the research's stop (0.25 ATR above the bounce, no floor) and its two exits only - TP2 its 1.618 extension, no map / ATR targets added
+                'tp2': ['level', sig.get('dump_ext') or sig['dump_low'], 0.0, None], 'own_targets': True}
         plan = _confirm_plan(x, self.name, '1h', exit, 'first bounce after a dump, 1h close below the previous low')
         if plan and not plan.get('skip'):
             plan['key'] = (sig['anchor_ts'], 'dump')

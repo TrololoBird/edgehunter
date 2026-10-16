@@ -79,7 +79,8 @@ def test_spring_test_volume():
     loud = [minute(t0, i, 1, 1, 1, 1, q=5000) for i in range(5)]
     assert pullback_volume_ok(quiet, t0, t0 + 5 * 60_000, reference_minute_usd=2000)
     assert not pullback_volume_ok(loud, t0, t0 + 5 * 60_000, reference_minute_usd=2000)
-    assert pullback_volume_ok(loud, t0, t0 + 5 * 60_000, reference_minute_usd=0)   # unknown reference: no veto
+    # audit 2026-10-16 C08: an unknown reference is no observed test
+    assert not pullback_volume_ok(loud, t0, t0 + 5 * 60_000, reference_minute_usd=0)
 
 
 def test_simulate_trigger_and_manual_fill():

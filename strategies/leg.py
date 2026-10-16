@@ -54,7 +54,7 @@ def broke_structure(candles: List[List[float]], start_ts: int, end: float, direc
             return end > b[2]
         if direction < 0 and b[3] < a[3] and b[3] < c[3]:
             return end < b[3]
-    return True                     # no swing in reach: nothing to break (a leg out of price discovery)
+    return False                    # audit 2026-10-16 C08: no swing in reach = no break of structure observed (was True)
 
 
 def displacement(candles: List[List[float]], start_ts: int, end_ts: int, direction: int) -> bool:

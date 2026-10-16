@@ -645,8 +645,9 @@ class SignalBook:
                 done = (int(minutes[-1][0]) + MINUTE_MS) // size * size
                 bars = [b for b in resample(minutes, int(sar['tf_min']), done) if sar['last_ts'] < b[0] and b[0] + size <= done]
                 for b in bars:
-                    nxt, ep, af, stopped = parabolic_sar_step(sar['sar'], sar['ep'], sar['af'], d, b[2], b[3])
-                    sar.update(sar=nxt, ep=ep, af=af, last_ts=int(b[0]))
+                    nxt, ep, af, stopped = parabolic_sar_step(sar['sar'], sar['ep'], sar['af'], d, b[2], b[3],
+                                                              prev_hi=sar.get('prev_hi'), prev_lo=sar.get('prev_lo'))
+                    sar.update(sar=nxt, ep=ep, af=af, last_ts=int(b[0]), prev_hi=float(b[2]), prev_lo=float(b[3]))
                     if stopped:
                         break
                 if d * (sar['sar'] - lv['sl']) > 0:
@@ -772,7 +773,8 @@ class SignalBook:
         if not entry or not risk:
             return 0.0
         cost = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(s.sig.get('volume_24h'), s.symbol) / 1e4) * entry / risk
-        return cost + funding_r(s.sig.get('funding_rate'), s.direction, entry, risk, (s.entered_at or 0) * 1000, exit_ms)
+        return cost + funding_r(s.sig.get('funding_rate'), s.direction, entry, risk, (s.entered_at or 0) * 1000, exit_ms,
+                                s.sig.get('funding_hours'))
 
     @staticmethod
     def _exit_r(s: TrackedSignal, status: str) -> Optional[float]:
@@ -1030,7 +1032,8 @@ class SignalBook:
                                                              spring_minute or 0.0):
             reason = 'no_spring_test'
         elif s.group_key in ('SPRING', 'UTAD') and not pullback_spread_ok(minutes, s.zone_since_ms, trigger['time'],
-                                                                         s.sig.get('spring_range')):
+                                                                         s.sig.get('spring_range'),
+                                                                         {'15m': 15, '1h': 60, '4h': 240, '1d': 1440}.get(s.sig.get('wy_tf') or '1h', 60)):
             reason = 'no_spring_test'                # eng-55: the test's spread did not narrow
         confirms = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, trigger['time'], trigger.get('extreme_time')) \
             if confirm_of else {}
@@ -1102,7 +1105,7 @@ class SignalBook:
             if blackout(now_ms):
                 reason = 'macro_event'
         if reason is None and s.group_key.startswith('RSI2X '):
-            reason = 'rsi2x_shadow'      # eng-106: Connors' original entry, measured beside ours
+            reason = 'rsi2x_shadow'      # audit 2026-10-16: our eng-84 cross-back, measured beside Connors' own entry
         if reason is None and s.group_key in ('FLUSH REVERSAL', 'SQUEEZE REVERSAL'):
             reason = 'cascade_shadow'    # eng-127: no tested cascade-reversal rules exist - shadow
         if reason is None and s.group_key.startswith('OI BUILD '):
@@ -1365,9 +1368,13 @@ class SignalBook:
                     break
             if s.best_target == 3:
                 return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
-            self._trail(s, candles_of, hi, lo)
+            # audit 2026-10-16 C05: the trail / overlay of this minute see only the candles up to it (a catch-up pass
+            # over several minutes must not move the stop on candles that did not exist yet)
+            upto = int(c[0])
+            seen = (lambda sym, _u=upto: [x for x in candles_of(sym) if x[0] <= _u]) if candles_of else None
+            self._trail(s, seen, hi, lo)
             self._profile_manage(s, hi, lo)
-            why = self._overlay_exit(s, c, candles_of)
+            why = self._overlay_exit(s, c, seen)
             if why:
                 s.exit_fill = float(c[4])
                 return self._finish(s, 'CLOSED', now, why)

@@ -77,6 +77,9 @@ def events_of(bars: np.ndarray, W: int):
     return out
 
 
+from strategies.maniac import parabolic_sar_step  # noqa: E402
+
+
 def sar_trade(bars: np.ndarray, i: int, d: int, risk_pct: float, entry=None):
     """Net R of a trade entered at bar i+1's open with the initial stop `risk_pct` away, exited by Parabolic SAR."""
     n = len(bars)
@@ -95,11 +98,9 @@ def sar_trade(bars: np.ndarray, i: int, d: int, risk_pct: float, entry=None):
             r = d * (px - entry) / risk - FEE * entry / risk
             return r, mfe >= 1.0
         mfe = max(mfe, d * ((h[j] if d > 0 else l[j]) - entry) / risk)
-        new_ep = float(h[j] if d > 0 else l[j])
-        if d * (new_ep - ep) > 0:
-            ep, af = new_ep, min(0.20, af + 0.02)
-        nxt = sar + af * (ep - sar)
-        sar = min(nxt, l[j]) if d > 0 else max(nxt, h[j])
+        # audit 2026-10-16 R06: the live SAR step (two-bar limit), not a copy of it
+        sar, ep, af, _ = parabolic_sar_step(sar, ep, af, d, float(h[j]), float(l[j]),
+                                            prev_hi=float(h[j - 1]), prev_lo=float(l[j - 1]))
     px = float(bars[min(n, i + 1 + MAX_BARS) - 1, 4])
     return d * (px - entry) / risk - FEE * entry / risk, mfe >= 1.0
 

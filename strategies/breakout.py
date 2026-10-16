@@ -108,8 +108,14 @@ class BreakoutStrategy(Strategy):
         sig, d = x.sig, x.direction
         if not sig.get('turtle_n'):
             return None
-        stop = sig['anchor_level'] - d * 2 * sig['turtle_n']
-        exit = {'stop': ['price', stop], 'stop_src': '2N from the breakout (Turtles)', 'tp': ['trail'],
+        # audit 2026-10-16, the Original Turtle Rules: the stop is 2N from the ENTRY; the bot enters at market on the
+        # minute that broke the channel, so the entry (and the stop) is that minute's close, not the channel level
+        if x.minutes:
+            import dataclasses
+            x = dataclasses.replace(x, sig={**sig, 'anchor_close': float(x.minutes[-1][4])})
+            sig = x.sig
+        stop = sig['anchor_close'] - d * 2 * sig['turtle_n']
+        exit = {'stop': ['price', stop], 'stop_src': '2N from the entry (Turtles)', 'tp': ['trail'],
                 'tp_src': f"none: exit on the {sig['trail_days']}-day {'low' if d > 0 else 'high'}", 'atr': x.atr}
         plan = _confirm_plan(x, self.name, '1d', exit, f"Turtle System {sig['turtle_system']} breakout")
         if plan is not None:

@@ -256,6 +256,10 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     if reason is None and real[0] and _min_rr(plan) > 0 and rrs[0] is not None and \
             CONFIG.levels.min_rr_tp1_floor > 0 and rrs[0] < CONFIG.levels.min_rr_tp1_floor:
         reason = f"R:R to TP1 {rrs[0]:.2f} < {CONFIG.levels.min_rr_tp1_floor:g}"
+    own_tp1 = plan.get('min_rr_tp1')
+    if reason is None and own_tp1 and rrs[0] is not None and rrs[0] < own_tp1:
+        # audit 2026-10-16 C07: the method's ratio to its FIRST target (Seiden's 3:1 to the opposing zone)
+        reason = f"R:R to TP1 {rrs[0]:.2f} < {own_tp1:g} (the method's own)"
     # the averaging add (pump: one more unit at half the way to the stop) makes the position's risk 1.5 units
     risk_units = 1.5 if plan.get('add_half') else 1.0
     if plan.get('connors_exit') or (plan.get('exit') or {}).get('connors_exit'):
@@ -272,7 +276,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
 
 
 def _min_rr(plan: Dict) -> float:
-    """The plan's minimum R:R to TP1: its method's own (Strategy.min_rr, from the source) else the global rule."""
+    """The plan's minimum BLENDED R:R: its method's own (Strategy.min_rr) else the global rule (not a TP1 rule: C07)."""
     v = plan.get('min_rr')
     return CONFIG.levels.min_rr_tp1 if v is None else v
 
@@ -622,12 +626,18 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         stop, sl_src = base - direction * pad, f"{src} + {how} {pad / base:.2%}"
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
-        if exit['stop'][0] == 'price':
+        if exit['stop'][0] == 'price' and not exit.get('own_stop'):
             stop, sl_src = clear_pool(zones, stop, entry, direction, plan.get('symbol'), sl_src)
     risk = direction * (entry - stop)
-    if 0 < risk < floor:                                # eng-58: with the pierce model too (stop_levels)
+    if 0 < risk < floor and not exit.get('own_stop'):   # eng-58: with the pierce model too (stop_levels)
+        # audit C06: a method whose stop IS its rule (exit 'own_stop') is not widened by the common ATR floor
         stop, risk = entry - direction * floor, floor
         sl_src = f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
+    cap = exit.get('max_stop_pct')
+    if cap and risk > cap * entry * (1 + 1e-9):
+        # audit 2026-10-16 C06: the method's own stop limit (O'Neil's 7-8%) is a rule, not a floor the common layer
+        # may widen: a geometry that needs a farther stop is no trade of this method
+        return None
     if fixed_tp and zones:
         targets, sources = select_targets(zones, entry, direction, atr, 'opposite_liquidity')
         if targets and sources[0] != 'ATR step':

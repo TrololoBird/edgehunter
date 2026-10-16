@@ -13,9 +13,15 @@ from levels import resample
 
 
 class LoopDetectors:
-    def __init__(self, minutes_of: Callable[[str], List], m15_of: Callable[[str], List]):
+    def __init__(self, minutes_of: Callable[[str], List], m15_of: Callable[[str], List],
+                 daily_of: Optional[Callable[[], Dict[str, List]]] = None):
         self.minutes_of = minutes_of
         self.m15_of = m15_of
+        # audit 2026-10-16: {symbol: daily candles} of the whole universe, for the dump bounce's small-cap class (the
+        # research's: outside the top 30 by 30-day average volume), recomputed once per UTC day
+        self.daily_of = daily_of
+        self._ranks: Dict[str, int] = {}
+        self._ranks_day = None
         self._connors_checked: Dict[str, int] = {}   # symbol -> the daily close Connors' RSI(2) was checked at
         self._turtle_checked: Dict[str, int] = {}    # symbol -> the last final minute the Turtle channel was checked on
         self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
@@ -223,11 +229,29 @@ class LoopDetectors:
         from strategies.pump import MAJORS, dump_bounce
         if symbol.split('/')[0] in MAJORS:
             return None                           # measured on small caps (research_pumps: majors apart)
+        rank = self._volume_rank(symbol, now_ms)
+        if rank is not None and rank <= 30:
+            return None                           # audit: the research's class - outside the top 30 by 30d volume
         found = dump_bounce(h1, now_ms)
         if found is None or (symbol, found['anchor_ts']) in self._dump_fired:
             return None
         self._dump_fired.add((symbol, found['anchor_ts']))
         return found
+
+    def _volume_rank(self, symbol: str, now_ms: int) -> Optional[int]:
+        """The coin's rank by the average quote volume of its last 30 CLOSED daily candles (research_pumps' rank)."""
+        if self.daily_of is None:
+            return None
+        day = now_ms // 86_400_000
+        if self._ranks_day != day:
+            avg = {}
+            for s, d1 in (self.daily_of() or {}).items():
+                rows = [r for r in list(d1) if r[0] + 86_400_000 <= now_ms][-30:]
+                if len(rows) >= 30:
+                    avg[s] = sum(float(r[5]) for r in rows) / 30
+            self._ranks = {s: k for k, s in enumerate(sorted(avg, key=avg.get, reverse=True), 1)}
+            self._ranks_day = day
+        return self._ranks.get(symbol)
 
     def _connors_daily(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
         """Connors' RSI(2) on the coin's daily candles, once per closed day (fresh within the day's first 2 hours)."""

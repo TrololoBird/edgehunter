@@ -99,8 +99,11 @@ class Strategy:
     def has_data(self, sig: Dict) -> bool:
         return all(bool(sig.get('has_spot')) for need in self.requires if need == 'spot')
     follows_live_candle = False                     # the plan depends on the live 15m candle's high / low (a leg)
-    # the method's own minimum reward / risk to TP1 (its source's rule); None = CONFIG.levels.min_rr_tp1 (eng-40)
+    # the method's own minimum BLENDED reward / risk of the whole exit (a third at each target); None =
+    # CONFIG.levels.min_rr_tp1 (eng-40). Audit 2026-10-16 C07: it is not a TP1 rule - a far TP2 / TP3 lifts a ~1R TP1
+    # over it; a method whose source names the ratio to the FIRST target sets min_rr_tp1 too (checked on TP1 alone)
     min_rr: Optional[float] = None
+    min_rr_tp1: Optional[float] = None
     frozen_in_zone = False                          # a continuation's plan is frozen once price is in its zone
     # How the trade ends by time (eng-47): 'bars' = no TP1 within CONFIG.strategies.time_stop_bars bars of the
     # structure timeframe (the rest runs time_after_tp1 x longer once TP1 traded); 'fixed' = the method's own exit
@@ -166,6 +169,8 @@ def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> D
     strategy = strategy_of(x.setup)
     if strategy is not None and getattr(strategy, 'min_rr', None) is not None:
         plan.setdefault('min_rr', strategy.min_rr)
+    if strategy is not None and getattr(strategy, 'min_rr_tp1', None) is not None:
+        plan.setdefault('min_rr_tp1', strategy.min_rr_tp1)
     return plan
 
 

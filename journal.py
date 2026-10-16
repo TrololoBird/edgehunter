@@ -1079,7 +1079,10 @@ class SignalJournal:
             updates['mae_4h'] = min(float(k[3]) for k in window) / price - 1
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
             # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
-            updates.update(simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h')))
+            # audit C01: Connors' RSI(2) has no stop order ('sl' only sizes R) - the 8h replay must not stop it either
+            no_stop = str(row.get('group_key') or '').startswith(('RSI2 ', 'RSI2X '))
+            updates.update(simulate({**row, 'no_stop': no_stop}, row['direction'], window, use_fill=True,
+                                    funding_8h=row.get('funding_8h')))
             if row.get('tp1') is None and updates.get('outcome') in ('SL', 'OPEN'):
                 # eng-84: a method without targets (Bollinger's band, Crabel's session close, the Turtles' channel) can
                 # only read 'SL' / 'OPEN' here - its winners never showed (BB / ORB: 0 TP of 60). Its result is the

@@ -38,14 +38,18 @@ def n_series(d1: Sequence[Sequence[float]]) -> List[Optional[float]]:
 def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]) -> Optional[bool]:
     """
     Replays System 1 over the daily history (one hypothetical position at a time, either direction): the result of
-    the most recent breakout's trade (True = it exited above its entry for a long). None without one.
+    the most recent breakout's trade. None without one.
+    Audit 2026-10-16, the Original Turtle Rules: "a losing breakout if the price subsequently moved 2N against the
+    position before a profitable 10 day exit" - False when the 2N stop came first, True when the 10-day exit did;
+    N is the one known BEFORE the breakout day (ns[i - 1]: ns[i] held that day's own true range); a breakout still
+    open (neither yet) is unknown -> None (was: marked at the last close, a criterion the rules do not use).
     """
     pos = None
     last = None
     for i in range(21, len(d1)):
         c = d1[i]
         if pos is not None:
-            d, entry, stop = pos['d'], pos['entry'], pos['stop']
+            d, stop = pos['d'], pos['stop']
             lo10 = min(x[3] for x in d1[i - 10:i])
             hi10 = max(x[2] for x in d1[i - 10:i])
             exit_px = None
@@ -58,12 +62,12 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
             elif d < 0 and c[2] >= hi10:
                 exit_px = hi10
             if exit_px is not None:
-                last = d * (exit_px - entry) > 0
+                last = exit_px != stop
                 pos = None
             continue
         hi20 = max(x[2] for x in d1[i - 20:i])
         lo20 = min(x[3] for x in d1[i - 20:i])
-        n = ns[i]
+        n = ns[i - 1]
         if not n:
             continue
         if c[2] > hi20:
@@ -71,8 +75,7 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
         elif c[3] < lo20:
             pos = {'d': -1, 'entry': lo20, 'stop': lo20 + 2 * n}
     if pos is not None:
-        # the last breakout's trade is still open: marked at the last close
-        last = pos['d'] * (d1[-1][4] - pos['entry']) > 0
+        return None                 # the last breakout is still undecided
     return last
 
 

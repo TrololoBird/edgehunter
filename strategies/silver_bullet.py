@@ -122,6 +122,7 @@ class SilverBulletStrategy(Strategy):
     anchor_type = 'level'
     setups = {'SILVER BULLET LONG': 1, 'SILVER BULLET SHORT': -1}
     min_rr = 2.0                     # eng-84: >= 1:2 to the opposite liquidity (Silver Bullet practice)
+    min_rr_tp1 = 2.0                 # audit C07: that ratio is to the first draw (TP1), not the blend
     ttl_key = 'silver_bullet_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)
     uses_minutes = True

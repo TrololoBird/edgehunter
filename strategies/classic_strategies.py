@@ -64,10 +64,10 @@ class OrbStrategy(_System):
         # eng-84 (ORB practice, no source): longs only above the day's VWAP - eng-109: shadow only
         day0 = (x.minutes[-1][0] // 86_400_000 * 86_400_000) if x.minutes else None
         today = [m for m in (x.minutes or []) if day0 is not None and m[0] >= day0]
-        qv = sum(float(m[5]) for m in today if len(m) > 5)
-        if qv > 0:
-            vwap = sum((m[2] + m[3] + m[4]) / 3 * float(m[5]) for m in today if len(m) > 5) / qv
-            if d * (sig['anchor_close'] - vwap) < 0:
+        from zones import vwap as _vwap
+        day_vwap = _vwap(today, day0, 'VWAP day') if today else []
+        if day_vwap:
+            if d * (sig['anchor_close'] - day_vwap[0].price) < 0:
                 from signal_book import shadow_veto
                 shadow_veto(sig, 'against_vwap')
         # eng-109, Crabel: the other stop level is the protective stop; no target - out at the session's close (the
@@ -84,7 +84,7 @@ class OrbStrategy(_System):
 class ConnorsStrategy(_System):
     """Connors' RSI(2): out at the SMA5 (the target), stop from the structure (he uses none)."""
     name = 'connors'
-    setups = {'RSI2 LONG': 1, 'RSI2 SHORT': -1, 'RSI2X LONG': 1, 'RSI2X SHORT': -1}   # RSI2X: Connors' own entry, shadow
+    setups = {'RSI2 LONG': 1, 'RSI2 SHORT': -1, 'RSI2X LONG': 1, 'RSI2X SHORT': -1}   # RSI2: Connors' own entry; RSI2X: our cross-back, shadow
     min_rr = 0.0                     # Connors: no stop, no ratio - out at the SMA5; the R is only measured
     ttl_key = 'connors_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)
@@ -96,8 +96,10 @@ class ConnorsStrategy(_System):
         # Connors: out on the first daily CLOSE above (long) / below (short) the CURRENT 5-day SMA - a moving
         # exit, not the SMA5 of the signal day touched intraday (eng-48); SignalBook checks it on each daily close
         # eng-127, Connors (Short Term Trading Strategies That Work, rule 5 "Stops Hurt": stops of 1-50% all lowered
-        # the results): NO stop order. The position runs at 1x (executor: no liquidation) and is sized like a Turtle
-        # unit - 1% of the account per daily ATR (N); 'sl' = entry -+ 1 N is only the R unit, never an exit
+        # the results): NO stop order. The position runs at 1x and is sized like a Turtle unit - 1% of the account per
+        # daily ATR (N); 'sl' = entry -+ 1 N is only the R unit, never an exit. 1x does NOT rule out a liquidation
+        # (audit 2026-10-16): a short's loss grows without bound as price rises, and maintenance margin, funding and
+        # the other positions' margin share the account
         datr = sig.get('connors_atr')
         if not datr:
             return None

@@ -429,7 +429,8 @@ class DemoExecutor:
         fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'), s.symbol)
         no_stop = bool((getattr(s, 'plan', None) or {}).get('no_stop'))
         # eng-127: a system without a stop (Connors: "stops hurt") - the 'stop' is only the R unit (1 daily ATR, the
-        # Turtles' N sizing) and the position runs at 1x, so the account carries it to any price without a liquidation
+        # Turtles' N sizing) and the position runs at 1x. 1x is no guarantee against a liquidation (audit 2026-10-16):
+        # a short loses without bound as price rises; maintenance margin, funding and other positions share the account
         leverage = 1 if no_stop else cfg.max_leverage
         qty = min(risk_usd / (stop_dist + fee), balance * leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         if n:

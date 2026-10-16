@@ -166,9 +166,11 @@ def wyckoff_events(h1: Sequence[Sequence[float]], period_ms: int = HOUR_MS, tf: 
         lo, hi = rng['lo'], rng['hi']
         # eng-119: the spring as the sources define it - below the SC low, closed back inside (the half-wick and the 30%
         # pierce limits were ours)
-        if d > 0 and l < lo and c > lo:
+        # audit 2026-10-16: "closed back INSIDE" - within the range on both sides (a close above the range's high
+        # after piercing its low is no spring)
+        if d > 0 and l < lo and lo < c <= hi:
             return [_event('SPRING', 1, lo, hi, l, h1, rng, last, period_ms, tf)]
-        if d < 0 and h > hi and c < hi:
+        if d < 0 and h > hi and lo <= c < hi:
             return [_event('UTAD', -1, lo, hi, h, h1, rng, last, period_ms, tf)]
     return []
 

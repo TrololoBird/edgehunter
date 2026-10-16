@@ -273,9 +273,10 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
             short(('bollinger', len(h4), 146))
         if len(h4) >= 146:
             run('Bollinger Method I', maniac.bb_method1_event, list(h4), 4 * HOUR_MS, '4h')   # eng-127
-    if cut % (24 * HOUR_MS) == 0 and len(d1) < 120:
-        short(('cup_handle', len(d1), 120))
-    if cut % (24 * HOUR_MS) == 0 and len(d1) >= 120:
+    # audit 2026-10-16: the shortest cup (49 days) + its 2x prior advance + a 1-week handle = 154 daily candles
+    if cut % (24 * HOUR_MS) == 0 and len(d1) < 160:
+        short(('cup_handle', len(d1), 160))
+    if cut % (24 * HOUR_MS) == 0 and len(d1) >= 160:
         # O'Neil's cup with handle on DAILY candles at the UTC day's close (eng-58: his weekly / daily bases of >= 7
         # weeks; the 1h / 4h version of eng-40..57 was another pattern under his name)
         from strategies.cup_handle import cup_handle
