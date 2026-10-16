@@ -62,6 +62,7 @@ class DemoExecutor:
         self.db_path = db_path
         self._flat_seen: Dict[str, int] = {}      # card id -> consecutive reconcile passes that read the position as 0
         self._finalized: Dict[str, tuple] = {}    # symbol -> (trade, time) of the last finalize (close_untracked guard)
+        self._short_warned: set = set()            # FILL_PENDING rows already warned as short after 6h
         self._band_warned: set = set()      # coins whose market close BingX rejected (102202): warned once
         self._quotes_seen: Dict[str, tuple] = {}   # symbol -> (BingX last, since): a VST quote that stopped moving
         self.ex = None
@@ -1092,29 +1093,29 @@ class DemoExecutor:
 
     async def _finalize(self, trade: Dict, reason: str, journal_r: Optional[float]) -> None:
         """
-        Realized result: OUR quantity x (the exit fills' volume-weighted price - the entry fill), minus taker fees on both
-        sides. The fills' prices are right but ccxt's BingX swap fills report the amount 100x the position (live REZ:
-        33,333,333 for 333,333 coins), and right after a close the exit fill may not be listed yet (retried).
+        Realized result: OUR quantity x (the exit price - the entry fill), minus taker fees on both sides. The fills'
+        prices are right but ccxt's BingX swap fills report the amount in another unit than the position (live REZ:
+        33,333,333 for 333,333 coins), so the quantity each exit closed is its ORDER's filled amount (_exit_summary),
+        and right after a close the exit fill may not be listed yet (retried).
         """
         d = trade['direction']
         exit_side = 'sell' if d > 0 else 'buy'
         # one attempt: this runs under the executor's lock, and the old 4 x 5s retries held every entry / restop up
         # to 20s per close; a fill not listed yet is FILL_PENDING and _refinalize picks it up within 5 minutes
         try:
-            # from 2 min before the open: a limit's entry fill precedes opened_ms (_exits_complete weighs it)
-            fills = await self._call('fetch_my_trades', trade['symbol'], since=trade['opened_ms'] - 120_000)
+            fills = await self._call('fetch_my_trades', trade['symbol'], since=trade['opened_ms'] - 5_000)
         except Exception as e:
             # the API failing must not lose the close: the row is marked FILL_PENDING below, _refinalize retries
             logger.warning(f"Demo {reason} {trade['symbol']}: fills unavailable: {e!r}")
             fills = []
         exits = self._exit_fills(fills, exit_side, trade['opened_ms'], time.time() * 1000)
         qty, entry = float(trade.get('qty') or 0), float(trade.get('entry_fill') or 0)
-        weight = sum(f['amount'] for f in exits)
-        exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight if weight else None
-        if exit_avg is not None and not self._exits_complete(
-                fills, exits, d, self._entry_window_start(trade['symbol'], trade['opened_ms']), time.time() * 1000):
-            # TP1 listed, the final stop / close not yet: TP1's price was taken for the whole quantity
-            exit_avg = None
+        exit_avg = None
+        if exits and qty:
+            exit_avg, closed_qty = await self._exit_summary(trade['symbol'], exits)
+            if exit_avg is not None and closed_qty < 0.98 * qty:
+                # TP1 listed, the final stop / close not yet (audit A06: TP1's price was taken for the whole quantity)
+                exit_avg = None
         if exit_avg is None or not qty or not entry:
             # the fills list can lag a close (or the API is unreachable): retried by reconcile_loop (_refinalize)
             logger.info(f"Demo {reason} {trade['symbol']}: no exit fill listed yet, recovered by the 5-min pass")
@@ -1151,22 +1152,30 @@ class DemoExecutor:
         return [f for f in fills if f.get('side') == side and f.get('price') and f.get('amount')
                 and opened_ms - 1_000 < (f.get('timestamp') or 0) <= min(closed_ms + 120_000, (next_open_ms or 1e18) - 1_000)]
 
-    def _entry_window_start(self, symbol: str, opened_ms: float) -> float:
-        """2 min before opened_ms (a limit's fill precedes it), not before the previous trade on the coin closed (its
-        exit is this trade's entry side when it was the opposite direction)."""
-        with sqlite3.connect(self.db_path) as c:
-            prev = c.execute("SELECT MAX(closed_ms) FROM demo_trades WHERE symbol = ? AND closed_ms < ? AND opened_ms < ?",
-                             (symbol, opened_ms, opened_ms)).fetchone()[0]
-        return max(opened_ms - 120_000, (prev or 0) + 1_000)
-
-    @staticmethod
-    def _exits_complete(fills: List[Dict], exits: List[Dict], d: int, from_ms: float, until_ms: float) -> bool:
-        """The listed exit fills cover the entry fills in [from_ms, until_ms] (both in BingX's own amount unit - ccxt
-        reports it 100x the position, the same factor on both sides). No entry fill listed: nothing to compare."""
-        side = 'buy' if d > 0 else 'sell'
-        entered = sum(f['amount'] for f in fills if f.get('side') == side and f.get('amount')
-                      and from_ms <= (f.get('timestamp') or 0) <= until_ms)
-        return not entered or sum(f['amount'] for f in exits) >= 0.98 * entered
+    async def _exit_summary(self, symbol: str, exits: List[Dict]) -> tuple:
+        """(exit price, quantity closed) of the listed exit fills in the POSITION's unit: per exit order its filled
+        amount from fetch_order (the unit qty comes from at the entry), priced at its fills' volume-weighted price (one
+        order's fills share one unit). A fill without an order id or an order that cannot be read: (None, 0) - not
+        proven complete (audit A06: an empty / unreadable list was taken as complete)."""
+        by_order: Dict[str, List[Dict]] = {}
+        for f in exits:
+            if not f.get('order'):
+                return None, 0.0
+            by_order.setdefault(str(f['order']), []).append(f)
+        value = closed = 0.0
+        for oid, fs in by_order.items():
+            try:
+                o = await self._call('fetch_order', oid, symbol)
+            except Exception as e:
+                logger.info(f"Demo exit order {symbol} {oid}: {e!r}")
+                return None, 0.0
+            filled = float(o.get('filled') or 0)
+            weight = sum(f['amount'] for f in fs)
+            if filled <= 0 or not weight:
+                return None, 0.0
+            value += filled * sum(f['price'] * f['amount'] for f in fs) / weight
+            closed += filled
+        return (value / closed if closed else None), closed
 
     @staticmethod
     def _fees(entry: float, exit_avg: float, qty: float, exits: List[Dict]) -> float:
@@ -1192,7 +1201,7 @@ class DemoExecutor:
             side = 'sell' if d > 0 else 'buy'
             if symbol not in cache:
                 # one request per coin (the earliest open of its pending rows), one failing coin does not stop the rest
-                since = min(r[3] for r in rows if r[1] == symbol) - 120_000
+                since = min(r[3] for r in rows if r[1] == symbol) - 5_000
                 try:
                     cache[symbol] = await self._call('fetch_my_trades', symbol, since=since)
                 except Exception as e:
@@ -1205,16 +1214,16 @@ class DemoExecutor:
                                 "AND entry_fill IS NOT NULL", (symbol, closed)).fetchone()[0]
             nxt = nxt - 14_000 if nxt else None
             exits = self._exit_fills(cache[symbol], side, opened, closed, nxt)
-            weight = sum(f['amount'] for f in exits)
-            if not weight:
+            if not exits or not qty:
                 continue
-            if not self._exits_complete(cache[symbol], exits, d, self._entry_window_start(symbol, opened),
-                                        min(closed + 120_000, nxt or 1e18)):
-                if time.time() * 1000 - closed < 6 * 3_600_000:
-                    continue                          # the rest of the exit not listed yet
-                logger.warning(f"Demo result recovery {symbol}: exit fills still short of the entry after 6h, "
-                               f"result from the listed ones")
-            exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight
+            exit_avg, closed_qty = await self._exit_summary(symbol, exits)
+            if exit_avg is None or closed_qty < 0.98 * qty:
+                # not proven complete: stays FILL_PENDING (no result rather than a partial one), retried for 3 days
+                if time.time() * 1000 - closed > 6 * 3_600_000 and tid not in self._short_warned:
+                    self._short_warned.add(tid)
+                    logger.warning(f"Demo result recovery {symbol}: exit orders cover {closed_qty:g} of {qty:g} after "
+                                   f"6h - result left empty")
+                continue
             fees = self._fees(entry, exit_avg, qty, exits)
             pnl = d * (exit_avg - entry) * qty - fees
             with sqlite3.connect(self.db_path) as c:
