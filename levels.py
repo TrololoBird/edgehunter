@@ -141,7 +141,12 @@ def find_impulse(df: Optional[pl.DataFrame], leg_direction: int,
     htf_list = [list(c[:5]) for c in (htf or [])]
     atr = atr_15m if tf == '15m' else atr_of(htf_list if tf == '1h' else resample_htf(htf_list, 4))
     if not atr:
-        tf, atr = '15m', atr_15m          # no 1h history loaded yet: the leg measured in the 15m ATR
+        # audit 2026-10-16: the leg's timeframe needs its own ATR - no 1h history yet = no leg (was: silently measured
+        # on the 15m ATR and the 15m timeframe, another leg / zone / stop than the rule's). Without any htf argument
+        # at all (offline callers of the 15m frame alone, an empty list) the leg stays on the 15m.
+        if htf:
+            return None
+        tf, atr = '15m', atr_15m
     size = abs(end - start)
     if not atr or size < min_leg_atr() * atr or size < min_leg_move() * start:
         return None

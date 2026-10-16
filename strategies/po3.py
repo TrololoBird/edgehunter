@@ -44,7 +44,9 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
     start, _, a0, a1 = w
     asia = [b for b in bars5 if a0 <= b[0] < a1]
     inside = [b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms]
-    if len(asia) < 24 or len(inside) < 3:
+    # audit 2026-10-16: the WHOLE Asian range (20:00-00:00 NY = 48 5m bars; resample drops incomplete bars) - a range
+    # measured on half of it (24 bars) is another range, its raid another raid
+    if len(asia) < (a1 - a0) // FIVE_MS or len(inside) < 3:
         return None
     a_hi, a_lo = max(b[2] for b in asia), min(b[3] for b in asia)
     for d in (1, -1):
@@ -139,6 +141,8 @@ class Po3Strategy(Strategy):
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='PO3 FVG, limit at its CE',
+                         # audit 2026-10-16: the entry inside the London window it formed in (02:00-05:00 NY)
+                         session=('America/New_York', '02:00', '05:00'),
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
                          # eng-94: the eng-84 cap did not reach the trade - with an exit spec system_levels takes TP1

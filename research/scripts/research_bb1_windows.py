@@ -65,8 +65,8 @@ def events_of(bars: np.ndarray, W: int):
     hi20 = pl.Series(h).rolling_max(20).to_numpy()
     out = []
     for i in range(20 + W, n - 1):
-        k0 = last_sq[i - 1]                        # the live rule: the Squeeze bar lies in [i - W, i - 1]
-        if k0 < i - W or k0 < 0:
+        k0 = last_sq[i - 1]                        # the live rule (audit 2026-10-16): the Squeeze bar in [i - 5, i - 1]
+        if k0 < i - 5 or k0 < 0:
             continue
         if cs[i - 1] != cs[k0]:                    # a close outside a band since the Squeeze
             continue

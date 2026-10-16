@@ -9,7 +9,8 @@ Pumps (the owner's strategy, eng-39), built from published pieces, not invented 
   from the map (fillers in the move's own size).
 - PUMP TOP (short): the end of a pump - Wyckoff's buying climax / VSA's upthrust after a move of >= `pump_top_min_pct`
   within 4h: a 15m candle at the high with a wick >= half its range on >= 2x the average volume (the climax), then the
-  5m structure shift down; open interest falling or the CVD diverging confirms. Stop above the pump's high + the
+  5m structure shift down; falling open interest is only NOTED in the setup (no OI / CVD check blocks it - audit
+  2026-10-16: the old 'confirms' overstated the detector). Stop above the pump's high + the
   measured pierce; targets the pump's 0.382 / 0.5 / 0.618 retracements (the mean of the leg) and the map.
 - Averaging 1:1 (the owner's rule): one more unit of the same size at half the way from the entry to the stop; the stop
   stays; R is the sum of both units in the first unit's risk (SignalBook `add_at`).

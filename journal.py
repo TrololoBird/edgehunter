@@ -900,7 +900,7 @@ class SignalJournal:
         since = int((time.time() - 30 * 86400) * 1000)
         with self._lock:
             rows = self.conn.execute(
-                "SELECT strategy, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
+                "SELECT group_key, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
                 "outcome IN ('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL AND tp1 IS NOT NULL AND "
                 "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', 'tl_em_shadow', 'oi_shadow', 'cascade_shadow')",
                 (since,)).fetchall()
@@ -908,13 +908,14 @@ class SignalJournal:
         # ever ends 'SL' here: Bollinger measured p 0% and every entry was vetoed 'expectancy -1.00R') and of the
         # current logic (keep_waiting_from on: the older versions had other targets / stops); the shadow ALTERNATIVE
         # entries (flow_entry / weak_mss: never traded, TP1 at 0.03-0.4 R) made sweep's p 97%
-        from signal_book import version_no
-        floor = version_no(CONFIG.journal.keep_waiting_from)
+        # audit 2026-10-16 C09: per SETUP (sweep and Silver Bullet, Turtle and BB1 share a strategy name but not their
+        # rules) and of the CURRENT logic version only (keep_waiting_from let older targets / stops in)
         counts: Dict[str, List[int]] = {}
-        for strategy, outcome, lv in rows:
-            if version_no(lv) < floor:
+        for group_key, outcome, lv in rows:
+            if lv != CONFIG.journal.logic_version:
                 continue
-            c = counts.setdefault(strategy, [0, 0])
+            key = group_key.split(' ', 1)[1] if group_key.split(' ', 1)[0] in ('ENTRY', 'SL', 'TP3', 'CLOSED') else group_key
+            c = counts.setdefault(key, [0, 0])
             c[0 if outcome == 'SL' else 1] += 1
         # eng-124: no fixed n >= 30 (a 60% rate after 20-50 trades is anywhere in 35-85% / 46-74%): every strategy with
         # decided entries gets its rate AND the upper end of its 95% Wilson interval; the veto uses the upper end

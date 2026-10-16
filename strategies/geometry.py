@@ -245,7 +245,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     if risk < CONFIG.levels.cost_guard * fee:
         reason = reason or 'costs >= 1/3 of the risk'
     reason = reason or stop_too_far(plan, entry, stop)
-    hit = HIT_RATE.get(plan.get('strategy'))
+    hit = HIT_RATE.get(plan.get('setup'))     # audit C09: per setup (journal.refresh_hit_rates)
     if reason is None:
         hi = (hit[2] if len(hit) > 2 else hit[0]) if hit else None
         if hit and real[0] and hi * rrs[0] - (1 - hi) <= 0:

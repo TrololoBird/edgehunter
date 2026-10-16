@@ -1103,7 +1103,7 @@ class DemoExecutor:
             # the API failing must not lose the close: the row is marked FILL_PENDING below, _refinalize retries
             logger.warning(f"Demo {reason} {trade['symbol']}: fills unavailable: {e!r}")
             fills = []
-        exits = self._exit_fills(fills, exit_side, trade['opened_ms'], time.time() * 1000)
+        exits = self._exit_fills(fills, exit_side, trade['opened_ms'], time.time() * 1000, qty=trade.get('qty'))
         qty, entry = float(trade.get('qty') or 0), float(trade.get('entry_fill') or 0)
         weight = sum(f['amount'] for f in exits)
         exit_avg = sum(f['price'] * f['amount'] for f in exits) / weight if weight else None
@@ -1134,14 +1134,26 @@ class DemoExecutor:
 
     @staticmethod
     def _exit_fills(fills: List[Dict], side: str, opened_ms: float, closed_ms: float,
-                    next_open_ms: Optional[float] = None) -> List[Dict]:
+                    next_open_ms: Optional[float] = None, qty: Optional[float] = None) -> List[Dict]:
         """eng-91: only exit-side fills after this trade's entry (the 1s margin covers BingX's clock; the 5s fetch
         margin let the previous trade's exit on the same coin in) and not after its close (+2 min for a fill listed
         late): _refinalize retried for 3 days and took the NEXT trades' exits on the coin into this one's result; the +2 min
         ends before the next trade on the coin opened (_refinalize passes its opened_ms - 14s; with this 1s margin, 15s:
         its entry fill is on the same side when it is the opposite direction)."""
-        return [f for f in fills if f.get('side') == side and f.get('price') and f.get('amount')
-                and opened_ms - 1_000 < (f.get('timestamp') or 0) <= min(closed_ms + 120_000, (next_open_ms or 1e18) - 1_000)]
+        out = sorted((f for f in fills if f.get('side') == side and f.get('price') and f.get('amount')
+                      and opened_ms - 1_000 < (f.get('timestamp') or 0) <= min(closed_ms + 120_000, (next_open_ms or 1e18) - 1_000)),
+                     key=lambda f: f.get('timestamp') or 0)
+        if qty:
+            # audit 2026-10-16 C10: never more exit quantity than the trade held - the earliest exit-side fills up to
+            # its size (a later trade's fills inside the +2 min margin are not this trade's)
+            kept, left = [], float(qty) * (1 + 1e-6)
+            for f in out:
+                if left <= 0:
+                    break
+                kept.append(f)
+                left -= float(f['amount'])
+            out = kept
+        return out
 
     @staticmethod
     def _fees(entry: float, exit_avg: float, qty: float, exits: List[Dict]) -> float:
@@ -1179,7 +1191,7 @@ class DemoExecutor:
                 nxt = c.execute("SELECT MIN(opened_ms) FROM demo_trades WHERE symbol = ? AND opened_ms > ? "
                                 "AND entry_fill IS NOT NULL", (symbol, closed)).fetchone()[0]
             nxt = nxt - 14_000 if nxt else None
-            exits = self._exit_fills(cache[symbol], side, opened, closed, nxt)
+            exits = self._exit_fills(cache[symbol], side, opened, closed, nxt, qty=qty)
             weight = sum(f['amount'] for f in exits)
             if not weight:
                 continue

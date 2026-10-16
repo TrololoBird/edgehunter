@@ -161,10 +161,17 @@ class SilverBulletStrategy(Strategy):
             # map's nearest opposite liquidity, a target no source names)
             return {'skip': "no draw on liquidity ahead"}
         targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity', first=first)
+        # audit 2026-10-16: formed in a Silver Bullet hour = entered in THAT hour (the card no longer lives on after
+        # it: the common kill-zone check is a shadow and the structural lifetimes have no clock)
+        session = None
+        formed = sig.get('event_ts') or sig.get('anchor_ts')
+        if formed:
+            local = datetime.fromtimestamp((int(formed) - 1) / 1000, tz=timezone.utc).astimezone(NY)
+            session = ('America/New_York', f"{local.hour:02d}:00", f"{local.hour + 1:02d}:00")
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
-                         zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE',
+                         zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE', session=session,
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
                          # eng-96: the eng-84 3R cap did not reach the trade (system_levels takes TP1 from exit['tp'],

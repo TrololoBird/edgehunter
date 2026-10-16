@@ -240,7 +240,7 @@ def sd_opposing(zones: List[Dict], closes: Sequence[float], side: int, ref: floa
     Seiden's target: the OPPOSING zone - for a demand trade the nearest fresh supply zone above (its proximal line,
     the lowest body of its base), for a supply trade the nearest fresh demand zone below (its proximal line, the highest
     body); "the distance between our supply and target (T1: Demand) represents our potential profit zone" (FXStreet,
-    'Lessons from the pros', 2014). Fresh = no close beyond its distal line since it was confirmed. Up to `n`
+    'Lessons from the pros', 2014). Fresh = no close back at its proximal line since it was confirmed. Up to `n`
     [price, label] pairs, nearest first. Was the map's opposite liquidity (old highs / lows, equal levels, sessions),
     which is not his target.
     """
@@ -249,11 +249,14 @@ def sd_opposing(zones: List[Dict], closes: Sequence[float], side: int, ref: floa
         if z['side'] != -side:
             continue
         after = closes[z['confirm']:]
+        # audit 2026-10-16: Seiden's FRESH zone = price has not come back to it; was "no close beyond its DISTAL line"
+        # (unbroken: a zone tested many times passed). The closes only (the zone list carries no highs / lows): a
+        # close at or into the proximal line is the return
         if side > 0:
-            proximal, broken = z['lo'], any(c > z['hi'] for c in after)
+            proximal, broken = z['lo'], any(c >= z['lo'] for c in after)
             beyond = proximal > ref
         else:
-            proximal, broken = z['hi'], any(c < z['lo'] for c in after)
+            proximal, broken = z['hi'], any(c <= z['hi'] for c in after)
             beyond = proximal < ref
         if beyond and not broken:
             out.append([float(proximal), f"4h {'supply' if side > 0 else 'demand'} zone {z['lo']:.6g}-{z['hi']:.6g}"])
@@ -400,7 +403,9 @@ def bb_method1_event(bars: Sequence[Sequence[float]], period_ms: int = 4 * HOUR_
     with np.errstate(divide='ignore', invalid='ignore'):
         bw = (upper - lower) / ma
     i = n - 1
-    squeeze = [k for k in range(i - 125, i) if k >= 144 and np.isfinite(bw[k])
+    # audit 2026-10-16: the manual's Method I (2021) looks back 5 bars for the Squeeze event (was: any of the last
+    # 125 bars, a squeeze months old)
+    squeeze = [k for k in range(i - 5, i) if k >= 144 and np.isfinite(bw[k])
                and bw[k] <= np.nanmin(bw[k - 124:k + 1])]
     if not squeeze:
         return None
