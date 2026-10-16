@@ -129,8 +129,9 @@ class ArchiveCoin:
             self.d1 = self.daily[max(0, dd - 370):dd]
             self.w1 = _weeks(self.daily[:dd])[-60:]
 
-    def minutes(self, count: int = 240) -> List[List[float]]:
-        """FINAL 1m futures candles in the stream format (the scanner's _minute_candles)."""
+    def minutes(self, count: int = 600) -> List[List[float]]:
+        """FINAL 1m futures candles in the stream format (the scanner's _minute_candles): 600 as the live buffer
+        (MarketData.minute_klines; audit R02: 240 cut PO3's Asian range short of its 24 5m bars)."""
         return self.fut[max(0, self.j - count):self.j][:, STREAM_COLS].tolist()
 
     def spot_minutes(self, now_ms: int, count: int = 60) -> Optional[List[List[float]]]:
@@ -251,7 +252,8 @@ class Replay:
         from strategies import profiles
         profiles.select = lambda strategy, regime: (None, None)
         self.detector = LiveDetector()
-        self.loopside = LoopDetectors(self._minutes_of, lambda s: self.coins[s].m15(self.now_ms))
+        self.loopside = LoopDetectors(self._minutes_of, lambda s: self.coins[s].m15(self.now_ms),
+                                      lambda: {s: c.d1 for s, c in self.coins.items()})
         self.raw: Dict[str, list] = {}
         self.ctx_sig: Dict[str, int] = {}
         b = self.book
@@ -293,7 +295,8 @@ class Replay:
         return out
 
     def _band(self, symbol: str, direction: int) -> Optional[float]:
-        closes = [c[4] for c in self.coins[symbol].m15(self.now_ms)[-20:]]
+        # audit R03: the live exit's band (Scanner._opposite_band): BB(20, 2) of the CLOSED 4h candles, not 15m
+        closes = [c[4] for c in self.coins[symbol].h4 if c[0] + 4 * HOUR_MS <= self.now_ms][-20:]
         if len(closes) < 20:
             return None
         mean = sum(closes) / 20
@@ -343,7 +346,7 @@ class Replay:
                          np.asarray(c.m15(now_ms), dtype=np.float64),
                          np.asarray(c.h1_all[max(0, int(np.searchsorted(c.h1_close, now_ms, side='right')) - 499):
                                              int(np.searchsorted(c.h1_close, now_ms, side='right'))], dtype=np.float64),
-                         list(c.d1)[-60:], list(c.h4), list(c.w1)))
+                         list(c.d1), list(c.h4), list(c.w1)))   # audit R01: the live map gets the whole d1 (was 60)
         for s, (raw, ctx) in build_maps(jobs, corr).items():
             self.raw[s] = raw
             self.detector.set_context(s, ctx, now_ms)
@@ -412,6 +415,7 @@ def _entry_row(e, now_ms: int) -> Dict:
             'stage': 'entry', 'vetoed': e.vetoed, 'entry': lv.get('entry'), 'sl': lv.get('sl'), 'tp1': lv.get('tp1'),
             'tp2': lv.get('tp2'), 'tp3': lv.get('tp3'), 'rr_tp1': lv.get('rr_tp1'), 'sl_src': lv.get('sl_src'),
             'limit_entry': lv.get('limit_entry'), 'volume_24h': (e.sig or {}).get('volume_24h'),
+            'no_stop': bool((e.plan or {}).get('no_stop')),
             'funding': (e.sig or {}).get('funding_rate'),
             # eng-133 research columns (written only): the setup's timeframe and its ATR(14) at the entry, the shadow
             # tags (strings are not picked up by f_*), the logic version
@@ -475,7 +479,7 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
             continue
         a = int(np.searchsorted(c.m_ts, e['ts'], side='left'))
         b = int(np.searchsorted(c.m_ts, e['ts'] + ttl, side='left'))
-        lv = {k: e.get(k) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3', 'limit_entry', 'volume_24h', 'symbol')}
+        lv = {k: e.get(k) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3', 'limit_entry', 'volume_24h', 'symbol', 'no_stop')}
         res = simulate(lv, e['direction'], c.fut[a:b, :6].tolist(), funding_8h=e.get('funding'))
         e['outcome'] = res.get('outcome')
         for col in ('r_tp1', 'r_tp2', 'r_be'):

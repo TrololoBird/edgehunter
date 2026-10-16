@@ -82,7 +82,7 @@ def rolling_std(x: np.ndarray, n: int) -> np.ndarray:
     out = np.full_like(x, np.nan)
     w = _windows(x, n)
     if w is not None:
-        out[n - 1:] = w.std(axis=1, ddof=1)
+        out[n - 1:] = w.std(axis=1, ddof=0)    # audit C10/R06: Bollinger's population sigma
     return out
 
 
@@ -240,7 +240,7 @@ def sd_opposing(zones: List[Dict], closes: Sequence[float], side: int, ref: floa
     Seiden's target: the OPPOSING zone - for a demand trade the nearest fresh supply zone above (its proximal line,
     the lowest body of its base), for a supply trade the nearest fresh demand zone below (its proximal line, the highest
     body); "the distance between our supply and target (T1: Demand) represents our potential profit zone" (FXStreet,
-    'Lessons from the pros', 2014). Fresh = no close beyond its distal line since it was confirmed. Up to `n`
+    'Lessons from the pros', 2014). Fresh = no close back at its proximal line since it was confirmed. Up to `n`
     [price, label] pairs, nearest first. Was the map's opposite liquidity (old highs / lows, equal levels, sessions),
     which is not his target.
     """
@@ -249,11 +249,14 @@ def sd_opposing(zones: List[Dict], closes: Sequence[float], side: int, ref: floa
         if z['side'] != -side:
             continue
         after = closes[z['confirm']:]
+        # audit 2026-10-16: Seiden's FRESH zone = price has not come back to it; was "no close beyond its DISTAL line"
+        # (unbroken: a zone tested many times passed). The closes only (the zone list carries no highs / lows): a
+        # close at or into the proximal line is the return
         if side > 0:
-            proximal, broken = z['lo'], any(c > z['hi'] for c in after)
+            proximal, broken = z['lo'], any(c >= z['lo'] for c in after)
             beyond = proximal > ref
         else:
-            proximal, broken = z['hi'], any(c < z['lo'] for c in after)
+            proximal, broken = z['hi'], any(c <= z['hi'] for c in after)
             beyond = proximal < ref
         if beyond and not broken:
             out.append([float(proximal), f"4h {'supply' if side > 0 else 'demand'} zone {z['lo']:.6g}-{z['hi']:.6g}"])
@@ -307,10 +310,12 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
                        pct: float = 0.03) -> Optional[Dict]:
     """
     eng-107, the trendline break as Edwards & Magee define a DECISIVE penetration ("Technical Analysis of Stock Trends",
-    via Peter Brandt): a CLOSE beyond the line by about 3% of the price (eng-109: their 3%; Brandt's 1-2% is his own
-    suggestion for commodities / forex), confirmed by time (two closes beyond) and by volume (the breaking bar's volume
-    above the 20-bar average - their volume test; the exact wording of the book was not found). The same line as
-    the ATR-line bot (deleted in eng-127).
+    ch. 14-15): a CLOSE beyond the line by about 3% (eng-109: their 3%; Brandt's 1-2% is his own suggestion for
+    commodities / forex) and, on the up side, on rising volume (the breaking bar's volume above the 20-bar average).
+    Audit 2026-10-16 (Murphy, Technical Analysis of the Financial Markets, ch. 4 pp. 71-72: the 3% filter and the
+    two-day time filter are ALTERNATIVES): the 3% close alone decides (was: both 3% AND two closes), and the 3% is of
+    the LINE's price at that bar, the level broken (was: of the close - a long passed only from 103.09 for a line at
+    100). The same line as the ATR-line bot (deleted in eng-127).
     """
     cfg = CONFIG.strategies
     window = c1h[-(cfg.tl_lookback + 2):]
@@ -328,21 +333,22 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
             continue
         value = lambda j: line['p1'] + line['slope'] * (j - line['i1'])
         d = 1 if kind == 'resistance' else -1
-        if not all(d * (c[j] - value(j)) >= pct * c[j] for j in (n - 2, n - 1)):
+        if not d * (c[n - 1] - value(n - 1)) >= pct * abs(value(n - 1)):
             continue
-        if d * (c[n - 3] - value(n - 3)) >= pct * c[n - 3]:
+        if any(d * (c[j] - value(j)) >= pct * abs(value(j)) for j in range(line['i1'] + 1, n - 1)):
             continue                                   # the decisive break happened earlier: the first one only
-        avg_v = v[n - 22:n - 2].mean() if n >= 22 else 0.0
+        avg_v = v[n - 21:n - 1].mean() if n >= 21 else 0.0
         # Edwards & Magee: "activity should always be expected to rise notably on a genuine UP-side breakout" - the
         # volume test is theirs for the up side only
-        if d > 0 and (not avg_v or v[n - 2] <= avg_v):
+        if d > 0 and (not avg_v or v[n - 1] <= avg_v):
             continue
         i = n - 1
         return {'setup': 'TL EM UP' if d > 0 else 'TL EM DOWN', 'direction': d,
-                'setup_note': f"{tf} closed twice >= {pct:.1%} {'above a falling resistance' if d > 0 else 'below a rising support'}"
-                              f" on {(v[n - 2] / avg_v) if avg_v else 0:.1f}x volume (Edwards & Magee, a line through"
+                'setup_note': f"{tf} closed >= {pct:.1%} of the line {'above a falling resistance' if d > 0 else 'below a rising support'}"
+                              f" on {(v[n - 1] / avg_v) if avg_v else 0:.1f}x volume (Edwards & Magee, a line through"
                               f" the last two reaction points)",
                 'line_p1': line['p1'], 'line_slope': line['slope'], 'line_ts1': int(window[line['i1']][0]),
+                'line_period_ms': int(period_ms),
                 'line_value': value(i), 'atr_line': atr,
                 'anchor_level': value(i), 'anchor_extreme': l[i] if d > 0 else h[i],
                 'anchor_label': 'trendline (E&M)', 'anchor_ts': int(window[line['i1']][0]),
@@ -352,7 +358,8 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
 
 
 def parabolic_sar_step(sar: float, ep: float, af: float, d: int, hi: float, lo: float,
-                       step: float = 0.02, cap: float = 0.2) -> Tuple[float, float, float, bool]:
+                       step: float = 0.02, cap: float = 0.2, prev_hi: Optional[float] = None,
+                       prev_lo: Optional[float] = None) -> Tuple[float, float, float, bool]:
     """
     One bar of Wilder's Parabolic SAR (New Concepts in Technical Trading Systems, 1978: AF 0.02, +0.02 per new extreme,
     at most 0.20) for a position of side d: (new sar, ep, af, stopped). The bar is first checked against the current
@@ -363,8 +370,11 @@ def parabolic_sar_step(sar: float, ep: float, af: float, d: int, hi: float, lo: 
     if (d > 0 and hi > ep) or (d < 0 and lo < ep):
         ep, af = (hi if d > 0 else lo), min(cap, af + step)
     nxt = sar + af * (ep - sar)
-    # Wilder: the SAR never moves into the bar's range (here: beyond this bar's extreme against the position)
-    nxt = min(nxt, lo) if d > 0 else max(nxt, hi)
+    # Wilder: the SAR never moves into the range of this bar or the previous one (audit 2026-10-16: two bars)
+    if d > 0:
+        nxt = min(nxt, lo, prev_lo if prev_lo is not None else lo)
+    else:
+        nxt = max(nxt, hi, prev_hi if prev_hi is not None else hi)
     return nxt, ep, af, False
 
 
@@ -393,7 +403,9 @@ def bb_method1_event(bars: Sequence[Sequence[float]], period_ms: int = 4 * HOUR_
     with np.errstate(divide='ignore', invalid='ignore'):
         bw = (upper - lower) / ma
     i = n - 1
-    squeeze = [k for k in range(i - 125, i) if k >= 144 and np.isfinite(bw[k])
+    # audit 2026-10-16: the manual's Method I (2021) looks back 5 bars for the Squeeze event (was: any of the last
+    # 125 bars, a squeeze months old)
+    squeeze = [k for k in range(i - 5, i) if k >= 144 and np.isfinite(bw[k])
                and bw[k] <= np.nanmin(bw[k - 124:k + 1])]
     if not squeeze:
         return None

@@ -8,6 +8,12 @@ ATR(14) of the setup's timeframe measured at the PLACEBO's own entry, a random t
 (never within +-48 h of the real trade), the 4h-trend sign and the ATR/price tercile equal to the real entry's; the same
 exit rules and costs (levels.simulate + stats.net_r, as replay.run).
 
+AUDIT 2026-10-16 (R04 / R07): what this measures is NARROW - R of a full exit at TP1 (r_tp1) of levels.simulate over
+the 8h CONFIG.levels.trade_ttl_sec window, the same for the real entry and its placebo; NOT the cards' full result
+(cards.final_r: the Turtles' channel, Connors' SMA5, BB1's SAR, W / M's band, partials). Its verdicts are about "the
+entry with a fixed geometry over 8 hours". The bootstrap block = 12 NON-EMPTY 4h buckets as the protocol fixed it,
+which is more than 48 calendar hours when signals are rare; changing it needs a protocol amendment before a run.
+
     python research/scripts/research_entries_placebo_eng133.py --run data/replay/eng133 --placebos 100 --seed 133 \
         --boot 5000 --workers 4 --out research/entries_placebo_eng133.md
 Smoke test (server, < 1 GB):  --run data/replay/smoke --placebos 10 --boot 200 --workers 1 --out <scratch>/smoke.md

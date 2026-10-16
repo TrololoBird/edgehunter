@@ -101,6 +101,7 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
                 continue
             ce = (lo + hi) / 2
             return {'setup': 'SILVER BULLET LONG' if d > 0 else 'SILVER BULLET SHORT', 'direction': d,
+                    'session_end_ms': start + 3_600_000,     # audit: not entered in its hour = over (SignalBook)
                     'setup_note': f"ICT Silver Bullet {local:%H}:00-{local.hour + 1:02d}:00 NY: took {pool[1]}'s "
                                   f"{'low' if d > 0 else 'high'} {ref_lo if d > 0 else ref_hi:.6g}, displaced, 5m FVG "
                                   f"{lo:.6g}-{hi:.6g} (CE {ce:.6g}) after a structure shift; target {target:.6g}",
@@ -122,6 +123,7 @@ class SilverBulletStrategy(Strategy):
     anchor_type = 'level'
     setups = {'SILVER BULLET LONG': 1, 'SILVER BULLET SHORT': -1}
     min_rr = 2.0                     # eng-84: >= 1:2 to the opposite liquidity (Silver Bullet practice)
+    min_rr_tp1 = 2.0                 # audit C07: that ratio is to the first draw (TP1), not the blend
     ttl_key = 'silver_bullet_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)
     uses_minutes = True
@@ -160,10 +162,17 @@ class SilverBulletStrategy(Strategy):
             # map's nearest opposite liquidity, a target no source names)
             return {'skip': "no draw on liquidity ahead"}
         targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity', first=first)
+        # audit 2026-10-16: formed in a Silver Bullet hour = entered in THAT hour: a trigger outside it is vetoed
+        # 'off_session' and the card ends at the hour's close (sig session_end_ms)
+        session = None
+        formed = sig.get('event_ts') or sig.get('anchor_ts')
+        if formed:
+            local = datetime.fromtimestamp((int(formed) - 1) / 1000, tz=timezone.utc).astimezone(NY)
+            session = ('America/New_York', f"{local.hour:02d}:00", f"{local.hour + 1:02d}:00")
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
-                         zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE',
+                         zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE', session=session,
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
                          # eng-96: the eng-84 3R cap did not reach the trade (system_levels takes TP1 from exit['tp'],

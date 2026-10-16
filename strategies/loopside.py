@@ -12,10 +12,21 @@ from config import CONFIG
 from levels import resample
 
 
+def _contiguous(bars: List, step_ms: int) -> bool:
+    """No missing bar between consecutive bars (levels.resample drops an incomplete bucket, never fills it)."""
+    return all(int(b[0]) - int(a[0]) == step_ms for a, b in zip(bars, bars[1:]))
+
+
 class LoopDetectors:
-    def __init__(self, minutes_of: Callable[[str], List], m15_of: Callable[[str], List]):
+    def __init__(self, minutes_of: Callable[[str], List], m15_of: Callable[[str], List],
+                 daily_of: Optional[Callable[[], Dict[str, List]]] = None):
         self.minutes_of = minutes_of
         self.m15_of = m15_of
+        # audit 2026-10-16: {symbol: daily candles} of the whole universe, for the dump bounce's small-cap class (the
+        # research's: outside the top 30 by 30-day average volume), recomputed once per UTC day
+        self.daily_of = daily_of
+        self._ranks: Dict[str, int] = {}
+        self._ranks_day = None
         self._connors_checked: Dict[str, int] = {}   # symbol -> the daily close Connors' RSI(2) was checked at
         self._turtle_checked: Dict[str, int] = {}    # symbol -> the last final minute the Turtle channel was checked on
         self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
@@ -100,6 +111,8 @@ class LoopDetectors:
         # eng-106: from 20:00 NY the evening before (the Asian / London session pools), the 1m history holds 10h
         bars = resample([c for c in self.minutes_of(symbol) if c[0] >= start - 10 * 3_600_000], 5,
                         minute + 60_000)
+        if not _contiguous([b for b in bars if b[0] >= start - 3_600_000], 300_000):
+            return None                     # a dropped 5m bucket (a lost minute) would join bars that are not adjacent
         # the session pools older than the 1m history (Asia ends 10h before the 10:00 NY window): closed 15m candles
         first = bars[0][0] if bars else minute
         bars = [list(c) for c in self.m15_of(symbol) if start - 16 * 3_600_000 <= c[0] and c[0] + 900_000 <= first] + bars
@@ -126,6 +139,8 @@ class LoopDetectors:
             return None
         self._po3_checked[symbol] = minute
         bars = resample([c for c in self.minutes_of(symbol) if c[0] >= w[2]], 5, minute + 60_000)
+        if not _contiguous([b for b in bars if b[0] >= w[0]], FIVE_MS):
+            return None                     # a dropped 5m bucket inside the London window: no FVG / MSS across it
         pd = md.d1[-1] if md.d1 else None
         found = po3(bars, now_ms, pdh=pd[2] if pd else None, pdl=pd[3] if pd else None)
         if found is None:
@@ -223,11 +238,32 @@ class LoopDetectors:
         from strategies.pump import MAJORS, dump_bounce
         if symbol.split('/')[0] in MAJORS:
             return None                           # measured on small caps (research_pumps: majors apart)
+        rank = self._volume_rank(symbol, now_ms)
+        if rank is not None and rank <= 30:
+            return None                           # audit: the research's class - outside the top 30 by 30d volume
         found = dump_bounce(h1, now_ms)
         if found is None or (symbol, found['anchor_ts']) in self._dump_fired:
             return None
         self._dump_fired.add((symbol, found['anchor_ts']))
         return found
+
+    def _volume_rank(self, symbol: str, now_ms: int) -> Optional[int]:
+        """The coin's rank by the average quote volume of its last 30 CLOSED daily candles (research_pumps' rank)."""
+        if self.daily_of is None:
+            return None
+        universe = self.daily_of() or {}
+        # recomputed each UTC day AND whenever more coins have their daily history (after a start the d1 load in the
+        # background: a rank over the first 20 coins made them the 'top 30' for the day)
+        day = (now_ms // 86_400_000, sum(1 for d1 in universe.values() if len(d1) >= 31))
+        if self._ranks_day != day:
+            avg = {}
+            for s, d1 in universe.items():
+                rows = [r for r in list(d1) if r[0] + 86_400_000 <= now_ms][-30:]
+                if len(rows) >= 30:
+                    avg[s] = sum(float(r[5]) for r in rows) / 30
+            self._ranks = {s: k for k, s in enumerate(sorted(avg, key=avg.get, reverse=True), 1)}
+            self._ranks_day = day
+        return self._ranks.get(symbol)
 
     def _connors_daily(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
         """Connors' RSI(2) on the coin's daily candles, once per closed day (fresh within the day's first 2 hours)."""

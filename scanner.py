@@ -196,7 +196,8 @@ class Scanner:
         from strategies.loopside import LoopDetectors
         # eng-59: the loop-side detectors live in strategies/loopside.py (the archive replay runs the same code)
         self.loopside = LoopDetectors(self._minute_candles,
-                                      lambda symbol: part_candles(self._frame_parts.get(symbol))[0])
+                                      lambda symbol: part_candles(self._frame_parts.get(symbol))[0],
+                                      lambda: {s: md.d1 for s, md in self.market_data.items()})
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -1093,6 +1094,7 @@ class Scanner:
             out['prem_z'] = (out['prem_1h'] - mean) / sd if sd > 0 and out['prem_1h'] is not None else None
         hours = self.fetcher.funding_interval_hours.get(symbol)
         out['funding_1h'] = 1.0 if hours == 1 else 0.0 if hours else None
+        out['funding_hours'] = float(hours) if hours else None     # audit C12: the settlement interval (funding_r)
         state = (self.fetcher.venue_derivs.get(symbol) or {}).get('binance')
         out['oi_vol'] = state.oi_usd / md.quote_volume_24h if state is not None and state.oi_usd and \
             md.quote_volume_24h else None

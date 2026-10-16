@@ -900,21 +900,22 @@ class SignalJournal:
         since = int((time.time() - 30 * 86400) * 1000)
         with self._lock:
             rows = self.conn.execute(
-                "SELECT strategy, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
+                "SELECT group_key, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
                 "outcome IN ('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL AND tp1 IS NOT NULL AND "
-                "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', 'tl_em_shadow', 'oi_shadow', 'cascade_shadow')",
+                "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', 'tl_em_shadow', 'oi_shadow', 'cascade_shadow', 'off_session')",
                 (since,)).fetchall()
         # eng-102: only entries WITH a TP1 (a target-less system - Bollinger / ORB / breakout rows with tp1 NULL - only
         # ever ends 'SL' here: Bollinger measured p 0% and every entry was vetoed 'expectancy -1.00R') and of the
         # current logic (keep_waiting_from on: the older versions had other targets / stops); the shadow ALTERNATIVE
         # entries (flow_entry / weak_mss: never traded, TP1 at 0.03-0.4 R) made sweep's p 97%
-        from signal_book import version_no
-        floor = version_no(CONFIG.journal.keep_waiting_from)
+        # audit 2026-10-16 C09: per SETUP (sweep and Silver Bullet, Turtle and BB1 share a strategy name but not their
+        # rules) and of the CURRENT logic version only (keep_waiting_from let older targets / stops in)
         counts: Dict[str, List[int]] = {}
-        for strategy, outcome, lv in rows:
-            if version_no(lv) < floor:
+        for group_key, outcome, lv in rows:
+            if lv != CONFIG.journal.logic_version:
                 continue
-            c = counts.setdefault(strategy, [0, 0])
+            key = group_key.split(' ', 1)[1] if group_key.split(' ', 1)[0] in ('ENTRY', 'SL', 'TP3', 'CLOSED') else group_key
+            c = counts.setdefault(key, [0, 0])
             c[0 if outcome == 'SL' else 1] += 1
         # eng-124: no fixed n >= 30 (a 60% rate after 20-50 trades is anywhere in 35-85% / 46-74%): every strategy with
         # decided entries gets its rate AND the upper end of its 95% Wilson interval; the veto uses the upper end
@@ -1005,7 +1006,7 @@ class SignalJournal:
                 # eng-102: simulate reads limit_entry / volume_24h - without them every resting-limit entry was
                 # replayed as a market fill (next minute's open + slippage) at the default liquidity's slippage
                 f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h, "
-                f"limit_entry, volume_24h FROM signals "
+                f"limit_entry, volume_24h, group_key FROM signals "
                 f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
                 (*[due[label] for label in HORIZONS], limit),
             )
@@ -1079,7 +1080,10 @@ class SignalJournal:
             updates['mae_4h'] = min(float(k[3]) for k in window) / price - 1
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
             # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
-            updates.update(simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h')))
+            # audit C01: Connors' RSI(2) has no stop order ('sl' only sizes R) - the 8h replay must not stop it either
+            no_stop = str(row.get('group_key') or '').startswith(('ENTRY RSI2 ', 'ENTRY RSI2X ', 'RSI2 ', 'RSI2X '))
+            updates.update(simulate({**row, 'no_stop': no_stop}, row['direction'], window, use_fill=True,
+                                    funding_8h=row.get('funding_8h')))
             if row.get('tp1') is None and updates.get('outcome') in ('SL', 'OPEN'):
                 # eng-84: a method without targets (Bollinger's band, Crabel's session close, the Turtles' channel) can
                 # only read 'SL' / 'OPEN' here - its winners never showed (BB / ORB: 0 TP of 60). Its result is the

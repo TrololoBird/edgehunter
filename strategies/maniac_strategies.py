@@ -71,6 +71,7 @@ class SupplyDemandStrategy(_System):
     name = 'supply_demand'
     setups = {'SD DEMAND': 1, 'SD SUPPLY': -1}
     min_rr = 3.0
+    min_rr_tp1 = 3.0                 # audit C07: his 3:1 is to the first opposing zone, not a blend of three targets
     ttl_key = 'sd_ttl'
     time_exit = 'fixed'
     uses_minutes = True
@@ -79,7 +80,7 @@ class SupplyDemandStrategy(_System):
     def arrival(h1, since_ms: int, d: int) -> int:
         bars = [b for b in h1 if b[0] >= since_ms]
         if len(bars) < 5:
-            return 1
+            return 0                 # audit C08: too few bars to see the way back = not observed, no point (was 1)
         k = 2 if d > 0 else 3
         vals = [b[k] for b in bars]
         for i in range(2, len(vals) - 2):
@@ -195,7 +196,7 @@ def _pivot_stop(bars, direction: int, entry: float, pad: float) -> Optional[floa
 
 
 class TrendlineStrategy(_System):
-    """Edwards & Magee trendline break on 1h lines: two closes beyond the line, a resting limit at the broken line
+    """Edwards & Magee trendline break on 1h lines: a close 3% of the line beyond it, a resting limit at the broken line
     (the retest), the stop beyond the last confirmed 1h pivot, targets the next 1h+ levels of the map."""
     name = 'trendline'
     setups = {'TL EM UP': 1, 'TL EM DOWN': -1}   # eng-127: the ATR-line bot (TRENDLINE UP / DOWN) is deleted
@@ -212,19 +213,25 @@ class TrendlineStrategy(_System):
         # eng-116: beyond the pivot by the coin's measured pierce of a 1h swing (pierce.py, p80 as the other structural
         # stops) - the 0.1 x ATR(1h) was ours
         from pierce import overshoot
-        pad = overshoot(x.symbol, 'swing_1h', sig['anchor_level']) or 0.0
-        stop = _pivot_stop(h1[-120:], d, sig['anchor_level'], pad)          # beyond the line (the retest entry)
+        # audit 2026-10-16 (Murphy ch. 4: the broken line keeps its slope and changes its role): the retest is of the
+        # SAME sloping line at the current bar, not of its price at the break (a horizontal level of another time)
+        line = sig['anchor_level']
+        if sig.get('line_slope') is not None and sig.get('line_ts1') is not None:
+            period = sig.get('line_period_ms') or 3_600_000
+            bar = (now_ms - 1) // period * period
+            line = sig['line_p1'] + sig['line_slope'] * ((bar - sig['line_ts1']) / period)
+        pad = overshoot(x.symbol, 'swing_1h', line) or 0.0
+        stop = _pivot_stop(h1[-120:], d, line, pad)          # beyond the line (the retest entry)
         if stop is None:
             return None
         # classic trendline break (Edwards & Magee): the targets are the next support / resistance levels (the map), not
         # the line's first anchor (his robot's target, kept in the setup note)
         exit = {'stop': ['price', stop], 'stop_src': '1h structure beyond the line + measured pierce', 'tp': ['map', 1.0],
                 'atr': x.atr, 'no_atr_steps': True}
-        plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
+        plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (a close 3% beyond the line)')
         if plan and not plan.get('skip'):
             # eng-58, practice (Edwards & Magee; break -> retest -> move): the entry is a resting limit at the broken
             # line, retested from the other side, not the second close's price; first touch only
-            line = sig['anchor_level']
             # eng-84 (breakout-retest write-ups: retest + a confirming candle, not a resting limit; the owner's review):
             # the retest area is the line to half an hour-ATR beyond it on the broken side; the entry is a 15m
             # structure shift with agreeing taker flow there

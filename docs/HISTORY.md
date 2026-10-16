@@ -726,3 +726,43 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   -30.5R of which -35.4R came from 11-13.10, before the executor fixes of eng-129; since 14.10 +4.9R on 10 trades);
   the zone tooltip is absolute again (`#chart > div {position: relative}` outranked `.zone-tip`, the shown tip took
   layout space and the chart jumped under the cursor).
+- eng-136 (2026-10-16, owner: "внедряй все. исправляй все." on the independent strategy audit of 2026-10-16, two
+  versions; the second: the project implements the ORIGINAL methods, a deviation is fixed, not renamed). Fixed:
+  C01 levels.simulate / the journal's 8h replay honour no_stop (Connors); C02 VWAP = sum(quote) / sum(quote / HLC3)
+  (was HLC3-weighted quote volume: price counted twice), the ORB day-VWAP shadow uses zones.vwap; C03 TPO = one mark
+  per visited row (was 1 / rows); C04 levels.resample drops a closed bucket with a missing / duplicate minute (never
+  filled in); C05 the trail / overlay of each managed minute see only candles up to it; C06 exit 'max_stop_pct'
+  (Cup: O'Neil's 8% is a limit - a wider stop rejects the entry) and 'own_stop' (dump bounce: the research's stop,
+  no ATR floor / pool clearing); C07 Strategy.min_rr is the BLENDED minimum, min_rr_tp1 the ratio to TP1 (Seiden 3,
+  Silver Bullet 2); C08 no observation = no pass (the spring test's volume / spread, BOS without a swing, SD arrival
+  with < 5 bars); C09 hit rates per SETUP of the current logic version; C10 exit fills capped at the trade's qty;
+  C12 funding_r by the contract's settlement interval (sig funding_hours). Replay = live: R01 the whole d1 to the maps
+  (Cup was unreachable with 60), R02 600 minutes (PO3's Asian range), R03 the W / M exit band on closed 4h; R04 the
+  eng-133 placebo script states it measures the 8h TP1 exit only, R07 its bootstrap blocks on the calendar 4h grid;
+  R05 research_pumps and the live dump bounce are causal (the bounce searched after the exhaustion close), the live
+  class = outside the top 30 by 30-day volume, TP2 the 1.618 extension; R06 Bollinger population sigma
+  (rolling_std ddof 0), Wilder's SAR limited by two bars, one SAR step for live and research. Methods: Wyckoff spring /
+  UTAD close INSIDE the range, test spread scaled sqrt(tf / 15m); Cup 49..455 calendar days (7..65 weeks), handle
+  >= 7 days, a U share (ours, 20% of the cup's lows in its bottom third), d1 >= 160; Turtle S1 filter by the rules'
+  2N-before-the-10-day-exit (prior N; an open breakout = unknown), stop 2N from the entry; Connors: traded RSI2 =
+  his entry (RSI(2) beyond 5 / 95 with the SMA200), the eng-84 cross-back is the RSI2X shadow; trendline: one close
+  3% of the LINE beyond it (E&M; Murphy: % and time filters are alternatives), retest of the same sloping line;
+  Silver Bullet / PO3 enter only in their formation window (plan session); PO3 needs the whole Asian range (48 bars);
+  BB1's Squeeze within 5 bars (the 2021 manual); find_impulse never falls back to the 15m ATR with htf history given;
+  Seiden's opposing zone fresh = not returned to. Not done (needs the primary texts or the owner): the full Turtle /
+  Crabel / Connors / Wyckoff / Seiden / ICT (OTE, Silver Bullet, PO3) / Pring rule sets, the Turtle unit risk (eng-91,
+  the owner's), the funding rate history per settlement, OI in the archive, order ids binding the demo's fills.
+  Review fixes (same release): the journal's 8h replay reads group_key ('ENTRY RSI2 ...') for no_stop; the Turtle S1
+  filter calls only a PROFITABLE 10-day exit a winner; Silver Bullet / PO3 cards end at their window's close
+  (session_end_ms) and 'off_session' entries stay out of the hit rates; the Cup's 8% is measured from the actual entry
+  (a farther stop moves to the limit, no ATR floor); the dump bounce's volume rank is recomputed while the d1 histories
+  load; a spring test shorter than one 15m bar is judged on its 5m bars; the SAR trail keeps a 4h bar missing <= 10% of
+  its minutes and applies the two-bar limit only to adjacent bars; Silver Bullet / PO3 skip a check across a dropped
+  5m bucket; the eng-133 placebo script keeps its protocol's non-empty-bucket blocks (a calendar grid needs a protocol
+  amendment) and states its 8h TP1 scope. VOID for the new rules (docs/PLAN_server_eng76.md section 2):
+  research/bb1_windows.md (125-bar squeeze window, ddof 1, one-bar SAR), the dip-buy / dump-bounce tables of
+  research_pumps.py (non-causal), every replay before eng-136. Behaviour changes to note: broke_structure without a
+  swing in reach is False (a leg out of price discovery no longer passes the displacement gate); stats' verdicts per
+  strategy since verdict_since (eng-55) now mix the old and new rules of connors / breakout / trendline / cup_handle /
+  bollinger - the owner decides whether to raise verdict_since.
+  logic_version eng-136, keep_waiting_from eng-136.

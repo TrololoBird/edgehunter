@@ -47,7 +47,8 @@ def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets:
     for c in candles:
         a = min(buckets - 1, int((c[3] - lo) / size))
         b = min(buckets - 1, int((c[2] - lo) / size))
-        part = (1.0 if tpo else (c[5] or 0.0)) / (b - a + 1)
+        # TPO: one mark in every price row the period visited (audit 2026-10-16 C03: not 1 / rows); volume: spread evenly
+        part = 1.0 if tpo else (c[5] or 0.0) / (b - a + 1)
         for k in range(a, b + 1):
             vol[k] += part
     total = sum(vol)
@@ -395,8 +396,8 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     if prev is None or math.isnan(prev):
         return None
     if first == 'orig':
-        # eng-106, Connors' own entry (shadow 'RSI2X'): the FIRST close with RSI(2) beyond the extreme, above (below)
-        # the SMA200 - no waiting for the cross back out (our eng-84 rule)
+        # eng-106, Connors' own entry (traded 'RSI2' since the audit of 2026-10-16): the FIRST close with RSI(2) beyond
+        # the extreme, above (below) the SMA200 - no waiting for the cross back out (our eng-84 rule, shadow 'RSI2X')
         if c > sma200 and r < cfg.connors_rsi_low <= prev:
             side = 1
         elif c < sma200 and r > cfg.connors_rsi_high >= prev:
@@ -412,7 +413,9 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     extreme = min(x[3] for x in h1[-3:]) if side > 0 else max(x[2] for x in h1[-3:])
     trs = [max(x[2], p[4]) - min(x[3], p[4]) for p, x in zip(h1[-21:-1], h1[-20:])]
     atr = sum(trs) / len(trs) if trs else None
-    tag = 'RSI2X' if first == 'orig' else 'RSI2'
+    # audit 2026-10-16: the TRADED 'RSI2' is Connors' own entry (Short Term Trading Strategies That Work: a close with
+    # RSI(2) below 5 above the SMA200, out on a close above the SMA5); our eng-84 cross-back is the shadow 'RSI2X'
+    tag = 'RSI2' if first == 'orig' else 'RSI2X'
     return {'setup': f'{tag} LONG' if side > 0 else f'{tag} SHORT', 'direction': side, 'connors_atr': atr,
             'setup_note': f"daily RSI(2) {r:.0f} {'below ' + format(cfg.connors_rsi_low, 'g') + ' above' if side > 0 else 'above ' + format(cfg.connors_rsi_high, 'g') + ' below'} the SMA200 "
                           f"{sma200:.6g} (Connors); exit at the SMA5 {sma5:.6g}",

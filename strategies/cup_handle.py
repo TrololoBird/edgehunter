@@ -3,19 +3,25 @@ Cup with handle (William O'Neil, "How to Make Money in Stocks"; statistics: Thom
 Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
 
 - a prior advance of >= 30% into the left rim (the lowest low of the 2x cup-length before it to the rim);
-- the cup: 12-33% deep (O'Neil; eng-58, was up to 50%), 35..325 daily candles (his 7 .. 65 weeks);
-- the handle after the right rim: 5 days (O'Neil: at least one to two weeks) .. cup/4 candles, drifting in the cup's UPPER half and no deeper than 12% of the
+- the cup: 12-33% deep (O'Neil; eng-58, was up to 50%), 49..455 daily candles (his 7 .. 65 weeks: crypto trades 7
+  days a week - audit 2026-10-16: 35 candles were 5 calendar weeks); rounded, not a V - OUR approximation of his U
+  (he gives no number): >= cup_u_share of the cup's candles have their low in the cup's bottom third;
+- the handle after the right rim: 7 days (O'Neil: at least one to two weeks) .. 56 candles, drifting in the cup's UPPER half and no deeper than 12% of the
   rim, on lower volume than the cup's;
 - the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
 - stop below the handle's low; TP1 the pivot + 61% of the depth, TP2 + the full depth (Bulkowski's measure rule); O'Neil's own rule
   (cut losses at 7-8%, take 20-25%) is an exit rule, not an entry filter: the stop is the nearer of the handle's low
-  and 8% below the entry, the minimum R:R to the measured target is 1.
+  and 8% below the entry, the minimum R:R to the measured target is 1. The 8% is a hard limit from the actual entry
+  (audit C06): the common ATR floor does not widen it.
 """
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
 from strategies.base import PlanInput, Strategy
 from strategies.maniac_strategies import _System, _confirm_plan  # noqa: F401  (_System: the gate key)
+
+
+CUP_U_SHARE = 0.20                 # audit 2026-10-16: our U-vs-V rule (no source number), journaled with the setup
 
 
 def _pivots_high(h: List[float], k: int = 3) -> List[int]:
@@ -40,7 +46,7 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
         handle = list(range(r + 1, last))
         for left in reversed([p for p in pivots if p < r]):
             cup_len = r - left
-            if not 35 <= cup_len <= 325:
+            if not 49 <= cup_len <= 455:
                 continue
             rim = min(h[left], h[r])
             bottom = min(l[left:r + 1])
@@ -49,6 +55,9 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
                 continue
             # eng-118: the rims within 5% and the U-vs-V quarter count were ours (O'Neil gives no numbers): removed - the
             # shape is held by his depth 12-33%, the 30% prior advance and the handle in the upper half <= 12% deep
+            third = bottom + (rim - bottom) / 3
+            if sum(1 for i in range(left, r + 1) if l[i] <= third) < CUP_U_SHARE * (cup_len + 1):
+                continue                             # a V, not a rounded cup (our approximation, see the docstring)
             if left < 2 * cup_len:
                 # eng-132: the prior advance is measured over 2x the cup's length before the left rim; a shorter history
                 # measured it on a cut window (a rise looked smaller or bigger than it was): skipped, and said so
@@ -58,7 +67,7 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
             before = l[left - 2 * cup_len:left]
             if not before or h[left] / min(before) - 1 < 0.30:
                 continue                             # no prior advance
-            if not 5 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks (longer = stalling)
+            if not 7 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks (longer = stalling)
                 break
             h_lo = min(l[i] for i in handle)
             pivot = max(h[i] for i in [r] + handle)
@@ -106,7 +115,7 @@ class CupHandleStrategy(_System):
         exit = {'stop': ['price', stop], 'stop_src': src,
                 'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': f"{CONFIG.strategies.cup_target_share:.0%} of the cup depth (Bulkowski's measure rule)",
                 'tp2': ['level', sig.get('ch_target_full') or sig['ch_target'], 0.0, None],
-                'atr': x.atr, 'own_targets': True}
+                'atr': x.atr, 'own_targets': True, 'max_stop_pct': 0.08}
         return _confirm_plan(x, self.name, sig.get('ch_tf', '1d'), exit, 'close above the handle pivot on volume')
 
 
