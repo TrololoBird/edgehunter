@@ -32,8 +32,10 @@ def window_of(ts_ms: int) -> Optional[int]:
 
 
 def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = None,
-                  pdl: Optional[float] = None) -> Optional[Dict]:
-    """bars5: final 5m bars [open_time, o, h, l, c, ...] covering at least the hour before the window."""
+                  pdl: Optional[float] = None, skip: Sequence[int] = ()) -> Optional[Dict]:
+    """bars5: final 5m bars [open_time, o, h, l, c, ...] covering at least the hour before the window.
+    skip: directions already fired this window - searched past (audit A02: the first LONG kept coming back and hid a
+    later SHORT of the same window)."""
     start = window_of(now_ms)
     if start is None:
         return None
@@ -61,6 +63,8 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
     above = sorted(p for p in pools_hi if p[0] > open_px)
     below = sorted((p for p in pools_lo if p[0] < open_px), reverse=True)
     for d in (1, -1):
+        if d in skip:
+            continue
         pool = (below[0] if below else None) if d > 0 else (above[0] if above else None)
         if pool is None:
             continue

@@ -105,7 +105,8 @@ class LoopDetectors:
         bars = [list(c) for c in self.m15_of(symbol) if start - 16 * 3_600_000 <= c[0] and c[0] + 900_000 <= first] + bars
         # ICT's draw: the previous day's high / low (the last closed daily candle)
         pd = md.d1[-1] if md.d1 else None
-        found = silver_bullet(bars, now_ms, pdh=pd[2] if pd else None, pdl=pd[3] if pd else None)
+        found = silver_bullet(bars, now_ms, pdh=pd[2] if pd else None, pdl=pd[3] if pd else None,
+                              skip=[d for d in (1, -1) if (symbol, d, start) in self._sb_fired])
         if found is None:
             return None
         key = (symbol, found['direction'], start)
@@ -127,7 +128,8 @@ class LoopDetectors:
         self._po3_checked[symbol] = minute
         bars = resample([c for c in self.minutes_of(symbol) if c[0] >= w[2]], 5, minute + 60_000)
         pd = md.d1[-1] if md.d1 else None
-        found = po3(bars, now_ms, pdh=pd[2] if pd else None, pdl=pd[3] if pd else None)
+        found = po3(bars, now_ms, pdh=pd[2] if pd else None, pdl=pd[3] if pd else None,
+                    skip=[d for d in (1, -1) if (symbol, d, w[0]) in self._po3_fired])
         if found is None:
             return None
         key = (symbol, found['direction'], w[0])

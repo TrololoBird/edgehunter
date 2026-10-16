@@ -121,7 +121,7 @@ class SupplyDemandStrategy(_System):
                                'tp2': ['level', targets[1], 0.0, None], 'own_targets': True, 'atr': atr,
                                'stop_src': 'beyond the distal line', 'tp_src': 'the opposing 4h supply / demand zone (Seiden)'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
-                         sd_score=score, key=(sig['anchor_ts'], near))
+                         sd_score=score, min_rr_on_tp1=True, key=(sig['anchor_ts'], near))
         return plan
 
 

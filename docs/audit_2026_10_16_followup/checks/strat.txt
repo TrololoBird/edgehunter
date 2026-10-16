@@ -1,0 +1,14 @@
+== base
+A02 calls -> ['L', None, None] (a SHORT appears from the 2nd call)
+A18 no exhaustion -> ('DUMP BOUNCE SHORT', 49.0); with exhaustion -> ('DUMP BOUNCE SHORT', 55.0)
+S04 test avg range 2.0, spring 4h range 8, ratio 0.6: passes=True (limit 0.6 x 8 / 4 = 1.2)
+S05 TP1 rr 0.148, blend 5.66: low_rr=False (None)
+S06 entry 100, stop 94.37, TP1 104: rr_tp1 0.671 low_rr=False (None)
+S11 fillers passed to the plan: (110.0,)
+== fix
+A02 calls -> ['L', 'S', None] (a SHORT appears from the 2nd call)
+A18 no exhaustion -> None; with exhaustion -> ('DUMP BOUNCE SHORT', 55.0)
+S04 test avg range 2.0, spring 4h range 8, ratio 0.6: passes=False (limit 0.6 x 8 / 4 = 1.2)
+S05 TP1 rr 0.148, blend 5.66: low_rr=True (R:R to TP1 0.15 < 3 (to the first opposing zone))
+S06 entry 100, stop 94.37, TP1 104: rr_tp1 0.671 low_rr=True (R:R to TP1 0.67 < 1)
+S11 fillers passed to the plan: (110.0, 140.0)

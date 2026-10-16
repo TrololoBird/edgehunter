@@ -36,8 +36,10 @@ def london_window(ts_ms: int) -> Optional[tuple]:
 
 
 def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = None,
-        pdl: Optional[float] = None) -> Optional[Dict]:
-    """bars5: final 5m bars [open_time, o, h, l, c, ...] from the Asian range's start on."""
+        pdl: Optional[float] = None, skip: Sequence[int] = ()) -> Optional[Dict]:
+    """bars5: final 5m bars [open_time, o, h, l, c, ...] from the Asian range's start on.
+    skip: directions already fired this window - searched past (audit A02: the first LONG kept coming back and hid a
+    later SHORT of the same window)."""
     w = london_window(now_ms)
     if w is None:
         return None
@@ -48,6 +50,8 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
         return None
     a_hi, a_lo = max(b[2] for b in asia), min(b[3] for b in asia)
     for d in (1, -1):
+        if d in skip:
+            continue
         raid = next((k for k, b in enumerate(inside) if (b[3] < a_lo if d > 0 else b[2] > a_hi)), None)
         if raid is None:
             continue

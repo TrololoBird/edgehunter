@@ -99,10 +99,12 @@ def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
     period 2021-2026: +0.14R on 156 trades Apr-Sep 2026, 900 perpetuals). On CLOSED 1h candles [ts, o, h, l, c, vol]:
     - DUMP at hour t: close >= dump_min_move below the highest high of the last 6 hours, and the hours since that high
       traded >= dump_vol_x x the average hour of the week before; one dump per 48h.
-    - its low: the lowest low until the first close above the previous hour's high (exhaustion), within 24h.
-    - the bounce: price retraces to 38.2% of the dump (from the low toward the 6h high) within 24h, not beyond 61.8%,
+    - its low: the lowest low until the first close above the previous hour's high (exhaustion), within 24h; no
+      exhaustion, no signal (audit A18).
+    - the bounce, from the exhaustion hour on: price retraces to 38.2% of the dump (from the low toward the 6h high) within 24h, not beyond 61.8%,
       then a 1h close below the previous hour's low -> short at market now (the research entered at the next open).
-    - stop above the bounce's high + 0.25 ATR(1h); TP1 the dump's low; TP2 the 1.618 extension of the dump.
+    - stop above the bounce's high + 0.25 ATR(1h); TP1 the dump's low. dump_ext (the 1.618 extension) is journaled
+      in the signal only: the plan has no TP2 of its own (audit A18; the owner decides whether it becomes one).
     Fires only when the trigger is the candle that just closed.
     """
     cfg = CONFIG.strategies
@@ -131,17 +133,21 @@ def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
             continue                                  # too old to be still bouncing
         trs = [max(h[k], cl[k - 1]) - min(lo[k], cl[k - 1]) for k in range(t - 13, t + 1)]
         atr = sum(trs) / len(trs)
-        peak = lo[t]
+        # audit A18: the low is fixed by the exhaustion close (the first close above the previous hour's high) and
+        # the bounce is read only after it - without one the dump is not over (a later low, even the trigger
+        # candle's own, re-labelled the earlier hours as a bounce)
+        peak, ex = lo[t], None
         for k in range(t + 1, min(n, t + 25)):
             peak = min(peak, lo[k])
             if cl[k] > h[k - 1]:
+                ex = k
                 break
         size = base - peak
-        if size <= 0:
+        if ex is None or size <= 0:
             continue
         lo_r, hi_r = peak + 0.382 * size, peak + 0.618 * size
         touched, pull = False, None
-        for k in range(t + 1, min(n, t + 25)):
+        for k in range(ex, min(n, t + 25)):
             if not touched:
                 if h[k] >= lo_r:
                     touched, pull = True, h[k]
@@ -166,7 +172,7 @@ def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
 
 class DumpBounceStrategy(Strategy):
     """The short of the first bounce after a dump (eng-55): at market on the trigger close, stop above the bounce,
-    TP1 the dump's low, TP2 its 1.618 extension (research_pumps.py)."""
+    TP1 the dump's low (research_pumps.py); the 1.618 extension (sig dump_ext) is not a target of the plan."""
     name = 'pump'
     anchor_type = 'level'
     setups = {'DUMP BOUNCE SHORT': -1}

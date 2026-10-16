@@ -256,6 +256,10 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     if reason is None and real[0] and _min_rr(plan) > 0 and rrs[0] is not None and \
             CONFIG.levels.min_rr_tp1_floor > 0 and rrs[0] < CONFIG.levels.min_rr_tp1_floor:
         reason = f"R:R to TP1 {rrs[0]:.2f} < {CONFIG.levels.min_rr_tp1_floor:g}"
+    if reason is None and plan.get('min_rr_on_tp1') and (rrs[0] is None or rrs[0] < _min_rr(plan)):
+        # audit S05, Seiden: the profit zone up to the FIRST opposing zone must pay min_rr itself (the blend let a
+        # TP1 of 0.26R through behind a far TP2)
+        reason = f"R:R to TP1 {rrs[0] if rrs[0] is not None else 0:.2f} < {_min_rr(plan):g} (to the first opposing zone)"
     # the averaging add (pump: one more unit at half the way to the stop) makes the position's risk 1.5 units
     risk_units = 1.5 if plan.get('add_half') else 1.0
     if plan.get('connors_exit') or (plan.get('exit') or {}).get('connors_exit'):
@@ -587,7 +591,9 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
             # must pay the TP1 floor net of costs after the stop's padding
             rr1 = (direction * (tp1 - entry) - fee) / (risk + fee)
             out.update(tp1=tp1, tp1_src=exit.get('tp1_src', 'TP1'), rr_tp1=rr1)
-            floor_rr = CONFIG.levels.min_rr_tp1_floor
+            # audit S06: after the stop's padding / ATR floor the method's own min_rr too (it was checked on the
+            # signal's unpadded stop only: R:R 0.36 passed)
+            floor_rr = max(CONFIG.levels.min_rr_tp1_floor, _min_rr(plan))
             if not reason and floor_rr > 0 and rr1 < floor_rr:
                 out.update(low_rr=True, rr_reason=f"R:R to TP1 {rr1:.2f} < {floor_rr:g}")
         return out

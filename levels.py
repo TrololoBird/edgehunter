@@ -288,11 +288,12 @@ def pullback_volume_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
 
 
 def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int, until_ms: int,
-                       spring_range_1h: Optional[float]) -> bool:
+                       spring_range_1h: Optional[float], spring_tf_min: float = 60) -> bool:
     """
     eng-55: Wyckoff's test also NARROWS the spread (StockCharts Wyckoff tutorial; tradingwyckoff: test ranges 40-70%
-    smaller than the spring's). The pullback's 15m candles average a range <= spring_test_spread_ratio x the 1h spring
-    candle's range scaled to 15m (/ 2: ranges grow ~ sqrt(time)).
+    smaller than the spring's). The pullback's 15m candles average a range <= spring_test_spread_ratio x the spring
+    candle's range scaled to 15m (/ sqrt(spring_tf_min / 15): ranges grow ~ sqrt(time); audit S04: a 4h spring was
+    scaled as a 1h one, / 2 instead of / 4).
     """
     if not spring_range_1h:
         return True
@@ -300,7 +301,7 @@ def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     if not bars:
         return True
     avg = sum(b[2] - b[3] for b in bars) / len(bars)
-    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range_1h / 2
+    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range_1h / math.sqrt(max(spring_tf_min, 15) / 15)
 
 
 # eng-124: bps of an executor.max_notional_usd market order walked through each coin's REST book (worst side, from the

@@ -194,7 +194,7 @@ def _event(setup: str, d: int, lo: float, hi: float, extreme: float, h1, rng: Di
             # the spring candle's average FUTURES minute and range: Wyckoff's test trades on less volume and a narrower
             # spread (levels.pullback_volume_ok / pullback_spread_ok)
             'fut_candle_minute_usd': float(last[5]) / (period_ms / 60_000) if len(last) > 5 else None,
-            'spring_range': float(last[2] - last[3])}
+            'spring_range': float(last[2] - last[3]), 'spring_tf_min': period_ms // 60_000}
 
 
 class WyckoffRangeStrategy(Strategy):
@@ -232,6 +232,6 @@ class WyckoffRangeStrategy(Strategy):
         anchor = {'type': 'range', 'tf': tf, 'lo': lo, 'hi': hi, 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, tf, entry='pullback', zone_lo=zone[0], zone_hi=zone[1],
                          zone_src=f"Wyckoff test of the {'spring' if d > 0 else 'upthrust'}", invalid=extreme,
-                         fix_invalid=True, missable=True, stop_ref=extreme, intent='range', fillers=(far,),
-                         fill_label='range far side', targets=targets, target_src=sources, zones=zones,
+                         fix_invalid=True, missable=True, stop_ref=extreme, intent='range', fillers=fillers,
+                         fill_label='range far side / P&F count', targets=targets, target_src=sources, zones=zones,
                          key=(sig['anchor_ts'], edge))

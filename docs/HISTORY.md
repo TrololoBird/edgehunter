@@ -709,6 +709,17 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   minute (getmtime per card showed in watchdog stalls); `tools/coinglass_heatmap.py` - research downloader of
   CoinGlass's keyless order-book heatmap (undocumented endpoint, never a live input). CoinGecko: `/global` and sectors
   were already used; keyless offers nothing else needed.
+- eng-136 (2026-10-16, branch fix/audit-2026-10-16, NOT deployed: needs the owner's yes) - fixes of the audit
+  docs/audit_2026_10_16 (follow-up: docs/audit_2026_10_16_followup/FOLLOWUP.md, before / after in checks/):
+  A06 a demo close is final only when the exit ORDERS' filled amounts (fetch_order) cover the position, never a partial
+  result after 6h; S01/A16 candles carry base volume at index 7, VWAP = sum(quote)/sum(base), MFI / OBV on base;
+  A04 resample returns complete buckets only; A03 SAR two-bar clamp; A12 SAR as of the managed minute; A08 Turtle
+  channel / Bollinger band exits on every 1m candle; A10 the recorded exit fill for every open unit; A13 one card per
+  coin / direction within a scan; A15 demo API newest 5000 rows, excluded reasons as stats; S10 no TP on no_tp plans;
+  A02 Silver Bullet / PO3 search past a direction already fired; A18 dump bounce only after an exhaustion close (the
+  eng-55 research measured the old rule: its +0.14R does not cover the new one); S04 spring test spread scaled by the
+  spring's timeframe; S05 Seiden's 3:1 on TP1; S06 Bollinger's min_rr after the stop's padding; S11 the P&F count is a
+  filler. keep_waiting_from eng-136 (detection / plans changed).
 - eng-135 (2026-10-16, owner: "decide yourself, implement, update the UI"): exchange announcements in `event_risk.py`,
   keyless, every 2 minutes. Binance CMS catalogue 161 "Binance Will Delist A, B on <date>" (spot delisting; Alpha /
   Margin removals ignored) and Upbit "거래지원 종료" (delisting) / "유의 종목 지정" (warning list) now feed
