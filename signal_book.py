@@ -177,6 +177,13 @@ def _exit_flags(s: 'TrackedSignal') -> Dict:
     return plan
 
 
+def _candles_until(candles_of, until_ms: int):
+    """candles_of cut at the candle opened at until_ms (audit C05: a managed minute sees no later candle)."""
+    def seen(symbol: str):
+        return [x for x in candles_of(symbol) if x[0] <= until_ms]
+    return seen
+
+
 @dataclass
 class TrackedSignal:
     symbol: str
@@ -1370,8 +1377,7 @@ class SignalBook:
                 return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
             # audit 2026-10-16 C05: the trail / overlay of this minute see only the candles up to it (a catch-up pass
             # over several minutes must not move the stop on candles that did not exist yet)
-            upto = int(c[0])
-            seen = (lambda sym, _u=upto: [x for x in candles_of(sym) if x[0] <= _u]) if candles_of else None
+            seen = _candles_until(candles_of, int(c[0])) if candles_of else None
             self._trail(s, seen, hi, lo)
             self._profile_manage(s, hi, lo)
             why = self._overlay_exit(s, c, seen)

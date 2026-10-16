@@ -383,10 +383,12 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
     sl = levels['sl']
     entry = levels['entry']
     # audit 2026-10-16 C01: a plan without a stop order (Connors: 'sl' only sizes R) is never stopped here either
-    if levels.get('no_stop'):
-        sl_hit = lambda stop, high, low: False          # noqa: E731
-    else:
-        sl_hit = lambda stop, high, low: (low <= stop) if direction > 0 else (high >= stop)   # noqa: E731
+    no_stop = bool(levels.get('no_stop'))
+
+    def sl_hit(stop: float, high: float, low: float) -> bool:
+        if no_stop:
+            return False
+        return (low <= stop) if direction > 0 else (high >= stop)
     # a system without a profit target journals NULL targets (eng-51): unreachable here, the trade is marked to the end
     targets = [t if t is not None else entry + direction * 1e12 for t in (levels['tp1'], levels['tp2'], levels['tp3'])]
     result = {'filled': 1, 'outcome': 'OPEN', 'r_tp1': None, 'r_tp2': None, 'r_be': None, 'entry_fill': None}
