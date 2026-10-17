@@ -98,6 +98,12 @@ def _rr_text(lv: Dict) -> str:
     return f"{lv['rr_tp1']:.1f}" + (f" (blended {blend:.1f})" if blend is not None else '')
 
 
+def _row8(c) -> List[float]:
+    """A candle as exactly 8 floats [t, o, h, l, c, quote, taker buy quote, base], None / missing fields NaN."""
+    row = [float('nan') if v is None else float(v) for v in list(c)[:8]]
+    return row + [float('nan')] * (8 - len(row))
+
+
 class Scanner:
     """
     Orchestration:
@@ -976,8 +982,10 @@ class Scanner:
             if md is None:
                 continue
             candles, _ = part_candles(self._frame_parts.get(symbol))
-            merged = {int(c[0]): [float(v) for v in c] for c in md.m15_long}
-            merged.update({int(c[0]): list(c) for c in candles})
+            # 8 fields each (the base volume NaN when absent): the long REST rows and the frame's candles differ in
+            # width across versions, and one ragged row failed every quick map ('inhomogeneous shape')
+            merged = {int(c[0]): _row8(c) for c in md.m15_long}
+            merged.update({int(c[0]): _row8(c) for c in candles})
             if merged:
                 out[name] = np.asarray([merged[t] for t in sorted(merged)], dtype=np.float64)
         return out
