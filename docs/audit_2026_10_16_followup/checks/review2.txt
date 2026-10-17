@@ -1,32 +1,151 @@
-== prev
-true result of the fixture: exit 95 for 1.0, exit fee 0.0475, entry fee 0.025*100*1 -> pnl -5.0475 + ...
+=== before: 6b771ba (check mode, exit 1) ===
+the true result of the fixture: exit 95 for 1.0, fees 0.0975, pnl -5.0975
 A06 order filled 1.0 @95 in full, only a 0.3 fill @110 listed      exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
-A06 the same, order still working (status open)                    exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
-A06 the same, order without a reported fee                         exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
-A06 the same, order without an average price                       exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 order filled 1.0 @95 in full, only a 0.3 fill @110 listed: got (110.0, 0.0665, 9.9335, None), want (95.0, 0.0975, -5.0975, None)
+A06 the same, status EXPIRED (BingX raw), filled in full           exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 the same, status EXPIRED (BingX raw), filled in full: got (110.0, 0.0665, 9.9335, None), want (95.0, 0.0975, -5.0975, None)
+A06 EXPIRED with a partial fill 0.6 of 1.0                         exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 EXPIRED with a partial fill 0.6 of 1.0
+A06 canceled with a partial fill 0.6 of 1.0                        exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 canceled with a partial fill 0.6 of 1.0
+A06 order still working (status open)                              exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 order still working (status open): got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 order without a reported fee                                   exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 order without a reported fee: got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 fee cost NaN                                                   exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 fee cost NaN: got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 average = None                                                 exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 average = None: got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 average = 0                                                    exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 average = 0: got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 average = 0.0                                                  exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 average = 0.0: got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 average = -95.0                                                exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 average = -95.0: got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 average = nan                                                  exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 average = nan: got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 average = inf                                                  exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 average = inf: got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 average = 'abc'                                                exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 average = 'abc': got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 average = ''                                                   exit, fees, pnl, error = (110.0, 0.0665, 9.9335, None)
+  FAIL A06 average = '': got (110.0, 0.0665, 9.9335, None), want (None, None, None, 'exit fill pending')
+A06 filled = None                                                  exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = None
+A06 filled = 0                                                     exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = 0
+A06 filled = -1.0                                                  exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = -1.0
+A06 filled = nan                                                   exit, fees, pnl, error = (None, 0.0665, None, None)
+  FAIL A06 filled = nan: got (None, 0.0665, None, None), want (None, None, None, 'exit fill pending')
+A06 filled = inf                                                   exit, fees, pnl, error = (None, 0.0665, None, None)
+  FAIL A06 filled = inf: got (None, 0.0665, None, None), want (None, None, None, 'exit fill pending')
+A06 filled = 'abc'                                                 RAISED ValueError("could not convert string to float: 'abc'")
+  FAIL A06 filled = 'abc': no exception: got 'ValueError("could not convert string to float: \'abc\'")', want 'no exception'
+A06 two orders: TP1 0.5 @110 + stop 0.5 @90 (each listed in part)  exit, fees, pnl, error = (110.0, 0.083, 9.917, None)
+  FAIL A06 two orders: TP1 0.5 @110 + stop 0.5 @90 (each listed in part): got (110.0, 0.083, 9.917, None), want (100.0, 0.1, -0.1, None)
+A06 two orders cover 1.5 of 1.0 (another trade's order got in)     exit, fees, pnl, error = (110.0, 0.083, 9.917, None)
+  FAIL A06 two orders cover 1.5 of 1.0 (another trade's order got in): got (110.0, 0.083, 9.917, None), want (None, None, None, 'exit fill pending')
 SAR      live ('ENTRY', None, 99.0, None)  batch ('ENTRY', None, 99.0, None)  -> SAME
+  ok   SAR: live == batch
+  ok   SAR: expected outcome
 EMA      live ('SL', 105.61, 105.7625, 62)  batch ('SL', 105.02, 126.8282, 3)  -> DIFFERENT
+  FAIL EMA: live == batch: got ('SL', 105.02, 126.8282, 3), want ('SL', 105.61, 105.7625, 62)
+  FAIL EMA: expected outcome: got ('SL', 105.61, 105.7625, 62), want <function <lambda> at 0x7f5eae7277f0>
 channel  live ('ENTRY', None, 50.0, None)  batch ('CLOSED', 99.0, 50.0, 2)  -> DIFFERENT
+  FAIL channel: live == batch: got ('CLOSED', 99.0, 50.0, 2), want ('ENTRY', None, 50.0, None)
+  ok   channel: expected outcome
+  ok   band fixture: bucket 0 band 103 > high 102.92 > bucket 1 band
 band     live ('CLOSED', 102.8968, 90.0, 181)  batch ('CLOSED', 102.8974, 90.0, 2)  -> DIFFERENT
+  FAIL band: live == batch: got ('CLOSED', 102.8974, 90.0, 2), want ('CLOSED', 102.8968, 90.0, 181)
+  FAIL band: expected outcome: got ('CLOSED', 102.8968, 90.0, 181), want ('CLOSED', 102.8968, 90.0, 241)
+  ok   A04 5m bucket of minutes 10-14 lost minute 12 (inner): kept
 A04 5m bucket of minutes 10-14 lost minute 12 (inner) -> 5m bars 12, bucket at minute 10 kept: True 
+  FAIL A04 5m bucket 2 lost its first minute 10: kept: got True, want False
 A04 5m bucket 2 lost its first minute 10     -> 5m bars 12, bucket at minute 10 kept: True 
+  FAIL A04 5m bucket of minutes 10-14 lost its last minute 14: kept: got True, want False
 A04 5m bucket of minutes 10-14 lost its last minute 14 -> 5m bars 12, bucket at minute 10 kept: True 
+  FAIL A04 5m bucket 2 lost minutes 11, 12: kept: got True, want False
 A04 5m bucket 2 lost minutes 11, 12          -> 5m bars 12, bucket at minute 10 kept: True 
 FVG all bars           -> None
 FVG bar 11 dropped     -> {'gap_lo': 101.0, 'gap_hi': 103.0, 'ce': 102.0, 'mss': 101.5, 'extreme': 99.0, 'time': 3900000} (a gap 101..103 that bar 11 traded through)
-== fix
-true result of the fixture: exit 95 for 1.0, exit fee 0.0475, entry fee 0.025*100*1 -> pnl -5.0475 + ...
+  ok   FVG all bars: none
+  FAIL FVG bar 11 dropped: none: got {'gap_lo': 101.0, 'gap_hi': 103.0, 'ce': 102.0, 'mss': 101.5, 'extreme': 99.0, 'time': 3900000}, want None
+
+FAILED: A06 order filled 1.0 @95 in full, only a 0.3 fill @110 listed, A06 the same, status EXPIRED (BingX raw), filled in full, A06 order still working (status open), A06 order without a reported fee, A06 fee cost NaN, A06 average = None, A06 average = 0, A06 average = 0.0, A06 average = -95.0, A06 average = nan, A06 average = inf, A06 average = 'abc', A06 average = '', A06 filled = nan, A06 filled = inf, A06 filled = 'abc': no exception, A06 two orders: TP1 0.5 @110 + stop 0.5 @90 (each listed in part), A06 two orders cover 1.5 of 1.0 (another trade's order got in), EMA: live == batch, EMA: expected outcome, channel: live == batch, band: live == batch, band: expected outcome, A04 5m bucket 2 lost its first minute 10: kept, A04 5m bucket of minutes 10-14 lost its last minute 14: kept, A04 5m bucket 2 lost minutes 11, 12: kept, FVG bar 11 dropped: none
+
+=== after: fix branch (check mode, exit 0) ===
+the true result of the fixture: exit 95 for 1.0, fees 0.0975, pnl -5.0975
 A06 order filled 1.0 @95 in full, only a 0.3 fill @110 listed      exit, fees, pnl, error = (95.0, 0.0975, -5.0975, None)
-A06 the same, order still working (status open)                    exit, fees, pnl, error = (None, None, None, 'exit fill pending')
-A06 the same, order without a reported fee                         exit, fees, pnl, error = (None, None, None, 'exit fill pending')
-A06 the same, order without an average price                       exit, fees, pnl, error = (0.0, 0.0975, -100.0975, None)
+  ok   A06 order filled 1.0 @95 in full, only a 0.3 fill @110 listed
+A06 the same, status EXPIRED (BingX raw), filled in full           exit, fees, pnl, error = (95.0, 0.0975, -5.0975, None)
+  ok   A06 the same, status EXPIRED (BingX raw), filled in full
+A06 EXPIRED with a partial fill 0.6 of 1.0                         exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 EXPIRED with a partial fill 0.6 of 1.0
+A06 canceled with a partial fill 0.6 of 1.0                        exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 canceled with a partial fill 0.6 of 1.0
+A06 order still working (status open)                              exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 order still working (status open)
+A06 order without a reported fee                                   exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 order without a reported fee
+A06 fee cost NaN                                                   exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 fee cost NaN
+A06 average = None                                                 exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 average = None
+A06 average = 0                                                    exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 average = 0
+A06 average = 0.0                                                  exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 average = 0.0
+A06 average = -95.0                                                exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 average = -95.0
+A06 average = nan                                                  exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 average = nan
+A06 average = inf                                                  exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 average = inf
+A06 average = 'abc'                                                exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 average = 'abc'
+A06 average = ''                                                   exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 average = ''
+A06 filled = None                                                  exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = None
+A06 filled = 0                                                     exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = 0
+A06 filled = -1.0                                                  exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = -1.0
+A06 filled = nan                                                   exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = nan
+A06 filled = inf                                                   exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = inf
+A06 filled = 'abc'                                                 exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 filled = 'abc'
+A06 two orders: TP1 0.5 @110 + stop 0.5 @90 (each listed in part)  exit, fees, pnl, error = (100.0, 0.1, -0.1, None)
+  ok   A06 two orders: TP1 0.5 @110 + stop 0.5 @90 (each listed in part)
+A06 two orders cover 1.5 of 1.0 (another trade's order got in)     exit, fees, pnl, error = (None, None, None, 'exit fill pending')
+  ok   A06 two orders cover 1.5 of 1.0 (another trade's order got in)
 SAR      live ('ENTRY', None, 99.0, None)  batch ('ENTRY', None, 99.0, None)  -> SAME
+  ok   SAR: live == batch
+  ok   SAR: expected outcome
 EMA      live ('TP1', None, 126.4944, None)  batch ('TP1', None, 126.4944, None)  -> SAME
+  ok   EMA: live == batch
+  ok   EMA: expected outcome
 channel  live ('ENTRY', None, 50.0, None)  batch ('ENTRY', None, 50.0, None)  -> SAME
+  ok   channel: live == batch
+  ok   channel: expected outcome
+  ok   band fixture: bucket 0 band 103 > high 102.92 > bucket 1 band
 band     live ('CLOSED', 102.8968, 90.0, 241)  batch ('CLOSED', 102.8968, 90.0, 241)  -> SAME
+  ok   band: live == batch
+  ok   band: expected outcome
+  ok   A04 5m bucket of minutes 10-14 lost minute 12 (inner): kept
 A04 5m bucket of minutes 10-14 lost minute 12 (inner) -> 5m bars 12, bucket at minute 10 kept: True {'patched': 1, 'dropped': 0}
+  ok   A04 5m bucket 2 lost its first minute 10: kept
 A04 5m bucket 2 lost its first minute 10     -> 5m bars 11, bucket at minute 10 kept: False {'patched': 1, 'dropped': 1}
+  ok   A04 5m bucket of minutes 10-14 lost its last minute 14: kept
 A04 5m bucket of minutes 10-14 lost its last minute 14 -> 5m bars 11, bucket at minute 10 kept: False {'patched': 1, 'dropped': 2}
+  ok   A04 5m bucket 2 lost minutes 11, 12: kept
 A04 5m bucket 2 lost minutes 11, 12          -> 5m bars 11, bucket at minute 10 kept: False {'patched': 1, 'dropped': 3}
 FVG all bars           -> None
 FVG bar 11 dropped     -> None (a gap 101..103 that bar 11 traded through)
+  ok   FVG all bars: none
+  ok   FVG bar 11 dropped: none
+
+ALL EXPECTATIONS MET

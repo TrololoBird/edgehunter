@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import errors
+import math
 import os
 import sqlite3
 import time
@@ -46,6 +47,21 @@ CREATE TABLE IF NOT EXISTS demo_trades (
     risk_usd REAL, closed_ms INTEGER, close_reason TEXT, exit_avg REAL, fees_usd REAL, pnl_usd REAL, r REAL,
     journal_r REAL, error TEXT)
 """
+
+
+def _finite(x) -> Optional[float]:
+    """x as a finite float, else None (None, '', non-numeric, NaN, +-inf): an exchange field never raises here."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _positive(x) -> Optional[float]:
+    """x as a finite float > 0, else None."""
+    v = _finite(x)
+    return v if v is not None and v > 0 else None
 
 
 def credentials() -> tuple:
@@ -1173,15 +1189,22 @@ class DemoExecutor:
             except Exception as e:
                 logger.info(f"Demo exit order {symbol} {oid}: {e!r}")
                 return None, 0.0, None
-            filled, avg = float(o.get('filled') or 0), float(o.get('average') or 0)
+            filled, avg = _positive(o.get('filled')), _positive(o.get('average'))
             fee = o.get('fee') or {}
-            if (str(o.get('status') or '').lower() not in ('closed', 'canceled', 'expired')   # ccxt passes BingX's EXPIRED raw or filled <= 0 or avg <= 0
-                    or fee.get('cost') is None or fee.get('currency') not in (None, 'USDT', 'VST')):
+            cost = _finite(fee.get('cost'))
+            status = str(o.get('status') or '').lower()     # ccxt passes BingX's EXPIRED raw (upper case)
+            if status not in ('closed', 'canceled', 'expired'):
+                return None, 0.0, None                      # still working: more fills may come
+            if filled is None:
+                return None, 0.0, None                      # unknown / zero / negative / NaN / inf / non-numeric
+            if avg is None:
+                return None, 0.0, None
+            if cost is None or fee.get('currency') not in (None, 'USDT', 'VST'):
                 # currency None: BingX swap orders omit feeAsset; their commission is in the USDT margin
                 return None, 0.0, None
             value += filled * avg
             closed += filled
-            fees += abs(float(fee['cost']))
+            fees += abs(cost)
         return value / closed, closed, fees
 
     @staticmethod
