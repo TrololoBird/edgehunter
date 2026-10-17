@@ -248,6 +248,13 @@ class TrackedSignal:
     # the order-flow entry in the zone (SignalBook._flow_entry): checked once a minute, journaled once per card
     flow_checked_ms: int = 0
     flow_done: bool = False
+    # eng-137 (audit A01): the end of the last final 1m candle checked against the invalidation (0 = from the minute
+    # after the card's creation); audit A02: how the rest of the entry minute was judged ('' = not yet, 'trades' =
+    # the trades after the entry, 'clean' = its 1m range touched no level, 'ambiguous' = touched with no trades to
+    # tell whether before or after the entry) and the pessimistic R when that minute's range reached the stop
+    inv_ms: int = 0
+    entry_min: str = ''
+    r_low: Optional[float] = None
 
     @property
     def finished(self) -> bool:
@@ -306,6 +313,10 @@ class SignalBook:
         self.btc_bias_of: Optional[Callable[[], Optional[int]]] = None      # eng-59: BTC's ICT bias (scanner)     # closed daily candles (Turtle exits)
         # the opposite Bollinger band BB(20, 2) of the closed 15m candles (Bollinger W / M exit, eng-55)
         self.band_of: Optional[Callable[[str, int], Optional[float]]] = None
+        # eng-137 (audit A02): the trades after an entry (fetcher.track_from / tracked_of / untrack; None in the replay)
+        self.track_from: Optional[Callable[[str, int], None]] = None
+        self.tracked_of: Optional[Callable[[str, int, int], Optional[Dict]]] = None
+        self.untrack: Optional[Callable[[str, int], None]] = None
         self.context_of: Optional[Callable[[str], Optional[object]]] = None
         # symbol -> hashable key of everything a plan depends on (None: always recompute); plans cached per card
         self.plan_key_of: Optional[Callable[[str], Optional[tuple]]] = None
@@ -639,6 +650,8 @@ class SignalBook:
         if key is not None:
             self.finished_legs[(s.symbol, s.direction)] = (key, now)
         s.status, s.finished_at = status, now
+        if s.entered_at and self.untrack:
+            self.untrack(s.symbol, int(s.entered_at * 1000))
         s.finish_reason, s.finish_price = reason or status, (s.exit_fill if s.exit_fill is not None else s.last_price)
         self.finished_now.append(s)
         label = f"SL after TP{s.best_target}" if status == 'SL' and s.best_target else status
@@ -933,6 +946,14 @@ class SignalBook:
             return None
 
         invalid = s.invalid_price if s.invalid_price is not None else plan.get('invalid')
+        if invalid is not None and version_no(s.logic_version) >= 137 and candles_of:
+            # audit A01: every event since the card's creation, in time order - a wick through a touch invalidation
+            # between two scans (or a close beyond it on the system's timeframe) ends the card even when the price is
+            # back by the scan; a return never revives it
+            hit = self._invalid_since(s, candles_of, invalid, plan.get('invalid_close_min'))
+            if hit is not None:
+                self._finish(s, 'INVALID', now, self._invalid_reason(s, hit, invalid))
+                return None
         check = price
         if invalid is not None and plan.get('invalid_close_min'):
             # the system invalidates on a CLOSE beyond (a wick through is allowed): the last final candle of that tf
@@ -1110,6 +1131,40 @@ class SignalBook:
                 return vetoed
         return self._enter(s, levels, now_ms, reason, confirms)
 
+    def _invalid_since(self, s: TrackedSignal, candles_of, invalid: float,
+                       close_min: Optional[int]) -> Optional[float]:
+        """
+        Audit A01: the first final event beyond `invalid` since the last check (s.inv_ms; from the first whole minute
+        after the card's creation): a 1m low / high through it (touch rule), or with `close_min` a close beyond it of
+        a final `close_min` bar that closed after the card was created. Returns that price, None without one; moves
+        s.inv_ms to the end of the last final minute seen. A re-planned (moving) invalidation is checked on the minutes
+        since the last check only.
+        """
+        allm = candles_of(s.symbol)
+        if not isinstance(allm, list):
+            allm = list(allm or [])
+        if not allm:
+            return None
+        d = s.direction
+        start = s.inv_ms or (int(s.created * 1000) // MINUTE_MS + 1) * MINUTE_MS
+        done = int(allm[-1][0]) + MINUTE_MS
+        s.inv_ms = max(start, done)
+        size = int(close_min or 1) * MINUTE_MS
+        # the buffer is in time order: only its tail since the last check (+ one bar of the close rule's timeframe)
+        k = len(allm)
+        while k and allm[k - 1][0] >= start - size:
+            k -= 1
+        minutes = list(allm[k:])
+        if close_min:
+            for b in resample(minutes, int(close_min), done):
+                if b[0] + size > start and d * (b[4] - invalid) <= 0:
+                    return float(b[4])
+            return None
+        for c in minutes:
+            if c[0] >= start and ((c[3] <= invalid) if d > 0 else (c[2] >= invalid)):
+                return float(c[3] if d > 0 else c[2])
+        return None
+
     @staticmethod
     def _last_close(symbol: str, candles_of, minutes_tf: int) -> Optional[float]:
         """Close of the last FINAL candle of `minutes_tf` minutes (from the final 1m candles), None without data."""
@@ -1261,7 +1316,13 @@ class SignalBook:
                 return self._enter(s, levels, now_ms, 'unit_limit', confirms)
             s.units = [[levels['entry'], entered_at]]
         s.levels, s.entered_at, s.status, s.of_confirm, s.confirms = levels, entered_at, 'ENTRY', of, dict(confirms)
-        s.managed_ms = (now_ms // MINUTE_MS + 1) * MINUTE_MS
+        if version_no(s.logic_version) >= 137:
+            # audit A02: the entry minute is managed too - on the trades after the entry, not on its whole 1m range
+            s.managed_ms = now_ms // MINUTE_MS * MINUTE_MS
+            if self.track_from:
+                self.track_from(s.symbol, int(entered_at * 1000))
+        else:
+            s.managed_ms = (now_ms // MINUTE_MS + 1) * MINUTE_MS
         self.day_dir.setdefault((s.symbol, int(now_ms // 86_400_000)), s.direction)
         self.events.append((s, 'ENTRY'))
         return s
@@ -1383,6 +1444,46 @@ class SignalBook:
         # executor), not a veto
         return None
 
+    def _entry_minute(self, s: TrackedSignal, c, entry_ms: int, now: float):
+        """
+        Audit A02: the extremes of the entry minute AFTER the entry. (open, high, low) from the trades since the entry;
+        the 1m candle's own when its range touched no stop / target / exit level (nothing to decide); None while the
+        minute's trades are still arriving; False when the range touched a level and no complete trade record tells
+        whether before or after the entry: 'ambiguous', not judged (no invented fill), the pessimistic stop R kept
+        apart in r_low.
+        """
+        lv, d, entry = s.levels, s.direction, s.levels['entry']
+        end = int(c[0]) + MINUTE_MS
+        got = self.tracked_of(s.symbol, entry_ms, end) if self.tracked_of else None
+        if got is not None and got.get('pending'):
+            if now * 1000 - end < 10_000:
+                return None
+            got = None                       # no trade after the minute within 10 s: the record cannot be closed
+        if got is not None:
+            if self.untrack:
+                self.untrack(s.symbol, entry_ms)
+            s.entry_min = 'trades'
+            hi = got['hi'] if got['hi'] is not None else entry
+            lo = got['lo'] if got['lo'] is not None else entry
+            return entry, max(hi, entry), min(lo, entry)
+        if self.untrack:
+            self.untrack(s.symbol, entry_ms)
+        hi, lo = float(c[2]), float(c[3])
+        plan = s.plan or {}
+        stop_hit = not plan.get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl']))
+        levels = [] if plan.get('no_tp') else [lv[f'tp{k}'] for k in (1, 2, 3) if lv.get(f'tp{k}') is not None]
+        target_hit = any((hi >= t) if d > 0 else (lo <= t) for t in levels)
+        # the Turtles' channel / Bollinger's opposite band sit far from a fresh entry: not part of this test
+        if not stop_hit and not target_hit:
+            s.entry_min = 'clean'
+            return float(c[1]), hi, lo
+        s.entry_min = 'ambiguous'
+        if stop_hit:
+            risk = lv.get('risk0') or abs(entry - lv['sl'])
+            if risk:
+                s.r_low = d * (lv['sl'] - entry) / risk - self._cost_r(s, risk, end)
+        return False
+
     def _manage_trade(self, s: TrackedSignal, price: float, now: float, candles_of=None):
         lv, d = s.levels, s.direction
         # eng-58: stops and targets on the final 1m candles' extremes since the last check, as the journal's replay
@@ -1403,9 +1504,19 @@ class SignalBook:
         d1_all = list(self.daily_of(s.symbol) or []) if candles and days and self.daily_of else []
         channel_at = band_at = None
         channel = band = None
+        entry_ms = int((s.entered_at or 0) * 1000)
         for c in candles:
-            s.managed_ms = int(c[0]) + MINUTE_MS
             o, hi, lo = float(c[1]), float(c[2]), float(c[3])
+            if int(c[0]) <= entry_ms < int(c[0]) + MINUTE_MS:
+                # audit A02: the entry minute - its 1m high / low may have traded before the entry
+                first = self._entry_minute(s, c, entry_ms, now)
+                if first is None:
+                    break                        # its trades are not all in yet: judged on the next scan
+                if first is False:
+                    s.managed_ms = int(c[0]) + MINUTE_MS
+                    continue                     # not judged (ambiguous): from the next minute on
+                o, hi, lo = first
+            s.managed_ms = int(c[0]) + MINUTE_MS
             if d1_all and channel_at != int(c[0]) // DAY_MS:
                 from strategies.turtle import trail_level
                 channel_at = int(c[0]) // DAY_MS

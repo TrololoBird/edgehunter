@@ -253,10 +253,10 @@ def test_trendline_percent_of_the_line():
 
 
 def test_turtle_open_breakout_is_no_winner():
-    from strategies.turtle import _last_s1_was_winner, n_series
+    from strategies.turtle import s1_state, n_series
     d1 = [[i * DAY, 100, 101, 99, 100, 1e6] for i in range(60)]
     d1.append([60 * DAY, 100, 110, 100, 109, 1e6])                  # a 20-day breakout, still open
-    assert _last_s1_was_winner(d1, n_series(d1)) is None           # was True (marked at the last close)
+    assert s1_state(d1, n_series(d1)) == ('open', None)            # was True (marked at the last close)
 
 
 def test_funding_by_the_contracts_interval():
@@ -286,12 +286,12 @@ def test_turtle_stop_is_2n_from_the_entry():
 
 
 def test_turtle_entry_day_stop_is_ambiguous():
-    from strategies.turtle import _last_s1_was_winner, n_series
+    from strategies.turtle import s1_state, n_series
     d1 = [[i * DAY, 100, 100.5, 99.5, 100, 1e6] for i in range(40)]
     d1.append([40 * DAY, 100, 101, 95, 100.8, 1e6])                 # breakout and the 2N stop on the same day
     d1 += [[(41 + i) * DAY, 101 + i, 102 + i, 100 + i, 101.5 + i, 1e6] for i in range(15)]   # runs up
     d1.append([56 * DAY, 116, 116, 104, 105, 1e6])                  # out on the 10-day low, far above the entry
-    assert _last_s1_was_winner(d1, n_series(d1)) == 'ambiguous'      # unknown, not a winner and not 'none'
+    assert s1_state(d1, n_series(d1))[0] == 'ambiguous'             # unknown, not a winner and not 'none'
 
 
 def test_turtle_ambiguous_s1_does_not_allow_s1():

@@ -80,7 +80,8 @@ def test_continuation_lifecycle_with_orderflow_confirm(rally_frame, monkeypatch)
     # (the test is about the lifecycle)
     s.levels['tp2'], s.levels['tp3'] = s.levels['tp1'] + 2, s.levels['tp1'] + 4
     # eng-58: targets / stops on the final 1m candles' extremes (a target traded 2 bps through)
-    t = s.managed_ms
+    # eng-137 (A02): the entry minute itself is judged on the trades after the entry; this is the next whole minute
+    t = (int(s.entered_at * 1000) // 60_000 + 1) * 60_000
     tp1, sl = s.levels['tp1'], s.levels['sl']
     candles['X'].append([t, 111.4, tp1 * 1.0003, 111.3, tp1, 1e4, 6e3])
     price['X'] = tp1

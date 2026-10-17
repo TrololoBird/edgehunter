@@ -181,6 +181,10 @@ class Scanner:
         self.book.htf_of = lambda symbol: (lambda md: (md.h1 or md.htf_klines) if md else None)(self.market_data.get(symbol))
         self.book.context_of = lambda symbol: self.detector.context.get(symbol)
         self.book.band_of = self._opposite_band
+        # eng-137 (audit A02): the entry minute judged on the trades after the entry
+        self.book.track_from = self.fetcher.track_from
+        self.book.tracked_of = self.fetcher.tracked_of
+        self.book.untrack = self.fetcher.untrack
         self.book.plan_key_of = self._plan_key
         self.book.map_ready_of = lambda symbol: symbol in self._level_raw
         self.book.btc_bias_of = self._btc_bias

@@ -187,6 +187,9 @@ EXTRA_COLUMNS = {
     # eng-3: entry confirmations (strategies/confirm.py, JSON {name: true / false / null | order-flow kind}) and how
     # many were positive
     'confirms': 'TEXT', 'conf_n': 'INTEGER',
+    # eng-137 (audit A02): how the rest of the entry minute was judged ('trades' / 'clean' / 'ambiguous') and the
+    # pessimistic card R when that minute's range reached the stop with no trades to order it (= card_r otherwise)
+    'entry_min': 'TEXT', 'card_r_low': 'REAL',
     # the coin's weekly trend (distance from its weekly EMA in weekly standard deviations) and the universe's share
     # above its weekly EMA: context, never a filter (the weekly EMA tested as no level of its own, 2026-09-27)
     'trend_w': 'REAL', 'breadth_w': 'REAL',
@@ -671,7 +674,11 @@ class SignalJournal:
                     'vetoed': ','.join(sorted(set(tracked.veto_log))) or None,
                     # the card's own result in R: the lifecycle's exit (a trailing channel, pyramided units) - the 8h
                     # replay cannot see a Turtle or Connors trade that lives for days
-                    'card_r': tracked.final_r, 'units': float(len(getattr(tracked, 'units', None) or [])) or None,
+                    'card_r': tracked.final_r,
+                    'entry_min': getattr(tracked, 'entry_min', None) or None,
+                    'card_r_low': (min(tracked.r_low, tracked.final_r) if getattr(tracked, 'r_low', None) is not None
+                                   and tracked.final_r is not None else tracked.final_r),
+                    'units': float(len(getattr(tracked, 'units', None) or [])) or None,
                     # audit N24: the executor's own card id (symbol|setup|entered_at s) - the demo trade's exact card
                     'card_id': f"{tracked.symbol}|{tracked.group_key}|{int(tracked.entered_at)}" if tracked.entered_at else None,
                     # the furthest target the card reached (0 = none) - the TP1 / TP2 / TP3 hit rates of stats.py

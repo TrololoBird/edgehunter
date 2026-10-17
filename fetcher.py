@@ -481,6 +481,11 @@ class DataFetcher:
         self.small_caps: set = set()               # eng-99: the small-cap tier of the universe (select_universe)
         from flow import RushBook
         self.rush = RushBook()                     # eng-89: rush orders (one taker order eating several levels)
+        # eng-137 (audit A02): the trades after a card's entry, for the rest of its entry minute (the minute's 1m
+        # high / low may have traded BEFORE the entry). symbol -> {entry ms: tracker}; the Binance aggregate trade id
+        # 'a' must run on without a gap since the entry, else the tracker is not proof (ok = False)
+        self.entry_trackers: Dict[str, Dict[int, Dict]] = {}
+        self._last_agg: Dict[str, int] = {}
         self.sweeps = SweepTracker(self._on_sweep)
         self.footprint = Footprint()
         self.depth = DepthBook()
@@ -1929,6 +1934,43 @@ class DataFetcher:
         for venue, stream in list(self.venue_streams.items()):
             await stream.restart(dynamic=venue == 'hyperliquid')
 
+    # ------------------------------------------------------------------ entry-minute trades (audit A02)
+
+    def track_from(self, symbol: str, since_ms: int) -> None:
+        """Start collecting the Binance futures trades of `symbol` from `since_ms` (a card's entry)."""
+        last = self._last_agg.get(symbol)
+        self.entry_trackers.setdefault(symbol, {})[int(since_ms)] = {
+            'since': int(since_ms), 'last': last, 'ok': last is not None, 'hi': None, 'lo': None, 'seen_ms': 0}
+
+    @staticmethod
+    def _track_trade(trackers: Dict[int, Dict], agg, ts: int, price: float) -> None:
+        for tr in trackers.values():
+            if agg is None or tr['last'] is None or int(agg) != tr['last'] + 1:
+                tr['ok'] = False         # a lost aggregate trade (reconnect, dropped message): no proof any more
+            if agg is not None:
+                tr['last'] = int(agg)
+            if ts >= tr['since']:
+                tr['hi'] = price if tr['hi'] is None else max(tr['hi'], price)
+                tr['lo'] = price if tr['lo'] is None else min(tr['lo'], price)
+            tr['seen_ms'] = max(tr['seen_ms'], ts)
+
+    def tracked_of(self, symbol: str, since_ms: int, until_ms: int) -> Optional[Dict]:
+        """The trades of `symbol` in [since_ms, until_ms): {'hi', 'lo'} (None when no trade), 'pending' while no
+        trade at / after until_ms arrived yet, None when not tracked or a trade was lost."""
+        tr = (self.entry_trackers.get(symbol) or {}).get(int(since_ms))
+        if tr is None or not tr['ok']:
+            return None
+        if tr['seen_ms'] < until_ms:
+            return {'pending': True}
+        return {'hi': tr['hi'], 'lo': tr['lo']}
+
+    def untrack(self, symbol: str, since_ms: int) -> None:
+        trackers = self.entry_trackers.get(symbol)
+        if trackers:
+            trackers.pop(int(since_ms), None)
+            if not trackers:
+                self.entry_trackers.pop(symbol, None)
+
     # ------------------------------------------------------------------ stream sinks (hot path)
 
     def on_binance(self, market_type: str, stream: str, data, recv_ms: float):
@@ -1978,6 +2020,12 @@ class DataFetcher:
             usd = price * float(data['q'])
             side = -1 if data['m'] else 1  # m: buyer is maker -> taker SELL
             ts = int(data['T'])
+            agg = data.get('a')
+            trackers = self.entry_trackers.get(key)
+            if trackers:
+                self._track_trade(trackers, agg, ts, price)
+            if agg is not None:
+                self._last_agg[key] = int(agg)
             self.flow.trade('binance', key, ts, usd, side, recv_ms)
             self.sweeps.add('binance', key, ts, price, usd, side)
             self.rush.on_trade(key, ts, side, usd, price)

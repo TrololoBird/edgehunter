@@ -12,7 +12,7 @@ Original Turtle Trading Rules"), on DAILY candles (fetcher._daily_candles_loop),
 - Not here: pyramiding (+1 unit every 1/2 N up to 4) and unit sizing (1% of equity per N): the card is one trade and
   the journal measures it in R (risk = 2N).
 """
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 DAY_MS = 86_400_000
 
@@ -35,16 +35,21 @@ def n_series(d1: Sequence[Sequence[float]]) -> List[Optional[float]]:
     return out
 
 
-def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]) -> Optional[bool]:
+def s1_state(d1: Sequence[Sequence[float]], ns: List[Optional[float]]) -> Tuple[str, Optional[str]]:
     """
-    Replays System 1 over the daily history (one hypothetical position at a time, either direction): the result of
-    the most recent breakout's trade (True = it exited above its entry for a long). None without one.
-    audit: the N of a hypothetical entry is the one known BEFORE its day (ns[i - 1]: ns[i] holds day i's own true
-    range), and a breakout whose hypothetical trade is still open has no result yet - the last COMPLETED one decides
-    (the open trade marked at the last close was taken as a final winner).
+    Replays System 1 over the daily history (one hypothetical position at a time, either direction).
+    Returns (state of the most recent S1 breakout, result of the last COMPLETED one before it):
+      'none'      - no S1 breakout in the history,
+      'open'      - its hypothetical trade is still open (no result yet),
+      'ambiguous' - its entry day also traded through the 2N stop: daily OHLC cannot tell which came first (open or
+                    closed, the result is unknown),
+      'win' / 'loss' - completed (a long that exited above its entry is a win).
+    audit: the N of a hypothetical entry is the one known BEFORE its day (ns[i - 1]); an open trade is never marked at
+    the last close. eng-137 (audit A04): the open ambiguous breakout was reported as the PREVIOUS completed result (or
+    none), which let a new S1 in while its own result was unknown.
     """
     pos = None
-    last = None
+    last: Optional[str] = None
     for i in range(21, len(d1)):
         c = d1[i]
         if pos is not None:
@@ -61,7 +66,7 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
             elif d < 0 and c[2] >= hi10:
                 exit_px = hi10
             if exit_px is not None:
-                last = 'ambiguous' if pos.get('ambiguous') else d * (exit_px - entry) > 0
+                last = 'ambiguous' if pos.get('ambiguous') else ('win' if d * (exit_px - entry) > 0 else 'loss')
                 pos = None
             continue
         hi20 = max(x[2] for x in d1[i - 20:i])
@@ -74,11 +79,19 @@ def _last_s1_was_winner(d1: Sequence[Sequence[float]], ns: List[Optional[float]]
         elif c[3] < lo20:
             pos = {'d': -1, 'entry': lo20, 'stop': lo20 + 2 * n}
         if pos is not None and ((pos['d'] > 0 and c[3] <= pos['stop']) or (pos['d'] < 0 and c[2] >= pos['stop'])):
-            # review V06: the entry day also traded through the 2N stop - the OHLC does not tell which came first, so
-            # this breakout's result is unknown ('ambiguous': S1 is skipped as after a winner - unknown is never a
-            # permission; S2 still trades); it stays the open hypothetical
+            # review V06: the entry day also traded through the 2N stop - the OHLC does not tell which came first
             pos['ambiguous'] = True
-    return last
+    if pos is not None:
+        return ('ambiguous' if pos.get('ambiguous') else 'open'), last
+    return (last or 'none'), None
+
+
+def s1_blocked(state: str, prior: Optional[str]) -> bool:
+    """S1 is skipped after a winner and whenever the last breakout's result is unknown (unknown is no permission); an
+    open unambiguous hypothetical trade has no result yet - the last completed one decides. S2 is never blocked."""
+    if state in ('win', 'ambiguous'):
+        return True
+    return state == 'open' and prior in ('win', 'ambiguous')
 
 
 def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: float, now_ms: int,
@@ -99,8 +112,8 @@ def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: fl
         return None
     hi20, lo20 = max(c[2] for c in d1[-20:]), min(c[3] for c in d1[-20:])
     hi55, lo55 = max(c[2] for c in d1[-55:]), min(c[3] for c in d1[-55:])
-    last_s1 = _last_s1_was_winner(d1, ns)
-    skip = last_s1 is True or last_s1 == 'ambiguous'      # review: an unknown result does not allow S1
+    s1, s1_prior = s1_state(d1, ns)
+    skip = s1_blocked(s1, s1_prior)
     for d, level20, level55, crossed20, crossed55 in (
             (1, hi20, hi55, price_hi > hi20 and (before_hi is None or before_hi <= hi20),
              price_hi > hi55 and (before_hi is None or before_hi <= hi55)),
@@ -119,9 +132,10 @@ def turtle_breakout(d1: Sequence[Sequence[float]], price_hi: float, price_lo: fl
                 'setup_note': f"Turtle System {system}: price {'above' if d > 0 else 'below'} the {days}-day "
                               f"{'high' if d > 0 else 'low'} {level:.6g} (N {n:.6g}; stop 2N, exit on the "
                               f"{exit_days}-day {'low' if d > 0 else 'high'})"
-                              + (('; S1 skipped: the last S1 breakout won' if last_s1 is True else
-                                  '; S1 skipped: the last S1 breakout is undecidable on daily bars (stop on its entry day)')
+                              + ((f"; S1 skipped: the last S1 breakout is {s1}" + (f" (the one before it: {s1_prior})"
+                                                                                       if s1 == 'open' else ''))
                                  if system == 2 and skip else ''),
+                'turtle_s1': s1,
                 'anchor_level': level, 'anchor_extreme': level - d * 2 * n, 'anchor_label': f'{days}-day channel',
                 'anchor_ts': int(d1[-days][0]), 'anchor_close': level, 'turtle_n': n, 'turtle_system': system,
                 'trail_days': exit_days, 'range_hi': hi20 if system == 1 else hi55,
