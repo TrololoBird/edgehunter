@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS demo_trades (
 """
 
 
+class EntryUnknown(Exception):
+    """audit C02: a market entry whose outcome could not be read back (lost reply + unreadable exchange)."""
+
+
 def _finite(x) -> Optional[float]:
     """x as a finite float, else None (None, '', non-numeric, NaN, +-inf): an exchange field never raises here."""
     try:
@@ -270,10 +274,14 @@ class DemoExecutor:
             try:
                 await self._open(card_id, s)
             except Exception as e:
-                logger.warning(f"Demo entry failed for {s.symbol} {s.group_key}: {e!r}")
+                unknown = isinstance(e, EntryUnknown)
+                logger.warning(f"Demo entry {'UNKNOWN' if unknown else 'failed'} for {s.symbol} {s.group_key}: {e!r}")
+                if unknown:
+                    # not 'not filled': a position that turns up is closed by close_untracked (no card owns it)
+                    self.alert(f"⚠️ Демо {s.symbol}: исход входа неизвестен (биржа недоступна), проверьте позицию")
                 self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
                               'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': repr(e)[:300],
-                              'closed_ms': int(time.time() * 1000), 'close_reason': 'ERROR'})
+                              'closed_ms': int(time.time() * 1000), 'close_reason': 'UNKNOWN' if unknown else 'ERROR'})
 
     @staticmethod
     def regime_mult(s) -> float:
@@ -429,9 +437,19 @@ class DemoExecutor:
             need = (s.plan or {}).get('min_rr')
             need = CONFIG.levels.min_rr_tp1 if need is None else need
             plan_blend = s.levels.get('rr_blend')
+            plan = s.plan or {}
+            floor = CONFIG.levels.min_rr_tp1_floor
             # the plan passed its R:R on Binance; on BingX it must still pass it (a worse price by the basis / the
-            # spread / the move since the trigger)
-            if plan_blend is not None and blend < need:
+            # spread / the move since the trigger). audit C05: the same TP1 gates as geometry.level_plan - a method's
+            # own minimum (Seiden 3:1) and the floor are minimums to TP1, far targets lifting the blend do not meet them
+            # geometry applies them only when TP1 is a real level (a synthetic 'ATR step' / 'N R' TP1 is not gated)
+            from strategies.geometry import is_synthetic
+            tp1_real = not is_synthetic(s.levels.get('tp1_src'))
+            if tp1_real and (plan.get('min_rr') is not None or plan.get('min_rr_on_tp1')) and rrs[0] < need:
+                reject = f"R:R to TP1 {rrs[0]:.2f} at BingX {fill_est:.6g} < {need:g} (the method's minimum)"
+            elif tp1_real and floor > 0 and need > 0 and rrs[0] < floor:
+                reject = f"R:R to TP1 {rrs[0]:.2f} at BingX {fill_est:.6g} < {floor:g}"
+            elif plan_blend is not None and blend < need:
                 reject = f"blended R:R {blend:.2f} at BingX {fill_est:.6g} < {need:g} (Binance plan {plan_blend:.2f})"
         if reject:
             logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {reject} (basis {basis:+.3%})")
@@ -900,6 +918,9 @@ class DemoExecutor:
         if trade is None or (getattr(s, 'plan', None) or {}).get('no_stop'):
             return
         async with self._lock:
+            # audit C01: the trade may have been closed while this task waited for the lock
+            if all(t is not trade for t in self.open.values()):
+                return
             try:
                 symbol, d = trade['symbol'], trade['direction']
                 left = await self._position_qty(symbol)
@@ -926,10 +947,14 @@ class DemoExecutor:
         if not self.enabled or not s.entered_at:
             return
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
-        trade = self.open.get(card_id)
-        if trade is None:
+        if self.open.get(card_id) is None:
             return
         async with self._lock:
+            # audit C01: re-read under the lock - a close that ran while this task waited removed the trade, and an
+            # add on the stale object opened a new, unowned position
+            trade = self.open.get(card_id)
+            if trade is None or card_id in getattr(self, '_finished_cards', ()):
+                return
             try:
                 ex = await self._exchange()
                 symbol, d = trade['symbol'], trade['direction']
@@ -1051,30 +1076,42 @@ class DemoExecutor:
                     raise
                 await asyncio.sleep(1.5 * 2 ** attempt)
 
-    async def _position_of(self, symbol: str, d: int) -> tuple:
-        """(size, average entry price) of the coin's position on the side d, (0, None) when there is none / unreadable."""
+    async def _position_of(self, symbol: str, d: int, strict: bool = False) -> tuple:
+        """(size, average entry price) of the coin's position on the side d, (0, None) when there is none / unreadable.
+        strict: an unreadable position raises instead (audit C02: an API error is no proof of a flat coin)."""
         try:
             for p in await self._call('fetch_positions', [symbol]):
                 side = 1 if p.get('side') == 'long' else -1 if p.get('side') == 'short' else 0
                 if p.get('symbol') == symbol and p.get('contracts') and side in (0, d):
                     return float(p['contracts']), float(p.get('entryPrice') or 0) or None
         except Exception as e:
+            if strict:
+                raise
             errors.report('executor._position_of', e, f"Demo position {symbol}")
         return 0.0, None
 
     async def _resolve_unknown_entry(self, symbol: str, d: int, cid: str, err: Exception) -> Optional[Dict]:
-        """audit N03: a market entry whose reply was lost (timeout / network). The coin was free before the order (one
-        position per coin, one-way mode), so the position read decides: a position found becomes the trade (protected by
-        the caller), none after ~14s = not filled. Never retried blindly (a second order would double the position);
-        the client id is in the log to find the order on BingX by hand."""
+        """audit N03 / C02: a market entry whose reply was lost (timeout / network). The coin was free before the order
+        (one position per coin, one-way mode), so the position read decides: a position found becomes the trade
+        (protected by the caller); 'not filled' needs three SUCCESSFUL empty reads, the third >= 14s after the order (BingX's position snapshot lags a few seconds); the waits stay short since the lock is held. When the exchange stays unreadable the
+        outcome is UNKNOWN: EntryUnknown is raised (the caller records it and alerts; close_untracked closes a position
+        that turns up later). Never retried blindly (a second order would double the position)."""
         logger.warning(f"Demo ENTRY {symbol}: outcome unknown ({err!r}): resolving by client id {cid} / position")
-        for wait in (2, 4, 8):
+        flat = 0
+        for wait in (2, 4, 8, 15):
             await asyncio.sleep(wait)
-            qty, px = await self._position_of(symbol, d)
+            try:
+                qty, px = await self._position_of(symbol, d, strict=True)
+            except Exception as e:
+                errors.report('executor._resolve_unknown_entry', e, f"Demo position {symbol}")
+                continue
             if qty:
                 return {'id': None, 'filled': qty, 'average': px}
-        logger.info(f"Demo ENTRY {symbol}: no order / position found after the lost reply: not filled")
-        return None
+            flat += 1
+            if flat >= 3:
+                logger.info(f"Demo ENTRY {symbol}: no position after the lost reply (3 reads): not filled")
+                return None
+        raise EntryUnknown(f"entry {cid} on {symbol}: the exchange stayed unreadable, outcome unknown")
 
     async def _position_qty(self, symbol: str) -> float:
         for p in await self._call('fetch_positions', [symbol]):

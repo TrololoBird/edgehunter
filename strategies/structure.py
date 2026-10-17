@@ -193,11 +193,17 @@ def hours_from(candles_15m: Sequence[Sequence[float]], h1: Sequence[Sequence[flo
 
 
 def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
-    """eng-84: complete 4h candles [ts, o, h, l, c, quote_vol] built from the closed 1h candles up to `cut` (the 4h
-    REST loop lags the close; the hour's own candles are already merged in `hours_from`)."""
+    """eng-84: complete 4h candles [ts, o, h, l, c, quote_vol, taker_buy, base_vol] built from the closed 1h candles up
+    to `cut` (the 4h REST loop lags the close; the hour's own candles are already merged in `hours_from`). audit C09:
+    the base volume (field 7) is summed, NaN when any hour lacks it (the reader then falls back to quote / HLC3)."""
     size = 4 * HOUR_MS
+    nan = float('nan')
     out: List[List[float]] = []
     n = 0
+
+    def fld(c, i):
+        v = c[i] if len(c) > i else None
+        return float(v) if v is not None else nan
     for c in h1:
         if int(c[0]) + HOUR_MS > cut:
             break
@@ -206,11 +212,13 @@ def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
         if out and out[-1][0] == start:
             b = out[-1]
             b[2], b[3], b[4], b[5] = max(b[2], c[2]), min(b[3], c[3]), c[4], b[5] + vol
+            b[6] += fld(c, 6)
+            b[7] += fld(c, 7)
             n += 1
         else:
             if out and n != 4:
                 out.pop()                      # an incomplete 4h group (a gap): not a candle
-            out.append([start, c[1], c[2], c[3], c[4], vol])
+            out.append([start, c[1], c[2], c[3], c[4], vol, fld(c, 6), fld(c, 7)])
             n = 1
     if out and (n != 4 or out[-1][0] + size > cut):
         out.pop()

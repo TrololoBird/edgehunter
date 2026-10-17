@@ -1531,6 +1531,16 @@ class SignalBook:
                     s.managed_ms = int(c[0]) + MINUTE_MS
                     continue                     # not judged (ambiguous): from the next minute on
                 o, hi, lo = first
+            # audit C07: an exit by time that fell due before this minute opened ends the trade at the due minute's
+            # close - a later stop in the catch-up buffer (after an outage) must not pre-empt it
+            why_t, due_t = self._time_exit(s, int(c[0]) / 1000)
+            if why_t and due_t is not None and s.entered_at and int(c[0]) > entry_ms:
+                mark = next((m[4] for m in reversed(list(candles_of(s.symbol))) if m[0] / 1000 + 60 <= due_t), None)
+                if mark is not None:
+                    s.exit_fill = float(mark)
+                    s.last_price = float(mark)
+                    why_t += f" (due {time.strftime('%H:%M', time.gmtime(due_t))} UTC, marked at that minute's close)"
+                    return self._finish(s, 'CLOSED', due_t, why_t)
             s.managed_ms = int(c[0]) + MINUTE_MS
             if d1_all and channel_at != int(c[0]) // DAY_MS:
                 from strategies.turtle import trail_level
@@ -1539,11 +1549,15 @@ class SignalBook:
             if band_on and band_at != int(c[0]) // (4 * HOUR_MS):
                 band_at = int(c[0]) // (4 * HOUR_MS)
                 band = self.band_of(s.symbol, d, int(c[0]))
-            if not (s.plan or {}).get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl'])):
+            stop_hit = not (s.plan or {}).get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl']))
+            chan_hit = channel is not None and ((lo < channel) if d > 0 else (hi > channel))
+            # audit C06: both against the position - the level nearer the open is crossed first (a channel above a
+            # long's stop closes it at the channel before the stop is reached)
+            if stop_hit and not (chan_hit and d * (channel - lv['sl']) > 0):
                 s.exit_fill = min(o, lv['sl']) if d > 0 else max(o, lv['sl'])
                 return self._finish(s, 'SL', now, f"stop {lv['sl']:.6g} hit" + (f" after TP{s.best_target}" if s.best_target else ''))
             # Faith: out when the price went BEYOND the N-day low / high (a gap through it fills at the open)
-            if channel is not None and ((lo < channel) if d > 0 else (hi > channel)):
+            if chan_hit:
                 s.exit_fill = min(o, channel) if d > 0 else max(o, channel)
                 return self._finish(s, 'CLOSED', now, f"exit on the {days}-day {'low' if d > 0 else 'high'} "
                                                       f"{channel:.6g} (Turtles)")

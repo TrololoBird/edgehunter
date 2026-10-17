@@ -550,9 +550,16 @@ class Scanner:
             if len(new) >= slots:
                 # Evict the idle kept symbol with the lowest priority for a higher-priority newcomer
                 idle = [s for s in new if s not in wanted and now - self.market_data[s].tier2_since >= cfg.tier2_min_age_sec]
-                if not idle or priority > 3:
-                    continue
-                victim = min(idle, key=lambda s: self.market_data[s].tier2_wanted_at)
+                if idle and priority <= 3:
+                    victim = min(idle, key=lambda s: self.market_data[s].tier2_wanted_at)
+                else:
+                    # eng-139 (audit C18): slots full of wanted coins - a lower-priority one yields to a higher one
+                    # (a card in a trade, priority 0, does not wait for the victim's min age)
+                    lower = [s for s in new if wanted.get(s, 99) > priority and (
+                        priority == 0 or now - self.market_data[s].tier2_since >= cfg.tier2_min_age_sec)]
+                    if not lower:
+                        continue
+                    victim = max(lower, key=lambda s: (wanted.get(s, 99), -self.market_data[s].tier2_wanted_at))
                 new.remove(victim)
             new.append(symbol)
             self.market_data[symbol].tier2_since = now
@@ -1316,7 +1323,16 @@ class Scanner:
             candidates.append((ts, price))
         if md.minute_klines:
             candle = md.minute_klines[-1]
-            candidates.append((min(now_ms, candle[0] + 60_000), candle[4]))
+            # audit C03: the kline's price is dated by its last stream event; without one, a final candle by its close
+            # and a forming one by its open (open + 60s made a stale forming candle 'now' and beat a newer trade)
+            ev_open, ev_ms = getattr(md, 'kline_event', (0, 0.0))
+            if ev_open == candle[0] and ev_ms:
+                ts = min(now_ms, ev_ms)
+            elif candle[0] <= getattr(md, 'minute_closed_until', 0):
+                ts = min(now_ms, candle[0] + 60_000)
+            else:
+                ts = candle[0]
+            candidates.append((ts, candle[4]))
         fresh = [(ts, p) for ts, p in candidates if p and now_ms - ts <= self.PRICE_MAX_AGE_SEC * 1000]
         return float(max(fresh)[1]) if fresh else None
 

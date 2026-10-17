@@ -940,7 +940,8 @@ class SignalJournal:
         for strategy, outcome, lv in rows:
             if version_no(lv) < floor:
                 continue
-            c = counts.setdefault(strategy, [0, 0])
+            # audit C13: one key form for writer and reader (the plan asks by 'SWEEP LOW', the row is 'ENTRY SWEEP LOW')
+            c = counts.setdefault(geometry.setup_key(strategy), [0, 0])
             c[0 if outcome == 'SL' else 1] += 1
         # eng-124: no fixed n >= 30 (a 60% rate after 20-50 trades is anywhere in 35-85% / 46-74%): every strategy with
         # decided entries gets its rate AND the upper end of its 95% Wilson interval; the veto uses the upper end
@@ -1101,6 +1102,15 @@ class SignalJournal:
         window = klines[:minutes]
         if int(window[-1][0]) + 60_000 > time.time() * 1000 - 1_000:
             return  # the window's last candle has not closed yet: retry on a later pass
+        t0 = int(window[0][0])
+        if t0 > ts_ms // 60_000 * 60_000 + 60_000 or any(int(k[0]) != t0 + i * 60_000 for i, k in enumerate(window)):
+            # audit C12: a hole in the minutes made '15m' span 75 minutes - the horizon is a duration, not a row count.
+            # An exchange gap does not heal: the row is given up, not labelled with a longer window
+            with self._lock:
+                self.conn.execute("UPDATE signals SET eval_failed = 1 WHERE id = ?", (signal_id,))
+                self.conn.commit()
+            logger.info(f"Journal: signal {signal_id} {label} not labelled: the 1m minutes have a gap")
+            return
         updates = {f'ret_{label}': float(window[-1][4]) / price - 1}
         if label == '4h':
             updates['mfe_4h'] = max(float(k[2]) for k in window) / price - 1

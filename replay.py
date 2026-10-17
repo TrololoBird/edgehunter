@@ -277,8 +277,9 @@ class Replay:
         profiles.select = lambda strategy, regime: (None, None)
         self.detector = LiveDetector()
         self.loopside = LoopDetectors(self._minutes_of, lambda s: self.coins[s].m15(self.now_ms))
-        self.loopside.volume_rank = lambda s: 1 + sum(1 for c in self.coins.values()
-                                                      if c.quote_volume_24h > self.coins[s].quote_volume_24h)
+        # eng-139 (audit C17): live ranks against the whole market; a rank among the few replayed coins is not that
+        # class, so it is unknown here (rank-gated setups such as Dump Bounce stay out, as live with an unknown rank)
+        self.loopside.volume_rank = lambda s: None
         self.raw: Dict[str, list] = {}
         self.ctx_sig: Dict[str, int] = {}
         b = self.book
@@ -575,7 +576,7 @@ def main():
     with open(os.path.join(args.out, 'manifest.json'), 'w', encoding='utf-8') as f:
         json.dump({'start': str(start), 'end': str(end), 'coins': ids, 'group': args.group or len(ids),
                    'stop_model_window': window, 'stop_model_causal': not future,
-                   'universe': 'symbols given' if args.symbols else 'top by 30d volume before start'}, f, indent=1)
+                   'volume_rank': 'unknown (C17: rank-gated setups off)', 'universe': 'symbols given' if args.symbols else 'top by 30d volume before start'}, f, indent=1)
     coins = []
     for fid in ids:
         base = fid[:-4]

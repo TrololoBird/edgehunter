@@ -83,7 +83,7 @@ def pct_rank(x: np.ndarray, n: int) -> np.ndarray:
 def indicators(k: np.ndarray) -> dict:
     """k: [open_ms, o, h, l, c, quote_volume(, taker_buy_quote, base_volume)]. Arrays aligned with k (value at
     candle i uses candles <= i). MFI (Quong & Soudack) and OBV (Granville) weight by the traded AMOUNT: base_volume
-    (audit A16: typical x quote weighted price twice, 80 instead of 66.7); NaN without it - the rule reads None."""
+    (audit A16: typical x quote weighted price twice, 80 instead of 66.7); without it MFI falls back to the quote volume."""
     h, l, c, v = k[:, 2], k[:, 3], k[:, 4], k[:, 5]
     base = k[:, 7] if k.shape[1] > 7 else np.full(len(k), np.nan)
     prev_c = np.concatenate(([c[0]], c[:-1]))
@@ -109,9 +109,9 @@ def indicators(k: np.ndarray) -> dict:
     pctb = (c - (mid - 2 * sd)) / np.maximum(4 * sd, 1e-12)
     bbw = 4 * sd / np.maximum(mid, 1e-12)
     tp = (h + l + c) / 3
-    # audit N35: raw money flow = typical price x BASE volume; v is the quote volume (already price x base), so it IS
-    # the money flow - tp x quote multiplied the price in twice
-    mf = v
+    # audit N35 / C10: raw money flow = typical price x BASE volume (the classic MFI); quote volume (sum of trade price x
+    # qty) only for a row without base volume - it equals tp x base only when the average traded price is HLC3
+    mf = np.where(np.isfinite(base), tp * base, v)
     # Quong & Soudack / TA-Lib: an unchanged typical price is neither positive nor negative flow (it was negative)
     tp_diff = np.diff(tp, prepend=tp[0])
     tp_diff[np.abs(tp_diff) <= 1e-12 * np.abs(tp)] = 0.0      # (h + l + c) / 3 rounding noise of equal prices

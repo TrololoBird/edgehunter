@@ -142,6 +142,7 @@ def test_price_freshness():
     sc = scanner_with({'P/USDT:USDT': m})
     assert sc._price_of('P/USDT:USDT') is None
     m.minute_klines.append([int(NOW * 1000 // 60_000 * 60_000), 5, 5.2, 4.9, 5.1, 1e4, 5e3])
+    m.kline_event = (m.minute_klines[-1][0], time.time() * 1000)     # dated by its stream event (audit C03)
     assert sc._price_of('P/USDT:USDT') == 5.1
 
 

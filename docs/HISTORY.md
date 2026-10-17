@@ -742,3 +742,14 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   -30.5R of which -35.4R came from 11-13.10, before the executor fixes of eng-129; since 14.10 +4.9R on 10 trades);
   the zone tooltip is absolute again (`#chart > div {position: relative}` outranked `.zone-tip`, the shown tip took
   layout space and the chart jumped under the cursor).
+
+- **eng-139 (2026-10-17, audit Pump_Core_Audit_eng138 C01-C18)**: executor - add / restop re-check the trade under the
+  lock (C01), an unreadable position after a timed-out entry is UNKNOWN with an alert, never "not opened" (C02), R:R to
+  TP1 gated by the method's minimum before the blended check (C05); `_price_of` dates a kline by its stream event (C03);
+  the entry minute's high / low come from its own trades only (C04); the time exit is checked per candle, so a later
+  stop no longer outlives it (C07); a stop and a Turtle channel hit in one candle: the nearer one first (C06); Binance
+  OI recorded natively (C08); `bars_4h` keeps taker / base volume (C09); MFI = typical price x base volume (C10);
+  order-book drops queue per level (C11); the journal rejects a window with missing minutes (C12); hit rates keyed by
+  `setup_key` - this re-activates the negative-expectancy veto, which was dead before (C13); fib extensions from the
+  leg's start (C14); briefing scores signed R and skips scenarios already past TP1 (C15); pretrain buckets only full
+  groups (C16); replay rank unknown in a restricted universe (C17); hot-symbol slots evicted by priority (C18).

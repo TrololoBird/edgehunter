@@ -121,16 +121,20 @@ def select_coins(archive, start: date, end: date, min_volume: float) -> List[Tup
 # ====================================================================== per coin (worker process)
 
 def _bucket(arr: np.ndarray, ms: int) -> np.ndarray:
-    """1m rows [ts, o, h, l, c, v, qv, tbq] -> candles of `ms` (the last, possibly incomplete one dropped)."""
+    """1m rows [ts, o, h, l, c, v, qv, tbq] -> candles of `ms` (the last, possibly incomplete one dropped). audit C16:
+    as live (levels.resample), only a group holding every one of its minutes once is a candle - a 5m bar of two minutes
+    is not."""
     if len(arr) == 0:
         return np.empty((0, 8))
+    arr = arr[np.r_[True, arr[1:, 0] != arr[:-1, 0]]] if len(arr) > 1 else arr   # a re-delivered minute once
     b = (arr[:, 0] // ms) * ms
     idx = np.flatnonzero(np.r_[True, b[1:] != b[:-1]])
     last = np.r_[idx[1:] - 1, len(arr) - 1]
     out = np.column_stack([b[idx], arr[idx, 1], np.maximum.reduceat(arr[:, 2], idx),
                            np.minimum.reduceat(arr[:, 3], idx), arr[last, 4], np.add.reduceat(arr[:, 5], idx),
                            np.add.reduceat(arr[:, 6], idx), np.add.reduceat(arr[:, 7], idx)])
-    return out[:-1]
+    full = (last - idx + 1) == ms // 60_000
+    return out[:-1][full[:-1]]
 
 
 def _raw_frame(c: np.ndarray, oi: Optional[Dict[int, float]]) -> pl.DataFrame:

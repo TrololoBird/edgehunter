@@ -167,6 +167,12 @@ def is_synthetic(label: Optional[str]) -> bool:
 HIT_RATE: Dict[str, Tuple[float, int, float]] = {}
 
 
+def setup_key(name: Optional[str]) -> str:
+    """HIT_RATE's key: the setup without the journal's 'ENTRY ' prefix (audit C13)."""
+    name = (name or '').strip()
+    return name[6:] if name.upper().startswith('ENTRY ') else name
+
+
 def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], sources: List[str], direction: int,
                   sl_src: str, low: bool = False) -> Optional[Dict]:
     """
@@ -247,7 +253,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     reason = reason or stop_too_far(plan, entry, stop)
     # audit C09: the setup's own measured rate (SWEEP and SILVER BULLET share the strategy 'sweep', Turtle and BB1
     # 'breakout' - one rate for different stops / targets / methods is no probability of either)
-    hit = HIT_RATE.get(plan.get('setup'))
+    hit = HIT_RATE.get(setup_key(plan.get('setup')))
     if reason is None:
         hi = (hit[2] if len(hit) > 2 else hit[0]) if hit else None
         if hit and real[0] and hi * rrs[0] - (1 - hi) <= 0:

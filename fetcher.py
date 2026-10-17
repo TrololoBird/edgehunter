@@ -65,6 +65,9 @@ class MarketData:
     minute_klines: deque = field(default_factory=lambda: deque(maxlen=600))
     # Open time of the newest FINAL futures 1m candle (kline x=true): the last deque entry may still be running
     minute_closed_until: int = 0
+    # audit C03: (open time, event time ms) of the latest futures 1m kline update - its price is as fresh as the event,
+    # not as the candle's schedule
+    kline_event: tuple = (0, 0.0)
     spot_minute_klines: deque = field(default_factory=lambda: deque(maxlen=60))
     _alt_minute: Optional[list] = None          # the Bybit spot minute being built [ts, o, h, l, c, q, Q]
     avg_minute_usd: float = 0.0
@@ -244,7 +247,7 @@ class MarketData:
     def last_price(self) -> Optional[float]:
         return self.ticker_samples[-1][1] if self.ticker_samples else None
 
-    def apply_kline(self, market: str, k: dict):
+    def apply_kline(self, market: str, k: dict, event_ms: Optional[float] = None):
         if k.get('i') == '1m':
             candle = [int(k['t']), float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['q']), float(k['Q']),
                       float(k.get('v', 'nan'))]                   # base volume (coins), NaN if absent
@@ -253,6 +256,8 @@ class MarketData:
                 target[-1] = candle
             elif not target or candle[0] > target[-1][0]:
                 target.append(candle)
+            if market == 'futures' and target[-1][0] == candle[0]:
+                self.kline_event = (candle[0], float(event_ms or time.time() * 1000))
             if k.get('x'):
                 if market == 'futures':
                     self.minute_closed_until = max(self.minute_closed_until, candle[0])
@@ -652,7 +657,7 @@ class DataFetcher:
                 md.open_interest = oi
                 md.record_oi(now_ms, oi)
                 if md.last_price:
-                    self._record_venue_oi(symbol, 'binance', oi * md.last_price, now_ms)
+                    self._record_venue_oi(symbol, 'binance', oi * md.last_price, now_ms, native=oi)
 
         while self._running:
             symbols = list(self.markets)
@@ -664,12 +669,15 @@ class DataFetcher:
             await asyncio.gather(*[poll(s, i * step) for i, s in enumerate(symbols)], return_exceptions=True)
             await asyncio.sleep(max(0.0, interval - (time.time() - started)))
 
-    def _record_venue_oi(self, key: str, venue: str, oi_usd: float, ts_ms: float):
+    def _record_venue_oi(self, key: str, venue: str, oi_usd: float, ts_ms: float, native: Optional[float] = None):
+        """native: the venue's own contract count when known (Binance) - audit C08: native rebuilt as USD (x last) /
+        mark turned a constant OI into native x last / mark, a false change whenever last and mark moved apart."""
         state = self.venue_derivs.setdefault(key, {}).setdefault(venue, VenueDeriv())
         state.oi_usd, state.ts, state.oi_ts = oi_usd, ts_ms, ts_ms
         price = state.mark or self._binance_price(key)
-        if price and (not state.samples or ts_ms - state.samples[-1][0] >= 10_000):
-            state.samples.append((ts_ms, oi_usd / price))
+        value = native if native else (oi_usd / price if price else None)
+        if value and (not state.samples or ts_ms - state.samples[-1][0] >= 10_000):
+            state.samples.append((ts_ms, value))
 
     async def _binance_rest_tickers_loop(self):
         """
@@ -1937,10 +1945,12 @@ class DataFetcher:
     # ------------------------------------------------------------------ entry-minute trades (audit A02)
 
     def track_from(self, symbol: str, since_ms: int) -> None:
-        """Start collecting the Binance futures trades of `symbol` from `since_ms` (a card's entry)."""
+        """Start collecting the Binance futures trades of `symbol` from `since_ms` (a card's entry) to the end of its
+        minute (the trades kept, so a query's interval is exact - audit C04)."""
         last = self._last_agg.get(symbol)
         self.entry_trackers.setdefault(symbol, {})[int(since_ms)] = {
-            'since': int(since_ms), 'last': last, 'ok': last is not None, 'hi': None, 'lo': None, 'seen_ms': 0}
+            'since': int(since_ms), 'until': int(since_ms) // 60_000 * 60_000 + 60_000, 'last': last,
+            'ok': last is not None, 'trades': [], 'seen_ms': 0}
 
     @staticmethod
     def _track_trade(trackers: Dict[int, Dict], agg, ts: int, price: float) -> None:
@@ -1949,20 +1959,21 @@ class DataFetcher:
                 tr['ok'] = False         # a lost aggregate trade (reconnect, dropped message): no proof any more
             if agg is not None:
                 tr['last'] = int(agg)
-            if ts >= tr['since']:
-                tr['hi'] = price if tr['hi'] is None else max(tr['hi'], price)
-                tr['lo'] = price if tr['lo'] is None else min(tr['lo'], price)
+            if tr['since'] <= ts < tr['until']:
+                tr['trades'].append((ts, price))
             tr['seen_ms'] = max(tr['seen_ms'], ts)
 
     def tracked_of(self, symbol: str, since_ms: int, until_ms: int) -> Optional[Dict]:
         """The trades of `symbol` in [since_ms, until_ms): {'hi', 'lo'} (None when no trade), 'pending' while no
-        trade at / after until_ms arrived yet, None when not tracked or a trade was lost."""
+        trade at / after until_ms arrived yet, None when not tracked or a trade was lost. audit C04: a trade at /
+        after until_ms closes the observation but is not part of the interval."""
         tr = (self.entry_trackers.get(symbol) or {}).get(int(since_ms))
-        if tr is None or not tr['ok']:
+        if tr is None or not tr['ok'] or until_ms > tr['until']:
             return None
         if tr['seen_ms'] < until_ms:
             return {'pending': True}
-        return {'hi': tr['hi'], 'lo': tr['lo']}
+        px = [p for ts, p in tr['trades'] if since_ms <= ts < until_ms]
+        return {'hi': max(px) if px else None, 'lo': min(px) if px else None}
 
     def untrack(self, symbol: str, since_ms: int) -> None:
         trackers = self.entry_trackers.get(symbol)
@@ -2041,7 +2052,7 @@ class DataFetcher:
         elif event == 'kline':
             md = self.markets.get(self._binance_keys.get((market_type, data.get('s'))))
             if md is not None:
-                md.apply_kline(market_type, data['k'])
+                md.apply_kline(market_type, data['k'], data.get('E'))
         elif event == 'contractInfo':
             if data.get('ct') == 'PERPETUAL' and str(data.get('s', '')).endswith('USDT'):
                 logger.info(f"Binance contract event: {data.get('s')} {data.get('cs')}")

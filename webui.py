@@ -221,8 +221,8 @@ def sizing_view(levels: Optional[Dict], direction: int, funding_8h: Optional[flo
 def fib_view(plan: Dict, levels: Optional[Dict], direction: int) -> Optional[Dict]:
     """
     The Fibonacci grid of a leg card for the chart: the impulse A -> B (with its times), the retracements 0.5 / 0.618
-    / 0.705 / 0.786 (the OTE band 0.62-0.79), and after the entry the trend-based extensions from the pullback's
-    extreme C (1.0 / 1.2 / 1.272 / 1.618).
+    / 0.705 / 0.786 (the OTE band 0.62-0.79), and after the entry the leg's extensions from A (1.0 / 1.2 / 1.272 /
+    1.618), the same levels the plan targets; C (the pullback's extreme) is marked.
     """
     anchor = (plan or {}).get('anchor') or {}
     if anchor.get('type') != 'leg' or anchor.get('start') is None or anchor.get('end') is None:
@@ -234,7 +234,9 @@ def fib_view(plan: Dict, levels: Optional[Dict], direction: int) -> Optional[Dic
     c = (levels or {}).get('extreme')
     if c is not None:
         out['c'] = float(c)
-        out['ext'] = [[k, float(c) + k * leg] for k in CONFIG.levels.continuation_targets]
+        # audit C14: the plan's own extensions (strategies.leg: A + k x (B - A), fixed by the impulse) - C + k x leg
+        # drew other lines than the card's targets
+        out['ext'] = [[k, a + k * leg] for k in CONFIG.levels.continuation_targets]
     return out
 
 

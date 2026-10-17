@@ -106,7 +106,8 @@ def test_a02_fetcher_tracker_needs_contiguous_ids():
     DataFetcher._track_trade(tr, 11, 999, 50.0)       # before the entry: continuity only
     DataFetcher._track_trade(tr, 12, 1500, 101.0)
     DataFetcher._track_trade(tr, 13, 2500, 99.0)
-    assert DataFetcher.tracked_of(f, 'X', 1000, 2000) == {'hi': 101.0, 'lo': 99.0}
+    # audit C04: the trade at 2500 closes the observation of [1000, 2000) but is not inside it
+    assert DataFetcher.tracked_of(f, 'X', 1000, 2000) == {'hi': 101.0, 'lo': 101.0}
     assert DataFetcher.tracked_of(f, 'X', 1000, 3000) == {'pending': True}
     DataFetcher._track_trade(tr, 15, 3500, 98.0)      # id 14 lost
     assert DataFetcher.tracked_of(f, 'X', 1000, 2000) is None

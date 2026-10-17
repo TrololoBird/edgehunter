@@ -138,7 +138,8 @@ def test_journal_outcomes_manual_fill_and_retry(tmp_path):
     class Fetcher:
         async def fetch_minute_klines(self, symbol, start, count):
             calls.append(count)
-            return [[0, 100, 104.5, 99.5, 104]] + [[0, 104, 104.2, 103.9, 104]] * (count - 1)
+            return ([[start + 60_000 * i, 100, 104.5, 99.5, 104] if i == 0 else [start + 60_000 * i, 104, 104.2, 103.9, 104]
+                         for i in range(count)])   # contiguous minutes (audit C12)
 
     asyncio.run(j._evaluate_pass(Fetcher()))
     entry = j.conn.execute("SELECT outcome, entry_fill, r_tp1, filled FROM signals WHERE kind='entry'").fetchone()

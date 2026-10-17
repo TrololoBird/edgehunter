@@ -51,7 +51,7 @@ DEMO_RU = {'SL': 'стоп', 'EXCHANGE': 'закрыта биржей (стоп 
            'OVERLAP': 'не открыта: монета уже в сделке', 'UNTRACKED': 'чужая позиция закрыта',
            'NO_LIMIT': 'не открыта: лимитный вход не выставлен', 'NO_STOP': 'закрыта: стоп не выставлен',
            'DAILY_LIMIT': 'не открыта: дневной лимит', 'PAUSE': 'не открыта: пауза после убытков',
-           'ERROR': 'не открыта: ошибка биржи'}
+           'ERROR': 'не открыта: ошибка биржи', 'UNKNOWN': 'исход входа неизвестен (биржа не ответила)'}
 
 
 def _short(symbol: str) -> str:
@@ -612,11 +612,14 @@ class Briefing:
                     return 'отменён: закрытие за стопом до реакции'
                 if cls.reaction(sc, side, c):
                     fill = c[4]
+                    if side * (tp1 - fill) <= 0:
+                        # audit C15: the reaction closed at / beyond TP1 - no trade with a target ahead
+                        return 'пропущен: реакция закрылась за TP1'
                 continue
             if (c[3] <= stop) if side > 0 else (c[2] >= stop):
                 return 'вход → стоп (−1R)'
             if (c[2] >= tp1) if side > 0 else (c[3] <= tp1):
-                return f"вход → TP1 ({abs(tp1 - fill) / abs(fill - stop):+.1f}R)"
+                return f"вход → TP1 ({side * (tp1 - fill) / abs(fill - stop):+.1f}R)"
         if fill is not None:
             return 'вход, без исхода'
         if armed and breakout and not touched:
@@ -731,8 +734,10 @@ class Briefing:
                 e0, e1 = sorted(x['entry'])
                 armed = not x['tag'].startswith('закрепление') or any(
                     (side > 0 and b[4] > e0) or (side < 0 and b[4] < e1) for b in since[:-1])
-                if armed and self.reaction(x, side, c) and side * (c[4] - x['stop']) > 0:
-                    rr = abs(x['targets'][0] - c[4]) / abs(c[4] - x['stop'])
+                # audit C15: the target must still be ahead of the reaction close (a signed reward, not abs)
+                if armed and self.reaction(x, side, c) and side * (c[4] - x['stop']) > 0 \
+                        and side * (x['targets'][0] - c[4]) > 0:
+                    rr = side * (x['targets'][0] - c[4]) / abs(c[4] - x['stop'])
                     self._post(f"✅ {_short(symbol)}: реакция у зоны — {name.lower()}-сценарий включён\n"
                                f"Вход ~{_fmt(c[4])} (закрытие 1h) · стоп {_fmt(x['stop'])} · цели "
                                + ' / '.join(_fmt(t) for t in x['targets']) + f" · R:R {rr:.1f}",
