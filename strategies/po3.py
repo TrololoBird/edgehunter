@@ -46,7 +46,8 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
     start, _, a0, a1 = w
     asia = [b for b in bars5 if a0 <= b[0] < a1]
     inside = [b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms]
-    if len(asia) < 24 or len(inside) < 3:
+    # eng-138: the whole Asian range (48 final 5m bars, 20:00-00:00 NY): a missing bar may hold its high / low
+    if len(asia) < 48 or len(inside) < 3:
         return None
     a_hi, a_lo = max(b[2] for b in asia), min(b[3] for b in asia)
     for d in (1, -1):
@@ -117,10 +118,12 @@ class Po3Strategy(Strategy):
         return (x.sig.get('anchor_ts'), x.direction) if x.sig.get('fvg_lo') is not None else None
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        # eng-138: the bias is part of PO3's definition (module doc: REQUIRED) - its absence / a trade against it is
+        # no PO3, not a shadow filter (the generic 'no_bias' / 'against_bias' are in strategies.shadow_vetoes)
         bias = sig.get('weekly_bias') or sig.get('daily_bias')
         if not bias:
-            return 'no_bias'
-        return 'against_bias' if bias == -direction else None
+            return 'po3_bias_required'
+        return 'po3_against_bias' if bias == -direction else None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr

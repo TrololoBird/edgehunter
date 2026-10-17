@@ -13,7 +13,7 @@ direction; the hour's opposite side only without it). Detected loop-side on the 
   the raid (bullish: the first bar's high < the third bar's low) inside the window;
 - one setup per coin, window and direction.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Sequence
 from zoneinfo import ZoneInfo
 
@@ -48,9 +48,14 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
     # session highs / lows (Asia 20:00-00:00 NY, London 02:00-05:00 NY) besides the hour before the window - the nearest
     # one beyond the window's open is the pool; was the hour before the window only
     local = datetime.fromtimestamp(start / 1000, tz=timezone.utc).astimezone(NY)
-    day0 = local.replace(hour=0, minute=0, second=0, microsecond=0)
-    sessions = [(day0.timestamp() * 1000 - 4 * 3_600_000, day0.timestamp() * 1000),          # Asia
-                (day0.timestamp() * 1000 + 2 * 3_600_000, day0.timestamp() * 1000 + 5 * 3_600_000)]  # London
+    # eng-138 (audit A08): each boundary is a New York wall-clock time of its own (fixed hours added to midnight were an
+    # hour off on the DST change days); 20:00 of the previous day .. 00:00 Asia, 02:00 .. 05:00 London
+    day = local.date()
+
+    def ny_ms(d, hour):
+        return datetime(d.year, d.month, d.day, hour, tzinfo=NY).timestamp() * 1000
+    prev = day - timedelta(days=1)
+    sessions = [(ny_ms(prev, 20), ny_ms(day, 0)), (ny_ms(day, 2), ny_ms(day, 5))]
     pools_hi, pools_lo = [(hour_hi, 'the hour before')], [(hour_lo, 'the hour before')]
     for (a, b), tag in zip(sessions, ('Asia', 'London')):
         if b > start:

@@ -63,7 +63,11 @@ def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets:
     total = sum(vol)
     if total <= 0:
         return None
-    poc = max(range(buckets), key=lambda k: vol[k])
+    # eng-138 (audit A06): among equal maxima the row nearest the profile's middle, then the lower of two equidistant
+    # (Sierra Chart's documented rule; was the lowest row)
+    top = max(vol)
+    mid = (buckets - 1) / 2
+    poc = min((k for k in range(buckets) if vol[k] == top), key=lambda k: (abs(k - mid), k))
     i = j = poc
     acc = vol[poc]
     while acc < share * total and (i > 0 or j < buckets - 1):

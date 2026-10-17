@@ -60,6 +60,14 @@ def required(strategy: str) -> Tuple[str, ...]:
     return tuple(dict.fromkeys(out))
 
 
+def required_names() -> Set[str]:
+    """Every confirmation name some strategy may require (configured, order flow, journal-promoted)."""
+    out = {item.split(':', 1)[1] for item in CONFIG.orderflow.required_confirmations}
+    out.add('orderflow')
+    out.update(name for _, name in PROMOTED)
+    return out
+
+
 def missing(strategy: str, confirms: Dict) -> Optional[str]:
     """The veto reason of the first required confirmation that is negative ('no_<name>')."""
     for name in required(strategy):

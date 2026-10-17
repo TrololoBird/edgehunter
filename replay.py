@@ -20,6 +20,7 @@ Writes data/replay/<run>/cards.parquet and entries.parquet (resumable per coin g
 import argparse
 import logging
 import os
+import json
 import time
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
@@ -61,7 +62,10 @@ class ArchiveCoin:
         self.spot = archive.klines_1m('spot', spot_id, warm, end) if spot_id else np.empty((0, 8))
         self.met = archive.metrics(fut_id, warm, end)
         self.fund = archive.funding(fut_id, warm, end)
-        d = archive.klines_ohlc('futures', fut_id, '1d', start - timedelta(days=420), end)
+        self.fund_paid = archive.funding(fut_id, warm, end, raw=True)      # eng-138 (R06): the rates as settled
+        # eng-138 (audit R06): the daily history live has (the 1400-day buffer): the longest cup (455 days) and its
+        # prior advance (2 x 455) did not fit in 420 days
+        d = archive.klines_ohlc('futures', fut_id, '1d', start - timedelta(days=1400), end)
         self.daily = [[int(r[0]), r[1], r[2], r[3], r[4], r[5]] for r in d]
         self.has_spot = bool(spot_id)
         self.m_ts = self.fut[:, 0] if len(self.fut) else np.empty(0)
@@ -257,6 +261,16 @@ class Replay:
         self._minutes_of = minutes_of
         self.now_ms = 0
         self.book = SignalBook()
+        import signal_book as _sb
+
+        def paid(sym, t0, t1):
+            c = self.coins.get(sym)
+            f = getattr(c, 'fund_paid', None) if c is not None else None
+            if f is None or not len(f):
+                return None
+            m = (f[:, 0] > t0) & (f[:, 0] <= t1)
+            return float(f[m, 1].sum())
+        _sb.FUNDING_PAID = paid
         # the replay measures the methods' OWN plans: the optimized profiles (models/profiles*.json, research_optimize*)
         # are fitted on this replay's output and must not shape it
         from strategies import profiles
@@ -519,7 +533,12 @@ def main():
     ap.add_argument('--coins', type=int, default=20)
     ap.add_argument('--symbols', default='', help='comma-separated futures ids instead of the top --coins')
     ap.add_argument('--rate', type=float, default=2e6)
-    ap.add_argument('--group', type=int, default=5, help='coins replayed together (one SignalBook)')
+    ap.add_argument('--group', type=int, default=0, help='coins replayed together (one SignalBook); 0 = all in one, '
+                    'as live (crowd / unit limits are portfolio-wide); > 0 splits the portfolio - its limits then hold '
+                    'per group only (audit R03)')
+    ap.add_argument('--allow-future-model', action='store_true',
+                    help='run with a stop model (PIERCE_MODEL / models/overshoot.json) measured on data after the '
+                         "replay's start (audit R04: not causal; the run is labelled so)")
     ap.add_argument('--out', default=os.path.join('data', 'replay', 'run'))
     ap.add_argument('--shard', default='', help="k/N: run only the groups with index %% N == k (parallel processes "
                                                 "on one --out; the same coin selection in every process)")
@@ -537,26 +556,41 @@ def main():
             if not s.endswith('USDT') or '_' in s or 'SETTLED' in s or not _spot_pair(s[:-4], spot):
                 continue
             try:
-                d = arch.klines_ohlc('futures', s, '1d', start, end)
+                # eng-138 (audit R03): ranked by the 30 days BEFORE the window (what live would have seen at its start),
+                # not by the window's own future volume
+                d = arch.klines_ohlc('futures', s, '1d', start - timedelta(days=30), start - timedelta(days=1))
             except Exception:
                 continue
             if len(d) >= 20:
                 vols.append((float(d[:, 5].mean()), s))
         ids = [s for _, s in sorted(vols, reverse=True)[:args.coins]]
+    # eng-138 (audit R04): the stop model must be measured before the window, else the stops know the tested months
+    import pierce
+    window = (pierce.model() or {}).get('window') or []
+    future = not window or str(window[-1]) >= start.isoformat()
+    if future and not args.allow_future_model:
+        raise SystemExit(f"stop model window {window or '?'} reaches into the replay start {start}: build one before it "
+                         f"(research_overshoot.py --end {start}) and pass PIERCE_MODEL=..., or --allow-future-model")
+    os.makedirs(args.out, exist_ok=True)
+    with open(os.path.join(args.out, 'manifest.json'), 'w', encoding='utf-8') as f:
+        json.dump({'start': str(start), 'end': str(end), 'coins': ids, 'group': args.group or len(ids),
+                   'stop_model_window': window, 'stop_model_causal': not future,
+                   'universe': 'symbols given' if args.symbols else 'top by 30d volume before start'}, f, indent=1)
     coins = []
     for fid in ids:
         base = fid[:-4]
         coins.append((f"{base}/USDT:USDT", fid, _spot_pair(base, spot)))
     # groups of --group coins share one SignalBook (crowd / unit limits hold within a group): RAM ~100 MB per coin
     k, n = (map(int, args.shard.split('/')) if args.shard else (0, 1))
-    for g in range(0, len(coins), args.group):
-        if (g // args.group) % n != k:
+    size = args.group or len(coins) or 1
+    for g in range(0, len(coins), size):
+        if (g // size) % n != k:
             continue
-        out = os.path.join(args.out, f"group_{g // args.group:02d}")
+        out = os.path.join(args.out, f"group_{g // size:02d}")
         if os.path.exists(os.path.join(out, 'cards.parquet')):
             print(f"{out}: done before, skipped")
             continue
-        part = coins[g:g + args.group]
+        part = coins[g:g + size]
         n_cards, n_entries = run(part, start, end, out, args.rate)
         print(f"replay {start} .. {end}: {[c[1] for c in part]}: {n_cards} cards, {n_entries} entries / vetoes -> {out}",
               flush=True)

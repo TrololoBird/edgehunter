@@ -186,7 +186,7 @@ def _event(setup: str, d: int, lo: float, hi: float, extreme: float, h1, rng: Di
     return {'setup': setup, 'direction': d,
             'setup_note': f"{tf} {'spring below' if d > 0 else 'upthrust above'} a {hours}h trading range {lo:.6g}-{hi:.6g} "
                           f"({'SC' if d > 0 else 'BC'} -> AR -> ST) after a {'decline' if d > 0 else 'rally'}: closed "
-                          f"back inside; P&F count {cols} columns -> {count:.6g}; the entry waits for the test",
+                          f"back inside; P&F column proxy {cols} reversals -> {count:.6g} (not Wyckoff's horizontal count on a count line); the entry waits for the test",
             'range_lo': lo, 'range_hi': hi, 'anchor_level': edge, 'anchor_extreme': extreme,
             'anchor_label': f"{'SC low' if d > 0 else 'BC high'} (phase A range)",
             'anchor_ts': int(h1[rng['climax']][0]), 'anchor_close': last[4], 'event_ts': int(last[0]) + period_ms, 'wy_tf': tf,
@@ -225,7 +225,7 @@ class WyckoffRangeStrategy(Strategy):
         fillers = (far,) + ((sig['pnf_target'],) if sig.get('pnf_target') and d * (sig['pnf_target'] - far) > 0 else ())
         # eng-84 (Wyckoff practice): TP1 the middle of the range, then its far side / the P&F count
         # eng-110: Wyckoff's objectives - the range's far side and the P&F count (the eng-84 'range middle' TP1 was ours)
-        targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F count')
+        targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F proxy')
         # the test: back toward the spring's area (the spring's extreme to a fifth into the range)
         # eng-110: the test comes back to the spring's area - its extreme to the range edge (the 'fifth into the range'
         # was ours)
@@ -235,5 +235,5 @@ class WyckoffRangeStrategy(Strategy):
         return base_plan(x, self.name, anchor, tf, entry='pullback', zone_lo=zone[0], zone_hi=zone[1],
                          zone_src=f"Wyckoff test of the {'spring' if d > 0 else 'upthrust'}", invalid=extreme,
                          fix_invalid=True, missable=True, stop_ref=extreme, intent='range', fillers=fillers,
-                         fill_label='range far side / P&F count', targets=targets, target_src=sources, zones=zones,
+                         fill_label='range far side / P&F proxy', targets=targets, target_src=sources, zones=zones,
                          key=(sig['anchor_ts'], edge))

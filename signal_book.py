@@ -159,11 +159,20 @@ def shadow_veto(sig: Dict, reason: Optional[str]) -> Optional[str]:
     if not reason:
         return reason
     names = CONFIG.strategies.shadow_vetoes
-    if reason in names or ('no_*' in names and reason.startswith('no_') and reason not in _REAL_NO):
+    # eng-138: a missing entry CONFIRMATION (confirm.missing: 'no_<confirmation>', a required / journal-promoted one)
+    # stays a filter in shadow as before; a setup's own required part (no_spring_test, po3_bias_required, ...) blocks
+    conf = '<confirmations>' in names and reason.startswith('no_') and reason[3:] in confirm.required_names()
+    if reason in names or conf or ('no_*' in names and reason.startswith('no_') and reason not in _REAL_NO):
         have = set(filter(None, (sig.get('shadow_veto') or '').split(',')))
         sig['shadow_veto'] = ','.join(sorted(have | {reason}))
         return None
     return reason
+
+
+# eng-138 (audit R06): (symbol, t0_ms, t1_ms) -> the sum of the funding rates SETTLED in (t0, t1] (as paid, not
+# normalized), None when unknown; set by the replay from the archive ledger. Live keeps the entry-rate model (the real
+# ledger is the executor's)
+FUNDING_PAID: Optional[Callable[[str, float, float], Optional[float]]] = None
 
 
 def version_no(v: Optional[str]) -> int:
@@ -817,6 +826,12 @@ class SignalBook:
         if not entry or not risk:
             return 0.0
         cost = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(s.sig.get('volume_24h'), s.symbol) / 1e4) * entry / risk
+        if FUNDING_PAID is not None:
+            # eng-138 (audit R06): the settled rates themselves (the archive's fundingRate ledger in the replay), not the
+            # entry's rate for the whole hold
+            paid = FUNDING_PAID(s.symbol, (s.entered_at or 0) * 1000, exit_ms)
+            if paid is not None:
+                return cost + s.direction * paid * entry / risk
         return cost + funding_r(s.sig.get('funding_rate'), s.direction, entry, risk, (s.entered_at or 0) * 1000, exit_ms,
                                 s.sig.get('funding_interval_h'))
 

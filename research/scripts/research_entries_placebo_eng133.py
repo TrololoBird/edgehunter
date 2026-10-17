@@ -245,25 +245,31 @@ def process_symbol(job):
 
 
 # ------------------------------------------------------------------------------------------------ statistics
-def boot_idx(n, rng, n_boot):
-    """Moving-block bootstrap indices: n_boot x n, blocks of BLOCK consecutive buckets."""
-    nb = math.ceil(n / BLOCK)
-    starts = rng.integers(0, max(n - BLOCK + 1, 1), size=(n_boot, nb))
-    idx = (starts[:, :, None] + np.arange(BLOCK)[None, None, :]).reshape(n_boot, -1)[:, :n]
+def boot_idx(n, rng, n_boot, block=BLOCK):
+    """Moving-block bootstrap indices: n_boot x n, blocks of `block` consecutive calendar buckets (eng-138, audit R05:
+    at least the cards' p90 lifetime - a 48 h block under trades held for days broke their dependence)."""
+    block = max(1, int(block))
+    nb = math.ceil(n / block)
+    starts = rng.integers(0, max(n - block + 1, 1), size=(n_boot, nb))
+    idx = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1)[:, :n]
     return np.minimum(idx, n - 1)
 
 
 def newey_west_p(x, lag):
-    """One-sided p of mean(x) > 0 with a Bartlett-kernel HAC standard error."""
-    x = x[np.isfinite(x)]
-    n = len(x)
+    """One-sided p of mean(x) > 0 with a Bartlett-kernel HAC standard error. `x` is the CALENDAR series (NaN = an
+    empty bucket): eng-138 (audit R05) the lag counts calendar buckets - the autocovariances are taken over the observed
+    pairs k buckets apart, normalized by the observed count (missing values as zeros of the demeaned series); dropping
+    the NaN first measured the lag in signals."""
+    x = np.asarray(x, dtype=float)
+    ok = np.isfinite(x)
+    n = int(ok.sum())
     if n < 5:
         return 1.0
-    mu = x.mean()
-    e = x - mu
-    v = (e * e).mean()
-    for k in range(1, min(lag, n - 1) + 1):
-        v += 2 * (1 - k / (lag + 1)) * (e[k:] * e[:-k]).mean()
+    mu = x[ok].mean()
+    e = np.where(ok, x - mu, 0.0)
+    v = (e * e).sum() / n
+    for k in range(1, min(lag, len(x) - 1) + 1):
+        v += 2 * (1 - k / (lag + 1)) * (e[k:] * e[:-k]).sum() / n
     se = math.sqrt(max(v, 1e-12) / n)
     return 0.5 * math.erfc((mu / se) / math.sqrt(2))
 
@@ -279,7 +285,7 @@ def bucket_series(ts, vals):
     return u, sums / cnt
 
 
-def contrast(ts_a, v_a, ts_b, v_b, rng, n_boot, lag):
+def contrast(ts_a, v_a, ts_b, v_b, rng, n_boot, lag, block=BLOCK):
     """mean(A) - mean(B) over 4h buckets (A, B may be the real and the placebo series of the same entries, or two
     disjoint groups); 48 h moving-block bootstrap on the union of the buckets. Returns a dict or None (< 30 buckets)."""
     ua, xa = bucket_series(ts_a, v_a) if len(ts_a) else (np.array([], dtype=np.int64), np.array([]))
@@ -294,7 +300,7 @@ def contrast(ts_a, v_a, ts_b, v_b, rng, n_boot, lag):
     B[np.searchsorted(grid, ub)] = xb
     if min(len(ua), len(ub)) < 30:
         return None
-    idx = boot_idx(len(grid), rng, n_boot)
+    idx = boot_idx(len(grid), rng, n_boot, max(BLOCK, block))
     idx = idx[np.isfinite(A[idx]).any(axis=1) & np.isfinite(B[idx]).any(axis=1)] if len(idx) else idx
     with np.errstate(all='ignore'):
         ma = np.nanmean(A[idx], axis=1)
@@ -529,7 +535,7 @@ def main():
             if sel.sum() == 0:
                 res[h] = None
                 continue
-            c = contrast(ts_all[sel], R[sel], ts_all[sel], pl_mean[sel], rng, args.boot, lifetime_b)
+            c = contrast(ts_all[sel], R[sel], ts_all[sel], pl_mean[sel], rng, args.boot, lifetime_b, lifetime_b)
             if c is not None:
                 p90 = float(np.percentile([bucket_series(ts_all[sel], PM[sel, k])[1].mean() for k in range(K)], 90))
                 c['p90'] = p90
@@ -549,7 +555,7 @@ def main():
         res = {}
         for h in ('dev', 'holdout'):
             hs = half_arr == h
-            res[h] = contrast(ts_all[hs & has], R[hs & has], ts_all[hs & ~has], R[hs & ~has], rng, args.boot, lifetime_b)
+            res[h] = contrast(ts_all[hs & has], R[hs & has], ts_all[hs & ~has], R[hs & ~has], rng, args.boot, lifetime_b, lifetime_b)
         tag_rows.append((tg, res))
         if res.get('holdout'):
             p_all.append(min(1.0, 2 * min(res['holdout']['p'], res['holdout']['p_lo'])))
@@ -565,7 +571,7 @@ def main():
         for h in ('dev', 'holdout'):
             hs = (half_arr == h) & np.isfinite(v)
             top, bot = hs & (v >= hi_b), hs & (v <= lo_b)
-            res[h] = contrast(ts_all[top], R[top], ts_all[bot], R[bot], rng, args.boot, lifetime_b)
+            res[h] = contrast(ts_all[top], R[top], ts_all[bot], R[bot], rng, args.boot, lifetime_b, lifetime_b)
         res['bounds'] = (float(lo_b), float(hi_b))
         feat_rows.append((col, res))
         if res.get('holdout'):
@@ -591,8 +597,8 @@ def main():
     out.append(f"Run `{args.run}`; {len(d)} entries with a placebo ({e.height} usable, "
                f"{int((half_arr == 'dev').sum())} dev / {int((half_arr == 'holdout').sum())} holdout after the purge), "
                f"split {datetime.fromtimestamp(mid / 1000, timezone.utc):%Y-%m-%d}; K = {K} copies, seed {args.seed}, "
-               f"{args.boot} bootstrap draws, block = {BLOCK} calendar 4h buckets (48 h); lifetime lag for Newey-West = "
-               f"{lifetime_b} buckets (p90 holding {p90_hold / HOUR:.1f} h).\n")
+               f"{args.boot} bootstrap draws, block = {lifetime_b} calendar 4h buckets (>= 48 h, the p90 holding); "
+               f"Newey-West lag = {lifetime_b} calendar buckets (p90 holding {p90_hold / HOUR:.1f} h).\n")
     out.append("**What this measures (audit R04):** the entry with a FIXED geometry over 8 hours (levels.simulate: out at "
                "TP1 / the stop / the TTL), for the real entries and the placebos alike. It is NOT the cards' full "
                "result: the Turtle channel, Connors' SMA5, Bollinger's SAR / band and the partial exits are not in it. "

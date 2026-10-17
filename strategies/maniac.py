@@ -82,6 +82,11 @@ def _base_volume(bars) -> np.ndarray:
     """audit: the bars' BASE volume (quote volume / typical price) for the volume indicators (Intraday Intensity)."""
     out = []
     for b in bars:
+        # eng-138: the candle's own base volume (index 7, coins) when it has one; quote / HLC3 only for a row without
+        # it (the average traded price is not HLC3)
+        if len(b) > 7 and b[7] is not None and np.isfinite(b[7]):
+            out.append(float(b[7]))
+            continue
         tp = (b[2] + b[3] + b[4]) / 3
         out.append(float(b[5]) / tp if len(b) > 5 and b[5] is not None and tp > 0 else 0.0)
     return np.asarray(out)
@@ -414,8 +419,11 @@ def bb_method1_event(bars: Sequence[Sequence[float]], period_ms: int = 4 * HOUR_
     with np.errstate(divide='ignore', invalid='ignore'):
         bw = (upper - lower) / ma
     i = n - 1
-    squeeze = [k for k in range(i - 125, i) if k >= 144 and np.isfinite(bw[k])
-               and bw[k] <= np.nanmin(bw[k - 124:k + 1])]
+    # eng-138, the Method I manual (Bollinger 2021, TradeStation package): the Squeeze is BandWidth at its 125-period
+    # low with a 3% buffer by default, and the alert has "a five day lookback period for a Squeeze built in" - a
+    # breakout counts when the Squeeze was within the last five bars (was: any Squeeze of the last 125 bars)
+    squeeze = [k for k in range(i - 4, i + 1) if k >= 144 and np.isfinite(bw[k])
+               and bw[k] <= 1.03 * np.nanmin(bw[k - 124:k + 1])]
     if not squeeze:
         return None
     k0 = squeeze[-1]
