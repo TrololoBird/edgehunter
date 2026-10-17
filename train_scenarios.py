@@ -52,8 +52,20 @@ def coin_samples(j: int) -> List[Dict]:
         candles = [[ts[i], O[t - WINDOW + i], H[t - WINDOW + i], L[t - WINDOW + i], C[t - WINDOW + i],
                     V[t - WINDOW + i]] for i in range(WINDOW)]
         b = btc[sl]
+        # audit N25: the same inputs as the live card - the daily candles (complete UTC days before t, <= 370 as
+        # MarketData.d1) and the 30-day 1h profile, so the fitted levels / htf features are the ones live uses
+        d_end = t // 24
+        days = []
+        for d in range(max(0, d_end - 370), d_end):
+            a_, z_ = d * 24, d * 24 + 24
+            if np.isnan(C[a_:z_]).any():
+                continue
+            days.append([t0 + a_ * rh.HOUR, float(O[a_]), float(np.max(H[a_:z_])), float(np.min(L[a_:z_])),
+                         float(C[z_ - 1]), float(np.sum(V[a_:z_]))])
+        h30 = [[t0 + i * rh.HOUR, float(O[i]), float(H[i]), float(L[i]), float(C[i]), float(V[i])]
+               for i in range(max(0, t - 720), t) if not np.isnan(C[i])]
         sc = build(candles, float(C[t - 1]), t0 + t * rh.HOUR, None if np.isnan(b).any() else b.tolist(),
-                   model=False)
+                   model=False, candles_1d=days, candles_1h_30d=h30)
         if sc is None:
             continue
         up, down = sc['above'][0]['lo'], sc['below'][0]['hi']

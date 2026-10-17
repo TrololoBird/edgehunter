@@ -48,7 +48,7 @@ class BookState:
 
     __slots__ = ('bids', 'asks', 'last_u', 'synced', 'buffer', 'ts_ms', 'recv', 'resyncs', 'executed', 'flow',
                  'heat', 'heat_step', 'heat_ts', 'walls', 'bands', 'bands_ts', 'deep_bids', 'deep_asks', 'deep_ts',
-                 'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts', 'wall_info', 'wall_log')
+                 'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts', 'wall_info', 'wall_log', 'unexplained')
 
     def __init__(self):
         self.bids: Dict[float, float] = {}
@@ -63,6 +63,9 @@ class BookState:
         self.resyncs = 0
         # (side +1 bid / -1 ask, price) -> [quantity executed, last trade ms]
         self.executed: Dict[Tuple[int, float], List[float]] = {}
+        # audit N09: book decreases no trade explained YET: (side, price) -> [qty, ts, flow cell, offset, wall] - a
+        # trade arriving later on the other socket within ATTRIBUTION_MS moves them from pulled to filled
+        self.unexplained: Dict[Tuple[int, float], list] = {}
         # minute ms -> {bucket: [bid added, pulled, filled, ask added, pulled, filled]} (USD)
         self.flow: Dict[int, Dict[int, List[float]]] = {}
         # (epoch seconds, mid, first bucket index, USD per bucket: + bids / - asks)
@@ -107,6 +110,7 @@ class DepthBook:
         if book is None:
             return
         book.bids, book.asks, book.buffer, book.executed, book.walls = {}, {}, [], {}, {}
+        book.unexplained = {}
         book.synced, book.snapshot_wanted, book.bands = False, True, []
 
     def forget(self, symbol: str):
@@ -176,6 +180,19 @@ class DepthBook:
         if book is None or not book.synced:
             return
         key = (1 if taker_side < 0 else -1, price)
+        u = book.unexplained.get(key)
+        if u is not None and abs(ts_ms - u[1]) <= ATTRIBUTION_MS and u[0] > 0:
+            # audit N09: the decrease came first (the depth socket was faster): it was a fill, not a pull
+            moved = min(qty, u[0])
+            u[0] -= moved
+            qty -= moved
+            u[2][u[3] + PULLED] -= moved * price
+            u[2][u[3] + FILLED] += moved * price
+            if u[4] is not None:
+                u[4][3] += moved * price
+                u[4][4] -= moved * price
+            if qty <= 0:
+                return
         cell = book.executed.get(key)
         if cell is None:
             book.executed[key] = [qty, ts_ms]
@@ -220,6 +237,9 @@ class DepthBook:
                 if w is not None:
                     w[3] += filled * price
                     w[4] += (drop - filled) * price
+                if drop - filled > 0:
+                    # provisional: a trade on the other socket may still explain it (on_trade reclassifies)
+                    book.unexplained[(side, price)] = [drop - filled, ts, cell, off, w]
         book.last_u = int(event.get('u', book.last_u))
         book.ts_ms, book.recv = ts, now
         if count and len(book.flow) > FLOW_MINUTES:
@@ -229,6 +249,7 @@ class DepthBook:
             book.heat_ts = now
             # executed quantities older than the attribution window can no longer explain a decrease
             book.executed = {k: v for k, v in book.executed.items() if ts - v[1] <= ATTRIBUTION_MS}
+            book.unexplained = {k: v for k, v in book.unexplained.items() if ts - v[1] <= ATTRIBUTION_MS}
             self._snapshot(book, now)
 
     # ------------------------------------------------------------------ snapshots: heat, walls, bands

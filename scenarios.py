@@ -103,8 +103,17 @@ def levels_htf(candles_1d: Sequence[Sequence[float]], candles_1h_30d: Sequence[S
 
 def htf_context(candles_1d: Sequence[Sequence[float]], price: float) -> Dict[str, float]:
     """Weekly trend (EMA20 of weekly closes vs 4 weeks before) and the price's place in the 30-day range."""
-    closes = [c[4] for c in candles_1d]
-    weekly = closes[6::7]
+    # audit N25: the close of each COMPLETE calendar week (Monday 00:00 UTC weeks) - closes[6::7] took every 7th day
+    # from the buffer's start, its phase moving with the buffer
+    week_ms = 7 * 86_400_000
+    monday0 = 4 * 86_400_000                                  # 1970-01-05 was a Monday
+    last_close: Dict[int, float] = {}
+    for c in candles_1d:
+        last_close[int((c[0] - monday0) // week_ms)] = c[4]
+    if candles_1d:
+        last_close.pop(int((candles_1d[-1][0] - monday0) // week_ms), None) \
+            if (candles_1d[-1][0] - monday0) % week_ms < 6 * 86_400_000 else None   # the running week: not closed
+    weekly = [last_close[k] for k in sorted(last_close)]
     trend_w = 0.0
     if len(weekly) >= 24:
         e = _ema(weekly, 20)

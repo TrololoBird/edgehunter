@@ -89,8 +89,10 @@ def main():
     # ------------------------------------------------------------ 1. prequential online LR
     p_online = df['p_before'].to_numpy()
     ok = ~np.isnan(p_online.astype(float))
-    running = np.cumsum(y) / np.arange(1, len(y) + 1)
-    base_online = np.r_[0.5, running[:-1]]            # the base rate known before each row
+    # audit N15: the base rate KNOWN before each row - only labels already matured (row ts + 4h <= this row's ts)
+    cum = np.r_[0.0, np.cumsum(y)]
+    known = np.searchsorted(ts + 4 * 3_600_000, ts, side='right')     # ts sorted, so ts + 4h is too
+    base_online = np.where(known > 0, cum[known] / np.maximum(known, 1), 0.5)
     print("\n1. online logistic regression as it ran (prediction before learning each row)")
     print("   " + report('base rate (running)', y[ok], base_online[ok], w[ok],
                          _logloss(y[ok], base_online[ok], w[ok]), _brier(y[ok], base_online[ok], w[ok])))

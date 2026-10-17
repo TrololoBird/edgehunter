@@ -197,6 +197,17 @@ class Scanner:
         # eng-59: the loop-side detectors live in strategies/loopside.py (the archive replay runs the same code)
         self.loopside = LoopDetectors(self._minute_candles,
                                       lambda symbol: part_candles(self._frame_parts.get(symbol))[0])
+        self.loopside.volume_rank = self._volume_rank
+        self._rank_cache: tuple = (0.0, {})
+
+    def _volume_rank(self, symbol: str) -> Optional[int]:
+        """The coin's rank by 24h quote volume among the scanned markets (1 = largest), refreshed once a minute."""
+        at, ranks = self._rank_cache
+        if time.time() - at > 60:
+            ordered = sorted(self.market_data.items(), key=lambda kv: -(kv[1].quote_volume_24h or 0.0))
+            ranks = {s: i + 1 for i, (s, _) in enumerate(ordered)}
+            self._rank_cache = (time.time(), ranks)
+        return ranks.get(symbol)
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -398,7 +409,8 @@ class Scanner:
             # eng-89: rush orders of the last 10 / 30 s; the 5m futures flow against the visible book within 1% on its
             # side (Cont-Kukanov-Stoikov: short-horizon impact scales with the order-flow imbalance over the depth)
             m.update(self.fetcher.rush.stats(symbol, now_ms))
-            cvd = m.get('agg_cvd_5m') or m.get('futures_cvd_5m') or 0.0
+            from journal import present
+            cvd = present(m.get('agg_cvd_5m'), m.get('futures_cvd_5m')) or 0.0      # audit N12: a measured 0 stays 0
             ratio = self.fetcher.depth.sweep_vs_depth(symbol, abs(cvd), 1 if cvd > 0 else -1, band=0.01) if cvd else None
             m['flow_depth_5m'] = float('nan') if ratio is None else float(ratio) * (1 if cvd > 0 else -1)
             m['top_venue'] = flow.get('top_venue', '')
@@ -1095,9 +1107,10 @@ class Scanner:
             out['prem_z'] = (out['prem_1h'] - mean) / sd if sd > 0 and out['prem_1h'] is not None else None
         hours = self.fetcher.funding_interval_hours.get(symbol)
         out['funding_1h'] = 1.0 if hours == 1 else 0.0 if hours else None
+        out['funding_interval_h'] = float(hours) if hours else None          # audit C12: the cost model's interval
         state = (self.fetcher.venue_derivs.get(symbol) or {}).get('binance')
         out['oi_vol'] = state.oi_usd / md.quote_volume_24h if state is not None and state.oi_usd and \
-            md.quote_volume_24h else None
+            md.quote_volume_24h and time.time() * 1000 - state.oi_ts < 600_000 else None     # audit N18: a fresh OI
         h1 = list(md.h1)[-15:]
         if len(h1) == 15:
             closes = [c[4] for c in h1]

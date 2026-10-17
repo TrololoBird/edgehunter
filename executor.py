@@ -64,6 +64,12 @@ def _positive(x) -> Optional[float]:
     return v if v is not None and v > 0 else None
 
 
+def _coin(symbol: str) -> str:
+    """The coin of a ccxt symbol, its unit multiplier dropped (audit N05: the shared parser, not '.replace(1000)')."""
+    from symbols import split_base
+    return split_base((symbol or '').split('/')[0])[0]
+
+
 def credentials() -> tuple:
     """(key, secret): BINGX_API_KEY / BINGX_API_SECRET from the environment (systemd EnvironmentFile, mode 600)
     first, then config.local.toml [executor] - the key out of a file that sits next to the code."""
@@ -84,6 +90,8 @@ class DemoExecutor:
         self.ex = None
         self.open: Dict[str, Dict] = {}          # card id -> trade
         self._lock = asyncio.Lock()
+        # audit N02: cards whose finish already came (an entry still waiting for the lock must not open them)
+        self._finished_cards: set = set()
         # set by the scanner: is this card (symbol|setup|entered_at) still an open trade in the book? A card that
         # expired while the bot was down is never restored, so its finish never comes (3 demo positions stayed
         # open for 15h, 2026-10-01): the reconcile loop closes such orphans
@@ -106,7 +114,11 @@ class DemoExecutor:
             c.execute("CREATE INDEX IF NOT EXISTS idx_demo_pending ON demo_trades(error, closed_ms)")
             # columns added after the first schema: migrated once here (was an ALTER TABLE on every trade)
             have = {r[1] for r in c.execute("PRAGMA table_info(demo_trades)")}
-            for col, kind in (('basis', 'REAL'), ('exit_ref', 'REAL'), ('no_stop', 'INTEGER'), ('scale', 'REAL')):
+            # audit N01/N04: the entry order's id (its own fills are told from the next trade's by it) and whether the
+            # entry price / size came from the exchange (1) or are a quote / the requested size (0); scale: BingX's
+            # price scale (restored trades re-stop at it)
+            for col, kind in (('basis', 'REAL'), ('exit_ref', 'REAL'), ('no_stop', 'INTEGER'), ('scale', 'REAL'),
+                              ('entry_order', 'TEXT'), ('fill_confirmed', 'INTEGER'), ('funding_usd', 'REAL')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
@@ -206,7 +218,7 @@ class DemoExecutor:
         # scheduled as background tasks both passed 'coin free' before either took the lock
         async with self._lock:
             card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}"
-            if card_id in self.open:
+            if card_id in self.open or card_id in self._finished_cards:
                 return
             if self.is_limit_plan(s):
                 key = self.wait_key(s)
@@ -241,10 +253,10 @@ class DemoExecutor:
                               'close_reason': 'PAUSE' if limit.startswith('pause') else
                               'STRATEGY_OFF' if limit.startswith('strategy') else 'DAILY_LIMIT'})
                 return
-            coin = s.symbol.split('/')[0].replace('1000', '')
-            busy = next((t for t in self.open.values() if t['symbol'].split('/')[0].replace('1000', '') == coin), None) or \
+            coin = _coin(s.symbol)
+            busy = next((t for t in self.open.values() if _coin(t['symbol']) == coin), None) or \
                 next((p for p in self.pending.values() if not p.get('skip')
-                      and p.get('symbol', '').split('/')[0].replace('1000', '') == coin), None)
+                      and _coin(p.get('symbol', '')) == coin), None)
             if busy is not None:
                 # BingX's one-way mode nets every order of a coin into ONE position: a second card on the same coin would
                 # merge with the first (one card's exit closes the other, their fills mix in both results) - recorded, not
@@ -397,6 +409,10 @@ class DemoExecutor:
               for k, v in s.levels.items()}
         # the fill is BingX's own ask (a long) / bid (a short): the trade is judged at that price, not at the plan's
         fill_est = float((quote.get('ask') if d > 0 else quote.get('bid')) or bx_last)
+        n_turtle = (getattr(s, 'plan', None) or {}).get('turtle_n')
+        if n_turtle:
+            # review V05: the Turtles' stop is 2N from the position's OWN entry - BingX's price, not Binance's
+            lv['sl'] = fill_est - d * 2 * n_turtle * ratio
         reject = None
         if d * (fill_est - lv['sl']) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"
@@ -469,38 +485,64 @@ class DemoExecutor:
         except Exception as e:
             errors.report('executor._open', e, f"Demo leverage {symbol}")
         side, exit_side = ('buy', 'sell') if d > 0 else ('sell', 'buy')
+        import ccxt
+        import uuid
+        # audit N03: a client order id, so a request whose reply was lost can be found; a timeout is an UNKNOWN outcome
+        # (the exchange may have filled it), never 'not filled'
+        cid = f"pb{uuid.uuid4().hex[:24]}"
         try:
-            order = await ex.create_order(symbol, 'market', side, qty)
-        except Exception as e:
-            # BingX caps the position per coin (1000 USDT on small caps, live HUMA 2026-10-01) and names the cap in
-            # the error: retry once at 90% of it
-            import re
-            m = re.search(r'position limit of ([0-9.]+) USDT', str(e))
-            if not m:
+            try:
+                order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
+            except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
                 raise
-            qty = float(ex.amount_to_precision(symbol, 0.9 * float(m.group(1)) / lv['entry']))
-            if qty <= 0 or qty < min_qty:
+            except Exception as e:
+                # BingX caps the position per coin (1000 USDT on small caps, live HUMA 2026-10-01) and names the cap
+                # in the error: retry once at 90% of it
+                import re
+                m = re.search(r'position limit of ([0-9.]+) USDT', str(e))
+                if not m:
+                    raise
+                qty = float(ex.amount_to_precision(symbol, 0.9 * float(m.group(1)) / lv['entry']))
+                if qty <= 0 or qty < min_qty:
+                    raise
+                cid = f"pb{uuid.uuid4().hex[:24]}"
+                order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
+        except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
+            order = await self._resolve_unknown_entry(symbol, d, cid, e)
+            if order is None:
                 raise
-            order = await ex.create_order(symbol, 'market', side, qty)
         fill = order.get('average') or order.get('price')
-        if not fill:
-            # the create reply may carry no average: the order's own state, never the plan's price (it made R the plan's)
+        filled = order.get('filled')
+        if (not fill or not filled) and order.get('id'):
+            # the create reply may carry no average / filled: the order's own state, never the plan's price
             try:
                 o = await self._call('fetch_order', order['id'], symbol)
-                fill = o.get('average') or o.get('price')
-                order = {**order, 'filled': o.get('filled') or order.get('filled')}
+                fill = fill or o.get('average') or o.get('price')
+                filled = filled or o.get('filled')
             except Exception as e:
                 errors.report('executor._open', e, f"Demo fill price {symbol}")
+        # audit N04: one position per coin (one-way mode, coin checked free above), so the exchange's position IS this
+        # entry - its size and average price are confirmed data where the order reply was not
+        pos_qty, pos_px = await self._position_of(symbol, d)
+        if pos_qty:
+            filled = pos_qty
+            fill = fill or pos_px
+        confirmed = bool(fill and filled)
+        if not confirmed:
+            logger.warning(f"Demo ENTRY {symbol}: fill not confirmed by BingX (price {fill}, size {filled}): the quote / "
+                           f"requested size stand in, the row is marked unconfirmed")
+            self.alert(f"⚠️ Демо {symbol}: биржа не подтвердила цену/объём входа, записано как неподтверждённое")
         fill = float(fill or fill_est)
         # the exits use what was FILLED: a stop for the ordered size failed on a partial fill (live INJ 2026-10-03:
         # 'order size must be less than the available amount of 529', the position sat without a stop)
-        qty = float(order.get('filled') or 0) or qty
+        qty = float(filled or 0) or qty
         trade = {'card_id': card_id, 'symbol': symbol, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
                  'opened_ms': int(time.time() * 1000), 'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty,
                  'sl': lv['sl'], **{k: (None if (getattr(s, 'plan', None) or {}).get('no_tp') else lv[k])
                                     for k in ('tp1', 'tp2', 'tp3')},     # no_tp: placeholders are no targets
                  # the risk the size was computed from (stop distance + the round trip's costs): R = -1 at the stop
-                 'risk_usd': qty * (abs(fill - lv['sl']) + fee), 'no_stop': int(no_stop)}
+                 'risk_usd': qty * (abs(fill - lv['sl']) + fee), 'no_stop': int(no_stop),
+                 'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed)}
         try:
             if not no_stop:
                 await ex.create_order(symbol, 'market', exit_side, qty, None,
@@ -582,8 +624,8 @@ class DemoExecutor:
         d, plan = s.direction, s.plan
         if self.risk_limit() is not None:
             return                                   # eng-58: the day's risk rules - no new resting limit (retried later)
-        coin = s.symbol.split('/')[0].replace('1000', '')
-        if any(t['symbol'].split('/')[0].replace('1000', '') == coin for t in self.open.values()) or                 any(p.get('symbol', '').split('/')[0].replace('1000', '') == coin for p in self.pending.values()
+        coin = _coin(s.symbol)
+        if any(_coin(t['symbol']) == coin for t in self.open.values()) or                 any(_coin(p.get('symbol', '')) == coin for p in self.pending.values()
                     if not p.get('skip')):
             # BingX nets a coin's orders into one position: one trade or resting limit per coin
             self.pending[key] = {'skip': True, 'reason': 'the coin is held / has a resting limit'}
@@ -721,7 +763,8 @@ class DemoExecutor:
         trade = {'card_id': p.get('card_id') or key, 'symbol': p['symbol'], 'setup': p['setup'],
                  'strategy': p['strategy'], 'direction': p['direction'], 'opened_ms': int(time.time() * 1000),
                  'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty, 'sl': lv['sl'], 'tp1': lv['tp1'],
-                 'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * (abs(fill - lv['sl']) + float(p.get('fee') or 0))}
+                 'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * (abs(fill - lv['sl']) + float(p.get('fee') or 0)),
+                 'entry_order': str(p.get('order_id') or '') or None}
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, p['scale']
         self._set_scale(trade['id'], p['scale'])
@@ -940,16 +983,21 @@ class DemoExecutor:
         if not s.entered_at:
             return
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
-        trade = self.open.get(card_id)
-        if trade is None:
-            # the exchange closed it first (stop / last target, reconciled as EXCHANGE): the card's own result still
-            # belongs next to it - the demo exists to compare the two
-            if s.final_r is not None:
-                with sqlite3.connect(self.db_path) as c:
-                    c.execute("UPDATE demo_trades SET journal_r = ? WHERE card_id = ? AND journal_r IS NULL",
-                              (s.final_r, card_id))
-            return
+        # audit N02: the open trade is read under the lock - an entry still opening (on_entry holds the lock through
+        # _open) is waited for instead of the finish being dropped with the position left on BingX
         async with self._lock:
+            self._finished_cards.add(card_id)
+            if len(self._finished_cards) > 5000:
+                self._finished_cards = {card_id}
+            trade = self.open.get(card_id)
+            if trade is None:
+                # the exchange closed it first (stop / last target, reconciled as EXCHANGE): the card's own result
+                # still belongs next to it - the demo exists to compare the two
+                if s.final_r is not None:
+                    with sqlite3.connect(self.db_path) as c:
+                        c.execute("UPDATE demo_trades SET journal_r = ? WHERE card_id = ? AND journal_r IS NULL",
+                                  (s.final_r, card_id))
+                return
             try:
                 self._set_exit_ref(trade['id'], s.finish_price)
                 await self._close(trade, s.status, s.final_r, passive=True)
@@ -1002,6 +1050,31 @@ class DemoExecutor:
                 if attempt == tries - 1:
                     raise
                 await asyncio.sleep(1.5 * 2 ** attempt)
+
+    async def _position_of(self, symbol: str, d: int) -> tuple:
+        """(size, average entry price) of the coin's position on the side d, (0, None) when there is none / unreadable."""
+        try:
+            for p in await self._call('fetch_positions', [symbol]):
+                side = 1 if p.get('side') == 'long' else -1 if p.get('side') == 'short' else 0
+                if p.get('symbol') == symbol and p.get('contracts') and side in (0, d):
+                    return float(p['contracts']), float(p.get('entryPrice') or 0) or None
+        except Exception as e:
+            errors.report('executor._position_of', e, f"Demo position {symbol}")
+        return 0.0, None
+
+    async def _resolve_unknown_entry(self, symbol: str, d: int, cid: str, err: Exception) -> Optional[Dict]:
+        """audit N03: a market entry whose reply was lost (timeout / network). The coin was free before the order (one
+        position per coin, one-way mode), so the position read decides: a position found becomes the trade (protected by
+        the caller), none after ~14s = not filled. Never retried blindly (a second order would double the position);
+        the client id is in the log to find the order on BingX by hand."""
+        logger.warning(f"Demo ENTRY {symbol}: outcome unknown ({err!r}): resolving by client id {cid} / position")
+        for wait in (2, 4, 8):
+            await asyncio.sleep(wait)
+            qty, px = await self._position_of(symbol, d)
+            if qty:
+                return {'id': None, 'filled': qty, 'average': px}
+        logger.info(f"Demo ENTRY {symbol}: no order / position found after the lost reply: not filled")
+        return None
 
     async def _position_qty(self, symbol: str) -> float:
         for p in await self._call('fetch_positions', [symbol]):
@@ -1140,14 +1213,19 @@ class DemoExecutor:
         else:
             fees = self._fees(entry, qty, exit_fees)
             pnl = d * (exit_avg - entry) * qty - fees
+        # audit C12: the funding BingX actually settled on the coin while the trade was open (its ledger, signed:
+        # paid < 0), in the result beside the fills; None when the ledger is unreadable (pnl then excludes it)
+        funding = await self._funding_paid(trade['symbol'], trade['opened_ms'], time.time() * 1000)
+        if pnl is not None and funding is not None:
+            pnl += funding
         risk = trade.get('risk_usd') or 0
         if not risk:
             logger.warning(f"Demo {reason} {trade['symbol']}: risk_usd is 0 - R left empty")
         with sqlite3.connect(self.db_path) as c:
             c.execute("UPDATE demo_trades SET closed_ms = ?, close_reason = ?, exit_avg = ?, fees_usd = ?, pnl_usd = ?, "
-                      "r = ?, journal_r = ? WHERE id = ?",
+                      "r = ?, journal_r = ?, funding_usd = ? WHERE id = ?",
                       (int(time.time() * 1000), reason, exit_avg, fees, pnl,
-                       pnl / risk if risk and pnl is not None else None, journal_r, trade['id']))
+                       pnl / risk if risk and pnl is not None else None, journal_r, funding, trade['id']))
             if pnl is None and qty and entry:
                 c.execute("UPDATE demo_trades SET error = ? WHERE id = ?", (self.FILL_PENDING, trade['id']))
         self.open.pop(trade['card_id'], None)
@@ -1157,6 +1235,16 @@ class DemoExecutor:
             logger.info(f"Demo {reason} {trade['symbol']}: {pnl:+.2f} USD ({r_txt})")
 
     FILL_PENDING = 'exit fill pending'
+
+    async def _funding_paid(self, symbol: str, since_ms: float, until_ms: float) -> Optional[float]:
+        """Sum of BingX's FUNDING_FEE ledger entries of the coin in [since, until] (USDT, signed), None unreadable."""
+        try:
+            rows = await self._call('fetch_funding_history', symbol, int(since_ms) - 1_000)
+        except Exception as e:
+            logger.debug(f"Demo funding ledger {symbol}: {e!r}")
+            return None
+        return sum(float(r.get('amount') or 0) for r in rows or []
+                   if since_ms - 1_000 <= float(r.get('timestamp') or 0) <= until_ms + 1_000)
 
     @staticmethod
     def _exit_fills(fills: List[Dict], side: str, opened_ms: float, closed_ms: float,
@@ -1208,6 +1296,21 @@ class DemoExecutor:
         return value / closed, closed, fees
 
     @staticmethod
+    def _next_entry_cutoff(fills: List[Dict], nxt) -> Optional[float]:
+        """audit N01: where the next trade on the coin begins. Its entry order's own fill time when the row carries the
+        order id (exact: this trade's exit is never cut); for older rows without it, the row's opened_ms - 14s (a
+        limit's opened_ms is when check_limits SAW the fill, a market entry's after fetch_order's retries) - that
+        margin can drop an exit made in the last 15s before the next entry, which is why the id is stored now."""
+        if not nxt:
+            return None
+        opened, order = nxt
+        if order:
+            own = [f.get('timestamp') for f in fills if str(f.get('order') or '') == str(order) and f.get('timestamp')]
+            # +1s: _exit_fills subtracts its 1s clock margin; the entry fill itself is excluded by its order id
+            return min(own) + 1_000 if own else opened + 1_000
+        return opened - 14_000
+
+    @staticmethod
     def _fees(entry: float, qty: float, exit_fees: float) -> float:
         """The entry side at the configured taker rate (an estimate: the entry order's commission is not stored),
         the exit side as BingX charged it on the exit orders (_exit_summary)."""
@@ -1234,12 +1337,13 @@ class DemoExecutor:
                     logger.warning(f"Demo result recovery {symbol}: {e!r}")
                     cache[symbol] = []
             with sqlite3.connect(self.db_path) as c:
-                # trades with an entry fill only; 15s before the row's opened_ms: a limit's opened_ms is when
-                # check_limits SAW the fill (polled every 10s), a market entry's after fetch_order's retries
-                nxt = c.execute("SELECT MIN(opened_ms) FROM demo_trades WHERE symbol = ? AND opened_ms > ? "
-                                "AND entry_fill IS NOT NULL", (symbol, closed)).fetchone()[0]
-            nxt = nxt - 14_000 if nxt else None
-            exits = self._exit_fills(cache[symbol], side, opened, closed, nxt)
+                nxt = c.execute("SELECT opened_ms, entry_order FROM demo_trades WHERE symbol = ? AND opened_ms > ? "
+                                "AND entry_fill IS NOT NULL ORDER BY opened_ms LIMIT 1", (symbol, closed)).fetchone()
+                others = {o for (o,) in c.execute("SELECT entry_order FROM demo_trades WHERE symbol = ? AND id != ? "
+                                                  "AND entry_order IS NOT NULL", (symbol, tid))}
+            cutoff = self._next_entry_cutoff(cache[symbol], nxt)
+            exits = [f for f in self._exit_fills(cache[symbol], side, opened, closed, cutoff)
+                     if str(f.get('order') or '') not in others]
             if not exits or not qty:
                 continue
             exit_avg, closed_qty, exit_fees = await self._exit_summary(symbol, exits)
@@ -1252,9 +1356,13 @@ class DemoExecutor:
                 continue
             fees = self._fees(entry, qty, exit_fees)
             pnl = d * (exit_avg - entry) * qty - fees
+            funding = await self._funding_paid(symbol, opened, closed)          # audit C12
+            if funding is not None:
+                pnl += funding
             with sqlite3.connect(self.db_path) as c:
-                c.execute("UPDATE demo_trades SET exit_avg = ?, fees_usd = ?, pnl_usd = ?, r = ?, error = NULL WHERE id = ?",
-                          (exit_avg, fees, pnl, pnl / risk if risk else None, tid))
+                c.execute("UPDATE demo_trades SET exit_avg = ?, fees_usd = ?, pnl_usd = ?, r = ?, funding_usd = ?, "
+                          "error = NULL WHERE id = ?",
+                          (exit_avg, fees, pnl, pnl / risk if risk else None, funding, tid))
             logger.info(f"Demo result recovered {symbol}: {pnl:+.2f} USD ({pnl / risk if risk else 0:+.2f}R)")
 
     async def reconcile_loop(self, running) -> None:

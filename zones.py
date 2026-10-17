@@ -466,19 +466,23 @@ def observed_liquidations(events: Iterable[Tuple[float, float, float, int]], atr
 
 
 def vwap(candles: Sequence[Sequence[float]], since_ms: int, label: str) -> List[RawLevel]:
-    """
-    VWAP of [ts, o, h, l, c, quote_vol, taker_buy_quote, base_vol] candles opened at or after since_ms: the exact
-    sum(quote) / sum(base), i.e. every trade's price weighted by its size (audit S01: quote-weighted typical prices
-    weighted price twice). No level when any candle of the window lacks base_vol (no quote / typical estimate).
-    """
-    quote = base = 0.0
+    """VWAP of [ts, o, h, l, c, quote_vol, taker, base_vol] candles opened at or after since_ms: sum(quote) /
+    sum(base) - exact (every trade's price x quantity over the quantity; audit S01 / C02: quote-weighted typical
+    prices weighted price twice). The base volume is the exchange's own (Binance's kline volume, the 8th field); a
+    candle without it (None / NaN / older 7-column rows) falls back to quote / HLC3 - an approximation (one bar of
+    trades at 100 and 200 reads 166.67, not 150), kept from the live branch so a coin without base volume keeps its
+    VWAP level."""
+    num = den = 0.0
     for c in candles:
-        if c[0] >= since_ms:
-            if len(c) < 8 or c[5] is None or c[7] is None or not c[7] == c[7]:   # missing / NaN base: not exact
-                return []
-            quote += c[5]
-            base += c[7]
-    return [RawLevel(quote / base, 'vwap', label)] if base > 0 else []
+        if c[0] >= since_ms and c[5]:
+            base = c[7] if len(c) > 7 and c[7] is not None and c[7] == c[7] and c[7] > 0 else None
+            if base is None:
+                typical = (c[2] + c[3] + c[4]) / 3
+                base = c[5] / typical if typical > 0 else None
+            if base:
+                num += c[5]
+                den += base
+    return [RawLevel(num / den, 'vwap', label)] if den else []
 
 
 def _usd(v: float) -> str:

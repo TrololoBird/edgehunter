@@ -90,7 +90,7 @@ def coin_rows(j: int) -> List[Dict]:
             last_event = t
             a = atr1h(H, L, C, t)
             # the peak until exhaustion: the first close beyond the previous candle's extreme against the move
-            peak, ex = (H[t], None)
+            peak, ex = (H[t] if d > 0 else L[t], None)     # review V14: a dump's low may be the dump bar's own
             for h in range(t + 1, min(n - 1, t + 25)):
                 peak = max(peak, H[h]) if d > 0 else min(peak, L[h])
                 if (C[h] < L[h - 1]) if d > 0 else (C[h] > H[h - 1]):
@@ -126,7 +126,10 @@ def coin_rows(j: int) -> List[Dict]:
             # dip-buy: retrace to 38.2-61.8% of the pump within 24h, then a close beyond the previous candle
             lo_r, hi_r = peak - d * 0.382 * size, peak - d * 0.618 * size
             touched, pull = False, None
-            for h in range(t + 1, min(n - 1, t + 25)):
+            # audit R05: the extreme is only known at the exhaustion close ex: the retrace / trigger is searched from
+            # ex on (from t+1 a later low moved the targets of a trade already open - look-ahead); no exhaustion within
+            # 24h = no extreme = no trade
+            for h in (range(ex, min(n - 1, t + 25)) if ex is not None else ()):
                 if not touched:
                     if (L[h] <= lo_r) if d > 0 else (H[h] >= lo_r):
                         touched, pull = True, L[h] if d > 0 else H[h]

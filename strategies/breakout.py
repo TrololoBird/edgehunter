@@ -109,7 +109,10 @@ class BreakoutStrategy(Strategy):
         if not sig.get('turtle_n'):
             return None
         stop = sig['anchor_level'] - d * 2 * sig['turtle_n']
-        exit = {'stop': ['price', stop], 'stop_src': '2N from the breakout (Turtles)', 'tp': ['trail'],
+        # review V05: 2N from the ENTRY the levels are computed at (stop_n, geometry.system_levels), not from the
+        # channel / the minute's close - entry 106 with the stop fixed at 103 was 3N
+        exit = {'stop': ['price', stop], 'stop_n': 2 * sig['turtle_n'], 'stop_src': '2N from the entry (Turtles)',
+                'tp': ['trail'],
                 'tp_src': f"none: exit on the {sig['trail_days']}-day {'low' if d > 0 else 'high'}", 'atr': x.atr}
         plan = _confirm_plan(x, self.name, '1d', exit, f"Turtle System {sig['turtle_system']} breakout")
         if plan is not None:

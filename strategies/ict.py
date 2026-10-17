@@ -135,6 +135,12 @@ def fvg_setup(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, int
     gap and its consequent encroachment (CE, 50%) for a resting limit; the entry is that limit's fill (touch_trigger),
     not a later candle's close. eng-36..57 took any close above the highest high SINCE the sweep as the shift.
     """
+    # review V02: resample drops an incomplete bar, so neighbours in the list can be hours apart - only the run of
+    # time-contiguous bars ending at the last one is read (a gap / MSS across a hole is no structure)
+    k0 = len(ltf) - 1
+    while k0 > 0 and int(ltf[k0][0]) - int(ltf[k0 - 1][0]) == interval_ms:
+        k0 -= 1
+    ltf = ltf[k0:]
     start = next((k for k, x in enumerate(ltf) if x[0] + interval_ms > since_ms), None)
     if start is None or len(ltf) - start < 3 or start < 3:
         return None

@@ -1,18 +1,26 @@
 """Session-anchored ORB: range = first 30m (2 bars) after a session open, entry on a break of that range (buy stop at
 range high / sell stop at range low), stop = the opposite side, exit at the session end. Also Crabel's Stretch from
-the session open (open +- 10-session SMA of min(H-O, O-L)). DST: London 07:00 UTC in Apr-Oct else 08:00; NY 13:30 /
-14:30 (approx: US DST mid-Mar..early-Nov). Run: python -I sessions.py"""
+the session open (open +- 10-session SMA of min(H-O, O-L)). DST: each date's own London / New York
+offsets (zoneinfo). Run: python -I sessions.py"""
 import sys, os, datetime as dt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 import bt
 
-def dst_us(d): return (d.month, d.day) >= (3, 9) and (d.month, d.day) < (11, 2)
-def dst_eu(d): return (d.month, d.day) >= (3, 30) and (d.month, d.day) < (10, 26)
-SESS = {  # name -> (open h:m UTC (std), dst fn, length hours)
+from zoneinfo import ZoneInfo
+
+
+def _utc_hm(d, zone, h, m):
+    """audit N27: the local open h:m of the date d in `zone` as UTC (h, m) - the DST rules of THAT year (fixed
+    Mar 9 / Nov 2 and Mar 30 / Oct 26 were 2025's dates: 2026-03-08 09:30 NY read 14:30 UTC instead of 13:30)."""
+    local = dt.datetime(d.year, d.month, d.day, h, m, tzinfo=ZoneInfo(zone)).astimezone(dt.UTC)
+    return local.hour, local.minute
+
+
+SESS = {  # name -> (open h:m UTC for the date, length hours)
     'Asia (00:00 UTC, 8h)':   (lambda d: (0, 0), 8),
-    'London (08/07 UTC, 8h)': (lambda d: (7, 0) if dst_eu(d) else (8, 0), 8),
-    'New York (13:30/14:30, 6.5h)': (lambda d: (13, 30) if dst_us(d) else (14, 30), 6.5),
+    'London (08:00 London, 8h)': (lambda d: _utc_hm(d, 'Europe/London', 8, 0), 8),
+    'New York (09:30 NY, 6.5h)': (lambda d: _utc_hm(d, 'America/New_York', 9, 30), 6.5),
 }
 
 def run(mode):

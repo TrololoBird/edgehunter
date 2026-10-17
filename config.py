@@ -414,9 +414,10 @@ class LevelsConfig:
     # stop at break-even + costs, one flat / in loss is closed at market (stops are run both ways in the first minutes);
     # the multi-day systems (Turtles, Connors) keep theirs
     macro_guard_min: int = 0         # eng-123: the open-trade guard has no source - off (the entry window stays)
-    # trend-based Fibonacci extension (3 points: the impulse A-B projected from the pullback's extreme C; Carney /
-    # Pesavento's ABC, TradingView's Trend-Based Fib Extension): 1.0 / 1.2 / 1.272 / 1.618
-    continuation_targets: tuple = (1.0, 1.2, 1.272, 1.618)
+    # audit (ICT OTE Primer 10:45-14:46, 37:49-38:03): the first take profit at the PRIOR HIGH (the impulse's end, 1.0
+    # of the leg A->B from A), then the -27% / -62% extensions of that leg (1.272 / 1.618 from A); was C + k x leg from
+    # the pullback (low 100 / high 120 / C 104.2: TP1 124.2 instead of 120) and an extra 1.2 no source names
+    continuation_targets: tuple = (1.0, 1.272, 1.618)
     # Reversal: price must still be within this retracement of the reversed leg's end (accumulation: a bit wider)
     reversal_zone_max: float = 0.236
     # must stay below the first reversal target (0.382), or there is no room left for the trade

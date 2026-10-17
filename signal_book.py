@@ -134,7 +134,23 @@ def _jsonable(v) -> bool:
     return False
 
 
-_REAL_NO = ('no_data', 'no_leg', 'no_room', 'no_anchor')      # eng-104: no_bias is a filter (shadow)
+# eng-104: no_bias is a filter (shadow); audit C08: no_test_data - a required test that could not be observed is not
+# a passed one, and not a shadow filter either
+_REAL_NO = ('no_data', 'no_leg', 'no_room', 'no_anchor', 'no_test_data')
+
+
+# setups measured in shadow only (journaled, never traded) by their name: prefix / exact name -> the veto they get.
+# One list for _enter and the dashboard (audit N33: the page described setups by a hand-kept table)
+# audit (Connors): the book's long (RSI2X LONG) is traded; our eng-84 cross-back entry (RSI2 LONG / SHORT) and the
+# mirrored short the book does not state (RSI2X SHORT) are measured in shadow
+SHADOW_SETUPS = (('RSI2 ', 'rsi2_crossback_shadow'), ('RSI2X SHORT', 'connors_short_shadow'),
+                 ('FLUSH REVERSAL', 'cascade_shadow'), ('SQUEEZE REVERSAL', 'cascade_shadow'),
+                 ('OI BUILD ', 'oi_shadow'), ('BB3 ', 'bb3_shadow'))
+
+
+def shadow_of(group_key: str) -> Optional[str]:
+    return next((why for name, why in SHADOW_SETUPS
+                 if (group_key.startswith(name) if name.endswith(' ') else group_key == name)), None)
 
 
 def shadow_veto(sig: Dict, reason: Optional[str]) -> Optional[str]:
@@ -632,7 +648,9 @@ class SignalBook:
         if s.entered_at and s.r_now is not None:
             s.final_r = self._exit_r(s, status)
             self.session_r.append(s.final_r)
-        if status in ('SL', 'TP3'):
+        # audit N14: every terminal outcome of an ENTERED trade notifies once (CLOSED - band / session / time / opposite
+        # setup exits - was never sent)
+        if status in ('SL', 'TP3') or (status == 'CLOSED' and s.entered_at):
             self.events.append((s, status))
 
     def _trail(self, s: TrackedSignal, candles_of, hi: Optional[float] = None, lo: Optional[float] = None) -> None:
@@ -786,7 +804,8 @@ class SignalBook:
         if not entry or not risk:
             return 0.0
         cost = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(s.sig.get('volume_24h'), s.symbol) / 1e4) * entry / risk
-        return cost + funding_r(s.sig.get('funding_rate'), s.direction, entry, risk, (s.entered_at or 0) * 1000, exit_ms)
+        return cost + funding_r(s.sig.get('funding_rate'), s.direction, entry, risk, (s.entered_at or 0) * 1000, exit_ms,
+                                s.sig.get('funding_interval_h'))
 
     @staticmethod
     def _exit_r(s: TrackedSignal, status: str) -> Optional[float]:
@@ -798,15 +817,14 @@ class SignalBook:
         lv = s.levels or {}
         exit_ms = (s.finished_at or s.last_seen or 0) * 1000
         risk = lv.get('risk0') or (abs(lv['entry'] - lv['sl']) if lv.get('entry') and lv.get('sl') else None)
-        # audit A10: the recorded fill (stop / overlay exit on its 1m candle) is the exit price of EVERY part still
-        # open; the scan's later last_price only when no fill was recorded
-        out = s.exit_fill if s.exit_fill is not None else (lv.get('sl') if status == 'SL' else s.last_price)
-        rest = out
+        # audit N13: the price the trade really left at (a gapped stop's fill, the overlay exit's close) for EVERY part
+        # and unit - the scan's last price is a mark, not an exit
+        rest = s.exit_fill if s.exit_fill is not None else (lv.get('sl') if status == 'SL' else s.last_price)
         if s.units or not all(isinstance(lv.get(k), (int, float)) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')):
-            gross = s.r_now
-            if s.exit_fill is not None and risk:
-                gross = (sum(s.direction * (s.exit_fill - u[0]) for u in s.units) if s.units
-                         else s.direction * (s.exit_fill - lv['entry'])) / risk
+            gross = None
+            if risk and rest is not None:
+                gross = (sum(s.direction * (rest - u[0]) for u in s.units) if s.units else
+                         s.direction * (rest - lv['entry'])) / risk
             if gross is not None and (s.plan or {}).get('p1r_done'):
                 share = CONFIG.executor.partial_share
                 gross = share * CONFIG.executor.partial_r + (1 - share) * gross   # eng-105: the partial at +1R
@@ -978,6 +996,12 @@ class SignalBook:
                 # after its sweep, then gave the channel's whole move); an entry outside it is journaled shadow_veto
                 self._finish(s, 'EXPIRED', now, "session_end: the kill zone ended without an entry")
                 return None
+        until = plan.get('entry_until_ms')
+        if until and now_ms >= until:
+            # audit (Silver Bullet): the method's own entry window ended - no NEW entry after it (an entered trade is
+            # managed on; structural_lifetimes does not extend the window)
+            self._finish(s, 'EXPIRED', now, "entry window ended without an entry")
+            return None
         reclaim = self._reclaim_entry(s, price, now_ms)
         if reclaim is not None:
             return reclaim
@@ -1044,13 +1068,18 @@ class SignalBook:
         spring_minute = s.sig.get('fut_candle_minute_usd')
         if spring_minute is None and not s.sig.get('has_spot'):
             spring_minute = s.sig.get('candle_minute_usd')
-        if s.group_key in ('BULL B', 'SPRING', 'UTAD', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL') and not pullback_volume_ok(minutes, s.zone_since_ms, trigger['time'],
-                                                             spring_minute or 0.0):
+        tested = s.group_key in ('BULL B', 'SPRING', 'UTAD', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL')
+        vol_ok = pullback_volume_ok(minutes, s.zone_since_ms, trigger['time'], spring_minute or 0.0) if tested else True
+        spread_ok = pullback_spread_ok(minutes, s.zone_since_ms, trigger['time'], s.sig.get('spring_range'),
+                                       s.sig.get('spring_tf_min') or
+                                       {'15m': 15, '1h': 60, '4h': 240, '1d': 1440}.get(s.sig.get('wy_tf') or '1h', 60)) \
+            if s.group_key in ('SPRING', 'UTAD') else True
+        if vol_ok is False:
             reason = 'no_spring_test'
-        elif s.group_key in ('SPRING', 'UTAD') and not pullback_spread_ok(minutes, s.zone_since_ms, trigger['time'],
-                                                                         s.sig.get('spring_range'),
-                                                                         s.sig.get('spring_tf_min') or 60):
+        elif spread_ok is False:
             reason = 'no_spring_test'                # eng-55: the test's spread did not narrow
+        elif vol_ok is None or spread_ok is None:
+            reason = 'no_test_data'                  # audit C08: the test was not observable - not passed
         confirms = confirm_of(s.symbol, s.mode, d, s.zone_since_ms, trigger['time'], trigger.get('extreme_time')) \
             if confirm_of else {}
         if confirms is not None and s.plan:
@@ -1120,16 +1149,12 @@ class SignalBook:
             from macro_calendar import blackout
             if blackout(now_ms):
                 reason = 'macro_event'
-        if reason is None and s.group_key.startswith('RSI2X '):
-            reason = 'rsi2x_shadow'      # eng-106: Connors' original entry, measured beside ours
-        if reason is None and s.group_key in ('FLUSH REVERSAL', 'SQUEEZE REVERSAL'):
-            reason = 'cascade_shadow'    # eng-127: no tested cascade-reversal rules exist - shadow
-        if reason is None and s.group_key.startswith('OI BUILD '):
-            reason = 'oi_shadow'         # eng-127: Pring's OI rule - no study shows OI predicts crypto returns: shadow
+        # eng-106 / eng-127: RSI2X (Connors' original entry), BB3 (Bollinger's Method III), the cascade reversals and
+        # Pring's OI rule are measured in shadow beside the traded rules (SHADOW_SETUPS)
+        if reason is None:
+            reason = shadow_of(s.group_key)
         if reason is None and s.mode == 'supply_demand' and (s.plan or {}).get('sd_score', 10) < 8:
             reason = 'sd_score'          # eng-127: Seiden / OTA - below 8 of 10 odds enhancer points no trade
-        if reason is None and s.group_key.startswith('BB3 '):
-            reason = 'bb3_shadow'        # eng-106: Bollinger's Method III as his manual states it, measured beside the W / M
         if reason is None and not (s.plan or {}).get('trail_days') and self.crowded(s.mode, s.direction, entered_at):
             reason = 'crowded'
         hb = (confirms or {}).get('_bias') or {}
@@ -1409,7 +1434,11 @@ class SignalBook:
                     break
             if s.best_target == 3:
                 return self._finish(s, 'TP3', now, f"TP3 {lv['tp3']:.6g} reached")
-            self._trail(s, candles_of, hi, lo)
+            # audit C05: the trail sees the minutes up to THIS candle only - a catch-up pass over several minutes gave
+            # the EMA / SAR the later candles of the buffer and moved the stop on data that did not exist yet
+            upto = int(c[0])
+            self._trail(s, (lambda sym, _t=upto: [m for m in candles_of(sym) if m[0] <= _t]) if candles_of else None,
+                        hi, lo)
             self._profile_manage(s, hi, lo)
             why = self._overlay_exit(s, c, candles_of)
             if why:

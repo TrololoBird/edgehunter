@@ -64,7 +64,8 @@ def s04():
     from levels import pullback_spread_ok
     # 4h spring range 8; test 15m candles of range 2.5: old / 2 limit 2.4 lets it pass, sqrt(240/15) = 4 gives 1.2
     minutes = [[i * 60_000, 100., 100.0 + (2.0 if i % 15 == 0 else 0), 100., 100., 1., .5, .01] for i in range(30)]
-    kw = {'spring_tf_min': 240} if 'spring_tf_min' in inspect.signature(pullback_spread_ok).parameters else {}
+    params = inspect.signature(pullback_spread_ok).parameters      # renamed spring_minutes in the live branch
+    kw = {k: 240 for k in ('spring_tf_min', 'spring_minutes') if k in params}
     ratio = __import__('config').CONFIG.levels.spring_test_spread_ratio
     return (f'test avg range 2.0, spring 4h range 8, ratio {ratio}: passes={pullback_spread_ok(minutes, 0, 30 * 60_000, 8.0, **kw)} '
             f'(limit {ratio} x 8 / 4 = {ratio * 2:g})')

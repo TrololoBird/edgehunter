@@ -256,7 +256,7 @@ class MarketData:
             if k.get('x'):
                 if market == 'futures':
                     self.minute_closed_until = max(self.minute_closed_until, candle[0])
-                self._add_closed_minute(market, candle, float(k['v']))
+                self._add_closed_minute(market, candle, float(k.get('v') or 0.0))
             return
 
         quote_vol = float(k['q'])
@@ -298,8 +298,13 @@ class MarketData:
         if bucket is None:
             bucket = self.minute_bucket[market] = {
                 'timestamp': start, 'open': c[1], 'high': c[2], 'low': c[3], 'close': c[4], 'volume': 0.0,
-                'quote_volume': 0.0, 'taker_buy': 0.0, 'minutes': 0, 'first_minute': int(c[0]),
+                'quote_volume': 0.0, 'taker_buy': 0.0, 'minutes': 0, 'first_minute': int(c[0]), 'seen': set(),
             }
+        if int(c[0]) in bucket['seen']:
+            # audit N19: a re-delivered minute is applied once - counted twice it hid a missing minute (14 unique
+            # minutes read as 15 = complete, no backfill) and doubled its volume
+            return
+        bucket['seen'].add(int(c[0]))
         bucket['high'] = max(bucket['high'], c[2])
         bucket['low'] = min(bucket['low'], c[3])
         bucket['close'] = c[4]
@@ -312,7 +317,8 @@ class MarketData:
 
     def _finalize_bucket(self, market: str, bucket: dict):
         self.minute_bucket.pop(market, None)
-        complete = bucket['minutes'] == TIMEFRAME_MS // 60_000 and bucket['first_minute'] == bucket['timestamp']
+        start = bucket['timestamp']
+        complete = bucket['seen'] == set(range(start, start + TIMEFRAME_MS, 60_000))
         if not complete:
             # Started mid-candle or missed minutes: the REST candle replaces it
             self.backfill_wanted[market] = max(self.backfill_wanted.get(market, 0), bucket['timestamp'])
@@ -357,6 +363,9 @@ class VenueDeriv:
     funding_8h: Optional[float] = None
     mark: float = 0.0
     ts: float = 0.0
+    # audit N18: each field's own age - a fresh mark kept a stale OI / funding 'fresh' through the shared ts
+    oi_ts: float = 0.0
+    funding_ts: float = 0.0
     # (ts_ms, open interest in COINS), sampled at most every 10s, ~70 min deep. Coins, not USD: the USD value moves
     # with price, so "OI rising" on a rally was true without a single new position (the OI confirmation of a
     # breakout read the price itself); oi_usd stays the venue's weight in the aggregate
@@ -652,7 +661,7 @@ class DataFetcher:
 
     def _record_venue_oi(self, key: str, venue: str, oi_usd: float, ts_ms: float):
         state = self.venue_derivs.setdefault(key, {}).setdefault(venue, VenueDeriv())
-        state.oi_usd, state.ts = oi_usd, ts_ms
+        state.oi_usd, state.ts, state.oi_ts = oi_usd, ts_ms, ts_ms
         price = state.mark or self._binance_price(key)
         if price and (not state.samples or ts_ms - state.samples[-1][0] >= 10_000):
             state.samples.append((ts_ms, oi_usd / price))
@@ -696,7 +705,7 @@ class DataFetcher:
             rate = float(m.get('lastFundingRate') or 0.0) * 8 / self.funding_interval_hours.get(key, 8)
             md.funding_rate = md.predicted_funding = rate
             state = self.venue_derivs.setdefault(key, {}).setdefault('binance', VenueDeriv())
-            state.funding_8h, state.mark, state.ts = rate, md.mark_price, now_ms
+            state.funding_8h, state.mark, state.ts, state.funding_ts = rate, md.mark_price, now_ms, now_ms
 
     async def _update_24h_volumes(self):
         rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetTicker24hr', priority=1, weight=40)
@@ -842,11 +851,12 @@ class DataFetcher:
             out[label] = num / den if den else None
         num = den = 0.0
         for state in states.values():
-            if state.funding_8h is not None and state.oi_usd and now_ms - state.ts < 600_000:
+            if state.funding_8h is not None and state.oi_usd and now_ms - state.funding_ts < 600_000 \
+                    and now_ms - state.oi_ts < 600_000:
                 num += state.funding_8h * state.oi_usd
                 den += state.oi_usd
         out['agg_funding_8h'] = num / den if den else None
-        out['oi_venues'] = sum(1 for s in states.values() if s.oi_usd and now_ms - s.ts < 600_000)
+        out['oi_venues'] = sum(1 for s in states.values() if s.oi_usd and now_ms - s.oi_ts < 600_000)
         return out
 
     def _binance_to_ccxt_symbol(self, binance_symbol: str) -> Optional[str]:
@@ -1009,6 +1019,10 @@ class DataFetcher:
             if volume.get(s, float('inf')) < cfg.min_24h_quote_volume_usd:
                 small_pool.append(s)             # eng-99: the small-cap tier, selected below
                 continue
+            if len(selected) + len(reserve) >= spare:
+                # audit N20: the main universe is full, but the pass goes on - a break here never reached the
+                # lower-volume candidates of the small-cap pool (87 current majors: 0 small caps instead of 10)
+                continue
             futures_venues = [v for v in coverage.get(s, []) if v not in SPOT_VENUES]
             listed = int((markets[s].get('info') or {}).get('onboardDate') or 0)
             spread = self.spreads.get(s)
@@ -1030,8 +1044,6 @@ class DataFetcher:
                 selected.append(s)
             elif s in current:
                 reserve.append(s)
-            if len(selected) + len(reserve) >= spare:
-                break
         selected += reserve
         # eng-99: the small caps ($1-10M): listed long enough and a tradable spread, no complete-data rule; only the
         # small-cap strategies trade them (pools.allows)
@@ -1422,8 +1434,10 @@ class DataFetcher:
                 async with sem:
                     try:
                         rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                     {'symbol': binance_symbol, 'interval': '1d', 'limit': 370},
-                                                     priority=2, weight=2)
+                                                     # review V13: a 65-week cup needs its prior advance (2x) and
+                                                     # handle: 3 x 455 + 9 days - 1400 (one request, limit <= 1500)
+                                                     {'symbol': binance_symbol, 'interval': '1d', 'limit': 1400},
+                                                     priority=2, weight=10)
                     except Exception as e:
                         errors.report('fetcher.candles_1d', e, f"daily candles failed for {symbol}")
                         return
@@ -1435,6 +1449,21 @@ class DataFetcher:
                 await asyncio.gather(*(one(s) for s in symbols))
                 logger.info(f"Daily candles: {sum(1 for s in symbols if len(self.markets.get(s).d1 or []) >= 202) if symbols else 0}"
                             f" of {len(symbols)} coins have >= 202 closed days")
+                # review: what the detectors actually get - closed unique days, gaps, the span (limit 1400)
+                stats = []
+                for s_ in symbols:
+                    d1 = (self.markets.get(s_) or MarketData(symbol=s_)).d1 or []
+                    ts = [int(c[0]) for c in d1]
+                    stats.append((len(ts), len(set(ts)), sum(1 for a_, b_ in zip(ts, ts[1:]) if b_ - a_ != 86_400_000),
+                                  ts[0] if ts else None, ts[-1] if ts else None))
+                if stats:
+                    lens = sorted(x[0] for x in stats)
+                    longest = max(stats, key=lambda x: x[0])
+                    logger.info(f"Daily candles: length min {lens[0]} / median {lens[len(lens) // 2]} / max {lens[-1]}, "
+                                f"{sum(1 for x in stats if x[0] >= 1400)} coins with 1400, duplicates in "
+                                f"{sum(1 for x in stats if x[1] != x[0])}, gaps in {sum(1 for x in stats if x[2])}; "
+                                f"longest {time.strftime('%Y-%m-%d', time.gmtime(longest[3] / 1000)) if longest[3] else '-'}"
+                                f" .. {time.strftime('%Y-%m-%d', time.gmtime(longest[4] / 1000)) if longest[4] else '-'}")
             await asyncio.sleep(300)
 
     async def _dominance_loop(self):
@@ -1935,7 +1964,7 @@ class DataFetcher:
                     rate = float(m.get('r') or 0.0) * 8 / self.funding_interval_hours.get(key, 8)
                     md.funding_rate = md.predicted_funding = rate
                     state = self.venue_derivs.setdefault(key, {}).setdefault('binance', VenueDeriv())
-                    state.funding_8h, state.mark, state.ts = rate, md.mark_price, recv_ms
+                    state.funding_8h, state.mark, state.ts, state.funding_ts = rate, md.mark_price, recv_ms, recv_ms
                 self.market_marks_at = now_s
                 self.marks_stream_at = now_s
             return
@@ -2036,7 +2065,7 @@ class DataFetcher:
         now_ms = time.time() * 1000
         state = self.venue_derivs.setdefault(market.key, {}).setdefault(market.venue, VenueDeriv())
         if funding_8h is not None:
-            state.funding_8h = funding_8h
+            state.funding_8h, state.funding_ts = funding_8h, now_ms
         if mark:
             state.mark = mark
         state.ts = now_ms

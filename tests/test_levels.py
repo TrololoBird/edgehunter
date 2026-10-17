@@ -69,7 +69,9 @@ def test_low_rr_flag(rally_frame):
     tight = entry_levels(dict(plan, retarget=False, targets=[far, far + atr, far + 2 * atr], target_src=['a', 'b', 'c']),
                          far - 0.1, far - 5, +1)
     assert tight['low_rr'] is True
-    good = entry_levels(plan, 110.0, 109.5, +1)
+    # audit (ICT OTE Primer): TP1 is the prior high, so the entry must be inside the OTE band (0.62-0.79 of the leg)
+    # to pay - 110 (a 48% retracement) no longer passes, 105 (0.73) does
+    good = entry_levels(plan, 105.0, 104.5, +1)
     assert good['low_rr'] is False
 
 
@@ -79,7 +81,8 @@ def test_spring_test_volume():
     loud = [minute(t0, i, 1, 1, 1, 1, q=5000) for i in range(5)]
     assert pullback_volume_ok(quiet, t0, t0 + 5 * 60_000, reference_minute_usd=2000)
     assert not pullback_volume_ok(loud, t0, t0 + 5 * 60_000, reference_minute_usd=2000)
-    assert pullback_volume_ok(loud, t0, t0 + 5 * 60_000, reference_minute_usd=0)   # unknown reference: no veto
+    # audit C08: an unknown reference is an unobserved test (None), not a passed one
+    assert pullback_volume_ok(loud, t0, t0 + 5 * 60_000, reference_minute_usd=0) is None
 
 
 def test_simulate_trigger_and_manual_fill():

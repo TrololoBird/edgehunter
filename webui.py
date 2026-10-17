@@ -47,6 +47,15 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 
 # ---------------------------------------------------------------------------------------------------- text helpers
 
+
+def _registry() -> Dict:
+    """audit N33: setup -> its strategy and mode (on / shadow / off) from the code's registry, for the page's labels."""
+    from signal_book import shadow_of
+    from strategies import SETUPS
+    off = set(CONFIG.strategies.disabled_setups)
+    return {setup: {'strategy': name, 'mode': 'off' if setup in off else 'shadow' if shadow_of(setup) else 'on'}
+            for setup, (name, _) in SETUPS.items()}
+
 def _usd(value: float) -> str:
     for divisor, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
         if abs(value) >= divisor:
@@ -341,6 +350,7 @@ def build_state(scanner) -> Dict:
         'cards': cards, 'forming': forming, 'vetoed': vetoed, 'anomalies': anomalies,
         'pools': scanner.pools.view(),
         'archive_negative': list(CONFIG.strategies.archive_negative),
+        'registry': _registry(),
         'pumps': [dict(r, name=_name(r['symbol'])) for r in pumps.monitor(scanner.market_data, now * 1000,
                                                                           scanner._pump_cache)]
                  + [dict(r, name=_name(r['symbol']) + ' ·вне') for r in pumps.monitor_wide(scanner.wide_h1,
@@ -583,6 +593,8 @@ class WebUI:
                 args = list(DEMO_EXCLUDED)
                 if symbol:
                     where, args = "WHERE entry_fill IS NOT NULL AND symbol = ?", [symbol]
+                # audit N24: the LAST 5000 (newest first, then back to time order) - ascending + LIMIT dropped every
+                # trade after the 5000th
                 rows = conn.execute("SELECT opened_ms, closed_ms, symbol, strategy, setup, direction, entry_fill, exit_avg, sl, "
                                     f"tp1, r, pnl_usd, close_reason FROM demo_trades {where} "
                                     "ORDER BY COALESCE(closed_ms, opened_ms) DESC, id DESC LIMIT 5000", args).fetchall()[::-1]
@@ -745,6 +757,9 @@ class WebUI:
                 for k in range(5, 0, -1)]
         derivs = {v: {'oi_usd': s.oi_usd, 'funding_8h': s.funding_8h, 'mark': s.mark,
                       'age_sec': (now * 1000 - s.ts) / 1000 if s.ts else None, 'samples': len(s.samples),
+                      # audit N18: each field's own age (the shared one is the newest of any field)
+                      'oi_age_sec': (now * 1000 - s.oi_ts) / 1000 if s.oi_ts else None,
+                      'funding_age_sec': (now * 1000 - s.funding_ts) / 1000 if s.funding_ts else None,
                       'oi_5m_ago': next((x[1] for x in reversed(s.samples) if x[0] <= now * 1000 - 300_000), None)}
                   for v, s in f.venue_derivs.get(symbol, {}).items()}
         whales, notable = f.whales.thresholds(symbol)

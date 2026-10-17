@@ -168,7 +168,11 @@ def _leg_levels(df: pl.DataFrame, impulse: Dict[str, float], far_side: Optional[
     out += [RawLevel(fib_price(impulse, 1.0 - r), 'fib', f"fib ext {r:g}") for r in cfg.continuation_targets if r > 1.0]
     if far_side:
         out.append(RawLevel(far_side, 'range', 'range edge'))
-    rows = df.select(['timestamp', 'open', 'high', 'low', 'close', 'quote_volume', 'taker_delta', 'volume']).rows()
+    cols = ['timestamp', 'open', 'high', 'low', 'close', 'quote_volume']
+    if 'volume' in df.columns:
+        rows = [list(r[:6]) + [None, r[6]] for r in df.select(cols + ['volume']).rows()]     # [.., quote, -, base]
+    else:
+        rows = df.select(cols).rows()
     out += vwap(rows, impulse['start_ts'], 'VWAP leg')
     return out
 
@@ -203,15 +207,20 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
     holes for one lost minute). Counts in RESAMPLE_QUALITY. base_vol (coins) is NaN when any minute lacks it (a row
     of the old 7-column format): never estimated from quote. complete=False keeps partial buckets (the chart's
     forming bar only, never a signal input).
+    audit C04: a repeated minute counts once (the last copy); missing minutes are never interpolated.
     """
+    seen: Dict[int, Sequence[float]] = {}
+    for c in candles:
+        seen[int(c[0])] = c                      # a re-delivered minute replaces its copy instead of adding to it
+    rows = [seen[t] for t in sorted(seen)]
     if minutes <= 1:
-        return [list(c) + [_NAN] * (8 - len(c)) for c in candles if now_ms is None or c[0] + MINUTE_MS <= now_ms]
+        return [list(c) + [_NAN] * (8 - len(c)) for c in rows if now_ms is None or c[0] + MINUTE_MS <= now_ms]
     size = minutes * MINUTE_MS
     out: List[List[float]] = []
     seen: List[set] = []
-    for c in candles:
+    for c in rows:
         start = int(c[0]) // size * size
-        base = c[7] if len(c) > 7 else _NAN
+        base = c[7] if len(c) > 7 and c[7] is not None else _NAN    # None / NaN: no base volume -> NaN bar
         if out and out[-1][0] == start:
             bar = out[-1]
             bar[2] = max(bar[2], c[2])
@@ -294,35 +303,37 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
 
 
 def pullback_volume_ok(minute_candles: Sequence[Sequence[float]], since_ms: int, until_ms: int,
-                       reference_minute_usd: float) -> bool:
+                       reference_minute_usd: float) -> Optional[bool]:
     """
     Wyckoff "test" of a spring: the pullback after the spring trades on lower volume (supply dried up). The average
     1m quote volume in [since_ms, until_ms) must be <= spring_test_volume_ratio x the spring candle's average minute.
+    audit C08: None when it cannot be observed (no reference / no pullback minutes) - an unobserved test is not a
+    passed one.
     """
     if not reference_minute_usd:
-        return True
+        return None
     window = [c[5] for c in minute_candles if since_ms <= c[0] < until_ms]
     if not window:
-        return True
+        return None
     return sum(window) / len(window) <= CONFIG.levels.spring_test_volume_ratio * reference_minute_usd
 
 
 def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int, until_ms: int,
-                       spring_range_1h: Optional[float], spring_tf_min: float = 60) -> bool:
+                       spring_range: Optional[float], spring_minutes: int = 60) -> Optional[bool]:
     """
     eng-55: Wyckoff's test also NARROWS the spread (StockCharts Wyckoff tutorial; tradingwyckoff: test ranges 40-70%
     smaller than the spring's). The pullback's 15m candles average a range <= spring_test_spread_ratio x the spring
-    candle's range scaled to 15m (/ sqrt(spring_tf_min / 15): ranges grow ~ sqrt(time); audit S04: a 4h spring was
-    scaled as a 1h one, / 2 instead of / 4).
+    candle's range scaled to 15m by sqrt(time) - audit: sqrt(spring_minutes / 15), i.e. / 4 for the 4h spring the
+    detector runs on (the old / 2 was the 1h case). None when it cannot be observed (audit C08).
     """
-    if not spring_range_1h:
-        return True
+    if not spring_range:
+        return None
     # complete=False: the pullback window starts mid-bucket by design (its first 15m bar is the zone's part of it)
     bars = resample([c for c in minute_candles if since_ms <= c[0] < until_ms], 15, until_ms, complete=False)
     if not bars:
-        return True
+        return None
     avg = sum(b[2] - b[3] for b in bars) / len(bars)
-    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range_1h / math.sqrt(max(spring_tf_min, 15) / 15)
+    return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range / (max(spring_minutes, 15) / 15) ** 0.5
 
 
 # eng-124: bps of an executor.max_notional_usd market order walked through each coin's REST book (worst side, from the
@@ -368,19 +379,25 @@ def fill_price(levels: Dict[str, float], direction: int, candles: List[List]) ->
 FUNDING_MS = 8 * 3_600_000
 
 
-def funding_r(funding_8h: Optional[float], direction: int, entry: float, risk: float, t0: float, t1: float) -> float:
+def funding_r(funding_8h: Optional[float], direction: int, entry: float, risk: float, t0: float, t1: float,
+              interval_h: Optional[float] = None) -> float:
     """
-    Funding the position pays over (t0, t1] in R: rate x the settlements crossed (every 8h at 00 / 08 / 16 UTC,
-    Binance's default; coins settling every 4h pay about twice this) x entry / risk. Longs pay a positive rate.
+    Funding the position pays over (t0, t1] in R: the rate per settlement x the settlements crossed x entry / risk.
+    Longs pay a positive rate. audit C12: the contract's OWN interval (interval_h: 8 / 4 / 1 h, settlements at its
+    multiples from 00 UTC) - a 4h contract held 01:00-05:00 settled at 04:00 and paid; the 8h grid counted none. The
+    rate is the 8h-normalized one (fetcher), so one settlement of an h-hour contract is rate x h / 8. Still a model:
+    one rate for the whole hold, not the actual settled rates (those are the exchange's ledger - executor).
     """
     if not funding_8h or not risk:
         return 0.0
-    settlements = int(t1 // FUNDING_MS) - int(t0 // FUNDING_MS)
-    return direction * funding_8h * max(0, settlements) * entry / risk
+    hours = interval_h if interval_h and interval_h > 0 else 8
+    step = hours * 3_600_000
+    settlements = int(t1 // step) - int(t0 // step)
+    return direction * funding_8h * hours / 8 * max(0, settlements) * entry / risk
 
 
 def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_fill: bool = True,
-             funding_8h: Optional[float] = None) -> Dict:
+             funding_8h: Optional[float] = None, funding_hours: Optional[float] = None) -> Dict:
     """
     Replay 1m candles [open_time, open, high, low, close, ...] after an entry. With use_fill the trade is entered at
     fill_price (manual execution) and R is measured from there; otherwise at levels['entry'] (the trigger close).
@@ -467,7 +484,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         result['outcome'] = f"TP{best_target}" if best_target else 'OPEN'
 
     mark = direction * (float(candles[-1][4]) - entry) / risk
-    result['r_tp1'] = (exits[1] if exits[1] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[1])
-    result['r_tp2'] = (exits[2] if exits[2] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[2])
-    result['r_be'] = be_result - funding_r(funding_8h, direction, entry, risk, t_open, be_t)
+    result['r_tp1'] = (exits[1] if exits[1] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[1], funding_hours)
+    result['r_tp2'] = (exits[2] if exits[2] is not None else mark) - funding_r(funding_8h, direction, entry, risk, t_open, exit_t[2], funding_hours)
+    result['r_be'] = be_result - funding_r(funding_8h, direction, entry, risk, t_open, be_t, funding_hours)
     return result

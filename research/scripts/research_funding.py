@@ -36,13 +36,16 @@ def coin_trades(j: int) -> List[Dict]:
         if t <= busy or t < 24 or t + HOLD >= n or rate > CUTOFF:
             continue
         day = t // 24 - 1
-        if not elig[day] or np.isnan(C[t - 1]) or np.isnan(C[t + HOLD]):
+        # audit R08: C[t - 1] is the close at t0 + t h (entry); exactly HOLD hours later is C[t - 1 + HOLD] (C[t + HOLD]
+        # held 73 h), and the funding counted is the settlements in (entry, exit] - the same timestamps as the prices
+        if not elig[day] or np.isnan(C[t - 1]) or np.isnan(C[t - 1 + HOLD]):
             continue
-        entry, exit_ = C[t - 1], C[t + HOLD]
-        paid = -f[(f[:, 0] > ts) & (f[:, 0] <= t0 + (t + HOLD) * rh.HOUR), 1].sum()   # a short pays negative funding
+        entry, exit_ = C[t - 1], C[t - 1 + HOLD]
+        t_in, t_out = t0 + t * rh.HOUR, t0 + (t + HOLD) * rh.HOUR
+        paid = -f[(f[:, 0] > t_in) & (f[:, 0] <= t_out), 1].sum()   # a short pays negative funding
         gross = -(exit_ / entry - 1)
         mk = G['mkt']
-        mret = mk[t + HOLD] / mk[t - 1] - 1
+        mret = mk[t - 1 + HOLD] / mk[t - 1] - 1
         out.append({'coin': sym, 'ts': t0 + t * rh.HOUR, 'rate': rate, 'gross': gross,
                     'net': gross - 0.002 - paid, 'rel': gross + mret - 0.002 - paid, 'funding_paid': paid})
         busy = t + HOLD

@@ -68,9 +68,10 @@ def main():
         out = []
         for i in idx:
             if i + n < len(r):
-                s = np.nansum(r[i + 1:i + 1 + n])
-                if np.isfinite(s):
-                    out.append(s)
+                w = r[i + 1:i + 1 + n]
+                # audit R08: a window with missing bars is no observation (nansum made an empty window a 0 return)
+                if np.isfinite(w).all():
+                    out.append(float(w.sum()))
         return np.array(out)
     opens = {'Tokyo 00:00 UTC': ('UTC', 0, 0), 'London 08:00': ('Europe/London', 8, 0),
              'NY 08:30 (macro)': ('America/New_York', 8, 30), 'NY 09:30 (cash open)': ('America/New_York', 9, 30)}
@@ -124,8 +125,10 @@ def main():
             if i - last >= 12:
                 kept.append(i)
                 last = i
-        nx15 = np.array([np.sign(r15[i]) * np.nansum(alt[i + 1:i + 4]) for i in kept])
-        nx60 = np.array([np.sign(r15[i]) * np.nansum(alt[i + 1:i + 13]) for i in kept])
+        # audit R08: an incomplete window is missing (NaN), not a 0 return
+        nx15 = np.array([np.sign(r15[i]) * alt[i + 1:i + 4].sum() for i in kept])
+        nx60 = np.array([np.sign(r15[i]) * alt[i + 1:i + 13].sum() for i in kept])
+        nx15, nx60 = nx15[np.isfinite(nx15)], nx60[np.isfinite(nx60)]
         unc = np.nanmean(np.abs(np.convolve(np.nan_to_num(alt), np.ones(3), 'valid')))
         lines.append(f"| {s} | {int(ok.sum())} | " + ' | '.join(f"{c:.3f}" for c in cors)
                      + f" | {len(kept)} | {nx15.mean() * 100:+.3f}% | {nx60.mean() * 100:+.3f}% | |abs| {unc * 100:.3f}% |")

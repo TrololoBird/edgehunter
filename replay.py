@@ -106,6 +106,7 @@ class ArchiveCoin:
         self.w1: List = []
         self.tier0: Dict = {}
         self.oi_samples: deque = deque(maxlen=64)
+        self.oi_5m: deque = deque(maxlen=300)
         self.minute_closed_until = 0
         self.quote_volume_24h = 0.0
         self.j = 0                                         # minutes closed so far
@@ -119,6 +120,15 @@ class ArchiveCoin:
         self.quote_volume_24h = float(self.qv_cum[self.j] - self.qv_cum[self.j - n]) if n else 0.0
         k = int(np.searchsorted(self.oi_ts, now_ms, side='right')) if len(self.oi_ts) else 0
         self.oi_samples = deque(self.oi_pts[max(0, k - 13):k], maxlen=64)
+        # audit R07: the OI robot's 5-minute OI over the last day (MarketData.oi_5m), one sample per 5-minute bucket -
+        # without it the OI BUILD family never ran in the replay
+        if k != getattr(self, '_oi5_k', None):
+            self._oi5_k = k
+            buckets: Dict[int, tuple] = {}
+            for t, v in self.oi_pts[max(0, k - 2000):k]:
+                if t > now_ms - 300 * 300_000:
+                    buckets[int(t) // 300_000] = (t, v)
+            self.oi_5m = deque((buckets[b] for b in sorted(buckets)), maxlen=300)
         h = int(np.searchsorted(self.h1_close, now_ms, side='right'))
         if not self.h1 or (h and self.h1[-1][0] != self.h1_all[h - 1][0]):
             self.h1 = self.h1_all[max(0, h - 200):h]
@@ -126,11 +136,12 @@ class ArchiveCoin:
             self.h4 = _group(hl, 4 * HOUR_MS)[-200:]
         dd = int(np.searchsorted(self.d_close, now_ms, side='right'))
         if not self.d1 or (dd and self.d1[-1][0] != self.daily[dd - 1][0]):
-            self.d1 = self.daily[max(0, dd - 370):dd]
+            self.d1 = self.daily[max(0, dd - 1400):dd]          # review V13: as live (fetcher, 1400 days)
             self.w1 = _weeks(self.daily[:dd])[-60:]
 
-    def minutes(self, count: int = 240) -> List[List[float]]:
-        """FINAL 1m futures candles in the stream format (the scanner's _minute_candles)."""
+    def minutes(self, count: int = 600) -> List[List[float]]:
+        """FINAL 1m futures candles in the stream format (the scanner's _minute_candles). audit R02: 600 as the live
+        buffer (MarketData.minute_klines) - 240 left PO3 21 of its 24 required Asian 5m bars at 02:15 NY."""
         return self.fut[max(0, self.j - count):self.j][:, STREAM_COLS].tolist()
 
     def spot_minutes(self, now_ms: int, count: int = 60) -> Optional[List[List[float]]]:
@@ -252,6 +263,8 @@ class Replay:
         profiles.select = lambda strategy, regime: (None, None)
         self.detector = LiveDetector()
         self.loopside = LoopDetectors(self._minutes_of, lambda s: self.coins[s].m15(self.now_ms))
+        self.loopside.volume_rank = lambda s: 1 + sum(1 for c in self.coins.values()
+                                                      if c.quote_volume_24h > self.coins[s].quote_volume_24h)
         self.raw: Dict[str, list] = {}
         self.ctx_sig: Dict[str, int] = {}
         b = self.book
@@ -293,7 +306,12 @@ class Replay:
         return out
 
     def _band(self, symbol: str, direction: int, asof_ms: Optional[int] = None) -> Optional[float]:
-        closes = [c[4] for c in self.coins[symbol].m15(self.now_ms if asof_ms is None else int(asof_ms))[-20:]]
+        """audit R03: the live exit's band (Scanner._opposite_band) - BB(20, 2) of the closed 4h candles built from
+        the closed 1h ones known at asof_ms (the as-of rule of _manage_trade; now when None)."""
+        from strategies.structure import bars_4h
+        cut = self.now_ms if asof_ms is None else int(asof_ms)
+        h1 = [c for c in self.coins[symbol].h1 if c[0] + 3_600_000 <= cut]
+        closes = [c[4] for c in bars_4h(h1, cut)[-20:]] if h1 else []
         if len(closes) < 20:
             return None
         mean = sum(closes) / 20
@@ -343,7 +361,9 @@ class Replay:
                          np.asarray(c.m15(now_ms), dtype=np.float64),
                          np.asarray(c.h1_all[max(0, int(np.searchsorted(c.h1_close, now_ms, side='right')) - 499):
                                              int(np.searchsorted(c.h1_close, now_ms, side='right'))], dtype=np.float64),
-                         list(c.d1)[-60:], list(c.h4), list(c.w1)))
+                         # audit R01: the whole causal daily history (<= 370, as live) - 60 days never reached the
+                         # cup detector's 120-day gate, the family was untested
+                         list(c.d1), list(c.h4), list(c.w1)))
         for s, (raw, ctx) in build_maps(jobs, corr).items():
             self.raw[s] = raw
             self.detector.set_context(s, ctx, now_ms)
@@ -413,6 +433,7 @@ def _entry_row(e, now_ms: int) -> Dict:
             'tp2': lv.get('tp2'), 'tp3': lv.get('tp3'), 'rr_tp1': lv.get('rr_tp1'), 'sl_src': lv.get('sl_src'),
             'limit_entry': lv.get('limit_entry'), 'volume_24h': (e.sig or {}).get('volume_24h'),
             'funding': (e.sig or {}).get('funding_rate'),
+            'funding_hours': (e.sig or {}).get('funding_interval_h'),     # review V09: the contract's interval
             # eng-133 research columns (written only): the setup's timeframe and its ATR(14) at the entry, the shadow
             # tags (strings are not picked up by f_*), the logic version
             'tf': (e.plan or {}).get('tf'), 'atr_tf': (e.plan or {}).get('tf_atr'),
@@ -476,7 +497,8 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
         a = int(np.searchsorted(c.m_ts, e['ts'], side='left'))
         b = int(np.searchsorted(c.m_ts, e['ts'] + ttl, side='left'))
         lv = {k: e.get(k) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3', 'limit_entry', 'volume_24h', 'symbol')}
-        res = simulate(lv, e['direction'], c.fut[a:b, :6].tolist(), funding_8h=e.get('funding'))
+        res = simulate(lv, e['direction'], c.fut[a:b, :6].tolist(), funding_8h=e.get('funding'),
+                       funding_hours=e.get('funding_hours'))
         e['outcome'] = res.get('outcome')
         for col in ('r_tp1', 'r_tp2', 'r_be'):
             e[col] = net_r({col: res.get(col), 'entry': lv['entry'], 'entry_fill': res.get('entry_fill'),

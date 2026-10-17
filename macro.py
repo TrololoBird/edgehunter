@@ -1,7 +1,10 @@
 """
 Macro context from FRED (St. Louis Fed; public CSV, no key): US 10-year Treasury yield (DGS10), the broad trade-
-weighted dollar index (DTWEXBGS) and Brent crude (DCOILBRENTEU). Daily values published with a delay of about a
-day, so a value is used only from the day AFTER its date (no look-ahead in training, the same rule live).
+weighted dollar index (DTWEXBGS) and Brent crude (DCOILBRENTEU). audit N06: a value is used only from its RELEASE
+(available_ms, a conservative calendar per series), not from the day after its observation date: H.10 (DTWEXBGS) is
+published weekly on the following Monday 16:15 ET, EIA's Brent spot with up to a week's delay, H.15 (DGS10) the next
+business day. FRED's current CSV is not a point-in-time vintage either (revisions are in it): for a strict history use
+ALFRED vintages - until then the training features are labelled approximate.
 
 Features: the 5-trading-day change of each series as of the previous day (yield in basis points, dollar and Brent in
 %). Context for the scenario card and a candidate input of its probability model (`train_scenarios.py --macro`);
@@ -22,6 +25,20 @@ SERIES = {'us10y': 'DGS10', 'dxy': 'DTWEXBGS', 'brent': 'DCOILBRENTEU'}
 URL = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id={}'
 CACHE = os.path.join('models', 'macro_cache.json')
 DAY_MS = 86_400_000
+
+
+def available_ms(name: str, obs_day_ms: float) -> float:
+    """audit N06: when an observation dated obs_day_ms (UTC day start) is public, conservatively."""
+    wd = int(obs_day_ms // DAY_MS + 3) % 7               # 0 = Monday (1970-01-01 was a Thursday)
+    if name == 'dxy':
+        # H.10: weekly, the Monday after the observation's week, 16:15 ET (~21:15 UTC; 22:00 taken)
+        return obs_day_ms + (7 - wd) * DAY_MS + 22 * 3_600_000
+    if name == 'brent':
+        return obs_day_ms + 8 * DAY_MS                    # EIA spot prices: weekly release, up to ~a week late
+    # DGS10 (H.15): the next business day ~16:15 ET; a Friday's value on Monday
+    return obs_day_ms + (3 if wd == 4 else 2 if wd == 5 else 1) * DAY_MS + 22 * 3_600_000
+
+
 MACRO_FEATURES = ('us10y_5d_bp', 'dxy_5d', 'brent_5d')
 
 
@@ -68,9 +85,9 @@ class Macro:
     def _asof(self, name: str, ts_ms: float, back: int = 0) -> Optional[float]:
         rows = self.data.get(name) or []
         if name not in self._ts:
-            self._ts[name] = [r[0] for r in rows]
-        # a daily value is known from the next day on
-        i = bisect.bisect_right(self._ts[name], ts_ms - DAY_MS) - 1 - back
+            self._ts[name] = [available_ms(name, r[0]) for r in rows]     # release times rise with the dates
+        # audit N06: the last value RELEASED by ts_ms (was: dated before ts_ms - 1 day)
+        i = bisect.bisect_right(self._ts[name], ts_ms) - 1 - back
         return rows[i][1] if 0 <= i < len(rows) else None
 
     def features(self, ts_ms: float) -> Dict[str, float]:

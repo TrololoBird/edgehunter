@@ -40,7 +40,9 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
         handle = list(range(r + 1, last))
         for left in reversed([p for p in pivots if p < r]):
             cup_len = r - left
-            if not 35 <= cup_len <= 325:
+            # audit: O'Neil's 7-65 WEEKS are calendar time; the crypto daily chart has 7 candles a week, so 49-455
+            # candles (35-325 were stock trading days: 5 weeks on a 24/7 market)
+            if not 49 <= cup_len <= 455:
                 continue
             rim = min(h[left], h[r])
             bottom = min(l[left:r + 1])
@@ -55,10 +57,15 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
                 if skips is not None and not any(s[0] == 'cup_handle' for s in skips):
                     skips.append(('cup_handle', left, 2 * cup_len))
                 continue
+            # audit: the U shape (O'Neil, Bulkowski: rounded, not V). A V with straight sides spends exactly 1/3 of its
+            # bars in the lowest third of its depth; a rounded bottom spends more. Our formalization: > 40%
+            low_third = bottom + (rim - bottom) / 3
+            if sum(1 for i in range(left, r + 1) if l[i] <= low_third) <= 0.4 * (cup_len + 1):
+                continue
             before = l[left - 2 * cup_len:left]
             if not before or h[left] / min(before) - 1 < 0.30:
                 continue                             # no prior advance
-            if not 5 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks (longer = stalling)
+            if not 7 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks: 7-56 calendar days
                 break
             h_lo = min(l[i] for i in handle)
             pivot = max(h[i] for i in [r] + handle)
@@ -106,7 +113,10 @@ class CupHandleStrategy(_System):
         exit = {'stop': ['price', stop], 'stop_src': src,
                 'tp': ['level', sig['ch_target'], 0.0, None], 'tp_src': f"{CONFIG.strategies.cup_target_share:.0%} of the cup depth (Bulkowski's measure rule)",
                 'tp2': ['level', sig.get('ch_target_full') or sig['ch_target'], 0.0, None],
-                'atr': x.atr, 'own_targets': True}
+                'atr': x.atr, 'own_targets': True,
+                # audit C06: O'Neil's limit is 7-8% - a general stop floor / pool clearing that would widen it rejects
+                # the trade instead of quietly risking 20%
+                'max_loss_pct': 0.08}
         return _confirm_plan(x, self.name, sig.get('ch_tf', '1d'), exit, 'close above the handle pivot on volume')
 
 

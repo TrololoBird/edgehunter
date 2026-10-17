@@ -122,6 +122,8 @@ def coin_trades(j: int) -> List[Dict]:
                             break
                         if (h[m] >= tgt) if d > 0 else (l[m] <= tgt):
                             win, px = 1, tgt
+                            if key == '2':
+                                exit_i = m           # audit R08: the position is flat at its final target too
                             break
                     res[key] = (win, px, risk / (risk + d * (tgt - entry)) if d * (tgt - entry) > 0 else None)
                 busy[d] = exit_i

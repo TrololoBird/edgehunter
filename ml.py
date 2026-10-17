@@ -158,7 +158,8 @@ class AnomalyModel:
             per_minute((m.get('liq_long_5m') or 0.0) + (m.get('liq_short_5m') or 0.0)),
             abs(m.get('cluster') or 0.0),
             (m.get('top_venue_share') or 0.0) if venues >= 2 else 0.0,
-            per_minute(m.get('agg_cvd_5m') or m.get('futures_cvd_5m')),
+            per_minute(m.get('agg_cvd_5m') if m.get('agg_cvd_5m') is not None and m.get('agg_cvd_5m') == m.get('agg_cvd_5m')
+                       else m.get('futures_cvd_5m')),          # audit N12: a measured aggregate 0 is not replaced
             per_minute(m.get('spot_cvd_5m')),
         ]
 

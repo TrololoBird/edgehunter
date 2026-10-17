@@ -70,8 +70,13 @@ class Archive:
             logger.info(f"archive: cached {path} is truncated, downloading it again")
             os.remove(local)
         if os.path.exists(local + '.none'):
-            self.missing += 1
-            return None
+            # audit N07: a 404 of a RECENT period may only mean 'not published yet' (the archive lags a day or more):
+            # its marker expires after 12h; an old period's 404 is a confirmed absence and stays
+            if self._recent(path) and time.time() - os.path.getmtime(local + '.none') > 12 * 3600:
+                os.remove(local + '.none')
+            else:
+                self.missing += 1
+                return None
         url = f"{BASE_URL}/{urllib.parse.quote(path)}"          # non-ASCII tickers exist (e.g. Chinese names)
         for attempt in range(5):
             try:
@@ -106,6 +111,22 @@ class Archive:
                 logger.info(f"archive: {path} failed ({type(e).__name__} {e}), retry in {wait}s")
             time.sleep(wait)
         raise RuntimeError(f"archive: {path} failed 5 times")
+
+    @staticmethod
+    def _recent(path: str) -> bool:
+        """Does the archive file's period (YYYY-MM-DD / YYYY-MM in its name) end within the last 10 days?"""
+        import re
+        from datetime import datetime, timezone
+        m = re.search(r'(\d{4})-(\d{2})(?:-(\d{2}))?', path.rsplit('/', 1)[-1])
+        if not m:
+            return True
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        try:
+            end = (datetime(y, mo, d, tzinfo=timezone.utc).timestamp() + 86400 if d else
+                   datetime(y + (mo == 12), mo % 12 + 1, 1, tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            return True
+        return time.time() - end < 10 * 86400
 
     @staticmethod
     def _rows(data: bytes) -> List[List[str]]:

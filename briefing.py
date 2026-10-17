@@ -500,7 +500,10 @@ class Briefing:
                        + (f", медиана 1h {ms['mkt_1h'] * 100:+.2f}%" if ms.get('mkt_1h') is not None else ''))
         # research_sessions.py (12 months to 2026-09): the NY cash open's first 30 min move BTC 2.5x / alts 1.8x a
         # usual half hour, direction ~50/50; 08:30 NY (releases) 1.35x; Tokyo / London no larger than other times
-        out.append('Открытие NY (16:30 МСК): первые 30 мин BTC ×2.5, альты ×1.8 обычной амплитуды, направление ~50/50')
+        # audit N23: the NYSE 09:30 ET open in MSK for TODAY (16:30 in summer, 17:30 in winter), not a constant
+        ny_open = datetime.now(NY).replace(hour=9, minute=30, second=0, microsecond=0).astimezone(MSK)
+        out.append(f'Открытие NY ({ny_open:%H:%M} МСК): первые 30 мин BTC ×2.5, альты ×1.8 обычной амплитуды, '
+                   f'направление ~50/50')
         # Deribit (eng-72): DVOL = the 30-day implied volatility; the move it prices for one day = DVOL / sqrt(365)
         for cur, o in sorted((getattr(self.sc.fetcher, 'options', None) or {}).items()):
             if o.get('dvol'):
@@ -635,22 +638,35 @@ class Briefing:
             return out
         now = time.time() * 1000
         closed = [c for c in md.h1 if c[0] + HOUR_MS <= now]
+        minutes = [c for c in md.minute_klines if c[0] + 60_000 <= now]
         for r in recs:
             if r.get('symbol') != symbol or not str(r.get('slot', '')).startswith(today):
                 continue
             sc = r.get('scenario') or {}
-            bars = [c for c in closed if c[0] >= r['ts'] * 1000 - HOUR_MS + 1]
+            # audit N22: only prices AFTER the post. The hour holding the post is scored on its 1m candles after the
+            # post's minute; without them that hour is left out and said so (its OHLC may be before the post)
+            post_ms = r['ts'] * 1000
+            first_full = (int(post_ms) // HOUR_MS + 1) * HOUR_MS
+            head = [c for c in minutes if post_ms <= c[0] < first_full]
+            ambiguous = not head and post_ms % HOUR_MS != 0
+            # the post-hour's minutes after the post as ONE partial 1h bar (the reaction rule reads 1h candle shapes)
+            part = [[head[0][0], head[0][1], max(c[2] for c in head), min(c[3] for c in head), head[-1][4]]] \
+                if head and head[-1][0] + 60_000 >= first_full else []
+            bars = part + [c for c in closed if c[0] >= first_full]
             res = []
             for key, side, name in (('long', 1, 'лонг'), ('short', -1, 'шорт')):
                 if sc.get(key):
                     res.append(f"{name}: {self.score_scenario(sc[key], side, bars)}")
             if res:
-                out.append(f"· {r['title']} ({r['slot'][-5:]}): " + '; '.join(res))
+                out.append(f"· {r['title']} ({r['slot'][-5:]}): " + '; '.join(res)
+                           + (' (час публикации не оценён: нет минутных свечей)' if ambiguous else ''))
         return out
 
     def recap(self) -> str:
+        # audit N23: the MSK day the header names (was the UTC day), and the period actually covered by the minute
+        # ring (~10 hours) is stated - not called the day's range
+        day0 = int(datetime.now(MSK).replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
         parts = [f"🌙 <b>Итог дня</b> · {datetime.now(MSK):%d.%m} МСК"]
-        day0 = int(time.time() // 86400 * 86400 * 1000)
         for symbol, zones in self.zones.items():
             md = self.sc.market_data.get(symbol)
             price = self.sc._price_of(symbol)
@@ -660,7 +676,9 @@ class Briefing:
             if not today:
                 continue
             hi, lo = max(c[2] for c in today), min(c[3] for c in today)
-            lines = [f"<b>{_short(symbol)}</b> {_fmt(price)} · день {_fmt(lo)}–{_fmt(hi)}"]
+            since = datetime.fromtimestamp(today[0][0] / 1000, MSK)
+            span = 'день' if today[0][0] - day0 < 5 * 60_000 else f"с {since:%H:%M} МСК"
+            lines = [f"<b>{_short(symbol)}</b> {_fmt(price)} · {span} {_fmt(lo)}–{_fmt(hi)}"]
             for z in zones:
                 touched = lo <= z['hi'] and hi >= z['lo']
                 if not touched:
@@ -721,10 +739,14 @@ class Briefing:
                                key=f"react|{symbol}|{key}|{sc.get('ts')}", every_sec=24 * 3600)
 
     def session_now(self) -> Optional[str]:
-        now = datetime.now(MSK)
-        for name, hm in (('Азии', (3, 0)), ('Лондона', (10, 0)), ('Нью-Йорка', (16, 30))):
-            t = now.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0)
-            if timedelta(0) <= now - t <= timedelta(minutes=60):
+        # audit N23: the opens in their own zones (DST of each), not fixed MSK hours: Tokyo 09:00, London 08:00,
+        # New York 09:30 local
+        utc_now = datetime.now(MSK)
+        for name, zone, hm in (('Азии', ZoneInfo('Asia/Tokyo'), (9, 0)), ('Лондона', ZoneInfo('Europe/London'), (8, 0)),
+                               ('Нью-Йорка', NY, (9, 30))):
+            local = utc_now.astimezone(zone)
+            t = local.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0)
+            if timedelta(0) <= local - t <= timedelta(minutes=60):
                 return name
         return None
 
@@ -758,7 +780,8 @@ class Briefing:
             self._bias[symbol] = b
             if old != 'unset' and b != old and b is not None:
                 self._post(f"🧭 {_short(symbol)}: смещение старшего ТФ {BIAS_RU.get(old, old)} → <b>{BIAS_RU.get(b, b)}</b>"
-                           + ("\nАльты: сделки против BTC фильтр больше не пропускает" if symbol.startswith('BTC/') else ''),
+                           # audit N23: no BTC veto exists since eng-100 (regime_against_mult = 1): no such claim
+                           ,
                            key=f"bias|{symbol}|{b}", every_sec=3600)
 
     def check_demo(self):

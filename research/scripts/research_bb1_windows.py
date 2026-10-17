@@ -99,7 +99,8 @@ def sar_trade(bars: np.ndarray, i: int, d: int, risk_pct: float, entry=None):
         if d * (new_ep - ep) > 0:
             ep, af = new_ep, min(0.20, af + 0.02)
         nxt = sar + af * (ep - sar)
-        sar = min(nxt, l[j]) if d > 0 else max(nxt, h[j])
+        # audit R06: Wilder / TA-Lib - never inside THIS or the PREVIOUS bar's range (as maniac.parabolic_sar_step)
+        sar = min(nxt, l[j], l[j - 1]) if d > 0 else max(nxt, h[j], h[j - 1])
     px = float(bars[min(n, i + 1 + MAX_BARS) - 1, 4])
     return d * (px - entry) / risk - FEE * entry / risk, mfe >= 1.0
 

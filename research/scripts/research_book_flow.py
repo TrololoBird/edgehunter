@@ -134,7 +134,7 @@ def finished_auction(levels, direction, share=0.02):
     total = buy + sell
     if total <= 0:
         return False
-    return (sell if direction > 0 else buy) <= share * total
+    return (buy if direction > 0 else sell) <= share * total      # audit N10: zero ASK at a low, zero BID at a high
 
 
 def features(t, d, ext_off, m1, books, trades):

@@ -9,7 +9,8 @@ Zarattini, Pagani & Barbon (2025), "Catching Crypto Trends; A Tactical Approach 
 - per coin and lookback L in {5, 10, 20, 30, 60, 90, 150, 250, 360} days: a daily close above the highest close of
   the L days before opens that lookback's sub-position; it closes when the close falls below its trailing stop = the
   higher of the previous stop and the channel midpoint (highest + lowest close of the L days before) / 2;
-- coin exposure = the share of its lookbacks that are long x min(1, 25% / the coin's 90-day annualized volatility);
+- coin exposure = the share of its lookbacks that are long x min(2, 25% / the coin's 90-day annualized volatility)
+  (audit N31: the 2025-04-09 version caps the volatility scaling at 200%; 100% was ours);
   each coin gets 1/20 of the capital; long-only; decided at the daily close, held from the next day.
 - the phase gate alone, for comparison: the top-20 equal weight (or BTC) held only on days whose PREVIOUS close was
   in the UP phase (Faber 2007's 200-day rule + breadth), 0.10% per switch, funding paid;
@@ -20,6 +21,10 @@ Zarattini, Pagani & Barbon (2025), "Catching Crypto Trends; A Tactical Approach 
 Reported: the whole window, the part before the paper's end (their sample, overlapping) and the part AFTER it
 (2025-04 on: out of sample for the method), each by market phase (BTC vs its 200-day SMA + breadth, as
 research_htf.py), against BTC buy-and-hold and the equal-weight top-20 held all the time.
+
+Known remaining differences from the paper (audit N31, reported, not hidden): the universe is the Binance perpetuals
+with a spot pair (the paper: CoinMarketCap top coins), and the channel / initial stop follow our reading of the text
+where its formulas leave the current close's inclusion open.
 
 Run: python research_ensemble.py [--start 2020-01-01] [--out research/ensemble_trend.md]
 """
@@ -34,7 +39,9 @@ import numpy as np
 DAY = 86_400_000
 LOOKBACKS = (5, 10, 20, 30, 60, 90, 150, 250, 360)
 SIDE_COST = 0.0010
-PAPER_END = date(2025, 3, 31)
+# audit N31: the first SSRN version is dated 2025-04-04 and the one replicated 2025-04-09 - 'after publication'
+# starts after it, not on 04-01
+PAPER_END = date(2025, 4, 9)
 
 
 def load(start: date):
@@ -174,7 +181,7 @@ def main():
             w = lr[d - 90:d]
             if not np.isnan(w).any():
                 vol[d] = w.std() * np.sqrt(365)
-        scale = np.where(np.isnan(vol) | (vol <= 0), 0.0, np.minimum(1.0, 0.25 / np.where(vol > 0, vol, 1)))
+        scale = np.where(np.isnan(vol) | (vol <= 0), 0.0, np.minimum(2.0, 0.25 / np.where(vol > 0, vol, 1)))
         E[:, j] = exposure(c) * scale
     W = np.where(M, E, 0.0) / 20
     # funding per coin and day (8h rates summed within the UTC day)

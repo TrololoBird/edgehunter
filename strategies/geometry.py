@@ -245,13 +245,20 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     if risk < CONFIG.levels.cost_guard * fee:
         reason = reason or 'costs >= 1/3 of the risk'
     reason = reason or stop_too_far(plan, entry, stop)
-    hit = HIT_RATE.get(plan.get('strategy'))
+    # audit C09: the setup's own measured rate (SWEEP and SILVER BULLET share the strategy 'sweep', Turtle and BB1
+    # 'breakout' - one rate for different stops / targets / methods is no probability of either)
+    hit = HIT_RATE.get(plan.get('setup'))
     if reason is None:
         hi = (hit[2] if len(hit) > 2 else hit[0]) if hit else None
         if hit and real[0] and hi * rrs[0] - (1 - hi) <= 0:
             # proven negative: even the upper end of p's 95% interval does not pay this R:R
             reason = f"expectancy {hi * rrs[0] - (1 - hi):+.2f}R at p <= {hi:.0%} (measured {hit[0]:.0%} of {hit[1]})"
+        elif plan.get('min_rr') is not None and real[0] and rrs[0] is not None and rrs[0] < plan['min_rr']:
+            # audit C07: a method's OWN minimum (Strategy.min_rr - Seiden's 3:1 to the nearest opposing zone) is a
+            # minimum to TP1; far targets lifting the blend (TP1 1.04R, blended 3.6) do not meet it
+            reason = f"R:R to TP1 {rrs[0]:.2f} < {plan['min_rr']:g} (the method's minimum)"
         elif blended is not None and blended < _min_rr(plan):
+            # the global rule is on the blended R:R of the actual three-part exit (named so in the reason)
             reason = f"blended R:R {blended:.2f} < {_min_rr(plan):g}"
     if reason is None and real[0] and _min_rr(plan) > 0 and rrs[0] is not None and \
             CONFIG.levels.min_rr_tp1_floor > 0 and rrs[0] < CONFIG.levels.min_rr_tp1_floor:
@@ -562,6 +569,8 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         # a system without a profit target (the Turtles: out on the opposite N-day channel, SignalBook trails it):
         # its own stop; TP1-3 are 100 / 200 / 300 R placeholders the lifecycle never reaches (R:R never vetoes it)
         stop = exit['stop'][1]
+        if exit.get('stop_n'):
+            stop = entry - direction * exit['stop_n']          # review V05: a distance from the entry (Turtles' 2N)
         sl_src = exit.get('stop_src', 'the system stop')
         if exit.get('pad'):
             # a structural stop (Bollinger's retest): beyond it by the pierce / zone buffer, never inside 1 ATR
@@ -628,12 +637,19 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         stop, sl_src = base - direction * pad, f"{src} + {how} {pad / base:.2%}"
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
-        if exit['stop'][0] == 'price':
+        if exit['stop'][0] == 'price' and not exit.get('own_stop'):
             stop, sl_src = clear_pool(zones, stop, entry, direction, plan.get('symbol'), sl_src)
     risk = direction * (entry - stop)
-    if 0 < risk < floor:                                # eng-58: with the pierce model too (stop_levels)
+    if 0 < risk < floor and not exit.get('own_stop'):                                # eng-58: with the pierce model too (stop_levels)
         stop, risk = entry - direction * floor, floor
         sl_src = f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
+    cap = exit.get('max_loss_pct')
+    if cap and entry and risk > cap * entry * (1 + 1e-9):
+        # audit C06: the method's own loss limit outranks the shared floor / pool clearing: such a geometry is
+        # rejected, never widened past the limit (cup: 8% became 20%)
+        out = finish_levels(plan, entry, stop, [entry + direction * risk] * 3, ['n/a'] * 3, direction, sl_src) or {}
+        return {**out, 'entry': entry, 'sl': stop, 'low_rr': True,
+                'rr_reason': f"stop {risk / entry:.1%} away > the method's {cap:.0%} limit ({sl_src})"} if out else None
     if fixed_tp and zones:
         targets, sources = select_targets(zones, entry, direction, atr, 'opposite_liquidity')
         if targets and sources[0] != 'ATR step':
@@ -700,16 +716,16 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
     atr = max(plan.get('leg_atr') or plan['atr'], plan.get('tf_atr') or 0.0)
     tf_zones = htf_zones(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'))
     if plan.get('retarget'):
-        # Continuation: re-measured from the real entry. The impulse's objectives are the TREND-BASED extension:
-        # the impulse A->B projected from the pullback's extreme C (C + k x |B - A|), not from A (eng-42)
+        # Continuation (audit, ICT OTE Primer): the prior high and the leg's 1.272 / 1.618 extensions measured on the
+        # impulse A->B from A (A + k x (B - A)); the pullback's extreme C no longer moves them (eng-42's C + k x leg)
         fillers, fill_label = plan.get('fillers', ()), plan.get('fill_label', 'fib')
         imp = plan.get('impulse')
-        if imp and extreme is not None:
+        if imp:
             leg = abs(imp['end'] - imp['start'])
-            fillers = tuple(extreme + direction * k * leg for k in CONFIG.levels.continuation_targets)
+            fillers = tuple(imp['start'] + direction * k * leg for k in CONFIG.levels.continuation_targets)
             fill_label = 'ext'
         targets, sources = select_targets(tf_zones, entry, direction, atr, plan['intent'], fillers, fill_label)
-        if imp and extreme is not None:
+        if imp:
             # name each extension by its ratio, and mark the ones a higher-timeframe zone confirms (the screenshots'
             # daily + 4h extensions landing on one price)
             ratios = dict(zip(fillers, CONFIG.levels.continuation_targets))
