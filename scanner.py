@@ -283,6 +283,7 @@ class Scanner:
             self._background_thread(self.journal.refresh_hit_rates)
             self._background_thread(self.journal.refresh_anomaly_effects)
         self._tasks = [asyncio.create_task(c) for c in loops]
+        self.notifier.resume()                  # audit B05: trading messages a previous run left undelivered
 
     async def _seed_okx_later(self):
         await asyncio.sleep(5)                  # the streams' start time is known by then
@@ -353,7 +354,7 @@ class Scanner:
         if self._maps_pool is not None:
             self._maps_pool.shutdown(wait=False, cancel_futures=True)
         tasks = [t for t in (*self._tasks, self._baseline_task, getattr(self, '_heartbeat_task', None),
-                             *getattr(self, '_positioning_tasks', [])) if t]
+                             *getattr(self, '_positioning_tasks', []), self._context_task, *self._background) if t]
         for task in tasks:
             task.cancel()
         # return_exceptions: a task that already died with an error must not skip closing the streams below
@@ -1689,6 +1690,10 @@ class Scanner:
             ctxs = [c for c in self.detector.context.values() if c is not None]
             pairs = sum(1 for c in ctxs if getattr(c, 'smt_pair', None))
             failed = errors.health_text()
+            import macro_calendar
+            macro_bad = macro_calendar.coverage(time.time() * 1000)
+            if macro_bad:
+                failed = (failed + '; ' if failed else '') + f"macro veto degraded: {macro_bad}"
             gc_line = self.watchdog.gc_text()
             # the same reading for /api/health (external monitoring, the dashboard's health tab)
             self.health = {'ts': time.time(), 'tier0_sec': self.last_tier0_sec, 'scan_sec': self.last_scan_sec,
@@ -1929,7 +1934,12 @@ class Scanner:
             lv = s.levels or {}
             if event == 'ENTRY' and lv:
                 e = lv['entry']
-                lines = [f"Вход {px(e)} · стоп {px(lv['sl'])} ({(lv['sl'] / e - 1) * 100:+.1f}%)"]
+                if (s.plan or {}).get('no_stop'):
+                    # audit B10: a system without a stop (Connors): 'sl' is only the R unit, never an order to place
+                    lines = [f"Вход {px(e)} · стопа нет (система выходит по правилу; расчётная единица риска R = "
+                             f"{px(lv['sl'])}, {(lv['sl'] / e - 1) * 100:+.1f}%, не ставить как стоп)"]
+                else:
+                    lines = [f"Вход {px(e)} · стоп {px(lv['sl'])} ({(lv['sl'] / e - 1) * 100:+.1f}%)"]
                 if (s.plan or {}).get('no_tp') or lv.get('rr_tp1') is None:
                     exit_ru = {'bollinger': 'выход у противоположной полосы Боллинджера',
                                'breakout': 'выход по противоположному каналу Дончиана (Turtles)',
@@ -1959,7 +1969,7 @@ class Scanner:
                     f"Цена {px(s.last_price)}{r_txt}"
                 if event.startswith('TP'):
                     k = event[2:]
-                    rest = (f"\nСтоп теперь {px(lv['sl'])}" if lv.get('sl') else '') + \
+                    rest = (f"\nСтоп теперь {px(lv['sl'])}" if lv.get('sl') and not (s.plan or {}).get('no_stop') else '') + \
                         (f", следующая цель {px(lv['tp' + str(int(k) + 1)])}" if k in ('1', '2')
                          and isinstance(lv.get('tp' + str(int(k) + 1)), (int, float)) else '')
                     text = f"Цель {k} взята {px(lv.get('tp' + k, s.last_price))}\n{head}{rest}"

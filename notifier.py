@@ -12,12 +12,15 @@ import asyncio
 import logging
 import os
 import errors
+import json
 import platform
-from typing import Optional, Set
+import time
+from typing import Dict, List, Optional, Set
 
 import aiohttp
 
 from config import CONFIG
+from storage import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,63 @@ class Notifier:
         self._session: Optional[aiohttp.ClientSession] = None
         # eng-102: one request at a time (parallel tasks of a briefing burst hit Telegram's per-chat limit, 429)
         self._send_lock: Optional[asyncio.Lock] = None
+        # audit B05: trading instructions (ENTRY / SL / RESTOP ...) outrank briefings for the send lock, wait for it a
+        # bounded time and, when Telegram does not take them, wait in a file outbox (survives a restart) until they are
+        # delivered or too old to act on
+        self._prio_waiting = 0
+        self._outbox: List[Dict] = self._load_outbox()
+        self._retry_task: Optional[asyncio.Task] = None
+
+    OUTBOX_PATH = 'notify_outbox.json'
+    OUTBOX_TTL_SEC = 900.0          # a trading instruction older than this is dropped: its price is no longer actionable
+    LATE_NOTE_SEC = 60.0
+    PRIORITY_LOCK_WAIT_SEC = 20.0
+
+    def _load_outbox(self) -> List[Dict]:
+        try:
+            with open(self.OUTBOX_PATH, encoding='utf-8') as fh:
+                items = json.load(fh)
+            return [i for i in items if isinstance(i, dict) and 'text' in i and 'chat' in i]
+        except (OSError, ValueError):
+            return []
+
+    def _save_outbox(self) -> None:
+        try:
+            atomic_write(self.OUTBOX_PATH, json.dumps(self._outbox, ensure_ascii=False).encode('utf-8'))
+        except OSError as e:
+            logger.warning(f"Telegram outbox not saved: {e!r}")
+
+    def resume(self) -> None:
+        """Start the retry task for messages left in the outbox by a previous run."""
+        if self._outbox and self._retry_task is None:
+            self._retry_task = asyncio.get_running_loop().create_task(self._retry_loop())
+
+    async def _retry_loop(self) -> None:
+        delay = 5.0
+        try:
+            while self._outbox:
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60.0)
+                token, _ = self._creds()
+                keep = []
+                items, self._outbox = self._outbox, []      # a message queued while this pass sends is not lost
+                for item in items:
+                    age = time.time() - float(item.get('ts') or 0)
+                    if age > self.OUTBOX_TTL_SEC:
+                        logger.warning(f"Telegram message dropped after {age:.0f}s undelivered: {item['text'][:60]!r}")
+                        continue
+                    text = item['text']
+                    if age > self.LATE_NOTE_SEC:
+                        text = (f"⏱ <i>доставлено с опозданием {age / 60:.0f} мин: цены могли уйти, "
+                                f"проверь актуальность перед действием</i>\n{text}")
+                    ok = bool(token) and await self._telegram_to(token, item['chat'], item.get('thread'), text,
+                                                                 item.get('html', True), priority=True, queue=False)
+                    if not ok:
+                        keep.append(item)
+                self._outbox = keep + self._outbox
+                self._save_outbox()
+        finally:
+            self._retry_task = None
 
     def _lock(self) -> asyncio.Lock:
         if self._send_lock is None:
@@ -52,13 +112,28 @@ class Notifier:
         text, (token, _) = repr(e), self._creds()
         return text.replace(token, '<token>') if token else text
 
-    async def _post(self, method: str, timeout: float, **kw):
+    async def _post(self, method: str, timeout: float, priority: bool = False, **kw):
         """POST to the Bot API under the send lock; a 429 waits its retry_after (<= 60 s) and retries twice.
         Returns (status, body text)."""
         token, _ = self._creds()
         if self._session is None:
             self._session = aiohttp.ClientSession()
-        async with self._lock():
+        if priority:
+            self._prio_waiting += 1
+            try:
+                await asyncio.wait_for(self._lock().acquire(), self.PRIORITY_LOCK_WAIT_SEC)
+            except asyncio.TimeoutError:
+                raise ConnectionError(f"send lock busy for {self.PRIORITY_LOCK_WAIT_SEC:.0f}s")
+            finally:
+                self._prio_waiting -= 1
+        else:
+            # a briefing / photo lets waiting trading instructions go first (bounded, so it is never starved forever)
+            waited = 0.0
+            while self._prio_waiting and waited < 30.0:
+                await asyncio.sleep(0.2)
+                waited += 0.2
+            await self._lock().acquire()
+        try:
             for attempt in range(3):
                 data = kw.get('data')
                 if callable(data):
@@ -77,7 +152,9 @@ class Notifier:
                     await asyncio.sleep(min(wait, 60.0) + 0.5)
                 if callable(data):
                     kw = dict(kw, data=data)
-        return 429, ''
+            return 429, ''
+        finally:
+            self._lock().release()
 
     @property
     def enabled(self) -> bool:
@@ -93,7 +170,7 @@ class Notifier:
         loop = asyncio.get_running_loop()
         import re
         plain = re.sub(r'</?[a-zA-Z][^>]*>', '', text)
-        for coro in (self._toast(title, plain), self._telegram(f"<b>{title}</b>\n{text}", html=True, topic='signals')):
+        for coro in (self._toast(title, plain), self._telegram(f"<b>{title}</b>\n{text}", html=True, topic='signals', priority=True)):
             task = loop.create_task(coro)
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
@@ -194,33 +271,49 @@ class Notifier:
         for c in chunks:
             await self._telegram(c, html=True, topic=topic)
 
-    async def _telegram(self, text: str, html: bool = False, topic: str = 'alerts'):
+    async def _telegram(self, text: str, html: bool = False, topic: str = 'alerts', priority: bool = False):
         token, _ = self._creds()
         if not token:
             return
         for chat, thread in self._targets(topic):
-            await self._telegram_to(token, chat, thread, text, html)
+            await self._telegram_to(token, chat, thread, text, html, priority)
 
-    async def _telegram_to(self, token: str, chat, thread, text: str, html: bool):
+    async def _telegram_to(self, token: str, chat, thread, text: str, html: bool, priority: bool = False,
+                           queue: bool = True) -> bool:
+        """One message to one destination; True when Telegram took it. With `priority` (a trading instruction) a failed
+        delivery (HTTP 5xx / 429 / a network error / a busy lock) goes to the outbox for the retry loop (audit B05)."""
+        retryable = False
         try:
             payload = {'chat_id': chat, 'text': text[:4000], 'disable_web_page_preview': True}
             if thread:
                 payload['message_thread_id'] = thread
             if html:
                 payload['parse_mode'] = 'HTML'
-            status, body = await self._post('sendMessage', 10, json=payload)
-            if status != 200:
-                body = body[:200]
-                if html and status == 400 and "can't parse entities" in body:
-                    # a bare '<' in the text ("R:R 1.55 < 2", 2026-10-06 09:16) breaks Telegram's HTML: the
-                    # message goes out as plain text instead of not at all
-                    import re
-                    return await self._telegram_to(token, chat, thread, re.sub(r'</?[a-zA-Z][^>]*>', '', text), False)
-                logger.warning(f"Telegram notification failed: HTTP {status} {body}")
+            status, body = await self._post('sendMessage', 10, priority=priority, json=payload)
+            if status == 200:
+                return True
+            body = body[:200]
+            if html and status == 400 and "can't parse entities" in body:
+                # a bare '<' in the text ("R:R 1.55 < 2", 2026-10-06 09:16) breaks Telegram's HTML: the
+                # message goes out as plain text instead of not at all
+                import re
+                return await self._telegram_to(token, chat, thread, re.sub(r'</?[a-zA-Z][^>]*>', '', text), False,
+                                               priority, queue)
+            retryable = status >= 500 or status == 429
+            logger.warning(f"Telegram notification failed: HTTP {status} {body}")
         except Exception as e:
+            retryable = True
             logger.warning(f"Telegram notification failed: {self._redact(e)}")    # repr: a timeout's str() is empty
+        if priority and queue and retryable:
+            self._outbox.append({'text': text, 'chat': chat, 'thread': thread, 'html': html, 'ts': time.time()})
+            self._save_outbox()
+            self.resume()
+        return False
 
     async def close(self):
+        if self._retry_task is not None:
+            self._retry_task.cancel()
+        self._save_outbox()
         for task in list(self._tasks):
             task.cancel()
         if self._tasks:

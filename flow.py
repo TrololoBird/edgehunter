@@ -26,6 +26,9 @@ FUTURES_VENUES = ('binance', 'bybit', 'okx', 'bitget', 'hyperliquid')
 SPOT_VENUES = ('coinbase', 'bybit_spot')
 
 
+GAP_SEC = 45                     # audit B11: no write on a venue for more than this many seconds = a coverage gap
+
+
 class VenueFlow:
     """
     Ring buffer of one venue: data[second % H, field, symbol_row]. Second-major: advancing one second zeroes ~5 KB
@@ -40,6 +43,8 @@ class VenueFlow:
         self.data = np.zeros((history_sec, N_FIELDS, capacity), dtype=np.float32)
         self.counts = np.zeros((history_sec, capacity), dtype=np.int32)
         self.last_sec = 0
+        self.last_msg_sec = 0           # the second of the last real write (advance() also runs on reads)
+        self.gaps: list = []            # audit B11: [(from_sec, to_sec)] stretches with no message at all (a transport gap)
         self.first_sec = 0              # audit D13: the second the ring started to be written (it holds data only from here)
         self.messages = 0
         self.last_event_ms = 0
@@ -51,6 +56,10 @@ class VenueFlow:
         if extra > 0:
             self.data = np.concatenate([self.data, np.zeros((self.H, N_FIELDS, extra), np.float32)], axis=2)
             self.counts = np.concatenate([self.counts, np.zeros((self.H, extra), np.int32)], axis=1)
+
+    def covers(self, a: int, b: int) -> bool:
+        """Audit B11: [a, b) lies after the ring started and crosses no recorded transport gap."""
+        return bool(self.first_sec) and a >= self.first_sec - 60 and b <= self.last_msg_sec + GAP_SEC and all(e <= a or s >= b for s, e in self.gaps)
 
     def clear_row(self, row: int):
         self.data[:, :, row] = 0
@@ -64,6 +73,8 @@ class VenueFlow:
             self.data[:] = 0
             self.counts[:] = 0
             self.first_sec = sec
+            self.gaps = []
+            self.last_msg_sec = 0
         else:
             a, n = (self.last_sec + 1) % self.H, sec - self.last_sec
             for lo, hi in ((a, min(a + n, self.H)), (0, max(0, a + n - self.H))):
@@ -77,6 +88,12 @@ class VenueFlow:
             self.advance(sec)
         elif sec <= self.last_sec - self.H:
             return  # older than the buffer
+        if sec > self.last_msg_sec:
+            if self.last_msg_sec and sec - self.last_msg_sec > GAP_SEC:
+                # a whole venue silent for this long is a dropped / stalled feed, not a quiet market: the stretch is
+                # unknown coverage (zeros in the ring there are 'no data', never 'no trades')
+                self.gaps = (self.gaps + [(self.last_msg_sec, sec)])[-100:]
+            self.last_msg_sec = sec
         slot = sec % self.H
         self.data[slot, field, row] += usd
         if count:

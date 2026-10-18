@@ -256,6 +256,7 @@ class TrackedSignal:
     last_veto: list = field(default_factory=list)   # [reason, entry, sl] of the last journaled veto
     # the order-flow entry in the zone (SignalBook._flow_entry): checked once a minute, journaled once per card
     flow_checked_ms: int = 0
+    tp_ms: int = 0                              # audit B03: the end of the last final minute checked for TP1 before an entry
     flow_done: bool = False
     # eng-137 (audit A01): the end of the last final 1m candle checked against the invalidation (0 = from the minute
     # after the card's creation); audit A02: how the rest of the entry minute was judged ('' = not yet, 'trades' =
@@ -979,7 +980,9 @@ class SignalBook:
         tp1 = plan['targets'][0]
         # eng-108: with structural lifetimes EVERY waiting card ends once TP1 traded before an entry (its structural end;
         # the invented waiting clocks are gone)
-        if (plan.get('missable') or CONFIG.strategies.structural_lifetimes) and d * (price - tp1) >= 0:
+        tp_seen = self._tp1_since(s, candles_of, tp1, plan) if version_no(s.logic_version) >= 141 else None
+        if (plan.get('missable') or CONFIG.strategies.structural_lifetimes) and (d * (price - tp1) >= 0
+                                                                                  or tp_seen is not None):
             reasons = ', '.join(sorted(set(s.veto_log)))
             # two different failures: price never came back to the zone (the zone is too far from where the move
             # turns) vs it did and no trigger fired (the trigger is too strict)
@@ -1178,6 +1181,31 @@ class SignalBook:
         for c in minutes:
             if c[0] >= start and ((c[3] <= invalid) if d > 0 else (c[2] >= invalid)):
                 return float(c[3] if d > 0 else c[2])
+        return None
+
+    def _tp1_since(self, s: TrackedSignal, candles_of, tp1: float, plan: Optional[Dict] = None) -> Optional[float]:
+        """Audit B03: the first final 1m high / low at TP1 since the last check (s.tp_ms; from the first whole minute after
+        the card's creation) - a wick through TP1 between two scans ends the waiting card though the price is back.
+        Only the minutes since the last check are read, with the plan of that moment (a moved TP1 is never applied to
+        the older candles)."""
+        if not candles_of:
+            return None
+        allm = candles_of(s.symbol)
+        if not isinstance(allm, list):
+            allm = list(allm or [])
+        if not allm:
+            return None
+        start = s.tp_ms or (int(s.created * 1000) // MINUTE_MS + 1) * MINUTE_MS
+        s.tp_ms = max(start, int(allm[-1][0]) + MINUTE_MS)
+        k = len(allm)
+        while k and allm[k - 1][0] >= start:
+            k -= 1
+        edge = (plan or {}).get('zone_hi' if s.direction > 0 else 'zone_lo') if (plan or {}).get('trigger') == 'touch' else None
+        for c in allm[k:]:
+            if edge is not None and ((c[3] <= edge) if s.direction > 0 else (c[2] >= edge)):
+                return None              # the limit's line traded first (or in the same minute): the touch rules decide
+            if (c[2] >= tp1) if s.direction > 0 else (c[3] <= tp1):
+                return float(c[2] if s.direction > 0 else c[3])
         return None
 
     @staticmethod
@@ -1513,6 +1541,18 @@ class SignalBook:
             # a trade restored from a state saved before eng-58: never judge it on candles before its entry
             s.managed_ms = int(((s.entered_at or 0) // 60 + 1) * 60_000)
         candles = [c for c in (list(candles_of(s.symbol)) if candles_of else []) if c[0] >= s.managed_ms]
+        if version_no(s.logic_version) >= 141 and len(candles) > 1:
+            # audit B09: missing minutes are not 'nothing happened'. The path from the last close before the hole to the
+            # next open is certain (price is continuous): a bridge candle with that range stands for the hole, so a
+            # stop between the two is taken (stamped at the hole's last minute, so a time exit due inside it still comes first) instead of the next available minute crediting a target
+            bridged = [candles[0]]
+            for c in candles[1:]:
+                prev = bridged[-1]
+                if int(c[0]) - int(prev[0]) > MINUTE_MS:
+                    pc, no = float(prev[4]), float(c[1])
+                    bridged.append([int(c[0]) - MINUTE_MS, pc, max(pc, no), min(pc, no), no, 0.0])
+                bridged.append(c)
+            candles = bridged
         # audit A08: the exit levels that are price conditions (the Turtles' N-day channel, Bollinger's opposite band)
         # are checked on every final 1m candle's extremes like the stop - the scan price missed the wicks between scans.
         # Each minute is judged on the levels known at its OPEN (review of 6b771ba): only the days / 4h bars closed by

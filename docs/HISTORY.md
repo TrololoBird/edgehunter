@@ -779,3 +779,18 @@ one RSI convention (flat = 50, no absolute floor: scale-invariant) and TA-Lib's 
 (26.08, was 23.79). E07: Bybit both-sides OI fallback halved. E08: the ORB contract is the closed minute (documented; the tick args stay unread).
 Review notes: `htf_zones` trimming also moves the structure stops of 1h+ plans to the qualifying levels' edges; liquidity targets sit exactly on the
 swing's extreme (no buffer rule yet); `_ltf_prices` knows both prices of a zone. A stale HL snapshot reads as no positions (0), not unknown.
+
+**eng-141 (business trading-logic audit B01-B11, H01, F01)**: B01 `executor.on_add` confirms the add by the exchange's own position (size and
+average price before/after, a client id, a lost reply resolved by the position, partial fills recorded as filled); B02 `_dedupe_stops` compares the
+stops' total quantity with the actual position and re-places the stop when it covers less. B03: a waiting card ends MISSED when a final 1m high/low
+reached TP1 since the last check (`SignalBook._tp1_since`, `tp_ms`; only cards of eng-141+). B04: `fetch_candidates` skips markets with
+`active=False` or `info.status != TRADING`. B05: trading messages (`Notifier.send`) take the send lock before briefings (bounded 20s wait), failed
+deliveries (5xx / 429 / network) go to `notify_outbox.json` and are retried for 15 min, a late one carries a "delivered late" note; the outbox
+survives a restart (`Notifier.resume`). B06: NFP 2026-11-06 added; `macro_calendar.coverage` puts "macro veto degraded" into the Health line when the weekly
+feed is lost/stale (6h) or the hand list ended. B07/B08 are conventions, documented only: Turtle units have their own budget (not one portfolio limit);
+BingX stops trigger on MARK_PRICE while the card judges Binance trades, so the two can end at different minutes. B09: missing 1m candles inside a trade
+are bridged by a candle with the certain range (last close -> next open), so a stop between them is taken. B10: a `no_stop` plan (Connors) is announced
+as "стопа нет", `sl` is only the R unit. B11: `VenueFlow.gaps` records stretches of >45s without any write; a confirmation window crossing one (or ending
+more than 45s after the last write) does not count that venue. H01: `Scanner.stop` also cancels `_context_task` and the background tasks. F01: the
+UNKNOWN-entry coin hold survives a restart (`demo_unknown.json`). Not done: per-coin continuity (gaps are per venue), F07 (the ADD fallback price
+is the Binance price; only used when the position gives no average). Not measured live yet.

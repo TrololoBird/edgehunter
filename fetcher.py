@@ -929,6 +929,11 @@ class DataFetcher:
             except (TypeError, ValueError):
                 quote_vol = 0.0
             is_active = t.get('active', info.get('active', True))
+            # audit B04: the markets reference carries the trading status (ticker has none): a SETTLING / closed contract
+            # is no candidate; the status is read only when the market states it
+            status = str((market.get('info') or {}).get('status') or 'TRADING').upper()
+            if market.get('active') is False or status != 'TRADING':
+                continue
             floor = min(CONFIG.exchange.min_24h_quote_volume_usd, CONFIG.exchange.smallcap_min_volume_usd or 1e18)
             if (pinned or quote_vol >= floor) and is_active:      # eng-99: small caps are candidates too
                 # pinned coins first (CONFIG.exchange.pinned_bases), then by volume
@@ -1539,7 +1544,7 @@ class DataFetcher:
                         rows = await asyncio.to_thread(get, 'https://nfs.faireconomy.media/ff_calendar_thisweek.json')
                         with open(cache, 'w', encoding='utf-8') as fh:
                             json.dump(rows, fh)
-                    macro_calendar.set_live(rows)
+                    macro_calendar.set_live(rows, os.path.getmtime(cache) if os.path.exists(cache) else None)
                 except Exception as e:
                     errors.report('fetcher.calendar', e)
                 last['cal'] = now                      # a failure waits an hour too (429)
@@ -2317,7 +2322,7 @@ class DataFetcher:
                 # a venue whose ring is shorter than the window (Bitget / Hyperliquid / spot venues keep 15 min)
                 # would add only its last part: left out rather than a partial sum skewing the total
                 # ... or that started recording after the window began (a restart / reconnect): capacity is not coverage
-                if vf is None or b - a > vf.H or not vf.first_sec or a < vf.first_sec - 60:
+                if vf is None or b - a > vf.H or not vf.covers(a, b):
                     continue
                 total += vf.row_range_sum(BUY, row, a, b, now_sec) - vf.row_range_sum(SELL, row, a, b, now_sec)
                 counted += 1

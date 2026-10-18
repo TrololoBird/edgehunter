@@ -111,6 +111,14 @@ class DemoExecutor:
         # {order_id, symbol, levels in BingX prices, ...} (eng-46)
         self.pending: Dict[str, Dict] = {}
         self.pending_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'demo_pending.json')
+        self.unknown_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'demo_unknown.json')
+        try:
+            # audit F01: an entry of unknown outcome holds its coin across a restart too
+            with open(self.unknown_path, encoding='utf-8') as f:
+                self._unknown_coins = {str(k): float(v) for k, v in json.load(f).items()
+                                       if time.time() - float(v) < UNKNOWN_HOLD_SEC}
+        except (OSError, ValueError, AttributeError):
+            pass
         try:
             with open(self.pending_path, encoding='utf-8') as f:
                 self.pending = json.load(f)     # resting limits survive a restart (else they stay on BingX unseen)
@@ -284,6 +292,11 @@ class DemoExecutor:
                 logger.warning(f"Demo entry {'UNKNOWN' if unknown else 'failed'} for {s.symbol} {s.group_key}: {e!r}")
                 if unknown:
                     self._unknown_coins[coin] = time.time()
+                    try:
+                        with open(self.unknown_path, 'w', encoding='utf-8') as f:
+                            json.dump(self._unknown_coins, f)
+                    except OSError as e2:
+                        errors.report('executor.on_entry', e2, "Demo unknown-entry state")
                     # not 'not filled': a position that turns up is closed by close_untracked (no card owns it)
                     self.alert(f"⚠️ Демо {s.symbol}: исход входа неизвестен (биржа недоступна), проверьте позицию")
                 self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
@@ -902,6 +915,23 @@ class DemoExecutor:
             if not stops:
                 await self._restore_stop(trade)
                 continue
+            # audit B02: a stop that exists is not a stop that covers the position (a grown position kept the old size)
+            if not (trade.get('no_stop') or trade.get('strategy') == 'connors' or not trade.get('sl')):
+                try:
+                    left = await self._position_qty(trade['symbol'])
+                except Exception as e:
+                    errors.report('executor._dedupe_stops', e, f"Demo position {trade['symbol']}")
+                    left = 0.0
+                covered = sum(float((o.get('info') or {}).get('origQty') or o.get('amount') or 0) for o in stops)
+                if left > 0 and covered and covered < left * 0.999:
+                    logger.warning(f"Demo {trade['symbol']}: stops cover {covered} of the position {left}: re-placed")
+                    self.alert(f"⚠️ Демо {trade['symbol']}: стоп покрывал {covered} из {left}, переставлен")
+                    try:
+                        new = await self._place_stop(trade['symbol'], trade['direction'], left, float(trade['sl']))
+                        await self._cancel_orders(trade['symbol'], keep=new.get('id'), stops_only=True)
+                    except Exception as e:
+                        errors.report('executor._dedupe_stops', e, f"Demo stop re-place {trade['symbol']}")
+                    continue
             if len(stops) < 2:
                 continue
             ref = float(trade.get('sl') or 0)
@@ -969,10 +999,37 @@ class DemoExecutor:
                 symbol, d = trade['symbol'], trade['direction']
                 # after a restart the unit is the position over the units it already holds
                 unit = float(trade.get('unit_qty') or float(trade['qty']) / max(1, len(s.units) - 1))
-                order = await ex.create_order(symbol, 'market', 'buy' if d > 0 else 'sell', unit)
-                fill = float(order.get('average') or order.get('price') or s.last_price)
-                total = float(trade['qty']) + unit
-                trade['entry_fill'] = (float(trade['entry_fill']) * float(trade['qty']) + fill * unit) / total
+                # audit B01: the add is confirmed by the exchange's own position (size and average price), never by the
+                # requested unit; a lost reply is an UNKNOWN outcome resolved by the position, not a 'not filled'
+                import ccxt
+                import uuid
+                before, before_px = await self._position_of(symbol, d, strict=True)
+                cid = f"pb{uuid.uuid4().hex[:24]}"
+                try:
+                    order = await ex.create_order(symbol, 'market', 'buy' if d > 0 else 'sell', unit, None,
+                                                  {'clientOrderId': cid})
+                except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
+                    logger.warning(f"Demo ADD {symbol}: outcome unknown ({e!r}): resolving by position")
+                    order = {}
+                    await asyncio.sleep(4)
+                for wait in (0, 3, 6, 10):             # BingX's position snapshot lags the fill by a few seconds
+                    await asyncio.sleep(wait)
+                    after, after_px = await self._position_of(symbol, d, strict=True)
+                    if after - before > 0:
+                        break
+                added = after - before
+                if added <= 0:
+                    logger.warning(f"Demo ADD {symbol}: no growth of the position ({before} -> {after}): not added")
+                    self.alert(f"⚠️ Демо {symbol}: добор не подтверждён позицией ({before} → {after}), стоп сверит проверка покрытия")
+                    return
+                if after_px and before_px and added > 0:
+                    fill = (after_px * after - before_px * before) / added   # the add's own average price
+                else:
+                    fill = float(order.get('average') or order.get('price') or 0) or float(s.last_price)
+                total = after
+                if abs(added - unit) > 1e-9 * max(1.0, unit):
+                    logger.warning(f"Demo ADD {symbol}: filled {added} of the requested {unit}")
+                trade['entry_fill'] = after_px or (float(trade['entry_fill']) * float(trade['qty']) + fill * added) / total
                 trade['qty'], trade['unit_qty'] = total, unit
                 # BingX's price ratio to Binance (contract scale x basis) lives in memory only: after a restart it is
                 # the BingX plan entry over the card's Binance entry (1.0 put a 1000-unit contract's stop 1000x off)
@@ -1002,7 +1059,7 @@ class DemoExecutor:
                 with sqlite3.connect(self.db_path) as c:
                     c.execute("UPDATE demo_trades SET qty = ?, entry_fill = ?, sl = ? WHERE id = ?",
                               (total, trade['entry_fill'], s.levels['sl'] * scale, trade['id']))
-                logger.info(f"Demo ADD {symbol} unit {len(s.units)}: +{unit} @ {fill:.6g}, position {total}, "
+                logger.info(f"Demo ADD {symbol} unit {len(s.units)}: +{added} @ {fill:.6g}, position {total}, "
                             f"stop {s.levels['sl'] * scale:.6g}")
             except Exception as e:
                 logger.warning(f"Demo add-unit failed for {trade['symbol']}: {e!r}")
