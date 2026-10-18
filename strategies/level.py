@@ -13,6 +13,7 @@ eng-58: after the sweep, ICT's 2022 model - a displacement that breaks the swing
 arms a resting limit at the gap's CE (ict.fvg_setup -> SignalBook: the plan becomes a touch plan the demo places).
 """
 import re
+import math
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
@@ -60,11 +61,12 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
                    symbol: Optional[str] = None) -> Optional[Dict]:
     """The candle that just closed took a pool and closed back beyond it on volume -> the sweep event."""
     cfg = CONFIG.strategies
-    if len(candles_15m) < 21 or not atr:
+    if len(candles_15m) < 21 or atr is None or not math.isfinite(atr) or atr <= 0:
         return None
     c = candles_15m[-1]
     avg_volume = sum(x[5] for x in candles_15m[-21:-1]) / 20
-    if avg_volume and c[5] < cfg.sweep_min_rvol * avg_volume:
+    if not math.isfinite(avg_volume) or avg_volume <= 0 or not math.isfinite(c[5]) \
+            or c[5] < cfg.sweep_min_rvol * avg_volume:
         return None
     lo_depth, hi_depth = cfg.sweep_min_depth_atr * atr, cfg.sweep_max_depth_atr * atr
     best = None

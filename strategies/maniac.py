@@ -613,6 +613,8 @@ def ifvg_trigger(ltf: Sequence[Sequence[float]], direction: int, pierce_ms: int,
     min_size = cfg.smt_ifvg_min_atr * atr
     best = None
     for i in range(max(2, start - cfg.smt_ifvg_search_back), len(ltf)):
+        if ts[i] - ts[i - 1] != interval_ms or ts[i - 1] - ts[i - 2] != interval_ms:
+            continue  # a missing bar is not a three-candle fair value gap
         if direction > 0 and h[i] < l[i - 2] and l[i - 2] - h[i] >= min_size:
             top = l[i - 2]
             j = next((k for k in range(i + 1, len(ltf)) if c[k] > top), None)

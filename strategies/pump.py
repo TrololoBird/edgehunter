@@ -68,7 +68,7 @@ def pump_top(minutes: Sequence[Sequence[float]], m: Dict, now_ms: int) -> Option
     """The climax 15m candle that just closed after a pump of >= pump_top_min_pct within 4h."""
     cfg = CONFIG.strategies
     bars = resample(minutes, 15, now_ms)
-    if len(bars) < 20:
+    if len(bars) < 21:
         return None
     last = bars[-1]
     window = bars[-16:]
