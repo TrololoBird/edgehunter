@@ -180,21 +180,20 @@ def merge_candles(older: Sequence[Sequence[float]], newer: Sequence[Sequence[flo
 
 def hours_from(candles_15m: Sequence[Sequence[float]], h1: Sequence[Sequence[float]], cut_ms: int) -> List[List[float]]:
     """Closed 1h candles up to `cut_ms`; an hour REST has not published yet is built from its four 15m candles."""
-    out = [list(c) for c in h1 if c[0] + HOUR_MS <= cut_ms]
-    last = out[-1][0] if out else None
+    out = {int(c[0]): list(c) for c in h1 if c[0] + HOUR_MS <= cut_ms}
     by_hour: Dict[int, List] = {}
     for c in candles_15m:
         hour = int(c[0]) // HOUR_MS * HOUR_MS
-        if (last is None or hour > last) and hour + HOUR_MS <= cut_ms:
+        if hour not in out and hour + HOUR_MS <= cut_ms:
             by_hour.setdefault(hour, []).append(c)
     for hour in sorted(by_hour):
         q = sorted(by_hour[hour], key=lambda c: c[0])
         # audit F05: the four quarters exactly (a count of 4 accepted :00 / :15 / :15 / :45)
         if [int(c[0]) for c in q] == [hour + i * 900_000 for i in range(4)]:
-            out.append([hour, q[0][1], max(c[2] for c in q), min(c[3] for c in q), q[-1][4],
+            out[hour] = [hour, q[0][1], max(c[2] for c in q), min(c[3] for c in q), q[-1][4],
                         sum(c[5] for c in q), sum(c[6] for c in q),
-                        sum(c[7] for c in q) if all(len(c) > 7 and c[7] is not None for c in q) else float('nan')])
-    return out
+                        sum(c[7] for c in q) if all(len(c) > 7 and c[7] is not None for c in q) else float('nan')]
+    return [out[t] for t in sorted(out)]
 
 
 def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
@@ -227,7 +226,7 @@ def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
             if out and n != 4:
                 out.pop()                      # an incomplete 4h group (a gap): not a candle
             out.append([start, c[1], c[2], c[3], c[4], vol, fld(c, 6), fld(c, 7)])
-            n = 1
+            n = 1 if int(c[0]) == start else -99  # the first hour must start on the bucket's boundary
     if out and (n != 4 or out[-1][0] + size > cut):
         out.pop()
     return out

@@ -68,16 +68,17 @@ def atr_of(candles: Sequence[Sequence[float]], period: int = 14) -> Optional[flo
 
 
 def resample_htf(candles_1h: Sequence[Sequence[float]], hours: int) -> List[List[float]]:
-    """1h candles -> `hours` candles aligned to UTC multiples (the last one may be partial)."""
+    """1h candles -> complete `hours` candles on the UTC grid, without missing or repeated hours."""
     size = hours * 3_600_000
-    out: List[List[float]] = []
+    groups: Dict[int, List] = {}
     for c in candles_1h:
         start = int(c[0]) // size * size
-        if out and out[-1][0] == start:
-            bar = out[-1]
-            bar[2], bar[3], bar[4] = max(bar[2], c[2]), min(bar[3], c[3]), c[4]
-        else:
-            out.append([start, c[1], c[2], c[3], c[4]])
+        groups.setdefault(start, []).append(c)
+    out: List[List[float]] = []
+    for start in sorted(groups):
+        group = sorted(groups[start], key=lambda c: c[0])
+        if [c[0] for c in group] == [start + i * 3_600_000 for i in range(hours)]:
+            out.append([start, group[0][1], max(c[2] for c in group), min(c[3] for c in group), group[-1][4]])
     return out
 
 
@@ -109,7 +110,7 @@ def find_impulse(df: Optional[pl.DataFrame], leg_direction: int,
     eng-122, the leg from STRUCTURE (no windows of ours): its END is the last confirmed 2/2 swing high (low for a
     down leg) of the 15m frame; its START is the most extreme opposite price between that end and the last candle
     (15m, then the older 1h history) that traded beyond the end - the move began after it. Its timeframe by duration
-    (15m up to 12h, 1h up to 2 days, else 4h) and its ATR in that timeframe; it qualifies by the derived minimum leg
+    (15m below 5h, 1h below 20h, else 4h) and its ATR in that timeframe; it qualifies by the derived minimum leg
     (levels.min_leg_atr / min_leg_move). Returns {'start', 'end', 'size', 'candles', 'atr', 'atr_15m', 'tf',
     'trigger_minutes', 'start_ts', 'end_ts'} or None.
     """
@@ -151,7 +152,8 @@ def find_impulse(df: Optional[pl.DataFrame], leg_direction: int,
     duration = end_ts - start_ts
     # eng-123, Elder's factor of five: the leg's timeframe is the largest of 15m / 1h / 4h holding >= 5 of its candles
     tf = '4h' if duration >= 5 * TF_MS['4h'] else '1h' if duration >= 5 * TF_MS['1h'] else '15m'
-    htf_list = [list(c[:5]) for c in (htf or [])]
+    cut = int(rows[-1][0]) + TF_MS['15m']
+    htf_list = [list(c[:5]) for c in (htf or []) if c[0] + TF_MS['1h'] <= cut]
     atr = atr_15m if tf == '15m' else atr_of(htf_list if tf == '1h' else resample_htf(htf_list, 4))
     if not atr:
         # audit 2026-10-18 P1: the structure's timeframe comes from its duration, not from what is loaded - without
