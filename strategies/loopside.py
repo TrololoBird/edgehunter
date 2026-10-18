@@ -169,7 +169,7 @@ class LoopDetectors:
         if not earlier:
             return None                           # no record of the day before this minute: cannot tell a fresh touch
         from strategies.turtle import turtle_breakout
-        found = turtle_breakout(md.d1, last[2], last[3], now_ms,
+        found = turtle_breakout(md.d1, last[2], last[3], int(last[0]),
                                 max(c[2] for c in earlier), min(c[3] for c in earlier))
         if found is None:
             return None
