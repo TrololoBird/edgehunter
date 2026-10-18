@@ -236,8 +236,8 @@ class Briefing:
         k = own[0][4] / at[4]
         return [[c[0], c[1] * k, c[2] * k, c[3] * k, c[4] * k] + list(c[5:]) for c in proxy if c[0] < first] + list(own)
 
-    def _bias_of(self, symbol: str) -> Tuple[Optional[str], Dict]:
-        md = self.sc.market_data.get(symbol)
+    def _bias_of(self, symbol: str, md=None) -> Tuple[Optional[str], Dict]:
+        md = md if md is not None else self.sc.market_data.get(symbol)
         if md is None:
             return None, {}
         src, since = md, None
@@ -298,7 +298,7 @@ class Briefing:
         return (f"Цена внутри широкой зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} ({' · '.join(z['labels'][:3])}): "
                 f"входы только от краёв, не из середины.")
 
-    def key_zones(self, symbol: str) -> Tuple[Optional[float], List[Dict]]:
+    def key_zones(self, symbol: str, src: Optional[Dict] = None, keep_state: bool = True) -> Tuple[Optional[float], List[Dict]]:
         """
         The 1h+ zones of the plans' map around the price (eng-74, the 2026-10-07 review): whole zones, never trimmed
         (a trim to 0.3 daily ATR cut ETH's daily breaker 2 475-2 615 to 2 593-2 615, deleted the daily FVG 2 484-2 562
@@ -309,12 +309,14 @@ class Briefing:
         measured p80 pierce, at least zone_buffer_atr x the 1h ATR - Osler: stops cluster just beyond a level).
         """
         from pierce import overshoot
-        price = self.sc._price_of(symbol)
-        levels = self.sc._levels_of(symbol)
-        tf = self.sc._tf_atrs(symbol)
+        # src: a coin outside the universe (the web analysis): {'price', 'levels', 'tf', 'md'} built from REST candles
+        src = src or {}
+        price = src['price'] if 'price' in src else self.sc._price_of(symbol)
+        levels = src['levels'] if 'levels' in src else self.sc._levels_of(symbol)
+        tf = src['tf'] if 'tf' in src else self.sc._tf_atrs(symbol)
         atr1d = tf.get('1d') or (tf.get('4h') or 0) * 2.5
         atr1h = tf.get('1h') or (atr1d / 5 if atr1d else 0)
-        if not price or not levels or not atr1d:
+        if not price or (not levels and 'levels' not in src) or not atr1d:
             return price, []
         # only the levels a session forecast stands on (the owner 2026-10-08: minor levels made huge zones) - daily /
         # weekly swings, the previous day / week / month extremes, the week / month open, the year's extremes, 4h+ ICT
@@ -325,7 +327,7 @@ class Briefing:
         import dataclasses
         cap = atr1h                    # eng-74: ~1 1h-ATR thick (the owner's reference card), was half a daily ATR
         keep = []
-        for l in levels:
+        for l in levels or []:
             if not _significant(l):
                 continue
             if l.body is not None and abs(l.body - l.price) > cap and l.kind.split('_')[0] not in ('fvg', 'ob', 'breaker', 'bpr'):
@@ -350,7 +352,7 @@ class Briefing:
         # VAL, opens, sessions) only name a zone they coincide with ("здесь же"); they were the zones themselves, a
         # sum of labels whether or not price ever reacted there
         import sr
-        md = self.sc.market_data.get(symbol)
+        md = src['md'] if 'md' in src else self.sc.market_data.get(symbol)
         now_ms = time.time() * 1000
         zs = sr.zones({'1h': list(md.h1) if md else [], '4h': list(md.h4) if md else [],
                        '1d': list(md.d1) if md else []}, now_ms, tol=0.6 * atr1h, max_width=1.5 * atr1h)
@@ -406,7 +408,9 @@ class Briefing:
         # wider than a daily ATR around the price: context (named, not traded); the other zones around the price are
         # supports / resistances by their level price (a daily low whose candle body reaches above the price - BTC's
         # 82 500 / 83 461 - is a support at 82 500, not context: as context it vanished from the targets)
-        self.context[symbol] = [m for m in inside if m is not cur and m['wide']]
+        wide = [m for m in inside if m is not cur and m['wide']]
+        if keep_state:
+            self.context[symbol] = wide
         for m in inside:
             if m is not cur and not m['wide']:
                 lo, hi = (min(m['lo'], m['mid']), min(m['mid'], price - m['tol'])) if m['mid'] < price                     else (max(m['mid'], price + m['tol']), max(m['hi'], m['mid']))
@@ -417,7 +421,7 @@ class Briefing:
             daily-ATR window skipped BTC's 82 500 daily low and ETH's 2 475 edge for weaker or farther ones); the next
             pick must lie beyond the previous one by more than their pierce (closer = one place); a zone of
             15m / 1h levels only was already dropped above."""
-            pool_ = sorted((m for m in cands if m is not cur and m not in self.context[symbol]
+            pool_ = sorted((m for m in cands if m is not cur and m not in wide
                             and (m['lo'] > price if side > 0 else m['hi'] < price)),
                            key=lambda m: m['lo'] if side > 0 else -m['hi'])
             chosen, edge = [], (cur['hi'] if cur and side > 0 else cur['lo'] if cur else price)
@@ -438,7 +442,7 @@ class Briefing:
             return chosen
         # the edges of a wide zone around the price are levels of their own (ETH inside the daily FVG 2 484-2 568: its
         # low is the first support for a short's target, not 2 469 beyond it)
-        for m in self.context[symbol]:
+        for m in wide:
             for side, edge in ((-1, m['lo']), (1, m['hi'])):
                 if side * (edge - price) > m['tol'] and not (cur and cur['lo'] <= edge <= cur['hi']):
                     cands.append({**m, 'lo': edge, 'hi': edge, 'mid': edge, 'wide': False,
@@ -487,6 +491,78 @@ class Briefing:
                              + ' / '.join(_fmt(t) for t in sc['targets']))
         self.scenario[symbol] = {'long': p['long'], 'short': p['short'], 'price': price, 'ts': time.time()}
         return '\n'.join(lines)
+
+    @staticmethod
+    def light_src(symbol: str, price: float, h1: List, h4: List, d1: List, w1: List):
+        """A coin outside the universe, from REST candles only (rows [ts, o, h, l, c, ...]): the same shape key_zones /
+        htf_bias read. No flows, liquidations or level map - the zones are the swing clusters of sr.zones alone."""
+        import types
+        md = types.SimpleNamespace(symbol=symbol, h1=h1, h4=h4, d1=d1, w1=w1, last_price=price, minute_klines=[])
+        now = time.time() * 1000
+        tf: Dict[str, float] = {}
+        for k, rows, period in (('1h', h1, 3_600_000), ('4h', h4, 14_400_000), ('1d', d1, 86_400_000)):
+            closed = [r for r in rows[-20:] if r[0] + period <= now]
+            if len(closed) >= 15:
+                trs = [max(c[2] - c[3], abs(c[2] - p[4]), abs(c[3] - p[4])) for p, c in zip(closed[-15:-1], closed[-14:])]
+                tf[k] = sum(trs) / len(trs)
+        return md, {'price': price, 'levels': [], 'tf': tf, 'md': md}
+
+    def analyze(self, symbol: str, md=None, src: Optional[Dict] = None, cards: Optional[List[Dict]] = None) -> Dict:
+        """The web analysis of one coin (pinned or typed in): zones, higher-timeframe bias, the long / short scenarios
+        of briefing_chart.plan with their R:R and a mechanical checklist per side. Pure: the watched state (context,
+        zones, scenario) is restored, nothing is posted. A rule list, not advice."""
+        import briefing_chart
+        price, zones = self.key_zones(symbol, src, keep_state=False)
+        md = md if md is not None else self.sc.market_data.get(symbol)
+        if not price or md is None:
+            return {'symbol': symbol, 'error': 'нет данных'}
+        bias, st = self._bias_of(symbol, md)
+        tf = (src or {}).get('tf') or self.sc._tf_atrs(symbol, md)
+        atr1d, atr1h = tf.get('1d'), tf.get('1h')
+        ath, days = self._history_high(md)
+        p = briefing_chart.plan(price, zones, atr1d, ath, days)
+        events = macro_today(datetime.now(MSK))
+        d1c = [c for c in md.d1 if c[0] + 86_400_000 <= time.time() * 1000]       # closed days only (REST rows hold today's)
+        out = {'symbol': symbol, 'base': _short(symbol), 'price': price, 'light': src is not None,
+               'chg_day': (price / d1c[-1][4] - 1) * 100 if d1c else None,
+               'bias': bias, 'bias_ru': BIAS_RU.get(bias, bias), 'bias_line': self._bias_line(symbol, bias, st),
+               'atr1h': atr1h, 'atr1d': atr1d,
+               'zones': [{k: z[k] for k in ('lo', 'hi', 'side', 'strength', 'label')} for z in zones],
+               'macro': [f"{dt:%H:%M} {name}" for dt, name in events], 'scenarios': {}, 'cards': cards or []}
+        if _short(symbol) in self.cfg.coins and src is None:
+            out['outcomes'] = self.outcomes(symbol, 14, md)
+        for side, d, name in (('long', 1, 'Лонг'), ('short', -1, 'Шорт')):
+            sc = p.get(side)
+            if not sc:
+                out['scenarios'][side] = None
+                continue
+            e = sum(sc['entry']) / 2
+            risk, reward = abs(e - sc['stop']), abs(sc['targets'][0] - e)
+            rr = reward / risk if risk else 0.0
+            dist = abs(e - price) / atr1h if atr1h else None
+            checks = []
+            aligned = bias in ('bull', 'bear') and ((bias == 'bull') == (d == 1))
+            against = bias in ('bull', 'bear') and not aligned
+            checks.append(('Старший ТФ', 'ok' if aligned else 'bad' if against else 'warn', BIAS_RU.get(bias, bias)))
+            checks.append(('R:R до TP1', 'ok' if rr >= 2 else 'warn' if rr >= 1 else 'bad', f"{rr:.1f}"))
+            if dist is not None:
+                checks.append(('Вход от цены', 'ok' if dist <= 1.5 else 'warn' if dist <= 4 else 'bad',
+                               f"{dist:.1f} ATR(1h)"))
+            if events:
+                checks.append(('Макро сегодня', 'warn', ', '.join(n for _, n in events)[:80]))
+            mine = [c for c in (cards or []) if c.get('direction') == d]
+            against_cards = [c for c in (cards or []) if c.get('direction') == -d]
+            if mine:
+                checks.append(('Карточки бота', 'ok', f"{len(mine)} по направлению"))
+            if against_cards:
+                checks.append(('Карточки бота', 'bad', f"{len(against_cards)} против"))
+            bad = sum(1 for _, s, _ in checks if s == 'bad')
+            warn = sum(1 for _, s, _ in checks if s == 'warn')
+            verdict = 'нет' if bad else 'осторожно' if warn >= 2 else 'условия выполнены' if warn == 0 else 'приемлемо'
+            out['scenarios'][side] = {
+                'name': name, 'cond': sc['cond'], 'tag': sc.get('tag'), 'entry': list(sc['entry']), 'stop': sc['stop'],
+                'targets': list(sc['targets']), 'p': sc['p'], 'rr': rr, 'checks': checks, 'verdict': verdict}
+        return out
 
     def market_text(self) -> str:
         out = []
@@ -645,25 +721,71 @@ class Briefing:
         for r in recs:
             if r.get('symbol') != symbol or not str(r.get('slot', '')).startswith(today):
                 continue
-            sc = r.get('scenario') or {}
-            # audit N22: only prices AFTER the post. The hour holding the post is scored on its 1m candles after the
-            # post's minute; without them that hour is left out and said so (its OHLC may be before the post)
-            post_ms = r['ts'] * 1000
-            first_full = (int(post_ms) // HOUR_MS + 1) * HOUR_MS
-            head = [c for c in minutes if post_ms <= c[0] < first_full]
-            ambiguous = not head and post_ms % HOUR_MS != 0
-            # the post-hour's minutes after the post as ONE partial 1h bar (the reaction rule reads 1h candle shapes)
-            part = [[head[0][0], head[0][1], max(c[2] for c in head), min(c[3] for c in head), head[-1][4]]] \
-                if head and head[-1][0] + 60_000 >= first_full else []
-            bars = part + [c for c in closed if c[0] >= first_full]
-            res = []
-            for key, side, name in (('long', 1, 'лонг'), ('short', -1, 'шорт')):
-                if sc.get(key):
-                    res.append(f"{name}: {self.score_scenario(sc[key], side, bars)}")
+            res, ambiguous = self._score_record(r, closed, minutes)
             if res:
-                out.append(f"· {r['title']} ({r['slot'][-5:]}): " + '; '.join(res)
+                out.append(f"· {r['title']} ({r['slot'][-5:]}): " + '; '.join(f"{name}: {txt}" for name, txt, _ in res)
                            + (' (час публикации не оценён: нет минутных свечей)' if ambiguous else ''))
         return out
+
+    def _score_record(self, r: Dict, closed: List, minutes: List, until_ms: Optional[float] = None):
+        """One saved briefing record against the closed 1h candles after its post: ([(name, result, tag)], ambiguous).
+        audit N22: only prices AFTER the post. The hour holding the post is scored on its 1m candles after the post's
+        minute; without them that hour is left out and said so (its OHLC may be before the post)."""
+        sc = r.get('scenario') or {}
+        post_ms = r['ts'] * 1000
+        first_full = (int(post_ms) // HOUR_MS + 1) * HOUR_MS
+        head = [c for c in minutes if post_ms <= c[0] < first_full]
+        ambiguous = not head and post_ms % HOUR_MS != 0
+        # the post-hour's minutes after the post as ONE partial 1h bar (the reaction rule reads 1h candle shapes)
+        part = [[head[0][0], head[0][1], max(c[2] for c in head), min(c[3] for c in head), head[-1][4]]] \
+            if head and head[-1][0] + 60_000 >= first_full else []
+        bars = part + [c for c in closed if c[0] >= first_full and (until_ms is None or c[0] < until_ms)]
+        res = []
+        for key, side, name in (('long', 1, 'лонг'), ('short', -1, 'шорт')):
+            if sc.get(key):
+                res.append((name, self.score_scenario(sc[key], side, bars), sc[key].get('tag', '')))
+        return res, ambiguous
+
+    @staticmethod
+    def _outcome_class(txt: str) -> str:
+        if txt.startswith('вход → TP1'):
+            return 'tp1'
+        if txt.startswith('вход → стоп'):
+            return 'stop'
+        if txt.startswith('вход, без исхода'):
+            return 'open'
+        if txt.startswith('отменён') or txt.startswith('пропущен'):
+            return 'cancelled'
+        return 'no_entry'
+
+    def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
+        """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
+        counts by scenario side and outcome class. A tally of what the plan rules did, not a verdict on them."""
+        import json
+        try:
+            with open(os.path.join('data', 'briefings.jsonl'), encoding='utf-8') as f:
+                recs = [json.loads(x) for x in f if x.strip()]
+        except (OSError, ValueError):
+            return {}
+        since = time.time() - days * 86400
+        now = time.time() * 1000
+        tally: Dict[str, Dict[str, int]] = {}
+        for r in recs:
+            sym = r.get('symbol')
+            if r.get('ts', 0) < since or (symbol and sym != symbol):
+                continue
+            m = md if (md is not None and sym == symbol) else self.sc.market_data.get(sym)
+            if m is None:
+                continue
+            closed = [c for c in m.h1 if c[0] + HOUR_MS <= now]
+            minutes = [c for c in list(getattr(m, 'minute_klines', []) or []) if c[0] + 60_000 <= now]
+            day_end = datetime.strptime(str(r['slot'])[:10], '%Y-%m-%d').replace(tzinfo=MSK) + timedelta(days=1)
+            res, _ = self._score_record(r, closed, minutes, until_ms=day_end.timestamp() * 1000)
+            for name, txt, _tag in res:
+                cls = self._outcome_class(txt)
+                tally.setdefault(name, {}).setdefault(cls, 0)
+                tally[name][cls] += 1
+        return {'days': days, 'tally': tally}
 
     def recap(self) -> str:
         # audit N23: the MSK day the header names (was the UTC day), and the period actually covered by the minute

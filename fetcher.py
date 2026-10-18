@@ -447,6 +447,8 @@ class DataFetcher:
         self.market_marks: Dict[str, float] = {}
         self.market_marks_at = 0.0               # when market_marks were fetched (stale marks are no baseline)
         self.futures_exchange: Optional[ccxt.Exchange] = None
+        self._light_lock = asyncio.Lock()
+        self._light_cache: Dict[str, Tuple[float, Dict]] = {}     # web analysis of coins outside the universe
         self.venue_exchanges: Dict[str, ccxt.Exchange] = {}
         self.markets: Dict[str, MarketData] = {}
         self._running = False
@@ -1293,6 +1295,39 @@ class DataFetcher:
         return {'symbol': symbol, 'price': c15[-1][4] if c15 else None, 'atr': None, 'candles_15m': c15,
                 'candles_5m': rows(k5), 'candles_1h': rows(k1h), 'zones': [], 'cards': [], 'liquidations': [], 'htf_loaded': 0,
                 'note': 'coin is not in the current universe: no level map'}
+
+    async def light_candles(self, symbol: str) -> Optional[Dict]:
+        """1h / 4h / daily / weekly candles of any listed USDT perpetual for the web analysis (a coin outside the
+        universe), cached 5 min: [ts, o, h, l, c, quote volume] rows and the last price."""
+        hit = self._light_cache.get(symbol)
+        if hit and time.time() - hit[0] < 300:
+            return hit[1]
+        binance_symbol = self._ccxt_to_binance_symbol(symbol)
+        ex = self.futures_exchange
+        if not binance_symbol or ex is None or symbol not in (ex.markets or {}):
+            return None
+        # public endpoint: one load at a time, the lowest REST priority (the bot's own backfills never queue behind it)
+        async with self._light_lock:
+            hit = self._light_cache.get(symbol)
+            if hit and time.time() - hit[0] < 300:
+                return hit[1]
+            try:
+                ks = await asyncio.gather(*[
+                    self._rest_call(ex, 'fapiPublicGetKlines',
+                                    {'symbol': binance_symbol, 'interval': tf, 'limit': n}, priority=3, weight=2)
+                    for tf, n in (('1h', 499), ('4h', 499), ('1d', 399), ('1w', 99))])
+            except Exception as e:
+                errors.report('fetcher.light_candles', e, f"Light candles failed for {symbol}")
+                return None
+        rows = lambda r: [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])] for k in r or []]
+        h1, h4, d1, w1 = (rows(k) for k in ks)
+        if len(h1) < 50 or len(d1) < 20:
+            return None
+        out = {'h1': h1, 'h4': h4, 'd1': d1, 'w1': w1, 'price': h1[-1][4]}
+        if len(self._light_cache) > 64:
+            self._light_cache.clear()
+        self._light_cache[symbol] = (time.time(), out)
+        return out
 
     @staticmethod
     def _closed_only(klines: List) -> List:

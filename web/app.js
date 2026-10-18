@@ -616,13 +616,75 @@ function renderHealth() {
   </div><h3>Биржи</h3><div class="grid">${boxes}</div>`;
 }
 
-const RENDER = { trade: renderTrade, wait: renderWait, done: renderDone, anom: renderAnom, forming: renderForming, stats: renderStats, health: renderHealth };
+// ------------------------------------------------------------------------------------------------ analysis tab
+// Pinned coins always + any typed ticker: zones, scenarios and a mechanical checklist (briefing.Briefing.analyze).
+let anQuery = localStorage.getItem('anq') || '', anLast = 0;
+const VERDICT_CLS = { 'нет': 'bad', 'осторожно': 'warn', 'приемлемо': 'warn', 'условия выполнены': 'good' };
+function anCard(a) {
+  if (!a || a.error) return `<div class="box"><h4>${esc((a && a.symbol) || '')}</h4><div class="empty">${esc((a && a.error) || 'нет данных')}</div></div>`;
+  const zones = (a.zones || []).slice().sort((x, y) => y.lo - x.lo).map(z => {
+    const tag = z.side > 0 ? '<span class="bad">сопр.</span>' : z.side < 0 ? '<span class="good">подд.</span>' : '<span class="cyan">цена в зоне</span>';
+    return `<tr><td>${tag}</td><td class="mono">${fp(z.lo)}–${fp(z.hi)}</td><td class="mono">${Math.round(z.strength)}</td><td>${esc(z.label)}</td></tr>`;
+  }).join('');
+  const sc = ['long', 'short'].map(k => {
+    const s = a.scenarios && a.scenarios[k];
+    if (!s) return `<div class="box"><h4>${k === 'long' ? 'Лонг' : 'Шорт'}</h4><div class="dim">сценария нет</div></div>`;
+    const checks = s.checks.map(([n, st, v]) => `<span>${esc(n)}</span><span class="${st === 'ok' ? 'good' : st === 'bad' ? 'bad' : 'warn'}">${esc(v)}</span>`).join('');
+    return `<div class="box"><h4>${esc(s.name)} <span class="pill ${VERDICT_CLS[s.verdict] || ''}">${esc(s.verdict)}</span></h4>
+      <div class="dim">${esc(s.cond)}</div>
+      <div class="kv"><span>вход</span><span class="mono">${fp(s.entry[0])}–${fp(s.entry[1])}</span><span>стоп</span><span class="mono">${fp(s.stop)}</span>
+      <span>цели</span><span class="mono">${s.targets.map(fp).join(' / ')}</span><span>R:R до TP1</span><span class="mono">${s.rr.toFixed(1)}</span>
+      <span>шанс TP1 по расстоянию*</span><span class="mono">${(s.p * 100).toFixed(0)}%</span>${checks}</div></div>`;
+  }).join('');
+  const T = (a.outcomes && a.outcomes.tally) || {};
+  const NM = { tp1: 'TP1', stop: 'стоп', open: 'без исхода', cancelled: 'отменён', no_entry: 'не сработал' };
+  const oc = Object.keys(T).length ? `<div class="dim">Исходы брифингов за ${a.outcomes.days} дн.: ` + Object.entries(T).map(([side, m]) =>
+    side + ' — ' + Object.entries(m).map(([k, n]) => `${NM[k] || k} ${n}`).join(', ')).join(' · ') + '</div>' : '';
+  const cards = (a.cards || []).map(c => `${esc(c.mode)} ${esc(c.setup)} ${c.direction > 0 ? '▲' : '▼'} ${esc(c.status)}`).join(' · ');
+  return `<div class="box an-card"><h4>${esc(a.base)} <span class="mono">${fp(a.price)}</span>
+      ${a.chg_day != null ? `<span class="${a.chg_day >= 0 ? 'good' : 'bad'}">${a.chg_day >= 0 ? '+' : ''}${a.chg_day.toFixed(2)}%</span>` : ''}
+      ${a.light ? '<span class="pill warn" title="монета вне вселенной бота: только свечи Binance, без потоков, ликвидаций и карты уровней">только свечи</span>' : ''}</h4>
+    <div class="dim">${esc(a.bias_line || '')}</div>
+    ${a.macro && a.macro.length ? `<div class="warn">Макро сегодня (МСК): ${a.macro.map(esc).join(', ')}</div>` : ''}
+    ${cards ? `<div>Карточки бота: ${cards}</div>` : ''}
+    <div class="tablewrap"><table><tbody>${zones || '<tr><td class="dim">зон рядом нет</td></tr>'}</tbody></table></div>
+    ${oc}<div class="grid">${sc}</div></div>`;
+}
+async function refreshAnalysis() {
+  const pin = $('#an-pinned'), res = $('#an-result');
+  if (!pin || !res) return;
+  anLast = Date.now();
+  const [p, one] = await Promise.all([
+    api('/api/pinned', 20).catch(() => null),
+    anQuery ? api('/api/analysis?symbol=' + encodeURIComponent(anQuery), 20).catch(() => null) : null]);
+  if (tab !== 'analysis') return;
+  res.innerHTML = anQuery ? (one ? anCard(one) : '<div class="empty">Ошибка запроса</div>') : '';
+  pin.innerHTML = p && p.coins.length ? p.coins.map(anCard).join('') : '<div class="empty">Нет данных</div>';
+}
+function renderAnalysis() {
+  if (!$('#an-pinned')) {
+    $('#view').innerHTML = `<div class="box"><form id="an-form"><input id="an-q" placeholder="Тикер любой монеты, например PEPE или SOL" value="${esc(anQuery)}" autocomplete="off" maxlength="24"> <button>Показать</button></form>
+      <div class="dim">Уровни и чек-лист — механические правила (зоны разворотов 1h/4h/1d, ATR, старший ТФ, макро, карточки бота), не совет и не гарантия. R:R брутто, без комиссий и проскальзывания; пороги чек-листа не измерены. *Шанс TP1 по расстоянию — модель случайного блуждания без дрейфа.</div></div>
+      <div id="an-result"></div><h3>Закреплённые монеты</h3><div id="an-pinned"><div class="empty">Загрузка…</div></div>`;
+  }
+  return refreshAnalysis();
+}
+document.addEventListener('submit', e => {
+  if (e.target.id !== 'an-form') return;
+  e.preventDefault();
+  anQuery = $('#an-q').value.trim().toUpperCase(); localStorage.setItem('anq', anQuery);
+  $('#an-result').innerHTML = anQuery ? '<div class="empty">Загрузка…</div>' : '';
+  refreshAnalysis();
+});
+
+const RENDER = { trade: renderTrade, wait: renderWait, done: renderDone, anom: renderAnom, forming: renderForming, stats: renderStats, health: renderHealth, analysis: null };
 if (!(tab in RENDER)) tab = 'wait';
 let renderSeq = 0;
 async function render() {
   if (!S) { $('#view').innerHTML = '<div class="empty">Подключение к боту…</div>'; return; }
   renderHeader();
   if (document.activeElement && document.activeElement.tagName === 'SELECT' && document.activeElement.closest('#view')) return;   // an open list closes on re-render
+  if (tab === 'analysis') { renderSeq++; await renderAnalysis(); return; }
   const seq = ++renderSeq;
   const focus = document.activeElement && document.activeElement.id;
   const pos = focus === 'filter' ? document.activeElement.selectionStart : null;
@@ -648,7 +710,7 @@ document.addEventListener('change', e => {
 document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => {
   if (tab === b.dataset.tab) return;
   tab = b.dataset.tab; localStorage.setItem('tab', tab); setActiveTab();
-  if (['done', 'anom', 'stats'].includes(tab)) $('#view').innerHTML = '<div class="empty">Загрузка…</div>';
+  if (['done', 'anom', 'stats', 'analysis'].includes(tab)) $('#view').innerHTML = '<div class="empty">Загрузка…</div>';
   render();
 }));
 function setActiveTab() { document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); }
@@ -656,7 +718,7 @@ function setActiveTab() { document.querySelectorAll('#tabs button').forEach(b =>
 // Live tabs re-render on every state; journal-backed tabs every 60s (their data changes slowly)
 let lastSlow = 0;
 function onState() {
-  const slow = ['done', 'anom', 'stats'].includes(tab);
+  const slow = ['done', 'anom', 'stats', 'analysis'].includes(tab);
   if (!slow || Date.now() - lastSlow > 60000) { lastSlow = Date.now(); render(); } else renderHeader();
 }
 

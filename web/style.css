@@ -133,3 +133,10 @@ svg.equity .tick { fill: var(--dim); font-size: 10px; }
 .heat-scale i { display: inline-block; width: 28px; height: 8px; vertical-align: middle; margin: 0 3px 0 8px; border-radius: 2px; }
 .hs-bid { background: linear-gradient(90deg, rgba(46,204,113,.05), rgba(46,204,113,.7)); }
 .hs-ask { background: linear-gradient(90deg, rgba(255,92,92,.05), rgba(255,92,92,.7)); }
+
+/* Analysis tab */
+.good { color: var(--green); } .bad { color: var(--red); } .cyan { color: var(--cyan); }
+.pill.warn { color: var(--yellow); background: var(--yellow-bg); }
+#an-form { display: flex; gap: 8px; margin-bottom: 6px; }
+#an-form input { flex: 1; min-width: 0; padding: 6px 10px; }
+.an-card { margin-bottom: 14px; }

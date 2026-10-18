@@ -485,6 +485,8 @@ class WebUI:
         app.router.add_get('/api/debug', self._debug)
         app.router.add_get('/api/health', self._health)
         app.router.add_get('/api/demo', self._demo)
+        app.router.add_get('/api/analysis', self._analysis)
+        app.router.add_get('/api/pinned', self._pinned)
         app.router.add_get('/api/briefing', self._briefing)
         app.router.add_get('/api/briefing_card', self._briefing_card)
         app.router.add_static('/static/', WEB_DIR)
@@ -690,6 +692,88 @@ class WebUI:
         """A request from this machine itself, not through the public proxy (deploy/web_access.sh: Caddy adds
         X-Forwarded-For). The dashboard may be public; posting to Telegram and the internals are not."""
         return request.remote in ('127.0.0.1', '::1') and 'X-Forwarded-For' not in request.headers
+
+    def _cards_of(self, symbol: str):
+        """The bot's live cards of a coin, as short rows for the analysis page."""
+        out = []
+        for s in self.scanner.book.signals.values():
+            if s.symbol == symbol and not s.finished:
+                out.append({'mode': s.mode, 'setup': s.group_key, 'direction': s.direction, 'status': s.status,
+                            'entered': bool(s.entered_at)})
+        return out
+
+    async def _analysis_of(self, symbol: str) -> dict:
+        """Levels + a mechanical checklist of one coin (briefing.Briefing.analyze), cached 60 s. A coin outside the
+        universe is analysed from REST candles only (no flows / liquidations / level map): cached, and at most
+        12 such REST loads a minute (the dashboard is public)."""
+        b = getattr(self.scanner, 'briefing', None)
+        if b is None:
+            return {'symbol': symbol, 'error': 'briefing off'}
+        cache = self.__dict__.setdefault('_analysis_cache', {})
+        hit = cache.get(symbol)
+        if hit and time.time() - hit[0] < 60:
+            return hit[1]
+        inflight = self.__dict__.setdefault('_analysis_inflight', {})
+        if symbol in inflight:
+            return await asyncio.shield(inflight[symbol])         # one computation per coin, however many clients
+        task = asyncio.ensure_future(self._analysis_compute(b, symbol, cache))
+        inflight[symbol] = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done():
+                inflight.pop(symbol, None)
+
+    async def _analysis_compute(self, b, symbol: str, cache: dict) -> dict:
+        cards = self._cards_of(symbol)
+        sem = self.__dict__.setdefault('_analysis_sem', asyncio.Semaphore(1))      # one analysis thread at a time
+        if symbol in self.scanner.market_data:
+            async with sem:
+                res = await asyncio.to_thread(b.analyze, symbol, None, None, cards)
+        else:
+            # outside the universe: REST loads (cached 5 min, one at a time) - at most 12 NEW coins a minute; the slot
+            # is taken before the await
+            now = time.time()
+            recent = [x for x in self.__dict__.get('_light_calls', []) if now - x < 60]
+            fresh = (self.scanner.fetcher._light_cache.get(symbol) or (0,))[0]
+            if now - fresh >= 300:
+                if len(recent) >= 12:
+                    return {'symbol': symbol, 'error': 'слишком много запросов, повторите через минуту'}
+                recent.append(now)
+            self._light_calls = recent
+            c = await self.scanner.fetcher.light_candles(symbol)
+            if c is None:
+                return {'symbol': symbol, 'error': 'монета не найдена среди USDT-перпетуалов Binance или мало истории'}
+            md, src = b.light_src(symbol, c['price'], c['h1'], c['h4'], c['d1'], c['w1'])
+            async with sem:
+                res = await asyncio.to_thread(b.analyze, symbol, md, src, cards)
+        if len(cache) > 200:
+            cache.clear()
+        cache[symbol] = (time.time(), res)
+        return res
+
+    async def _analysis(self, request):
+        import re
+        raw = request.query.get('symbol', '').strip().upper().replace(' ', '')
+        base = raw.split('/')[0].removesuffix('USDT') if '/' not in raw else raw.split('/')[0]
+        symbol = raw if '/' in raw else f"{base}/USDT:USDT"
+        if not re.fullmatch(r'[A-Z0-9]{1,20}/USDT:USDT', symbol):
+            return self._json({'error': 'неверный тикер'})
+        mk = getattr(self.scanner.fetcher.futures_exchange, 'markets', None) or {}
+        if symbol not in self.scanner.market_data and symbol not in mk:
+            for pre in ('1000', '10000', '1000000'):       # Binance lists small-price coins as 1000PEPE, 1000000MOG
+                alt = f"{pre}{base}/USDT:USDT"
+                if alt in mk:
+                    symbol = alt
+                    break
+        return self._json(await self._analysis_of(symbol))
+
+    async def _pinned(self, request):
+        """The pinned coins' analysis, always (CONFIG.exchange.pinned_bases that are in the universe)."""
+        want = CONFIG.exchange.pinned_bases
+        syms = [s for b_ in want for s in self.scanner.market_data if s.split('/')[0] == b_]
+        res = await asyncio.gather(*[self._analysis_of(s) for s in syms])
+        return self._json({'coins': [r for r in res if not r.get('error')], 'ts': time.time()})
 
     async def _briefing_card(self, request):
         """The briefing card of one coin as it would be sent now (PNG), for checking - nothing is posted (local only)."""

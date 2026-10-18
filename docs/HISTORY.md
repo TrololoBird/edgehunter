@@ -794,3 +794,14 @@ as "стопа нет", `sl` is only the R unit. B11: `VenueFlow.gaps` records s
 more than 45s after the last write) does not count that venue. H01: `Scanner.stop` also cancels `_context_task` and the background tasks. F01: the
 UNKNOWN-entry coin hold survives a restart (`demo_unknown.json`). Not done: per-coin continuity (gaps are per venue), F07 (the ADD fallback price
 is the Binance price; only used when the position gives no average). Not measured live yet.
+
+## eng-141b (web analysis; no signal-logic change)
+- New tab "Аналитика": the pinned coins (`CONFIG.exchange.pinned_bases` in the universe) always, plus a ticker box for any
+  Binance USDT perpetual (`/api/pinned`, `/api/analysis`). `Briefing.analyze` is pure (restores `context`, posts nothing):
+  zones (`key_zones` with a `src` override), higher-timeframe bias, the briefing plan's long / short scenarios with R:R and
+  a mechanical checklist (bias, R:R, entry distance in 1h ATR, macro, the bot's own cards). A coin outside the universe is
+  light: REST candles only (`fetcher.light_candles`, cached 5 min, <= 12 loads a minute, `1000`-prefixed names resolved),
+  labelled "только свечи". The verdict is a rule list, not advice.
+- `Briefing.outcomes` tallies the saved briefings' scenarios (TP1 / stop / open / cancelled / no entry) per watched coin;
+  `_score_record` is the shared scorer. Week sample (60 briefings, BTC/ETH/XAU): long 4 TP1 / 10 stops, short 6 TP1 / 0 stops
+  in a bearish week - too small and correlated for any rule change.

@@ -1066,9 +1066,9 @@ class Scanner:
             if md is not None:
                 md.ret_std, md.oi_std = ret_std, oi_std
 
-    def _tf_atrs(self, symbol: str) -> Dict[str, float]:
+    def _tf_atrs(self, symbol: str, md=None) -> Dict[str, float]:
         """ATR14 (simple mean of true ranges, as the bot's 15m ATR) of the coin's closed 1h / 4h / daily candles."""
-        md = self.market_data.get(symbol)
+        md = md if md is not None else self.market_data.get(symbol)
         out: Dict[str, float] = {}
         if md is None:
             return out
