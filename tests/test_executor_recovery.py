@@ -73,15 +73,16 @@ def test_nearly_complete_open_order_is_cancelled_before_conversion():
 
 
 @pytest.mark.parametrize('stage', ['exchange', 'position'])
-def test_failed_close_remains_tracked_for_retry(stage):
-    ex = executor.DemoExecutor.__new__(executor.DemoExecutor)
-    ex.open = {}
+def test_failed_close_remains_tracked_for_retry(stage, tmp_path, monkeypatch):
+    monkeypatch.setattr(executor, 'credentials', lambda: ('', ''))
+    ex = executor.DemoExecutor(str(tmp_path / 'demo.db'))
     api = SimpleNamespace(fetch_open_orders=AsyncMock(return_value=[]))
     ex._exchange = AsyncMock(return_value=api)
     ex._position_qty = AsyncMock(side_effect=OSError('offline'))
     if stage == 'exchange':
         ex._exchange.side_effect = OSError('offline')
     trade = {'card_id': 'late-fill', 'symbol': 'AUDIT/USDT:USDT', 'direction': 1}
+    trade['id'] = ex._insert(trade)
     with pytest.raises(OSError, match='offline'):
         asyncio.run(ex._close(trade, 'LATE_FILL', None))
     assert ex.open['late-fill'] is trade

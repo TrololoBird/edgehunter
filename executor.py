@@ -134,15 +134,20 @@ class DemoExecutor:
             # entry price / size came from the exchange (1) or are a quote / the requested size (0); scale: BingX's
             # price scale (restored trades re-stop at it)
             for col, kind in (('basis', 'REAL'), ('exit_ref', 'REAL'), ('no_stop', 'INTEGER'), ('scale', 'REAL'),
-                              ('entry_order', 'TEXT'), ('fill_confirmed', 'INTEGER'), ('funding_usd', 'REAL')):
+                              ('entry_order', 'TEXT'), ('fill_confirmed', 'INTEGER'), ('funding_usd', 'REAL'),
+                              ('close_pending_reason', 'TEXT'), ('close_pending_r', 'REAL'),
+                              ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
             # without it a restored trade's new stop went out at scale 1); rows from before the column: entry_plan
-            for row in c.execute("SELECT id, card_id, symbol, direction, opened_ms, entry_fill, qty, sl, risk_usd, no_stop, "
-                                 "strategy, entry_plan, scale, fill_confirmed FROM demo_trades WHERE closed_ms IS NULL"):
-                self.open[row[1]] = dict(zip(('id', 'card_id', 'symbol', 'direction', 'opened_ms', 'entry_fill',
-                                              'qty', 'sl', 'risk_usd', 'no_stop', 'strategy', 'entry_plan', 'scale', 'fill_confirmed'), row))
+            c.row_factory = sqlite3.Row
+            for row in c.execute("SELECT * FROM demo_trades WHERE closed_ms IS NULL"):
+                trade = dict(row)
+                if trade.get('close_pending_reason') is not None:
+                    trade['close_pending'] = [trade['close_pending_reason'], trade['close_pending_r']]
+                self.open[trade['card_id']] = trade
+            c.execute("CREATE INDEX IF NOT EXISTS idx_demo_entry_order ON demo_trades(symbol, entry_order)")
 
     # ------------------------------------------------------------------ exchange
 
@@ -615,7 +620,9 @@ class DemoExecutor:
                                     for k in ('tp1', 'tp2', 'tp3')},     # no_tp: placeholders are no targets
                  # the risk the size was computed from (stop distance + the round trip's costs): R = -1 at the stop
                  'risk_usd': qty * (abs(fill - lv['sl']) + fee), 'no_stop': int(no_stop),
-                 'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed)}
+                 'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed),
+                 'trail': int(bool((getattr(s, 'plan', None) or {}).get('trail_after_tp1'))),
+                 'no_tp': int(bool((getattr(s, 'plan', None) or {}).get('no_tp')))}
         try:
             if not no_stop:
                 await ex.create_order(symbol, 'market', exit_side, qty, None,
@@ -789,6 +796,8 @@ class DemoExecutor:
         self._save_pending()
         if filled > 0:
             trade = self._limit_trade(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']), filled)
+            if trade is None:
+                return
             logger.warning(f"Demo limit {p['symbol']} {p['setup']} was filled ({filled}) though its card ended "
                            f"({why}): closed at market")
             self.alert(f"⚠️ Демо {p['symbol']}: лимитка исполнилась после конца карточки ({why}), закрыта рынком")
@@ -848,14 +857,35 @@ class DemoExecutor:
                 await self._cancel_limit(key, f"Binance touched the line, BingX did not fill within "
                                               f"{CONFIG.executor.limit_wait_min} min", record=True)
 
-    def _limit_trade(self, key: str, p: Dict, fill: float, qty: float) -> Dict:
+    def _limit_trade(self, key: str, p: Dict, fill: float, qty: float) -> Optional[Dict]:
         """The demo row of a filled limit, written before its exits are placed (a failure there still leaves it)."""
+        # A crash can leave both the committed trade and its old pending JSON entry.
+        # Callers verify the exchange order is terminal before reaching this point.
+        order_id = str(p.get('order_id') or '') or None
+        if order_id is not None:
+            with sqlite3.connect(self.db_path) as c:
+                c.row_factory = sqlite3.Row
+                recorded = c.execute("SELECT * FROM demo_trades WHERE symbol = ? AND entry_order = ? ORDER BY id DESC LIMIT 1",
+                                     (p['symbol'], order_id)).fetchone()
+            if recorded is not None:
+                logger.warning(f"Demo limit {p['symbol']}: entry order {order_id} already recorded")
+                if recorded['closed_ms'] is not None:
+                    return None
+                trade = self.open.get(recorded['card_id'])
+                if trade is None:
+                    trade = dict(recorded)
+                    if trade.get('close_pending_reason') is not None:
+                        trade['close_pending'] = [trade['close_pending_reason'], trade['close_pending_r']]
+                    self.open[trade['card_id']] = trade
+                trade['_limit_recorded'] = True
+                return trade
         lv = p['lv']
         trade = {'card_id': p.get('card_id') or key, 'symbol': p['symbol'], 'setup': p['setup'],
                  'strategy': p['strategy'], 'direction': p['direction'], 'opened_ms': int(time.time() * 1000),
                  'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty, 'sl': lv['sl'], 'tp1': lv['tp1'],
                  'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * (abs(fill - lv['sl']) + float(p.get('fee') or 0)),
-                 'entry_order': str(p.get('order_id') or '') or None}
+                 'entry_order': str(p.get('order_id') or '') or None, 'from_limit': 1,
+                 'trail': int(bool(p.get('trail'))), 'no_tp': int(bool(p.get('no_tp')))}
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, p['scale']
         self._set_scale(trade['id'], p['scale'])
@@ -868,6 +898,15 @@ class DemoExecutor:
         symbol, d, lv = p['symbol'], p['direction'], p['lv']
         exit_side = 'sell' if d > 0 else 'buy'
         trade = self._limit_trade(key, p, fill, qty)
+        if trade is None or trade.get('_limit_recorded'):
+            if trade is not None:
+                if trade.get('close_pending'):
+                    await self._close(trade, *trade['close_pending'])
+                elif not any(self._is_stop(o) for o in await ex.fetch_open_orders(symbol)):
+                    await self._restore_stop(trade)
+            self.pending[key] = {'skip': True, 'reason': 'entry order already recorded in demo_trades'}
+            self._save_pending()
+            return
         self.pending.pop(key, None)
         self._save_pending()
         try:
@@ -1314,6 +1353,13 @@ class DemoExecutor:
         # Retain late fills / failed stops even when the first exchange read raises.
         self.open.setdefault(trade['card_id'], trade)
         trade['close_pending'] = [reason, journal_r]
+        try:
+            with sqlite3.connect(self.db_path) as c:
+                c.execute("UPDATE demo_trades SET close_pending_reason = ?, close_pending_r = ? "
+                          "WHERE id = ? AND closed_ms IS NULL", (reason, journal_r, trade['id']))
+        except sqlite3.Error as e:
+            # A storage failure must not prevent an emergency exchange close.
+            errors.report('executor._close', e, "Demo close intent not persisted")
         ex = await self._exchange()
         symbol, d = trade['symbol'], trade['direction']
         side = 'sell' if d > 0 else 'buy'
