@@ -806,3 +806,4 @@ is the Binance price; only used when the position gives no average). Not measure
   `_score_record` is the shared scorer. Week sample (60 briefings, BTC/ETH/XAU): long 4 TP1 / 10 stops, short 6 TP1 / 0 stops
   in a bearish week - too small and correlated for any rule change.
 - Silent briefing records for every pinned coin (`_save`, `silent: true`; posts still BTC/ETH/XAU), `snapshot_outcomes` at the 23:30 recap -> data/briefing_outcomes.jsonl (14-day tally per coin), `outcomes_total` on the analysis tab.
+- Loop stalls (319 'Event loop blocked' in 24 h, 1-3 s, victims: polars/numpy calls waiting for the GIL): the panel prewarm thread ran the pure-Python minute->15m/1h `resample` for each direction every 20 s; now cached per (coin, tf, minute ring, bucket) in `fetcher._RESAMPLE_CACHE`. Same results.

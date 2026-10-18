@@ -424,6 +424,9 @@ def _top_strikes(rows: list, n: int = 4) -> list:
     return sorted(out, key=lambda x: -x[1])[:n]
 
 
+_RESAMPLE_CACHE: Dict[Tuple[str, int], Tuple[tuple, List]] = {}   # indicator_panel's resampled minute bars
+
+
 class DataFetcher:
     """
     Binance REST (ccxt, through RestGate) for candle history, OI and journal outcomes; own WebSocket clients
@@ -2427,7 +2430,18 @@ class DataFetcher:
         for tf, size, hist in (('15m', 15, md.m15_long), ('1h', 60, md.h1_long)):
             base = [list(r) for r in hist] if len(hist) else []
             last = base[-1][0] if base else 0
-            base += [b for b in resample(minutes, size, until_ms) if b[0] > last]
+            # the pure-Python resample of the minute ring was run for each direction and every 20 s by the prewarm
+            # thread (the GIL it held stalled the loop 1-3 s): once per (coin, tf, last minute, bucket)
+            rkey = (len(minutes), minutes[0][0] if minutes else 0, minutes[-1][0] if minutes else 0, int(until_ms // (size * 60_000)))
+            hit = _RESAMPLE_CACHE.get((md.symbol, size))
+            if hit is not None and hit[0] == rkey:
+                bars = hit[1]
+            else:
+                bars = resample(minutes, size, until_ms)
+                if len(_RESAMPLE_CACHE) > 1500:
+                    _RESAMPLE_CACHE.clear()
+                _RESAMPLE_CACHE[(md.symbol, size)] = (rkey, bars)
+            base += [list(b) for b in bars if b[0] > last]
             try:
                 out[tf] = panel(base, direction, key=(md.symbol, tf))
             except Exception as e:
