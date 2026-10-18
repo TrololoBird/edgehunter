@@ -6,11 +6,12 @@ commit of it, read the bot's status and journal. It cannot read the secrets (`co
 or run anything else as root.
 
 Cloud environment settings (claude.ai -> Code -> environment): network access to `194.247.182.162:22`; secrets
-`EDGEHUNTER_VPS_HOST=194.247.182.162` and `EDGEHUNTER_VPS_KEY` (the private key in `/root/claude-cloud-key` on the VPS).
-Setup command:
+`EDGEHUNTER_VPS_HOST=194.247.182.162` and `EDGEHUNTER_VPS_KEY` (the private key in `/root/claude-cloud-key` on the VPS;
+the older names `PUMP_VPS_HOST` / `PUMP_VPS_KEY` still work). Setup command:
 
 ```bash
-mkdir -p ~/.ssh && printf '%s\n' "$EDGEHUNTER_VPS_KEY" > ~/.ssh/edgehunter && chmod 600 ~/.ssh/edgehunter
+mkdir -p ~/.ssh && printf '%s\n' "${EDGEHUNTER_VPS_KEY:-$PUMP_VPS_KEY}" > ~/.ssh/edgehunter && chmod 600 ~/.ssh/edgehunter
+echo "export EDGEHUNTER_VPS_HOST=${EDGEHUNTER_VPS_HOST:-$PUMP_VPS_HOST}" >> ~/.bashrc
 ```
 
 ## Workflow
