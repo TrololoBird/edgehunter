@@ -749,7 +749,8 @@ class WebUI:
                 res = await asyncio.to_thread(b.analyze, symbol, md, src, cards)
         if len(cache) > 200:
             cache.clear()
-        cache[symbol] = (time.time(), res)
+        if not res.get('error'):
+            cache[symbol] = (time.time(), res)
         return res
 
     async def _analysis(self, request):

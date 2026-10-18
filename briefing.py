@@ -516,6 +516,8 @@ class Briefing:
         md = md if md is not None else self.sc.market_data.get(symbol)
         if not price or md is None:
             return {'symbol': symbol, 'error': 'нет данных'}
+        if not zones:
+            return {'symbol': symbol, 'error': 'история ещё загружается или зон рядом нет'}
         bias, st = self._bias_of(symbol, md)
         tf = (src or {}).get('tf') or self.sc._tf_atrs(symbol, md)
         atr1d, atr1h = tf.get('1d'), tf.get('1h')
