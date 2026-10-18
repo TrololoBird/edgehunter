@@ -48,23 +48,9 @@ def _trend(closes: np.ndarray, slope_n: int) -> int:
 def _adx(k: np.ndarray, n: int = 14) -> Optional[float]:
     if len(k) < 3 * n:
         return None
-    h, l, c = k[:, 2], k[:, 3], k[:, 4]
-    prev = np.concatenate(([c[0]], c[:-1]))
-    tr = np.maximum(h - l, np.maximum(abs(h - prev), abs(l - prev)))
-    up, dn = h - np.concatenate(([h[0]], h[:-1])), np.concatenate(([l[0]], l[:-1])) - l
-    pdm, mdm = np.where((up > dn) & (up > 0), up, 0.0), np.where((dn > up) & (dn > 0), dn, 0.0)
-
-    def rma(x):
-        out = np.empty_like(x)
-        out[:n] = np.nan
-        out[n - 1] = x[:n].mean()
-        for i in range(n, len(x)):
-            out[i] = (out[i - 1] * (n - 1) + x[i]) / n
-        return out
-    atr = rma(tr)
-    pdi, mdi = 100 * rma(pdm) / atr, 100 * rma(mdm) / atr
-    dx = np.nan_to_num(100 * abs(pdi - mdi) / np.maximum(pdi + mdi, 1e-12))
-    return float(rma(dx)[-1])
+    from strategies.ind_panel import adx_talib      # audit E06: one ADX (TA-Lib's seed) for the bias, regime and panel
+    last = adx_talib(k[:, 2], k[:, 3], k[:, 4], n)[2][-1]
+    return None if np.isnan(last) else float(last)
 
 
 def state(d1: Sequence, h4: Sequence, w1: Sequence) -> Optional[Dict]:

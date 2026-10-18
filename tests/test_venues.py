@@ -22,7 +22,7 @@ class Sink:
     def on_liquidation(self, market, ts, price, size, side_liq, recv):
         self.liqs.append((market.venue, market.key, price, size, side_liq))
 
-    def on_deriv(self, market, oi_usd=None, funding_8h=None, mark=None, ts_ms=None):
+    def on_deriv(self, market, oi_usd=None, funding_8h=None, mark=None, ts_ms=None, native_oi=None):
         self.derivs.append((market.venue, market.key, oi_usd, funding_8h, mark))
 
     def on_binance(self, market_type, stream, data, recv):

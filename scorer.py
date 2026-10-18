@@ -68,8 +68,10 @@ class PhaseScorer:
             # moment before its futures twin (15m rollover, lagging stream) still gets OI / RVOL
             renamed = futures_df.select(['symbol', 'timestamp', *[pl.col(s).alias(d) for s, d in fut_cols.items()]])
             df = base.drop([d for d in fut_cols.values() if d in base.columns and d not in ('delta_1h', 'flow_1h')])
+            # audit D07: not further back than two 15m bars - a futures candle a day old is no OI / RVOL of this candle
+            # (its columns stay null: unknown, not a fresh zero)
             df = df.join_asof(renamed, on='timestamp', by='symbol', strategy='backward', check_sortedness=False,
-                              suffix='_fut')
+                              tolerance=2 * 900_000, suffix='_fut')
         else:
             df = (spot_df if has_spot else futures_df).with_columns(pl.lit(has_spot).alias('has_spot'))
             if not has_spot:

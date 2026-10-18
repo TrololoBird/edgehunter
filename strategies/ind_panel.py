@@ -80,6 +80,38 @@ def pct_rank(x: np.ndarray, n: int) -> np.ndarray:
     return out
 
 
+def adx_talib(h, l, c, n: int = 14):
+    """(+DI, -DI, ADX) aligned with the bars, TA-Lib's ADX (unstable period 0): Wilder sums seeded with the first n-1
+    true ranges / directional moves, the first ADX the mean of n DX values (audit E06: strategies.regime used another
+    seed and zero-filled the early DX, 23.8 vs 26.1 at the threshold 25)."""
+    h, l, c = (np.asarray(x, dtype=float) for x in (h, l, c))
+    m = len(c)
+    pdi, mdi, adx = (np.full(m, np.nan) for _ in range(3))
+    if m < 2 * n:
+        return pdi, mdi, adx
+    tr = np.maximum(h[1:] - l[1:], np.maximum(abs(h[1:] - c[:-1]), abs(l[1:] - c[:-1])))
+    up, dn = h[1:] - h[:-1], l[:-1] - l[1:]
+    pd = np.where((up > dn) & (up > 0), up, 0.0)
+    md = np.where((dn > up) & (dn > 0), dn, 0.0)
+    st, sp, sm = tr[:n - 1].sum(), pd[:n - 1].sum(), md[:n - 1].sum()
+    dx = []
+    for k in range(n - 1, len(tr)):
+        st = st - st / n + tr[k]
+        sp = sp - sp / n + pd[k]
+        sm = sm - sm / n + md[k]
+        pdi[k + 1] = 100 * sp / st if st else 0.0
+        mdi[k + 1] = 100 * sm / st if st else 0.0
+        tot = pdi[k + 1] + mdi[k + 1]
+        dx.append(100 * abs(pdi[k + 1] - mdi[k + 1]) / tot if tot else 0.0)
+    if len(dx) >= n:
+        a = float(np.mean(dx[:n]))
+        adx[2 * n - 1] = a        # first ADX: bar of the n-th DX
+        for q in range(n, len(dx)):
+            a = (a * (n - 1) + dx[q]) / n
+            adx[n + q] = a
+    return pdi, mdi, adx
+
+
 def indicators(k: np.ndarray) -> dict:
     """k: [open_ms, o, h, l, c, quote_volume(, taker_buy_quote, base_volume)]. Arrays aligned with k (value at
     candle i uses candles <= i). MFI (Quong & Soudack) and OBV (Granville) weight by the traded AMOUNT: base_volume
@@ -88,17 +120,14 @@ def indicators(k: np.ndarray) -> dict:
     base = k[:, 7] if k.shape[1] > 7 else np.full(len(k), np.nan)
     prev_c = np.concatenate(([c[0]], c[:-1]))
     tr = np.maximum(h - l, np.maximum(abs(h - prev_c), abs(l - prev_c)))
-    up, dn = h - np.concatenate(([h[0]], h[:-1])), np.concatenate(([l[0]], l[:-1])) - l
-    plus_dm = np.where((up > dn) & (up > 0), up, 0.0)
-    minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
     atr = rma(tr, 14)
-    pdi = 100 * rma(plus_dm, 14) / atr
-    mdi = 100 * rma(minus_dm, 14) / atr
-    dx = 100 * abs(pdi - mdi) / np.maximum(pdi + mdi, 1e-12)
-    adx = rma(np.nan_to_num(dx), 14)
+    pdi, mdi, adx = adx_talib(h, l, c, 14)          # audit E06: TA-Lib's seed (as the heavy scorer), not rma over zeros
     delta = np.diff(c, prepend=c[0])
-    rs = rma(np.maximum(delta, 0), 14) / np.maximum(rma(np.maximum(-delta, 0), 14), 1e-12)
-    rsi = 100 - 100 / (1 + rs)
+    gain, loss = rma(np.maximum(delta, 0), 14), rma(np.maximum(-delta, 0), 14)
+    # audit E05: no absolute floor (it made RSI depend on the price scale); a flat series is neutral (no loss, no gain)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        rsi = np.where(loss == 0, np.where(gain == 0, 50.0, 100.0), 100 - 100 / (1 + gain / loss))
+    rsi = np.where(np.isnan(gain) | np.isnan(loss), np.nan, rsi)
     macd = ema(c, 12) - ema(c, 26)
     hist = macd - ema(macd, 9)
     lo14, hi14 = rolling_min(l, 14), rolling_max(h, 14)

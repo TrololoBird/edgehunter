@@ -57,23 +57,10 @@ def direction(bars: Sequence[Sequence[float]]) -> int:
 def adx(bars: Sequence[Sequence[float]], n: int = 14) -> Optional[float]:
     if len(bars) < 3 * n:
         return None
+    from strategies.ind_panel import adx_talib
     k = np.asarray([b[:5] for b in bars], dtype=float)
-    h, l, c = k[:, 2], k[:, 3], k[:, 4]
-    prev = np.concatenate(([c[0]], c[:-1]))
-    tr = np.maximum(h - l, np.maximum(abs(h - prev), abs(l - prev)))
-    up, dn = h - np.concatenate(([h[0]], h[:-1])), np.concatenate(([l[0]], l[:-1])) - l
-    pdm, mdm = np.where((up > dn) & (up > 0), up, 0.0), np.where((dn > up) & (dn > 0), dn, 0.0)
-
-    def rma(x):
-        out = np.full_like(x, np.nan)
-        out[n - 1] = x[:n].mean()
-        for i in range(n, len(x)):
-            out[i] = (out[i - 1] * (n - 1) + x[i]) / n
-        return out
-    atr = rma(tr)
-    pdi, mdi = 100 * rma(pdm) / atr, 100 * rma(mdm) / atr
-    dx = np.nan_to_num(100 * abs(pdi - mdi) / np.maximum(pdi + mdi, 1e-12))
-    return float(rma(dx)[-1])
+    last = adx_talib(k[:, 2], k[:, 3], k[:, 4], n)[2][-1]
+    return None if np.isnan(last) else float(last)
 
 
 def state(h1: Sequence, h4: Sequence, d1: Sequence, price: Optional[float]) -> Optional[Dict]:

@@ -1459,7 +1459,7 @@ class SignalBook:
         # executor), not a veto
         return None
 
-    def _entry_minute(self, s: TrackedSignal, c, entry_ms: int, now: float):
+    def _entry_minute(self, s: TrackedSignal, c, entry_ms: int, now: float, channel=None, band=None):
         """
         Audit A02: the extremes of the entry minute AFTER the entry. (open, high, low) from the trades since the entry;
         the 1m candle's own when its range touched no stop / target / exit level (nothing to decide); None while the
@@ -1488,8 +1488,11 @@ class SignalBook:
         stop_hit = not plan.get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl']))
         levels = [] if plan.get('no_tp') else [lv[f'tp{k}'] for k in (1, 2, 3) if lv.get(f'tp{k}') is not None]
         target_hit = any((hi >= t) if d > 0 else (lo <= t) for t in levels)
-        # the Turtles' channel / Bollinger's opposite band sit far from a fresh entry: not part of this test
-        if not stop_hit and not target_hit:
+        # audit EXTRA_2: the Turtles' channel / Bollinger's opposite band are exit levels too - a minute that touched
+        # one cannot be called clean without the trades (the low may have printed before the entry)
+        exit_hit = (channel is not None and ((lo < channel) if d > 0 else (hi > channel))) or \
+                   (band is not None and ((hi >= band) if d > 0 else (lo <= band)))
+        if not stop_hit and not target_hit and not exit_hit:
             s.entry_min = 'clean'
             return float(c[1]), hi, lo
         s.entry_min = 'ambiguous'
@@ -1522,9 +1525,16 @@ class SignalBook:
         entry_ms = int((s.entered_at or 0) * 1000)
         for c in candles:
             o, hi, lo = float(c[1]), float(c[2]), float(c[3])
+            if d1_all and channel_at != int(c[0]) // DAY_MS:
+                from strategies.turtle import trail_level
+                channel_at = int(c[0]) // DAY_MS
+                channel = trail_level([b for b in d1_all if int(b[0]) + DAY_MS <= int(c[0])], days, d)
+            if band_on and band_at != int(c[0]) // (4 * HOUR_MS):
+                band_at = int(c[0]) // (4 * HOUR_MS)
+                band = self.band_of(s.symbol, d, int(c[0]))
             if int(c[0]) <= entry_ms < int(c[0]) + MINUTE_MS:
                 # audit A02: the entry minute - its 1m high / low may have traded before the entry
-                first = self._entry_minute(s, c, entry_ms, now)
+                first = self._entry_minute(s, c, entry_ms, now, channel, band)
                 if first is None:
                     break                        # its trades are not all in yet: judged on the next scan
                 if first is False:
@@ -1542,13 +1552,6 @@ class SignalBook:
                     why_t += f" (due {time.strftime('%H:%M', time.gmtime(due_t))} UTC, marked at that minute's close)"
                     return self._finish(s, 'CLOSED', due_t, why_t)
             s.managed_ms = int(c[0]) + MINUTE_MS
-            if d1_all and channel_at != int(c[0]) // DAY_MS:
-                from strategies.turtle import trail_level
-                channel_at = int(c[0]) // DAY_MS
-                channel = trail_level([b for b in d1_all if int(b[0]) + DAY_MS <= int(c[0])], days, d)
-            if band_on and band_at != int(c[0]) // (4 * HOUR_MS):
-                band_at = int(c[0]) // (4 * HOUR_MS)
-                band = self.band_of(s.symbol, d, int(c[0]))
             stop_hit = not (s.plan or {}).get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl']))
             chan_hit = channel is not None and ((lo < channel) if d > 0 else (hi > channel))
             # audit C06: both against the position - the level nearer the open is crossed first (a channel above a

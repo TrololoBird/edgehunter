@@ -1103,7 +1103,7 @@ class SignalJournal:
         if int(window[-1][0]) + 60_000 > time.time() * 1000 - 1_000:
             return  # the window's last candle has not closed yet: retry on a later pass
         t0 = int(window[0][0])
-        if t0 > ts_ms // 60_000 * 60_000 + 60_000 or any(int(k[0]) != t0 + i * 60_000 for i, k in enumerate(window)):
+        if t0 != -(-ts_ms // 60_000) * 60_000 or any(int(k[0]) != t0 + i * 60_000 for i, k in enumerate(window)):
             # audit C12: a hole in the minutes made '15m' span 75 minutes - the horizon is a duration, not a row count.
             # An exchange gap does not heal: the row is given up, not labelled with a longer window
             with self._lock:

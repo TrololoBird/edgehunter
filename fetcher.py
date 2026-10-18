@@ -77,6 +77,7 @@ class MarketData:
     # 15m candles built from closed 1m candles per market: the bucket being filled, and markets whose last bucket
     # missed minutes (stream gap) and needs a REST backfill
     minute_bucket: dict = field(default_factory=dict)
+    bucket_done: dict = field(default_factory=dict)   # market -> start of the last finalized 15m bucket
     backfill_wanted: dict = field(default_factory=dict)   # market -> open time of the candle REST must replace
     # market -> open times of candles built from an incomplete set of minutes, not yet replaced by REST: scoring
     # sees the history only up to the first of them
@@ -297,6 +298,10 @@ class MarketData:
         """
         start = int(c[0]) // TIMEFRAME_MS * TIMEFRAME_MS
         bucket = self.minute_bucket.get(market)
+        if start <= self.bucket_done.get(market, -1) or (bucket is not None and start < bucket['timestamp']):
+            # audit D10: a minute of an already finalized bucket re-delivered after the next one began must not close
+            # the current bucket as incomplete (the late repeat is not a new minute)
+            return
         if bucket is not None and bucket['timestamp'] != start:
             self._finalize_bucket(market, bucket)   # its last minute never closed (stream gap)
             bucket = None
@@ -323,6 +328,7 @@ class MarketData:
     def _finalize_bucket(self, market: str, bucket: dict):
         self.minute_bucket.pop(market, None)
         start = bucket['timestamp']
+        self.bucket_done[market] = start
         complete = bucket['seen'] == set(range(start, start + TIMEFRAME_MS, 60_000))
         if not complete:
             # Started mid-candle or missed minutes: the REST candle replaces it
@@ -813,7 +819,7 @@ class DataFetcher:
                 hours = num(t.get('fundingIntervalHour')) or 8.0
                 funding = t.get('fundingRate')
                 # singleOpenInterestValue: one side, comparable with the other venues
-                oi = num(t.get('singleOpenInterestValue')) or num(t.get('openInterestValue'))
+                oi = num(t.get('singleOpenInterestValue')) or (num(t.get('openInterestValue')) or 0) / 2 or None   # audit E07: both sides -> one
                 self.on_deriv(market, oi_usd=oi or None, mark=num(t.get('markPrice')) or None,
                               funding_8h=num(funding) * 8 / hours if funding not in (None, '') else None)
         elif venue == 'bitget':
@@ -823,7 +829,8 @@ class DataFetcher:
                     continue
                 mark = num(t.get('markPrice'))
                 # holdingAmount is in coins; funding comes from current-fund-rate (it knows each interval)
-                self.on_deriv(market, oi_usd=num(t.get('holdingAmount')) * mark or None, mark=mark or None)
+                self.on_deriv(market, oi_usd=num(t.get('holdingAmount')) * mark or None, mark=mark or None,
+                              native_oi=num(t.get('holdingAmount')) or None)
         elif venue == 'bitget_funding':
             for t in payload.get('data') or []:
                 market = self.symbol_map.lookup('bitget', t.get('symbol', ''))
@@ -1418,8 +1425,9 @@ class DataFetcher:
                     except Exception as e:
                         errors.report('fetcher.candles_4h', e, f"4h candles failed for {symbol}")
                         return
-                md.h4 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
-                         for k in self._closed_only(rows or [])]
+                # audit D15: the same 8-field schema as the 1h REST candles (quote, taker-buy quote, base volume)
+                md.h4 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10]),
+                          float(k[5])] for k in self._closed_only(rows or [])]
                 md.h4_slot = slot
 
             if symbols and now - slot * 14_400 >= 60:
@@ -2118,18 +2126,23 @@ class DataFetcher:
                 self.liq_log.append((market.key, ts_ms, binance_price, usd, side_liq, market.venue))
 
     def on_deriv(self, market: VenueMarket, oi_usd: Optional[float] = None, funding_8h: Optional[float] = None,
-                 mark: Optional[float] = None, ts_ms: Optional[float] = None):
+                 mark: Optional[float] = None, ts_ms: Optional[float] = None, native_oi: Optional[float] = None):
         if mark and not market.verified and not self.symbol_map.check_price(market, mark, self._binance_price(market.key)):
             return
         now_ms = time.time() * 1000
         state = self.venue_derivs.setdefault(market.key, {}).setdefault(market.venue, VenueDeriv())
-        if funding_8h is not None:
-            state.funding_8h, state.funding_ts = funding_8h, now_ms
+        # audit D01: the exchange's event time stamps the field (a delayed message is not 'now'); a clock ahead of ours
+        # is capped at now; a message older than what is stored is dropped, it must not roll the series back
+        ev_ms = min(float(ts_ms), now_ms) if ts_ms else now_ms
+        if funding_8h is not None and ev_ms >= (state.funding_ts or 0):
+            state.funding_8h, state.funding_ts = funding_8h, ev_ms
         if mark:
             state.mark = mark
         state.ts = now_ms
-        if oi_usd:
-            self._record_venue_oi(market.key, market.venue, oi_usd, now_ms)
+        if oi_usd and ev_ms >= (state.oi_ts or 0):
+            # audit D11: the venue's own coin count when it sends one - rebuilt from USD / Binance's price a basis move
+            # read as OI growth
+            self._record_venue_oi(market.key, market.venue, oi_usd, ev_ms, native=native_oi or None)
 
     def _on_sweep(self, sweep: Sweep):
         # A liquidation is executed as a MARKET order and prints in the same trade stream: a "whale buy" during a
@@ -2303,7 +2316,8 @@ class DataFetcher:
                 vf = self.flow.venues.get(v)
                 # a venue whose ring is shorter than the window (Bitget / Hyperliquid / spot venues keep 15 min)
                 # would add only its last part: left out rather than a partial sum skewing the total
-                if vf is None or b - a > vf.H:
+                # ... or that started recording after the window began (a restart / reconnect): capacity is not coverage
+                if vf is None or b - a > vf.H or not vf.first_sec or a < vf.first_sec - 60:
                     continue
                 total += vf.row_range_sum(BUY, row, a, b, now_sec) - vf.row_range_sum(SELL, row, a, b, now_sec)
                 counted += 1

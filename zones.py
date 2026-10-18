@@ -111,6 +111,8 @@ class RawLevel:
     # the candle's body edge on the level's side (a high: max(open, close) of the candle that made it): the zone runs
     # from where price was ACCEPTED (the body) to where it only probed (the wick = `price`); None = a point level
     body: Optional[float] = None
+    # audit D09: a swing a later WICK traded through (no close beyond: still an S/R level, but its stops were taken)
+    swept: bool = False
 
 
 @dataclass
@@ -122,6 +124,10 @@ class Zone:
     labels: List[str] = field(default_factory=list)
     strength: float = 0.0
     ts: int = 0            # open time of the candle that made the zone's earliest level (0 = unknown): the chart's box
+    # audit D05: the merged levels as (kind, price, lo, hi, swept) - which kind made which edge (a plan of a higher timeframe
+    # takes only its own levels' edges, see geometry.htf_zones)
+    parts: List[Tuple[str, float, float, float, bool]] = field(default_factory=list)
+    origin: int = 0        # id() of the zone this one was trimmed from (geometry.htf_zones), 0 = itself
 
     @property
     def label(self) -> str:
@@ -148,18 +154,22 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
     # Highest / lowest close after each index, to test "broken since" in one pass
     max_after = [float('-inf')] * (n + 1)
     min_after = [float('inf')] * (n + 1)
+    hi_after = [float('-inf')] * (n + 1)
+    lo_after = [float('inf')] * (n + 1)
     for i in range(n - 1, -1, -1):
         max_after[i] = max(max_after[i + 1], candles[i][4])
         min_after[i] = min(min_after[i + 1], candles[i][4])
+        hi_after[i] = max(hi_after[i + 1], candles[i][2])
+        lo_after[i] = min(lo_after[i + 1], candles[i][3])
     for i in range(width, n - width):
         h, l = candles[i][2], candles[i][3]
         around = candles[i - width:i] + candles[i + 1:i + 1 + width]
         if all(c[2] < h for c in around) and max_after[i + 1] <= h:
             out.append(RawLevel(h, kind, f"{tf} high", +1, ts=int(candles[i][0]),
-                                body=max(candles[i][1], candles[i][4])))
+                                body=max(candles[i][1], candles[i][4]), swept=hi_after[i + 1] > h))
         if all(c[3] > l for c in around) and min_after[i + 1] >= l:
             out.append(RawLevel(l, kind, f"{tf} low", -1, ts=int(candles[i][0]),
-                                body=min(candles[i][1], candles[i][4])))
+                                body=min(candles[i][1], candles[i][4]), swept=lo_after[i + 1] < l))
     return out
 
 
@@ -450,18 +460,27 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
     return out
 
 
+BANKRUPTCY_PRICE_VENUES = ('bybit', 'okx')
+
+
 def observed_liquidations(events: Iterable[Tuple[float, float, float, int]], atr: float, now_ms: float) -> List[RawLevel]:
     """Price buckets where >= liq_observed_min_usd was actually liquidated in the last 24h."""
     if not atr:
         return []
     step = atr / 2
     buckets: Dict[int, float] = {}
+    bankr: Dict[int, float] = {}
     for event in events:
         ts, price, usd = event[0], event[1], event[2]
         if now_ms - ts <= DAY_MS and price:
             k = int(price / step)
             buckets[k] = buckets.get(k, 0.0) + usd
-    return [RawLevel((k + 0.5) * step, 'liq_hit', f"liq {_usd(usd)}", 0, usd)
+            if len(event) > 4 and event[4] in BANKRUPTCY_PRICE_VENUES:
+                bankr[k] = bankr.get(k, 0.0) + usd
+    # audit E02: Bybit (and OKX) report the BANKRUPTCY price of a liquidated position, not where the order traded: a
+    # bucket made mostly of those events is labelled so (the level is where positions went bankrupt, not a fill)
+    return [RawLevel((k + 0.5) * step, 'liq_hit', f"liq {_usd(usd)}" + (" (bankruptcy px)" if bankr.get(k, 0.0) > usd / 2 else ""),
+                     0, usd)
             for k, usd in buckets.items() if usd >= CONFIG.zones.liq_observed_min_usd]
 
 
@@ -515,7 +534,13 @@ def imbalances(candles: Sequence[Sequence[float]], tf: str, keep: int = 4) -> Li
     cl = [c[4] for c in candles]
     out: List[Tuple[float, RawLevel]] = []
     last = cl[-1]
+    # audit D06: a candle step from the data itself (the usual spacing); a gap of missing candles inside the three is
+    # no imbalance (the third candle's low sits hours after the first's high)
+    diffs = sorted(candles[k][0] - candles[k - 1][0] for k in range(1, n))
+    step = diffs[len(diffs) // 2]
     for i in range(2, n):
+        if step > 0 and candles[i][0] - candles[i - 2][0] != 2 * step:
+            continue
         # a gap under a tenth of its displacement candle is noise, not an imbalance (the usual "significant FVG" cut)
         min_gap = 0.1 * (h[i - 1] - l[i - 1])
         if h[i - 2] < l[i] and l[i] - h[i - 2] >= min_gap:
@@ -773,7 +798,8 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
                 labels.append(l.label)
         zones.append(Zone(price, min(_span(l)[0] for l in group), max(_span(l)[1] for l in group),
                           sorted(per_kind, key=lambda k: -per_kind[k]), labels, strength,
-                          min((int(l.ts) for l in group if l.ts), default=0)))
+                          min((int(l.ts) for l in group if l.ts), default=0),
+                          [(l.kind, l.price, *_span(l), l.swept) for l in group]))
 
     group_hi = float('-inf')
     max_w = CONFIG.zones.max_merge_atr * atr if atr and atr > 0 else float('inf')

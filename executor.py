@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS demo_trades (
 """
 
 
+UNKNOWN_HOLD_SEC = 900.0     # a coin stays closed to new entries this long after an entry whose outcome is unknown
+
+
 class EntryUnknown(Exception):
     """audit C02: a market entry whose outcome could not be read back (lost reply + unreadable exchange)."""
 
@@ -88,6 +91,7 @@ class DemoExecutor:
         self.db_path = db_path
         self._flat_seen: Dict[str, int] = {}      # card id -> consecutive reconcile passes that read the position as 0
         self._finalized: Dict[str, tuple] = {}    # symbol -> (trade, time) of the last finalize (close_untracked guard)
+        self._unknown_coins: Dict[str, float] = {}  # coin -> when an entry's outcome stayed UNKNOWN: held until close_untracked has had its turn
         self._short_warned: set = set()            # FILL_PENDING rows already warned as short after 6h
         self._band_warned: set = set()      # coins whose market close BingX rejected (102202): warned once
         self._quotes_seen: Dict[str, tuple] = {}   # symbol -> (BingX last, since): a VST quote that stopped moving
@@ -128,9 +132,9 @@ class DemoExecutor:
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
             # without it a restored trade's new stop went out at scale 1); rows from before the column: entry_plan
             for row in c.execute("SELECT id, card_id, symbol, direction, opened_ms, entry_fill, qty, sl, risk_usd, no_stop, "
-                                 "strategy, entry_plan, scale FROM demo_trades WHERE closed_ms IS NULL"):
+                                 "strategy, entry_plan, scale, fill_confirmed FROM demo_trades WHERE closed_ms IS NULL"):
                 self.open[row[1]] = dict(zip(('id', 'card_id', 'symbol', 'direction', 'opened_ms', 'entry_fill',
-                                              'qty', 'sl', 'risk_usd', 'no_stop', 'strategy', 'entry_plan', 'scale'), row))
+                                              'qty', 'sl', 'risk_usd', 'no_stop', 'strategy', 'entry_plan', 'scale', 'fill_confirmed'), row))
 
     # ------------------------------------------------------------------ exchange
 
@@ -261,6 +265,8 @@ class DemoExecutor:
             busy = next((t for t in self.open.values() if _coin(t['symbol']) == coin), None) or \
                 next((p for p in self.pending.values() if not p.get('skip')
                       and _coin(p.get('symbol', '')) == coin), None)
+            if busy is None and time.time() - self._unknown_coins.get(coin, 0.0) < UNKNOWN_HOLD_SEC:
+                busy = {'setup': 'an entry with an unknown outcome'}   # audit C02: its order may stand on BingX
             if busy is not None:
                 # BingX's one-way mode nets every order of a coin into ONE position: a second card on the same coin would
                 # merge with the first (one card's exit closes the other, their fills mix in both results) - recorded, not
@@ -277,6 +283,7 @@ class DemoExecutor:
                 unknown = isinstance(e, EntryUnknown)
                 logger.warning(f"Demo entry {'UNKNOWN' if unknown else 'failed'} for {s.symbol} {s.group_key}: {e!r}")
                 if unknown:
+                    self._unknown_coins[coin] = time.time()
                     # not 'not filled': a position that turns up is closed by close_untracked (no card owns it)
                     self.alert(f"⚠️ Демо {s.symbol}: исход входа неизвестен (биржа недоступна), проверьте позицию")
                 self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
@@ -643,6 +650,8 @@ class DemoExecutor:
         if self.risk_limit() is not None:
             return                                   # eng-58: the day's risk rules - no new resting limit (retried later)
         coin = _coin(s.symbol)
+        if time.time() - self._unknown_coins.get(coin, 0.0) < UNKNOWN_HOLD_SEC:
+            return                                   # audit C02: an entry on the coin of unknown outcome (retried later)
         if any(_coin(t['symbol']) == coin for t in self.open.values()) or                 any(_coin(p.get('symbol', '')) == coin for p in self.pending.values()
                     if not p.get('skip')):
             # BingX nets a coin's orders into one position: one trade or resting limit per coin
@@ -1265,6 +1274,9 @@ class DemoExecutor:
                        pnl / risk if risk and pnl is not None else None, journal_r, funding, trade['id']))
             if pnl is None and qty and entry:
                 c.execute("UPDATE demo_trades SET error = ? WHERE id = ?", (self.FILL_PENDING, trade['id']))
+            elif pnl is not None and trade.get('fill_confirmed') == 0:
+                # audit EXTRA_3: the exit is read from the fills, the entry price is the quote / requested size
+                c.execute("UPDATE demo_trades SET error = ? WHERE id = ?", (self.ENTRY_ESTIMATE, trade['id']))
         self.open.pop(trade['card_id'], None)
         self._finalized[trade['symbol']] = (trade, time.time())
         if pnl is not None:
@@ -1272,6 +1284,7 @@ class DemoExecutor:
             logger.info(f"Demo {reason} {trade['symbol']}: {pnl:+.2f} USD ({r_txt})")
 
     FILL_PENDING = 'exit fill pending'
+    ENTRY_ESTIMATE = 'entry fill unconfirmed: the result is an estimate'
 
     async def _funding_paid(self, symbol: str, since_ms: float, until_ms: float) -> Optional[float]:
         """Sum of BingX's FUNDING_FEE ledger entries of the coin in [since, until] (USDT, signed), None unreadable."""
@@ -1398,8 +1411,8 @@ class DemoExecutor:
                 pnl += funding
             with sqlite3.connect(self.db_path) as c:
                 c.execute("UPDATE demo_trades SET exit_avg = ?, fees_usd = ?, pnl_usd = ?, r = ?, funding_usd = ?, "
-                          "error = NULL WHERE id = ?",
-                          (exit_avg, fees, pnl, pnl / risk if risk else None, funding, tid))
+                          "error = CASE WHEN fill_confirmed = 0 THEN ? ELSE NULL END WHERE id = ?",
+                          (exit_avg, fees, pnl, pnl / risk if risk else None, funding, self.ENTRY_ESTIMATE, tid))
             logger.info(f"Demo result recovered {symbol}: {pnl:+.2f} USD ({pnl / risk if risk else 0:+.2f}R)")
 
     async def reconcile_loop(self, running) -> None:

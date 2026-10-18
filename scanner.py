@@ -1027,8 +1027,10 @@ class Scanner:
                 md = self.market_data[symbol]
                 # + the higher-timeframe histories: after a start the first quick map is built before the 1h / 4h /
                 # daily / weekly candles load and held no level of theirs until the next 15m close (eng-69)
+                # audit D04: the newest bar of each timeframe too - a full buffer replaces a bar without changing its length
                 signature = (part['timestamp'][-1], part.height, len(md.h1), len(md.h4), len(md.d1), len(md.w1),
-                             len(md.day_pocs))
+                             len(md.day_pocs), md.h1[-1][0] if md.h1 else 0, md.h4[-1][0] if md.h4 else 0,
+                             md.d1[-1][0] if md.d1 else 0, md.w1[-1][0] if md.w1 else 0)
                 if self._context_sig.get(symbol) == signature:
                     continue
                 jobs.append(self._map_job(symbol, part, True, now_ms))

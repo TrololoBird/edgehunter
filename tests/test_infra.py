@@ -138,6 +138,7 @@ def test_journal_outcomes_manual_fill_and_retry(tmp_path):
     class Fetcher:
         async def fetch_minute_klines(self, symbol, start, count):
             calls.append(count)
+            start = -(-start // 60_000) * 60_000  # the real fetch starts at the next full minute
             return ([[start + 60_000 * i, 100, 104.5, 99.5, 104] if i == 0 else [start + 60_000 * i, 104, 104.2, 103.9, 104]
                          for i in range(count)])   # contiguous minutes (audit C12)
 

@@ -258,19 +258,24 @@ def calculate_tier0_metrics(
         metrics['avg_minute_usd'] = avg_minute
         if minute_klines and avg_minute > 0:
             cur_open, cur_quote = minute_klines[-1][0], minute_klines[-1][5]
-            elapsed = min(max((now_ms - cur_open) / 60_000, 0.0), 1.0)
-            prev = minute_klines[-2] if len(minute_klines) >= 2 and minute_klines[-2][0] == cur_open - 60_000 else None
-            if now_ms - cur_open < 120_000:
+            # audit D08: the wall-clock minute, not the last kline's: a kline opened ~90s ago is not the current minute
+            # (a quiet coin writes no kline for the minutes without trades)
+            real_open = int(now_ms // 60_000) * 60_000
+            elapsed = min(max((now_ms - real_open) / 60_000, 0.0), 1.0)
+            last_60s = None
+            if cur_open == real_open:
+                prev = minute_klines[-2] if len(minute_klines) >= 2 and minute_klines[-2][0] == cur_open - 60_000 else None
                 if prev is not None:
                     last_60s = cur_quote + prev[5] * (1 - elapsed)
                 elif elapsed >= 0.5:
                     # Warm-up (no previous minute yet): project the current minute
                     last_60s = cur_quote / elapsed
-                else:
-                    last_60s = None
-                if last_60s is not None:
-                    metrics['rvol_1m'] = last_60s / avg_minute
-                    metrics['minute_usd'] = last_60s
+            elif cur_open == real_open - 60_000:
+                # the current minute has no trade yet: only the tail of the previous minute is inside the window
+                last_60s = cur_quote * (1 - elapsed)
+            if last_60s is not None:
+                metrics['rvol_1m'] = last_60s / avg_minute
+                metrics['minute_usd'] = last_60s
 
     if whale_trades and whale_threshold_usd > 0:
         net = sum(t[1] for t in whale_trades if t[0] >= now_ms - window_ms)

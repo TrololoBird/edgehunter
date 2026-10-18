@@ -690,7 +690,7 @@ def card_results_table(console: Console, rows: List):
         return
     table = Table(title="Entered cards by their own exit (card_r, R of one unit)", header_style="bold magenta",
                   border_style="blue")
-    for name in ("Strategy", "Cards", "Mean R", "Win", "TP1", "TP2", "TP3", "SL before TP1", "Trail", "Avg units", "R / unit"):
+    for name in ("Strategy", "Cards", "Mean R", "Win", "TP1", "TP2", "TP3", "SL before TP1", "Trail", "Avg units", "R / unit", "Ambig", "Mean R low"):
         table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in cards:
@@ -715,6 +715,10 @@ def card_results_table(console: Console, rows: List):
         sl0 = sum(1 for r, b in zip(members, tps) if b == 0 and r['group_key'].startswith('SL') and r['card_r'] <= 0)
         # eng-132: a stop that ended IN PROFIT (the trailed / break-even stop) is not a loss: counted apart ('TRAIL')
         trail = sum(1 for r in members if r['group_key'].startswith('SL') and r['card_r'] > 0)
+        # audit EXTRA_1: a card whose entry minute could not be judged ('ambiguous') shows its pessimistic R apart
+        ambig = sum(1 for r in members if _col(r, 'entry_min') == 'ambiguous')
+        low = [_col(r, 'card_r_low') if _col(r, 'entry_min') == 'ambiguous' and _col(r, 'card_r_low') is not None
+               else r['card_r'] for r in members]
         per_unit = statistics.fmean(x / u for x, u in zip(rs, units))   # eng-132: R of a Turtle trade per unit held
         table.add_row(name, str(n), Text(f"{statistics.fmean(rs):+.2f}R", style="green" if statistics.fmean(rs) > 0 else "red"),
                       f"{sum(x > 0 for x in rs) / n:.0%}",
@@ -722,7 +726,7 @@ def card_results_table(console: Console, rows: List):
                       f"{sum(b >= 2 for b in tps)} ({sum(b >= 2 for b in tps) / n:.0%})",
                       f"{sum(b >= 3 for b in tps)} ({sum(b >= 3 for b in tps) / n:.0%})",
                       f"{sl0} ({sl0 / n:.0%})", f"{trail} ({trail / n:.0%})", f"{statistics.fmean(units):.1f}",
-                      f"{per_unit:+.2f}R")
+                      f"{per_unit:+.2f}R", str(ambig), f"{statistics.fmean(low):+.2f}R")
     console.print(table)
 
 

@@ -401,7 +401,9 @@ class DepthBook:
     # ------------------------------------------------------------------ readers
 
     def _fresh(self, book: Optional[BookState], now: float) -> bool:
-        return book is not None and book.synced and now - book.recv <= CONFIG.depth.stale_sec
+        # audit D02: the exchange's event time too - a delayed update delivered now is not a fresh book
+        return (book is not None and book.synced and now - book.recv <= CONFIG.depth.stale_sec
+                and (not book.ts_ms or now * 1000 - book.ts_ms <= (CONFIG.depth.stale_sec + 5) * 1000))
 
     def top(self, symbol: str, n: int = 20) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
         """The best n levels per side (iceberg tracking reads the near book as the old depth20 stream gave it)."""

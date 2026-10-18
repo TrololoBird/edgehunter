@@ -97,6 +97,7 @@ def test_finish_during_open_is_not_lost():
     async def run():
         ex = DemoExecutor.__new__(DemoExecutor)
         ex.enabled, ex.open, ex.pending, ex._finished_cards = True, {}, {}, set()
+        ex._unknown_coins = {}
         ex._lock = asyncio.Lock()
         ex.db_path = ':memory:'
         closed = []

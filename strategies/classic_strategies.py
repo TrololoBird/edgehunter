@@ -65,17 +65,21 @@ class OrbStrategy(_System):
         day0 = (x.minutes[-1][0] // 86_400_000 * 86_400_000) if x.minutes else None
         today = [m for m in (x.minutes or []) if day0 is not None and m[0] >= day0]
         qv = sum(float(m[5]) for m in today if len(m) > 5)
+        base = sum(float(m[7]) for m in today if len(m) > 7 and m[7])
         if qv > 0:
-            vwap = sum((m[2] + m[3] + m[4]) / 3 * float(m[5]) for m in today if len(m) > 5) / qv
+            if base > 0 and all(len(m) > 7 for m in today):
+                vwap = qv / base                  # audit E03: quote / base is the exact VWAP (no price weighting twice)
+            else:
+                vwap = sum((m[2] + m[3] + m[4]) / 3 * float(m[5]) for m in today if len(m) > 5) / qv
             if d * (sig['anchor_close'] - vwap) < 0:
                 from signal_book import shadow_veto
                 shadow_veto(sig, 'against_vwap')
         # eng-109, Crabel: the other stop level is the protective stop; no target - out at the session's close (the
         # eng-84 middle stop and 100% projection were ours)
         exit = {'stop': ['price', sig['anchor_extreme']], 'tp': ['trail'], 'atr': x.atr,
-                'stop_src': "the opposite Crabel level (open -+ Stretch)",
+                'stop_src': "the opposite Crabel level (opening range -+ Stretch)",
                 'tp_src': "none: out at the session's close (Crabel)"}
-        plan = _confirm_plan(x, self.name, '15m', exit, f"{sig.get('orb_session', 'session')} open +- Stretch (Crabel)")
+        plan = _confirm_plan(x, self.name, '15m', exit, f"{sig.get('orb_session', 'session')} opening range +- Stretch (Crabel)")
         if plan and not plan.get('skip'):
             plan['no_tp'] = True
         return plan

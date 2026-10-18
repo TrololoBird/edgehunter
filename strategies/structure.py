@@ -188,7 +188,8 @@ def hours_from(candles_15m: Sequence[Sequence[float]], h1: Sequence[Sequence[flo
         q = sorted(by_hour[hour], key=lambda c: c[0])
         if len(q) == 4:
             out.append([hour, q[0][1], max(c[2] for c in q), min(c[3] for c in q), q[-1][4],
-                        sum(c[5] for c in q), sum(c[6] for c in q)])
+                        sum(c[5] for c in q), sum(c[6] for c in q),
+                        sum(c[7] for c in q) if all(len(c) > 7 and c[7] is not None for c in q) else float('nan')])
     return out
 
 
@@ -225,6 +226,28 @@ def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
     return out
 
 
+_BAR_DONE: Dict[Tuple[Optional[str], str], int] = {}
+
+
+def new_bar(symbol: Optional[str], name: str, bars: Sequence[Sequence[float]], period: int, cut: int,
+            max_late: int = 30 * 60_000) -> bool:
+    """audit D04 / D14: True once for the bar of `period` that closed at the latest boundary <= cut, whenever its
+    candle has arrived (the 4h / daily REST loops publish minutes after the boundary - gating on `cut % period == 0`
+    ran the detector on the old history at the boundary and never again). A bar already handled is not re-run;
+    a boundary older than the stored one (a restarted replay) resets it."""
+    boundary = cut // period * period
+    if not bars or int(bars[-1][0]) + period != boundary or cut - boundary > max_late:
+        return False                                 # not there yet / too late to act on (a start mid-window)
+    key = (symbol, name)
+    last = _BAR_DONE.get(key)
+    if last is not None and last > boundary:
+        last = None
+    if last == boundary:
+        return False
+    _BAR_DONE[key] = boundary
+    return True
+
+
 def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[float]],
                   corr: Optional[List[List[float]]], cut: int, h4: Sequence = (), d1: Sequence = (),
                   skips: Optional[List] = None) -> List[Dict]:
@@ -251,9 +274,10 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
     # Seiden draws supply / demand on 4h or higher and enters on the lower one: zones of 4h candles at the 4h close,
     # the limit touch on 1h (eng-37; eng-34 1h zones, the sample's 15m before). His curve: demand is bought in the
     # lower half of the daily range (20 days), supply sold in the upper half
-    if cut % (4 * HOUR_MS) == 0 and len(h4) < 40:
+    new_h4 = new_bar(symbol, 'h4', h4, 4 * HOUR_MS, cut)
+    if new_h4 and len(h4) < 40:
         short(('supply_demand', len(h4), 40))
-    if cut % (4 * HOUR_MS) == 0 and len(h4) >= 40:
+    if new_h4 and len(h4) >= 40:
         found = []
         run_into = lambda: maniac.sd_zone_events(h4, 4 * HOUR_MS, '4h')     # noqa: E731
         try:
@@ -277,13 +301,14 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
         if len(b4) >= 60:
             run('Bollinger W / M', maniac.bollinger_wm_event, b4, 4 * HOUR_MS, '4h')
             run('Bollinger Method III', maniac.bb_method3_event, b4, 4 * HOUR_MS, '4h')   # eng-106, shadow
-        if len(h4) < 146:
-            short(('bollinger', len(h4), 146))
-        if len(h4) >= 146:
-            run('Bollinger Method I', maniac.bb_method1_event, list(h4), 4 * HOUR_MS, '4h')   # eng-127
-    if cut % (24 * HOUR_MS) == 0 and len(d1) < 120:
+    if new_h4 and len(h4) < 146:
+        short(('bollinger', len(h4), 146))
+    if new_h4 and len(h4) >= 146:
+        run('Bollinger Method I', maniac.bb_method1_event, list(h4), 4 * HOUR_MS, '4h')   # eng-127
+    new_d1 = new_bar(symbol, 'd1', d1, 24 * HOUR_MS, cut, 90 * 60_000)
+    if new_d1 and len(d1) < 120:
         short(('cup_handle', len(d1), 120))
-    if cut % (24 * HOUR_MS) == 0 and len(d1) >= 120:
+    if new_d1 and len(d1) >= 120:
         # O'Neil's cup with handle on DAILY candles at the UTC day's close (eng-58: his weekly / daily bases of >= 7
         # weeks; the 1h / 4h version of eng-40..57 was another pattern under his name)
         from strategies.cup_handle import cup_handle

@@ -104,6 +104,16 @@ HTF_UNTIMED = ('pdhl', 'pmhl', 'year', 'open', 'range', 'poc', 'va')
 LTF_UNTIMED = ('vwap', 'round', 'book', 'liq_est', 'liq_hit', 'liq_hl', 'equal', 'hvn', 'lvn', 'wall')
 
 
+def _kind_rank(k: str) -> Optional[int]:
+    """One level kind's timeframe rank (see _zone_rank); None = valid on every timeframe."""
+    tf = k.rsplit('_', 1)[-1] if '_' in k else None
+    if tf in TF_RANK:
+        return TF_RANK[tf]
+    if k in LTF_UNTIMED:
+        return TF_RANK['15m']
+    return None                            # HTF_UNTIMED or an unknown kind: valid everywhere (as before)
+
+
 def _zone_rank(zone: Zone) -> Optional[int]:
     """The highest timeframe rank among the zone's kinds (swing_15m, fvg_1h, ob_4h ...); None = valid on every
     timeframe (it holds a daily-or-longer untimed reference: previous day / week / month, the year, an open, a completed
@@ -111,28 +121,40 @@ def _zone_rank(zone: Zone) -> Optional[int]:
     rank as 15m. A plan may target the zone when this rank >= its own timeframe's."""
     best = -1
     for k in zone.kinds:
-        tf = k.rsplit('_', 1)[-1] if '_' in k else None
-        if tf in TF_RANK:
-            best = max(best, TF_RANK[tf])
-        elif k in LTF_UNTIMED:
-            best = max(best, TF_RANK['15m'])
-        else:
-            return None                    # HTF_UNTIMED or an unknown kind: valid everywhere (as before)
+        r = _kind_rank(k)
+        if r is None:
+            return None
+        best = max(best, r)
     return best if best >= 0 else None
+
+
+def _trim(zone: Zone, rank: int) -> Zone:
+    """audit D05: the zone as a plan of timeframe rank `rank` sees it - the edges of its own levels only. A lower
+    timeframe's level merged into a 1h swing's zone moved the 1h target (130.1 -> 129.9, R:R 3.01 -> 2.99)."""
+    if not zone.parts:
+        return zone
+    own = [p for p in zone.parts if (_kind_rank(p[0]) is None or _kind_rank(p[0]) >= rank)]
+    if not own or len(own) == len(zone.parts):
+        return zone
+    return Zone(sum(p[1] for p in own) / len(own), min(p[2] for p in own), max(p[3] for p in own),
+                [k for k in zone.kinds if any(p[0] == k for p in own)], zone.labels, zone.strength, zone.ts, own,
+                zone.origin or id(zone))
 
 
 def htf_zones(zones: List[Zone], tf: Optional[str]) -> List[Zone]:
     """The zones a plan of timeframe `tf` may target: its own timeframe and higher (2026-10-05, the owner: a 1h / 4h
-    trade's TP1 was the nearest 15m swing / FVG, cutting the R:R of a stop now sized in the structure's ATR)."""
+    trade's TP1 was the nearest 15m swing / FVG, cutting the R:R of a stop now sized in the structure's ATR). A merged
+    zone is cut back to the edges of the levels that qualify."""
     rank = TF_RANK.get(tf or '15m', 1)
     if rank <= 1:
         return zones
-    return [z for z in zones if (_zone_rank(z) is None or _zone_rank(z) >= rank)]
+    return [_trim(z, rank) for z in zones if (_zone_rank(z) is None or _zone_rank(z) >= rank)]
 
 
 def _ltf_prices(zones: List[Zone], tf: Optional[str], direction: int) -> List[float]:
-    keep = set(map(id, htf_zones(zones, tf)))
-    return [_near(z, direction) for z in zones if id(z) not in keep]
+    keep = {z.origin or id(z) for z in htf_zones(zones, tf)}
+    # both prices a zone can be targeted at: the near edge and (liquidity intents) the swing's extreme
+    return [px for z in zones if id(z) not in keep for px in {_near(z, direction), _liq_price(z, direction)}]
 
 
 def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: float, direction: int,
@@ -297,6 +319,15 @@ def _min_rr(plan: Dict) -> float:
 LIQUIDITY_KINDS = ('pdhl', 'equal', 'swing_1h', 'swing_1d', 'swing_1w', 'pmhl', 'year', 'htf')
 
 
+def _liq_price(zone: Zone, direction: int) -> float:
+    """The nearest untaken liquidity extreme of the zone in the trade's direction (its levels' own prices: a swing's
+    wick, not the body edge the S/R zone starts from); the zone's near edge when it carries no liquidity part."""
+    prices = [p[1] for p in zone.parts if p[0] in LIQUIDITY_KINDS and not p[4]]
+    if not prices:
+        return _near(zone, direction)
+    return min(prices) if direction > 0 else max(prices)
+
+
 def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, intent: str,
                    fillers: Sequence[float] = (), fill_label: str = 'fib',
                    first: Optional[Tuple[float, str]] = None) -> Tuple[List[float], List[str]]:
@@ -306,10 +337,20 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     """
     cfg = CONFIG.zones
     gap = cfg.min_target_atr * atr
-    beyond = [z for z in zones if direction * (_near(z, direction) - ref) >= gap]
-    beyond.sort(key=lambda z: direction * (_near(z, direction) - ref))
-    strong = [z for z in beyond if z.strength >= cfg.min_strength]
     liquidity = intent in ('draw_liquidity', 'opposite_liquidity')
+    if liquidity:
+        # audit D09 / D12: the pool is where the stops rest - the swing's EXTREME (the wick), not the S/R zone's body
+        # edge, and a swing a wick already took is no untaken pool. Zones without a liquidity part stay as before.
+        def px(z: Zone) -> float:
+            return _liq_price(z, direction)
+        zones = [z for z in zones if not z.parts or not any(p[0] in LIQUIDITY_KINDS for p in z.parts)
+                 or any(p[0] in LIQUIDITY_KINDS and not p[4] for p in z.parts)]
+    else:
+        def px(z: Zone) -> float:
+            return _near(z, direction)
+    beyond = [z for z in zones if direction * (px(z) - ref) >= gap]
+    beyond.sort(key=lambda z: direction * (px(z) - ref))
+    strong = [z for z in beyond if z.strength >= cfg.min_strength]
     # eng-115: Wyckoff's range ('range': the far side, the P&F count) and the continuation's trend-based extensions
     # ('extension': Carney / Pesavento) are the methods' own objectives - no map zone in between
     own = intent in ('range', 'extension')
@@ -329,11 +370,11 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     candidates: List[Tuple[float, str, int]] = []
     if first is not None and direction * (first[0] - ref) >= gap:
         candidates.append((first[0], first[1], 0))
-    candidates += [(_near(z, direction), z.label, 0) for z in primary]
+    candidates += [(px(z), z.label, 0) for z in primary]
     if own:
         candidates = [c for c in candidates if c[2] != 0 or (first is not None and c[0] == first[0])]
     elif not liquidity:
-        candidates += [(_near(z, direction), z.label, 1) for z in strong if z not in primary]
+        candidates += [(px(z), z.label, 1) for z in strong if z not in primary]
     candidates += [(f, fill_label, 2) for f in fillers if direction * (f - ref) >= gap]
     candidates.sort(key=lambda c: direction * (c[0] - ref))
     prices: List[float] = []

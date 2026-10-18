@@ -73,7 +73,12 @@ def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets:
     while acc < share * total and (i > 0 or j < buckets - 1):
         down = vol[i - 1] if i > 0 else -1.0
         up = vol[j + 1] if j < buckets - 1 else -1.0
-        if up >= down:
+        if up == down and up >= 0:
+            # Sierra Chart: two equal neighbouring rows enter the value area together (audit E01)
+            j += 1
+            i -= 1
+            acc += vol[j] + vol[i]
+        elif up > down:
             j += 1
             acc += vol[j]
         else:
@@ -332,7 +337,9 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
     Stretch (the 10-day SMA of min(High - Open, Open - Low)) above its high and a sell stop the Stretch below its low;
     the first level TRADED through is the entry (a stop order fills on the touch, at the level or a gap's open), the
     other one the stop. Was: the session's open +- Stretch and a 5m CLOSE beyond (eng-105), another reference and
-    moment. `minutes`: final 1m candles; the break is read on them (a minute late at most, the level is the price)."""
+    moment. `minutes`: final 1m candles; the break is read on them (a minute late at most, the level is the price).
+    audit E08: the contract is the CLOSED minute - price_hi / price_lo (the live tick) are accepted for the caller's
+    signature and deliberately not read: a stop-entry detected on a candle that closed is a minute late, not instant."""
     or_minutes = 5
     for name, open_ms, close_ms in orb_sessions(base, now_ms):
         if (symbol, open_ms) in fired:
@@ -381,7 +388,7 @@ def rsi(closes: Sequence[float], period: int) -> Optional[float]:
         avg_g = (avg_g * (period - 1) + max(0.0, b - a)) / period
         avg_l = (avg_l * (period - 1) + max(0.0, a - b)) / period
     if avg_l == 0:
-        return 100.0
+        return 50.0 if avg_g == 0 else 100.0     # audit E05: a flat series is neutral, as ind_panel
     return 100 - 100 / (1 + avg_g / avg_l)
 
 

@@ -76,7 +76,7 @@ def test_binance_sinks_from_fixtures():
     assert f.depth.books['BTC/USDT:USDT'].synced
     btc = f.markets['BTC/USDT:USDT']
     assert btc.ticker_samples and btc.minute_klines       # price samples come from the aggTrades now
-    assert f.depth.metrics('BTC/USDT:USDT', now=f.depth.books['BTC/USDT:USDT'].recv)['bid_usd_0_5'] > 0
+    assert f.depth.metrics('BTC/USDT:USDT', now=f.depth.books['BTC/USDT:USDT'].ts_ms / 1000 if f.depth.books['BTC/USDT:USDT'].ts_ms else f.depth.books['BTC/USDT:USDT'].recv)['bid_usd_0_5'] > 0
     f.sweeps.flush(10 ** 15)
     assert f.flow.venues['binance'].messages >= 3
     liq = f.flow.window(('binance',), 2, 3600, 1790422647 + 60)  # LIQ_LONG at the time the fixture was recorded

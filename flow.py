@@ -40,6 +40,7 @@ class VenueFlow:
         self.data = np.zeros((history_sec, N_FIELDS, capacity), dtype=np.float32)
         self.counts = np.zeros((history_sec, capacity), dtype=np.int32)
         self.last_sec = 0
+        self.first_sec = 0              # audit D13: the second the ring started to be written (it holds data only from here)
         self.messages = 0
         self.last_event_ms = 0
         self.last_recv_ms = 0
@@ -62,6 +63,7 @@ class VenueFlow:
         if self.last_sec == 0 or sec - self.last_sec >= self.H:
             self.data[:] = 0
             self.counts[:] = 0
+            self.first_sec = sec
         else:
             a, n = (self.last_sec + 1) % self.H, sec - self.last_sec
             for lo, hi in ((a, min(a + n, self.H)), (0, max(0, a + n - self.H))):
@@ -170,6 +172,7 @@ class FlowStore:
         sec = int(minute_ms // 1000) + 30
         flow.add(row, sec, BUY, buy_usd, trades // 2)
         flow.add(row, sec, SELL, sell_usd, trades - trades // 2)
+        flow.first_sec = min(flow.first_sec, sec - 30) if flow.first_sec else sec - 30   # the seeded minute is coverage
 
     def trade(self, venue: str, symbol: str, ts_ms: int, usd: float, side: int, recv_ms: Optional[float] = None):
         row = self.rows.get(symbol)

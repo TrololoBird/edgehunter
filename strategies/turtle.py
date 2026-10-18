@@ -57,14 +57,22 @@ def s1_state(d1: Sequence[Sequence[float]], ns: List[Optional[float]]) -> Tuple[
             lo10 = min(x[3] for x in d1[i - 10:i])
             hi10 = max(x[2] for x in d1[i - 10:i])
             exit_px = None
-            if d > 0 and c[3] <= stop:
+            chan = lo10 if d > 0 else hi10
+            stop_hit = (d > 0 and c[3] <= stop) or (d < 0 and c[2] >= stop)
+            chan_hit = (d > 0 and c[3] <= lo10) or (d < 0 and c[2] >= hi10)
+            gapped = (d > 0 and c[1] <= stop) or (d < 0 and c[1] >= stop)      # opened beyond the stop: it came first
+            chan_gap = (d > 0 and c[1] <= lo10) or (d < 0 and c[1] >= hi10)   # opened past the channel: it exits at the open
+            if stop_hit and chan_hit and not gapped and chan_gap:
+                exit_px = c[1]
+            elif stop_hit and chan_hit and not gapped and d * (chan - entry) > 0:
+                # audit E04: the day traded through the 2N stop AND a profitable channel exit - the OHLC does not say
+                # which came first (a continuous path exits at the channel with a profit): the result is unknown
+                pos['ambiguous'] = True
+                exit_px = chan
+            elif stop_hit:
                 exit_px = stop
-            elif d < 0 and c[2] >= stop:
-                exit_px = stop
-            elif d > 0 and c[3] <= lo10:
-                exit_px = lo10
-            elif d < 0 and c[2] >= hi10:
-                exit_px = hi10
+            elif chan_hit:
+                exit_px = chan
             if exit_px is not None:
                 last = 'ambiguous' if pos.get('ambiguous') else ('win' if d * (exit_px - entry) > 0 else 'loss')
                 pos = None

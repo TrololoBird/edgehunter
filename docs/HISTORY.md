@@ -753,3 +753,29 @@ and weekly (`fvg_1w` 3.5, `ob_1w` 4.0), the day / week open (`open`); ICT's top-
   `setup_key` - this re-activates the negative-expectancy veto, which was dead before (C13); fib extensions from the
   leg's start (C14); briefing scores signed R and skips scenarios already past TP1 (C15); pretrain buckets only full
   groups (C16); replay rank unknown in a restricted universe (C17); hot-symbol slots evicted by priority (C18).
+- **eng-140 (2026-10-18, independent recheck of eng-139)**: a coin stays closed to new entries (market and limit) for 15 min
+  after an entry whose outcome is UNKNOWN (C02); `hours_from` keeps the 15m candles' base volume (C09); the 1m outcome window
+  must start exactly at the next full minute (C12); the entry-minute test also counts the Turtles' channel / Bollinger band
+  as exit levels, a touched minute is 'ambiguous' (EXTRA_2); stats shows Ambig / Mean R low (EXTRA_1); demo rows with an
+  unconfirmed entry fill are marked as estimates, also after a restart and after `_refinalize` (EXTRA_3).
+
+**eng-140 (data-to-signal audit D01-D15, 2026-10-18)** - the same version as the recheck fixes above. D01/D11: venue OI / funding
+keep the exchange's event time (older-than-stored updates ignored) and the native OI unit (`native_oi`). D02: a depth book
+is fresh only if its event time is young too. D03: Hyperliquid positions - a refresh where every request failed keeps
+the last snapshot (with its real age); readers ignore a snapshot older than 6 refresh periods. D04/D14: the context
+signature carries the last h1/h4/d1/w1 timestamps; BB Method I / Supply-Demand / Cup & Handle run on "a new bar since the last
+pass" (`structure.new_bar`), not only at `cut % period == 0`. D06: `zones.imbalances` skips FVGs across missing candles. D05:
+`Zone.parts` keeps (kind, price, lo, hi, swept) of every merged level; `htf_zones` trims a zone to the edges of the levels
+that qualify for the plan's timeframe. D07: `join_asof` tolerance 2 candles (a stale futures column becomes null). D08: `rvol_1m` /
+`minute_usd` use the wall-clock minute (a kline opened 90s ago is not the current minute). D09/D12: liquidity targets are
+the swing's extreme (the wick), and a swing a later wick took (`RawLevel.swept`) is no untaken pool. D10: a minute of an
+already finalized 15m bucket is not re-added. D13: a venue's flow ring counts for a confirmation only if it was recording
+since the window began (`first_sec`). D15: 4h candles keep the base volume (8th field). Not measured live yet.
+
+**eng-140 (external-source recheck E01-E08)**: E01 Value Area: two equal neighbouring TPO rows enter together (Sierra). E02: observed-liquidation
+levels made mostly of Bybit / OKX events (bankruptcy price) are labelled "(bankruptcy px)". E03: the ORB VWAP veto uses quote / base. E04: `s1_state`
+- a day through the 2N stop AND a profitable channel exit (no opening gap past the stop) is 'ambiguous', which blocks the next S1. E05/E06:
+one RSI convention (flat = 50, no absolute floor: scale-invariant) and TA-Lib's ADX seed (`ind_panel.adx_talib`) shared by the panel and `regime.adx`
+(26.08, was 23.79). E07: Bybit both-sides OI fallback halved. E08: the ORB contract is the closed minute (documented; the tick args stay unread).
+Review notes: `htf_zones` trimming also moves the structure stops of 1h+ plans to the qualifying levels' edges; liquidity targets sit exactly on the
+swing's extreme (no buffer rule yet); `_ltf_prices` knows both prices of a zone. A stale HL snapshot reads as no positions (0), not unknown.

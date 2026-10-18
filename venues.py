@@ -488,7 +488,8 @@ class BybitStream(VenueStream):
             funding = state.get('fundingRate')
             self.sink.on_deriv(market, oi_usd=oi_usd or None,
                                funding_8h=_f(funding) * 8 / interval if funding not in (None, '') else None,
-                               mark=_f(state.get('markPrice')) or None, ts_ms=payload.get('ts'))
+                               mark=_f(state.get('markPrice')) or None, ts_ms=payload.get('ts'),
+                               native_oi=_f(state.get('openInterest')) or None)
         elif kind == 'allLiquidation':
             for liq in data:
                 # S = side of the liquidated position: Buy = a long was liquidated
@@ -543,7 +544,8 @@ class OkxStream(VenueStream):
             for item in data:
                 market = self.symbols.lookup(self.venue, item['instId'])
                 if market:
-                    self.sink.on_deriv(market, oi_usd=_f(item.get('oiUsd')) or None, ts_ms=int(item.get('ts') or 0))
+                    self.sink.on_deriv(market, oi_usd=_f(item.get('oiUsd')) or None, ts_ms=int(item.get('ts') or 0),
+                                       native_oi=_f(item.get('oiCcy')) or None)
         elif channel == 'funding-rate':
             for item in data:
                 market = self.symbols.lookup(self.venue, item['instId'])
@@ -597,6 +599,7 @@ class HyperliquidStream(VenueStream):
                 mark = _f(ctx.get('markPx'))
                 funding = ctx.get('funding')
                 self.sink.on_deriv(market, oi_usd=_f(ctx.get('openInterest')) * mark or None,
+                                   native_oi=_f(ctx.get('openInterest')) or None,
                                    # hourly funding -> 8h equivalent
                                    funding_8h=_f(funding) * 8 if funding not in (None, '') else None,
                                    mark=mark or None)
@@ -656,6 +659,7 @@ class BitgetStream(VenueStream):
                 hours = self.funding_hours.get(market.native, 8.0) or 8.0
                 funding = item.get('fundingRate')
                 self.sink.on_deriv(market, oi_usd=_f(item.get('holdingAmount')) * mark or None,
+                                   native_oi=_f(item.get('holdingAmount')) or None,
                                    funding_8h=_f(funding) * 8 / hours if funding not in (None, '') else None,
                                    mark=mark or None, ts_ms=int(item.get('ts') or 0))
 

@@ -190,12 +190,14 @@ class Positioning:
         f = self.fetcher
         positions: Dict[str, List[Tuple[int, float, Optional[float], float]]] = {}
         spacing = 60.0 / CONFIG.positioning.hl_requests_per_min
+        failed = 0
         for address in list(self.hl_accounts):
             try:
                 rows = await self._account_positions(address)
             except Exception as e:
                 errors.report('positioning._refresh_positions', e, f"Hyperliquid positions failed for {address[:10]}")
                 rows = []
+                failed += 1
             for p in rows:
                 market = f.symbol_map.lookup('hyperliquid', p.get('coin', ''))
                 size = float(p.get('szi') or 0)
@@ -207,6 +209,11 @@ class Positioning:
                 positions.setdefault(market.key, []).append(
                     (1 if size > 0 else -1, float(p.get('positionValue') or 0), liq, leverage))
             await asyncio.sleep(spacing)
+        if failed and failed == len(self.hl_accounts):
+            # audit D03: every request failed - that is 'unknown', not 'no positions': the last good snapshot stays
+            # with its real age (the readers stop using it once it is older than 6 refresh periods, see hl_current)
+            logger.info("Hyperliquid positions: every request failed, the previous snapshot is kept")
+            return
         self.hl_positions, self.hl_ts = positions, time.time()
         self._write_leverage_mix(positions)
 
@@ -287,15 +294,19 @@ class Positioning:
                 logger.info(f"Hyperliquid positions unavailable ({type(e).__name__} {e}); retry in 5 min")
                 await asyncio.sleep(300)
 
+    def hl_current(self) -> bool:
+        """audit D03: the snapshot is younger than 6 refresh periods (a stale snapshot is no current level)."""
+        return time.time() - self.hl_ts <= 6 * CONFIG.positioning.hl_positions_refresh_sec
+
     def hl_summary(self, symbol: str) -> Dict[str, float]:
-        rows = self.hl_positions.get(symbol, [])
+        rows = self.hl_positions.get(symbol, []) if self.hl_current() else []
         longs = [usd for side, usd, _, _ in rows if side > 0]
         shorts = [usd for side, usd, _, _ in rows if side < 0]
         return {'hl_long_usd': sum(longs), 'hl_short_usd': sum(shorts), 'hl_longs': len(longs), 'hl_shorts': len(shorts)}
 
     def hl_levels(self, symbol: str, price: Optional[float]) -> List[RawLevel]:
         """Liquidation prices of the tracked accounts, summed per price bucket: the 'liq_hl' levels of the map."""
-        rows = [r for r in self.hl_positions.get(symbol, []) if r[2]]
+        rows = [r for r in self.hl_positions.get(symbol, []) if r[2]] if self.hl_current() else []
         if not rows or not price:
             return []
         step = price * CONFIG.zones.liq_bucket
