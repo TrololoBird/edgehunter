@@ -25,6 +25,7 @@ import time
 from typing import Dict, List, Optional
 
 from config import CONFIG
+from storage import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -299,11 +300,7 @@ class DemoExecutor:
                 logger.warning(f"Demo entry {'UNKNOWN' if unknown else 'failed'} for {s.symbol} {s.group_key}: {e!r}")
                 if unknown:
                     self._unknown_coins[coin] = time.time()
-                    try:
-                        with open(self.unknown_path, 'w', encoding='utf-8') as f:
-                            json.dump(self._unknown_coins, f)
-                    except OSError as e2:
-                        errors.report('executor.on_entry', e2, "Demo unknown-entry state")
+                    self._save_unknown()
                     # not 'not filled': a position that turns up is closed by close_untracked (no card owns it)
                     self.alert(f"⚠️ Демо {s.symbol}: исход входа неизвестен (биржа недоступна), проверьте позицию")
                 self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
@@ -690,9 +687,8 @@ class DemoExecutor:
 
     def _save_pending(self) -> None:
         try:
-            with open(self.pending_path, 'w', encoding='utf-8') as f:
-                json.dump(self.pending, f)
-        except OSError as e:
+            atomic_write(self.pending_path, json.dumps(self.pending, allow_nan=False).encode('utf-8'))
+        except (OSError, TypeError, ValueError) as e:
             errors.report('executor._save_pending', e, "Demo pending state")
 
     async def _place_limit(self, key: str, s) -> None:
@@ -785,7 +781,10 @@ class DemoExecutor:
         if o.get('status') not in ('canceled', 'cancelled', 'closed', 'expired', 'rejected'):
             logger.warning(f"Demo limit {p['symbol']}: still {o.get('status')} after the cancel, retried in 10s")
             return
-        filled = float(o.get('filled') or 0)
+        filled = _finite(o.get('filled'))
+        if filled is None or filled < 0 or (filled == 0 and o.get('status') == 'closed'):
+            logger.warning(f"Demo limit {p['symbol']}: unconfirmed fill after the cancel, state kept")
+            return
         self.pending.pop(key, None)
         self._save_pending()
         if filled > 0:
@@ -807,6 +806,7 @@ class DemoExecutor:
         not fill within limit_wait_min is cancelled and recorded NOT_FILLED."""
         ex = await self._exchange()
         now = time.time() * 1000
+        terminal = {'canceled', 'cancelled', 'closed', 'expired', 'rejected'}
         for key, p in list(self.pending.items()):
             if p.get('skip'):
                 continue
@@ -815,8 +815,11 @@ class DemoExecutor:
             except Exception as e:
                 errors.report('executor.check_limits', e, f"Demo limit status {p['symbol']}")
                 continue
-            filled = float(o.get('filled') or 0)
-            if 0 < filled < 0.999 * p['qty'] and o.get('status') != 'closed':
+            filled = _finite(o.get('filled'))
+            if filled is None or filled < 0 or (filled == 0 and o.get('status') == 'closed'):
+                logger.warning(f"Demo limit {p['symbol']}: unconfirmed fill {o.get('filled')!r}, state kept")
+                continue
+            if filled > 0 and o.get('status') not in terminal:
                 # eng-85: a partly filled limit sat without a stop until limit_wait_min: the rest is cancelled and the
                 # filled part becomes the trade (its stop / targets for the filled size)
                 try:
@@ -828,14 +831,19 @@ class DemoExecutor:
                 except Exception as e:
                     errors.report('executor.check_limits', e, f"Demo partial limit status {p['symbol']}")
                     continue
-                if o.get('status') not in ('canceled', 'cancelled', 'closed', 'expired', 'rejected'):
+                if o.get('status') not in terminal:
                     continue
-                filled = float(o.get('filled') or 0)
-                await self._limit_filled(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']), filled)
-                continue
-            if o.get('status') == 'closed' or (filled and filled >= 0.999 * p['qty']):
-                await self._limit_filled(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']),
-                                         filled or p['qty'])
+                filled = _finite(o.get('filled'))
+                if filled is None or filled < 0 or (filled == 0 and o.get('status') == 'closed'):
+                    logger.warning(f"Demo limit {p['symbol']}: unconfirmed final fill, state kept")
+                    continue
+            if o.get('status') in terminal:
+                if filled > 0:
+                    await self._limit_filled(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']), filled)
+                else:
+                    # Keep the card marked skipped so sync_limits cannot place the same entry again.
+                    self.pending[key] = {'skip': True, 'reason': f"limit {o['status']} without a fill"}
+                    self._save_pending()
             elif p.get('entered') and now - p['entered_ms'] > CONFIG.executor.limit_wait_min * 60_000:
                 await self._cancel_limit(key, f"Binance touched the line, BingX did not fill within "
                                               f"{CONFIG.executor.limit_wait_min} min", record=True)
@@ -879,9 +887,8 @@ class DemoExecutor:
 
     def _save_unknown(self) -> None:
         try:
-            with open(self.unknown_path, 'w', encoding='utf-8') as f:
-                json.dump(self._unknown_coins, f)
-        except OSError as e:
+            atomic_write(self.unknown_path, json.dumps(self._unknown_coins, allow_nan=False).encode('utf-8'))
+        except (OSError, TypeError, ValueError) as e:
             errors.report('executor._save_unknown', e, "Demo unknown-entry state")
 
     async def _release_unknown(self, ex, positions: List[Dict]) -> None:
@@ -1304,6 +1311,9 @@ class DemoExecutor:
         go first, the stop is cancelled after the position is 0. The cancel-all first left the position without a stop
         whenever the close then failed (any error but 101290 / 102202 raised past it; 102202 left a bare limit).
         """
+        # Retain late fills / failed stops even when the first exchange read raises.
+        self.open.setdefault(trade['card_id'], trade)
+        trade['close_pending'] = [reason, journal_r]
         ex = await self._exchange()
         symbol, d = trade['symbol'], trade['direction']
         side = 'sell' if d > 0 else 'buy'
