@@ -78,7 +78,8 @@ def test_realized_r_uses_the_exit_fill_not_the_mark():
                       levels={'entry': 100, 'sl': 90, 'tp1': 200, 'tp2': 300, 'tp3': 400, 'risk0': 10},
                       units=[[100, 1], [105, 2]])
     s.exit_fill = 90.0
-    r = SignalBook._exit_r(s, 'SL') + SignalBook._cost_r(s, 10, 0) * 2
+    # audit 2026-10-18 D: each unit pays the round trip on its own price (100 and 105)
+    r = SignalBook._exit_r(s, 'SL') + SignalBook._cost_r(s, 10, 0) * (100 + 105) / 100
     assert r == pytest.approx(-2.5)                               # was +0.5 (the scan price 105)
 
 

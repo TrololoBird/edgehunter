@@ -154,7 +154,9 @@ def find_impulse(df: Optional[pl.DataFrame], leg_direction: int,
     htf_list = [list(c[:5]) for c in (htf or [])]
     atr = atr_15m if tf == '15m' else atr_of(htf_list if tf == '1h' else resample_htf(htf_list, 4))
     if not atr:
-        tf, atr = '15m', atr_15m          # no 1h history loaded yet: the leg measured in the 15m ATR
+        # audit 2026-10-18 P1: the structure's timeframe comes from its duration, not from what is loaded - without
+        # the 1h history the leg waits (no plan) instead of being re-measured as a 15m leg with a 5m trigger
+        return None
     size = abs(end - start)
     if not atr or size < min_leg_atr() * atr or size < min_leg_move() * start:
         return None

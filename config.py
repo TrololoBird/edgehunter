@@ -391,12 +391,13 @@ class LevelsConfig:
     impulse_min_candles: int = 4            # 1h
     # ... and at least this big in price: at night ATR shrinks and a 0.5% drift can measure 7 ATR
     # eng-57: derived (levels.min_leg_move): the first target, 0.382 of the leg, must cover cost_guard x the round-trip
-    # cost (fees + 2 x slippage at the reference liquidity, 0.2%): 3 x 0.2% / 0.382 = 1.57% (was the rounded 1.5%)
+    # cost (fees + 2 x slippage at the reference liquidity, 0.2%): cost_guard x 0.2% / 0.382 (0.52% at cost_guard 1;
+    # the 1.57% of eng-57 was at the old 3)
     impulse_min_move: float = 0.0
-    # the risk must be at least this many round-trip costs (geometry; was a literal 3 in two places). Ours, eng-44:
-    # 5x vetoed ordinary 2% stops; a source-less rule - the costs eat 1/3 of 1 R at the limit
-    # eng-108 (the owner: no invented numbers): 1 = the break-even formula - the risk must at least cover one round trip of
-    # costs (below it the costs exceed the risk); the 3 was source-less
+    # the risk must be at least this many round-trip costs (geometry; was a literal 3 in two places, 5 in eng-44)
+    # eng-108: 1 (the 3 was source-less). Audit 2026-10-18: a POLICY cap on the cost share, not a break-even condition -
+    # expectancy is p x win - (1 - p) x loss - cost, so a trade with costs above 1 R can still be positive (p 0.8,
+    # win 3 R, cost 1.2 R: +1 R) and one below it negative. Vetoes when risk < cost_guard x the round-trip cost
     cost_guard: float = 1.0
     # Continuation: look for the trigger once the pullback reaches this retracement zone of the impulse
     # The pullback band of a continuation: 0.382-0.618 of the leg (a deeper retrace is a trend failure, not an entry);
@@ -1003,12 +1004,12 @@ class JournalConfig:
     # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
     outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-141"
+    logic_version: str = "eng-142"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
-    keep_waiting_from: str = "eng-139"
+    keep_waiting_from: str = "eng-142"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

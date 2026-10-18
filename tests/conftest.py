@@ -28,6 +28,16 @@ def frame(close, open_=None, high=None, low=None, qv=None, delta=None, oi=None, 
                          'taker_delta': delta or [0.0] * n, 'open_interest': oi or [1e6] * n}, schema=RAW_SCHEMA)
 
 
+def h1_of(df):
+    """The 1h candles of a 15m frame (the leg's timeframe needs its own ATR since the 2026-10-18 audit)."""
+    rows, out = df.select(['timestamp', 'open', 'high', 'low', 'close']).rows(), {}
+    for t, o, h, lo, c in rows:
+        k = int(t) // 3_600_000 * 3_600_000
+        b = out.setdefault(k, [k, o, h, lo, c, 1.0])
+        b[2], b[3], b[4] = max(b[2], h), min(b[3], lo), c
+    return list(out.values())
+
+
 class Frames:
     """dict-like frame lookup for SignalBook.update."""
 

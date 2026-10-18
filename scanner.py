@@ -122,6 +122,7 @@ class Scanner:
         self.web = None   # webui.WebUI, attached by main.py
         self.journal = journal
         self.notifier = Notifier()
+        self.notifier.check = self._entry_still_actionable
         from executor import DemoExecutor
         self.demo = DemoExecutor()
         self.demo.alert = lambda text: self.notifier.post(html.escape(text), topic='demo')
@@ -1931,6 +1932,27 @@ class Scanner:
                 return ru
         return r or 'по правилу метода'
 
+    @staticmethod
+    def _card_key(s) -> str:
+        return f"{s.symbol}|{s.group_key}|{s.created:.3f}"
+
+    def _entry_still_actionable(self, item) -> Optional[str]:
+        """The notifier's retry check of a queued ENTRY (audit 2026-10-18 P1): None while the trade is open and the price
+        still pays the plan's minimum R:R to TP1 against its stop (strategies.geometry's rule); else why not."""
+        from strategies.geometry import _min_rr
+        s = next((x for x in self.book.signals.values() if self._card_key(x) == item.get('card')), None)
+        if s is None or s.finished or not s.entered_at:
+            return f"the trade is no longer open ({s.status if s else 'card gone'})"
+        lv, d, p = s.levels or {}, s.direction, s.last_price
+        if not p or (s.plan or {}).get('no_stop') or not isinstance(lv.get('tp1'), (int, float)) or lv.get('rr_tp1') is None:
+            return None
+        risk, reward = d * (p - lv['sl']), d * (lv['tp1'] - p)
+        if risk <= 0 or reward <= 0:
+            return f"the price {p:.6g} is already beyond the stop / TP1"
+        if reward / risk < _min_rr(s.plan or {}):
+            return f"R:R from the price {p:.6g} is {reward / risk:.2f}, below the plan's minimum"
+        return None
+
     def _notify(self):
         """Card events for Telegram / toasts in Russian (the owner, 2026-10-07: the English one-liner with internal
         confirmation keys and the no-target placeholders as TPs was unreadable)."""
@@ -1993,7 +2015,7 @@ class Scanner:
                             f"стоп всех юнитов {px(lv['sl'])}\n{head}")
                 else:
                     text = head
-            self.notifier.send(event, title, text + "\n<i>механические правила, не совет</i>")
+            self.notifier.send(event, title, text + "\n<i>механические правила, не совет</i>", card=self._card_key(s))
 
     async def _output(self, created: List[TrackedSignal], entries: List[TrackedSignal]):
         # Sound on entries (the actionable moment), not on every new setup

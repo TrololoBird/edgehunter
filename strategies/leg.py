@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 import polars as pl
 
 from config import CONFIG
-from levels import _leg_levels, fib_price, find_impulse, retracement_of
+from levels import TF_MS, _leg_levels, fib_price, find_impulse, retracement_of
 from strategies.base import TRIGGER_MINUTES, PlanInput, Strategy, base_plan
 from strategies.geometry import select_targets
 from zones import merge
@@ -61,12 +61,21 @@ def _to_4h(h1: List[List[float]]) -> List[List[float]]:
     return [b for b, hs in zip(out, hours) if hs == [b[0] + i * 3_600_000 for i in range(4)]]
 
 
-def broke_structure(candles: List[List[float]], start_ts: int, end: float, direction: int) -> bool:
+def _adjacent(a, b, c, step_ms: Optional[int]) -> bool:
+    """Three rows are three consecutive candles of the timeframe (audit 2026-10-18: a hole between rows is missing data,
+    not a gap / swing the market made)."""
+    return step_ms is None or (int(b[0]) - int(a[0]) == step_ms and int(c[0]) - int(b[0]) == step_ms)
+
+
+def broke_structure(candles: List[List[float]], start_ts: int, end: float, direction: int,
+                    step_ms: Optional[int] = None) -> bool:
     """ICT: the impulse must break structure - its end beyond the last 3-candle swing high (up; low down) formed in the
     48 candles before the leg's start (a swing high below the start does not count for an up leg)."""
     before = [c for c in candles if c[0] < start_ts][-48:]
     for k in range(len(before) - 2, 0, -1):
         a, b, c = before[k - 1], before[k], before[k + 1]
+        if not _adjacent(a, b, c, step_ms):
+            continue
         if direction > 0 and b[2] > a[2] and b[2] > c[2]:
             return end > b[2]
         if direction < 0 and b[3] < a[3] and b[3] < c[3]:
@@ -74,13 +83,16 @@ def broke_structure(candles: List[List[float]], start_ts: int, end: float, direc
     return True                     # no swing in reach: nothing to break (a leg out of price discovery)
 
 
-def displacement(candles: List[List[float]], start_ts: int, end_ts: int, direction: int) -> bool:
+def displacement(candles: List[List[float]], start_ts: int, end_ts: int, direction: int,
+                 step_ms: Optional[int] = None) -> bool:
     """
     ICT's displacement: the leg left a fair value gap in its direction - three candles inside the leg where the first's
     high is below the third's low (up; mirrored down): price moved too fast for the other side to trade there.
     """
     leg = [c for c in candles if start_ts <= c[0] <= end_ts]
-    for a, c in zip(leg, leg[2:]):
+    for a, b, c in zip(leg, leg[1:], leg[2:]):
+        if not _adjacent(a, b, c, step_ms):
+            continue
         if (direction > 0 and a[2] < c[3]) or (direction < 0 and a[3] > c[2]):
             return True
     return False
@@ -123,9 +135,10 @@ class LegContinuation(Strategy):
             candles = _rows(x.df) if impulse['tf'] == '15m' else [list(c) for c in (x.h1 or [])]
             if impulse['tf'] == '4h':
                 candles = _to_4h(candles)        # audit 2026-10-18: a 4h leg's FVG / BOS on its own candles, not 1h
-            if not displacement(candles, impulse['start_ts'], impulse['end_ts'], d):
+            step = TF_MS[impulse['tf']]
+            if not displacement(candles, impulse['start_ts'], impulse['end_ts'], d, step):
                 return {'skip': 'no_displacement'}
-            if not broke_structure(candles, impulse['start_ts'], impulse['end'], d):
+            if not broke_structure(candles, impulse['start_ts'], impulse['end'], d, step):
                 return {'skip': 'no_bos'}
         zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None), atr, symbol=x.symbol)
         lo_ratio, hi_ratio = cfg.continuation_zone

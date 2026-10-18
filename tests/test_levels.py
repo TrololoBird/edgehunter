@@ -1,6 +1,6 @@
 from config import CONFIG
 from levels import fib_price
-from conftest import CUR15, minute
+from conftest import CUR15, h1_of, minute
 from levels import find_impulse, fill_price, ltf_trigger, pullback_volume_ok, resample, retracement_of, simulate
 from strategies import STRATEGIES, PlanInput
 from strategies.geometry import entry_levels
@@ -21,11 +21,13 @@ def bull_ltf(t0=CUR15, interval=FIVE, final_q=8e3):
 
 def _x(df, direction, setup, sig=None):
     return PlanInput(symbol='X', direction=direction, setup=setup, sig=sig or {}, df=df, minutes=[], raw_levels=[],
-                     h1=[], context=None, reached=None)
+                     h1=h1_of(df), context=None, reached=None)
 
 
 def test_impulse_plan_continuation_and_reversal(rally_frame):
-    imp = find_impulse(rally_frame, +1)
+    assert find_impulse(rally_frame, +1) is None or find_impulse(rally_frame, +1)['tf'] == '15m'   # no 1h: waits
+    h1 = h1_of(rally_frame)
+    imp = find_impulse(rally_frame, +1, h1)
     assert imp and imp['end'] > 119 and imp['start'] < 101 and imp['candles'] >= 4
     plan = STRATEGIES['continuation'].plan(_x(rally_frame, +1, 'IMPULSE UP'))
     assert plan['zone_lo'] < plan['zone_hi'] and plan['targets'][0] >= imp['end'] - 1e-9

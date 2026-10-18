@@ -257,6 +257,9 @@ class TrackedSignal:
     # the order-flow entry in the zone (SignalBook._flow_entry): checked once a minute, journaled once per card
     flow_checked_ms: int = 0
     tp_ms: int = 0                              # audit B03: the end of the last final minute checked for TP1 before an entry
+    # audit 2026-10-18 D: when each part of the position left (ms; 'tp1' / 'tp2' / 'p1r'), so funding is charged on what
+    # was still held at each settlement, not on the whole position until the last exit
+    part_ms: dict = field(default_factory=dict)
     flow_done: bool = False
     # eng-137 (audit A01): the end of the last final 1m candle checked against the invalidation (0 = from the minute
     # after the card's creation); audit A02: how the rest of the entry minute was judged ('' = not yet, 'trades' =
@@ -733,6 +736,7 @@ class SignalBook:
                     and not plan.get('p1r_done') and not s.units and (plan.get('no_tp') or not lv.get('tp1') or
                                                                       d * (lv['tp1'] - lv['entry']) > risk * CONFIG.executor.partial_r):
                 plan['p1r_done'] = True
+                s.part_ms.setdefault('p1r', int(s.managed_ms or 0))
             if be_r and risk and fav >= be_r * risk:
                 # eng-84: the stop to break-even + costs once price traded +be_r R its way (off by default, eng-111)
                 be = lv['entry'] * (1 + d * BE_COST)
@@ -823,22 +827,32 @@ class SignalBook:
             self.events.append((s, 'RESTOP'))
 
     @staticmethod
-    def _cost_r(s: TrackedSignal, risk: float, exit_ms: float) -> float:
+    def _funding_r(s: TrackedSignal, risk: float, price: float, t0_ms: float, t1_ms: float) -> float:
+        """Funding in R of a whole position at `price` held over (t0, t1]."""
+        if t1_ms <= t0_ms:
+            return 0.0
+        if FUNDING_PAID is not None:
+            # eng-138 (audit R06): the settled rates themselves (the archive's fundingRate ledger in the replay), not the
+            # entry's rate for the whole hold
+            paid = FUNDING_PAID(s.symbol, t0_ms, t1_ms)
+            if paid is not None:
+                return s.direction * paid * price / risk
+        return funding_r(s.sig.get('funding_rate'), s.direction, price, risk, t0_ms, t1_ms, s.sig.get('funding_interval_h'))
+
+    @staticmethod
+    def _cost_r(s: TrackedSignal, risk: float, exit_ms: float, parts: Optional[List[Tuple[float, float]]] = None) -> float:
         """eng-58: the round trip's cost in R - fees, the slippage of the entry and of the exit (by the coin's
-        liquidity, levels.slippage_bps) and the funding settlements held through - as the journal's replay nets it."""
+        liquidity, levels.slippage_bps) and the funding settlements held through - as the journal's replay nets it.
+        audit 2026-10-18 D: `parts` = [(share, left at ms)] - each share pays funding only until it left (a third out
+        at TP1 pays no later settlement); None = the whole position held to exit_ms."""
         lv = s.levels or {}
         entry = lv.get('entry')
         if not entry or not risk:
             return 0.0
         cost = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(s.sig.get('volume_24h'), s.symbol) / 1e4) * entry / risk
-        if FUNDING_PAID is not None:
-            # eng-138 (audit R06): the settled rates themselves (the archive's fundingRate ledger in the replay), not the
-            # entry's rate for the whole hold
-            paid = FUNDING_PAID(s.symbol, (s.entered_at or 0) * 1000, exit_ms)
-            if paid is not None:
-                return cost + s.direction * paid * entry / risk
-        return cost + funding_r(s.sig.get('funding_rate'), s.direction, entry, risk, (s.entered_at or 0) * 1000, exit_ms,
-                                s.sig.get('funding_interval_h'))
+        t0 = (s.entered_at or 0) * 1000
+        return cost + sum(share * SignalBook._funding_r(s, risk, entry, t0, min(t1, exit_ms) if t1 else exit_ms)
+                          for share, t1 in (parts or [(1.0, exit_ms)]))
 
     @staticmethod
     def _exit_r(s: TrackedSignal, status: str) -> Optional[float]:
@@ -861,7 +875,15 @@ class SignalBook:
             if gross is not None and (s.plan or {}).get('p1r_done'):
                 share = CONFIG.executor.partial_share
                 gross = share * CONFIG.executor.partial_r + (1 - share) * gross   # eng-105: the partial at +1R
-            return None if gross is None else gross - SignalBook._cost_r(s, risk, exit_ms) * max(1, len(s.units or []))
+            if gross is None:
+                return None
+            if not s.units:
+                return gross - SignalBook._cost_r(s, risk, exit_ms, parts=SignalBook._parts_held(s, 0, exit_ms))
+            # audit 2026-10-18 D: each unit pays its own round trip and the funding from the time it was added, at its
+            # own price (was: every unit charged the first unit's funding from the trade's entry)
+            fees = SignalBook._cost_r(s, risk, exit_ms, parts=[(1.0, (s.entered_at or 0) * 1000)])   # costs, no funding
+            return gross - sum(fees * u[0] / lv['entry'] + SignalBook._funding_r(s, risk, u[0], u[1] * 1000, exit_ms)
+                               for u in s.units)
         if not risk:
             return s.r_now
         reached = 3 if status == 'TP3' else min(int(s.best_target or 0), 3)
@@ -875,7 +897,20 @@ class SignalBook:
         if (s.plan or {}).get('p1r_done'):
             share = CONFIG.executor.partial_share
             gross = share * CONFIG.executor.partial_r + (1 - share) * gross     # eng-105: the partial at +1R
-        return gross - SignalBook._cost_r(s, risk, exit_ms)
+        return gross - SignalBook._cost_r(s, risk, exit_ms, parts=SignalBook._parts_held(s, reached, exit_ms))
+
+    @staticmethod
+    def _parts_held(s: TrackedSignal, reached: int, exit_ms: float) -> List[Tuple[float, float]]:
+        """The position's parts as _exit_r books them, each with the time it left (audit 2026-10-18 D)."""
+        pm, plan = s.part_ms or {}, s.plan or {}
+        if plan.get('trail_after_tp1'):
+            parts = [(0.5, pm.get('tp1', exit_ms) if reached >= 1 else exit_ms), (0.5, exit_ms)]
+        else:
+            parts = [(1 / 3, pm.get(f'tp{k}', exit_ms) if k <= reached and k < 3 else exit_ms) for k in (1, 2, 3)]
+        if plan.get('p1r_done'):
+            share = CONFIG.executor.partial_share
+            parts = [(share, pm.get('p1r', exit_ms))] + [((1 - share) * w, t) for w, t in parts]
+        return parts
 
     def _invalid_reason(self, s: TrackedSignal, price: float, invalid: float) -> str:
         anchor = (s.plan or {}).get('anchor') or {}
@@ -1553,7 +1588,7 @@ class SignalBook:
         if version_no(s.logic_version) >= 141 and candles:
             # audit V04: a hole in the minutes (also right after the last managed minute) is UNKNOWN price action - a
             # bridge knows the two ends, not the hidden high / low. The trade waits at the hole while the minute
-            # patching can still fill it; a hole that stays is crossed with the bridge and the trade is flagged, its
+            # patching can still fill it; a hole that stays is crossed on the real minutes and the trade is flagged, its
             # result named as resting on missing data
             now_ms, expected = int(now * 1000), int(s.managed_ms)
             for i, c in enumerate(candles):
@@ -1568,18 +1603,11 @@ class SignalBook:
                                        f"-{time.strftime('%H:%M', time.gmtime(int(c[0]) / 1000))} UTC missing: the trade "
                                        f"is managed across the hole, its hidden extremes unknown")
                 expected = int(c[0]) + MINUTE_MS
-        if version_no(s.logic_version) >= 141 and len(candles) > 1:
-            # audit B09: missing minutes are not 'nothing happened'. The path from the last close before the hole to the
-            # next open is certain (price is continuous): a bridge candle with that range stands for the hole, so a
-            # stop between the two is taken (stamped at the hole's last minute, so a time exit due inside it still comes first) instead of the next available minute crediting a target
-            bridged = [candles[0]]
-            for c in candles[1:]:
-                prev = bridged[-1]
-                if int(c[0]) - int(prev[0]) > MINUTE_MS:
-                    pc, no = float(prev[4]), float(c[1])
-                    bridged.append([int(c[0]) - MINUTE_MS, pc, max(pc, no), min(pc, no), no, 0.0])
-                bridged.append(c)
-            candles = bridged
+        # audit 2026-10-18 P0 (replaces eng-141's B09 bridge candle): a hole is crossed on the real minutes only. A level
+        # between the close before the hole and the open after it lies beyond that open, so the next real minute catches
+        # it (the stop is checked before targets) and fills at its observed open; the made-up bridge bar opened at the
+        # old close and credited the stop price itself (long SL 99, 100 -> hole -> 95 filled at 99, not 95). The fill
+        # is still an estimate: the hole is flagged in plan['data_gaps'] and named in the finish reason
         # audit A08: the exit levels that are price conditions (the Turtles' N-day channel, Bollinger's opposite band)
         # are checked on every final 1m candle's extremes like the stop - the scan price missed the wicks between scans.
         # Each minute is judged on the levels known at its OPEN (review of 6b771ba): only the days / 4h bars closed by
@@ -1638,6 +1666,8 @@ class SignalBook:
             for k in (() if (s.plan or {}).get('no_tp') else (1,) if (s.plan or {}).get('trail_after_tp1') else (3, 2, 1)):
                 t = lv[f'tp{k}']
                 if k > s.best_target and ((hi >= t * (1 + through)) if d > 0 else (lo <= t * (1 - through))):
+                    for j in range(1, k + 1):
+                        s.part_ms.setdefault(f'tp{j}', int(c[0]) + MINUTE_MS)
                     s.best_target = k
                     if k < 3:
                         self.events.append((s, f'TP{k}'))

@@ -1,8 +1,9 @@
-from conftest import CHOP, CUR15, Frames, frame
+from conftest import CHOP, CUR15, Frames, frame, h1_of
 from indicators import compute_indicators
 from signal_book import SignalBook
 
-FIVE = 5 * 60_000
+# the fixture leg spans 6h: a 1h structure (Elder's factor of five), its trigger on 15m bars (TRIGGER_MINUTES)
+TRIG = 15 * 60_000
 T_ZONE = CUR15 / 1000 + 10          # scan time that puts zone_since_ms exactly at CUR15 (a 5m boundary)
 
 IMPULSE_UP = dict(is_structured=False, alert_type='ANOMALY', price_change_5m=0.03, oi_change_5m=0.01,
@@ -13,19 +14,19 @@ MARKUP = dict(alert_type='LONG', price_change_5m=0.03, price_z=8.0, oi_change_5m
               has_spot=True)
 
 
-def minutes_for_bars(bars):
-    """1m candles whose 5m resample reproduces `bars` (the whole bar in its first minute, flat fillers after)."""
+def minutes_for_bars(bars, per=TRIG // 60_000):
+    """1m candles whose `per`-minute resample reproduces `bars` (the whole bar in its first minute, flat fillers after)."""
     out = []
     for b in bars:
         out.append([b[0], b[1], b[2], b[3], b[4], b[5], b[6]])
-        for k in range(1, 5):
+        for k in range(1, per):
             out.append([b[0] + k * 60_000, b[4], b[4], b[4], b[4], 0.0, 0.0])
     return out
 
 
-def bull_bars(t0, final_q=8e3):
+def bull_bars(t0, final_q=8e3, interval=TRIG):
     def bar(i, o, h, l, c, q=1e4, Q=5e3):
-        return [t0 + i * FIVE, o, h, l, c, q, Q]
+        return [t0 + i * interval, o, h, l, c, q, Q]
     # eng-119: two candles before the 111.2 high make it a real 2/2 swing (no swing, no structure shift)
     return [bar(-5, 110.5, 110.9, 110.4, 110.7), bar(-4, 110.7, 111.0, 110.6, 110.9),
             bar(-3, 111, 111.2, 110.6, 110.8), bar(-2, 110.8, 110.9, 110.2, 110.3), bar(-1, 110.3, 110.4, 109.9, 110.0),
@@ -51,6 +52,7 @@ def _shift_entry(monkeypatch):
 
 def _book_in_zone(rally_frame, confirm):
     book = SignalBook()
+    book.htf_of = lambda _s: h1_of(rally_frame)
     price = {'X': 119.5}
     candles = {'X': []}
     pf = lambda s: price.get(s)
@@ -72,7 +74,7 @@ def test_continuation_lifecycle_with_orderflow_confirm(rally_frame, monkeypatch)
     _shift_entry(monkeypatch)
     confirm = lambda sym, strategy, d, since, until, extreme: {'flow': True, 'oi': True, 'orderflow': 'imbalance'}
     book, s, price, candles, pf, cf = _book_in_zone(rally_frame, confirm)
-    now = CUR15 / 1000 + 4 * 300 + 5
+    now = CUR15 / 1000 + 4 * TRIG / 1000 + 5
     _, entries = book.update([], Frames(rally_frame), pf, cf, now, confirm_of=confirm)
     assert entries == [s] and s.status == 'ENTRY' and s.levels['entry'] == 111.4 and s.of_confirm == 'imbalance'
     assert s.confirms['orderflow'] == 'imbalance'
@@ -110,10 +112,10 @@ def test_trigger_without_orderflow_is_vetoed_and_card_keeps_waiting(rally_frame,
     _shift_entry(monkeypatch)
     none = lambda sym, strategy, d, since, until, extreme: {'flow': True, 'oi': True, 'orderflow': False}
     book, s, price, candles, pf, cf = _book_in_zone(rally_frame, none)
-    now = CUR15 / 1000 + 4 * 300 + 5
+    now = CUR15 / 1000 + 4 * TRIG / 1000 + 5
     _, entries = book.update([], Frames(rally_frame), pf, cf, now, confirm_of=none)
     assert len(entries) == 1 and entries[0].vetoed == 'no_orderflow' and entries[0] is not s
-    assert s.status == 'ZONE' and s.entered_at is None and s.zone_since_ms == CUR15 + 4 * FIVE and s.vetoed_triggers == 1
+    assert s.status == 'ZONE' and s.entered_at is None and s.zone_since_ms == CUR15 + 4 * TRIG and s.vetoed_triggers == 1
 
 
 def test_shadow_veto_enters_and_journals_the_reason(rally_frame, monkeypatch):
@@ -124,7 +126,7 @@ def test_shadow_veto_enters_and_journals_the_reason(rally_frame, monkeypatch):
     _shift_entry(monkeypatch)
     none = lambda sym, strategy, d, since, until, extreme: {'flow': True, 'oi': True, 'orderflow': False}
     book, s, price, candles, pf, cf = _book_in_zone(rally_frame, none)
-    now = CUR15 / 1000 + 4 * 300 + 5
+    now = CUR15 / 1000 + 4 * TRIG / 1000 + 5
     _, entries = book.update([], Frames(rally_frame), pf, cf, now, confirm_of=none)
     # the confirmation no longer blocks (the next real rule, the fixture's low_rr, decides)
     assert len(entries) == 1 and entries[0].vetoed != 'no_orderflow' and 'no_orderflow' in s.sig['shadow_veto']
@@ -151,14 +153,16 @@ def test_perp_led_impulse_is_vetoed(rally_frame, monkeypatch):
 
 def test_invalid_dedupe_bias(rally_frame):
     from levels import find_impulse
-    imp = find_impulse(rally_frame, +1)
+    imp = find_impulse(rally_frame, +1, h1_of(rally_frame))
     b2 = SignalBook()
+    b2.htf_of = lambda _s: h1_of(rally_frame)
     p2 = {'Y': 119.5}
     s2 = b2.update([('Y', MARKUP)], Frames(rally_frame), lambda x: p2.get(x), lambda x: [], T_ZONE)[0][0]
     p2['Y'] = imp['start'] - 0.5
     b2.update([], Frames(rally_frame), lambda x: p2.get(x), lambda x: [], T_ZONE + 10)
     assert s2.status == 'INVALID'
     b3 = SignalBook()
+    b3.htf_of = lambda _s: h1_of(rally_frame)
     b3.update([('Z', MARKUP)], Frames(rally_frame), lambda x: 119.5, lambda x: [], T_ZONE)
     spring = dict(is_structured=True, alert_type='LONG', long_score=3, short_score=0, phase_b_score=3, active_phases=['B'])
     created, _ = b3.update([('Z', spring)], Frames(rally_frame), lambda x: 119.5, lambda x: [], T_ZONE + 10)

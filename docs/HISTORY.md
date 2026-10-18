@@ -807,3 +807,21 @@ is the Binance price; only used when the position gives no average). Not measure
   in a bearish week - too small and correlated for any rule change.
 - Silent briefing records for every pinned coin (`_save`, `silent: true`; posts still BTC/ETH/XAU), `snapshot_outcomes` at the 23:30 recap -> data/briefing_outcomes.jsonl (14-day tally per coin), `outcomes_total` on the analysis tab.
 - Loop stalls (319 'Event loop blocked' in 24 h, 1-3 s, victims: polars/numpy calls waiting for the GIL): the panel prewarm thread ran the pure-Python minute->15m/1h `resample` for each direction every 20 s; now cached per (coin, tf, minute ring, bucket) in `fetcher._RESAMPLE_CACHE`. Same results.
+
+## eng-142 (external audit 2026-10-18 "edgehunter recommendations eng141"; branch eng-142-audit)
+Base: the live tree's uncommitted audit-2026-10-18 fixes (commit d021a9e, running since the 18.10 17:57 restart) + the report's items:
+- P0 gap fill: eng-141's B09 bridge candle (last close -> next open as a made-up bar) is removed. Reproduced: long entry 100 / SL 99,
+  close 100, hole, next open 95 -> filled 99; now 95 (the first observed price). A level between the two ends lies beyond the next open,
+  so the real minute catches it; the hole stays flagged (`plan['data_gaps']`, "[data gap ...]" in the finish reason).
+- P1 leg timeframe: `find_impulse` no longer re-measures a 1h / 4h leg as a 15m one (15m ATR, 5m trigger) when the higher-timeframe ATR
+  is missing - it returns None (no plan, the card waits). Reproduced on a 7.5h leg: no 1h -> 15m / 5m / ATR 1, 1h -> 1h / 15m / ATR 2.
+  Tests now feed the fixture's 1h candles (`conftest.h1_of`); the lifecycle tests use 15m trigger bars (the fixture leg is 6h = 1h).
+- P1 displacement / BOS: three rows count only as three consecutive candles of the leg's timeframe (`leg._adjacent`). Reproduced:
+  timestamps [0, 15m, 45m] passed as an FVG.
+- P1 outbox: a card event carries card / event / seq; a retry drops an ENTRY whose trade is no longer open or whose price no longer pays
+  the plan's minimum R:R to TP1 (`Scanner._entry_still_actionable`), and a RESTOP superseded by a newer event of the card.
+- P1/P2 funding: charged per part of the position until it left (`TrackedSignal.part_ms` tp1 / tp2 / p1r, `SignalBook._parts_held`),
+  each Turtle unit from its own add time and at its own price (was: the whole position to the last exit, every unit from the entry).
+- cost_guard: the config text no longer calls it "the break-even formula" (a policy cap; costs > 1R can still have positive expectancy).
+Not done (proposals, separate changes): the TP1 hit-rate veto as expectancy (P1 #5), obstacles / horizon diagnostics (P2 #7), sizing /
+leverage assumptions in the UI (P2 #8), the stage-0 parameter-provenance table.

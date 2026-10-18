@@ -15,7 +15,7 @@ import errors
 import json
 import platform
 import time
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 import aiohttp
 
@@ -50,6 +50,15 @@ class Notifier:
         self._prio_waiting = 0
         self._outbox: List[Dict] = self._load_outbox()
         self._retry_task: Optional[asyncio.Task] = None
+        # audit 2026-10-18 P1: a queued card event knows its card and its place in the card's event order, so a retry
+        # can drop what the card's later state made wrong (an ENTRY of a closed trade, a RESTOP behind a newer one).
+        # `check(item)` is set by the scanner: None = still actionable, else the reason it is not
+        self._seq = max([int(i.get('seq') or 0) for i in self._outbox] + [0])
+        self._last_event: Dict[str, int] = {}
+        for i in self._outbox:
+            if i.get('card'):
+                self._last_event[i['card']] = max(self._last_event.get(i['card'], 0), int(i.get('seq') or 0))
+        self.check: Optional[Callable[[Dict], Optional[str]]] = None
 
     OUTBOX_PATH = 'notify_outbox.json'
     OUTBOX_TTL_SEC = 900.0          # a trading instruction older than this is dropped: its price is no longer actionable
@@ -92,6 +101,12 @@ class Notifier:
                         self._outbox.remove(item)
                         self._save_outbox()
                         continue
+                    stale = self._stale(item)
+                    if stale:
+                        logger.info(f"Telegram message not retried ({stale}): {item['text'][:60]!r}")
+                        self._outbox.remove(item)
+                        self._save_outbox()
+                        continue
                     text = item['text']
                     if age > self.LATE_NOTE_SEC:
                         text = (f"⏱ <i>доставлено с опозданием {age / 60:.0f} мин: цены могли уйти, "
@@ -103,6 +118,20 @@ class Notifier:
                         self._save_outbox()
         finally:
             self._retry_task = None
+
+    def _stale(self, item: Dict) -> Optional[str]:
+        """Why a queued card event is no longer an instruction (None: deliver it)."""
+        card, event = item.get('card'), item.get('event') or ''
+        if not card:
+            return None
+        if event == 'RESTOP' and self._last_event.get(card, 0) > int(item.get('seq') or 0):
+            return 'a newer event of the card superseded it'
+        if event == 'ENTRY' and self.check is not None:
+            try:
+                return self.check(item)
+            except Exception as e:                       # a check that fails never blocks a delivery
+                logger.warning(f"Telegram outbox check failed: {e!r}")
+        return None
 
     SENT_DB_PATH = 'data/tg_sent.db'
 
@@ -183,14 +212,21 @@ class Notifier:
     def wants(self, event: str) -> bool:
         return self.enabled and any(event.startswith(e) for e in self.cfg.events)
 
-    def send(self, event: str, title: str, text: str):
-        """Fire-and-forget; `event` is matched against notify.events (ENTRY, TP, SL, ZONE)."""
+    def send(self, event: str, title: str, text: str, card: Optional[str] = None):
+        """Fire-and-forget; `event` is matched against notify.events (ENTRY, TP, SL, ZONE); `card` identifies the card
+        for the outbox's staleness check."""
+        meta = None
+        if card:
+            self._seq += 1
+            self._last_event[card] = self._seq
+            meta = {'card': card, 'event': event, 'seq': self._seq}
         if not self.wants(event):
             return
         loop = asyncio.get_running_loop()
         import re
         plain = re.sub(r'</?[a-zA-Z][^>]*>', '', text)
-        for coro in (self._toast(title, plain), self._telegram(f"<b>{title}</b>\n{text}", html=True, topic='signals', priority=True)):
+        for coro in (self._toast(title, plain), self._telegram(f"<b>{title}</b>\n{text}", html=True, topic='signals', priority=True,
+                                                                     meta=meta)):
             task = loop.create_task(coro)
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
@@ -293,15 +329,16 @@ class Notifier:
         for c in chunks:
             await self._telegram(c, html=True, topic=topic)
 
-    async def _telegram(self, text: str, html: bool = False, topic: str = 'alerts', priority: bool = False):
+    async def _telegram(self, text: str, html: bool = False, topic: str = 'alerts', priority: bool = False,
+                        meta: Optional[Dict] = None):
         token, _ = self._creds()
         if not token:
             return
         for chat, thread in self._targets(topic):
-            await self._telegram_to(token, chat, thread, text, html, priority)
+            await self._telegram_to(token, chat, thread, text, html, priority, meta=meta)
 
     async def _telegram_to(self, token: str, chat, thread, text: str, html: bool, priority: bool = False,
-                           queue: bool = True) -> bool:
+                           queue: bool = True, meta: Optional[Dict] = None) -> bool:
         """One message to one destination; True when Telegram took it. With `priority` (a trading instruction) a failed
         delivery (HTTP 5xx / 429 / a network error / a busy lock) goes to the outbox for the retry loop (audit B05)."""
         retryable = False
@@ -321,7 +358,7 @@ class Notifier:
                 # message goes out as plain text instead of not at all
                 import re
                 return await self._telegram_to(token, chat, thread, re.sub(r'</?[a-zA-Z][^>]*>', '', text), False,
-                                               priority, queue)
+                                               priority, queue, meta)
             retryable = status >= 500 or status == 429
             self._log_sent('message', chat, thread, text, f"{status} {body}", False)
             logger.warning(f"Telegram notification failed: HTTP {status} {body}")
@@ -330,7 +367,8 @@ class Notifier:
             self._log_sent('message', chat, thread, text, self._redact(e)[:200], False)
             logger.warning(f"Telegram notification failed: {self._redact(e)}")    # repr: a timeout's str() is empty
         if priority and queue and retryable:
-            self._outbox.append({'text': text, 'chat': chat, 'thread': thread, 'html': html, 'ts': time.time()})
+            self._outbox.append({'text': text, 'chat': chat, 'thread': thread, 'html': html, 'ts': time.time(),
+                                 **(meta or {})})
             self._save_outbox()
             self.resume()
         return False
