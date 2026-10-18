@@ -260,6 +260,8 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
                   skips: Optional[List] = None) -> List[Dict]:
     """crypto_maniac's systems on the candle that just closed (15m), and on the hour when one closed (1h)."""
     from strategies import maniac
+    h4 = merge_candles(h4, [], cut, 4 * HOUR_MS)
+    d1 = merge_candles(d1, [], cut, 24 * HOUR_MS)
     log = logging.getLogger(__name__)
     events: List[Dict] = []
     short = skips.append if skips is not None else (lambda _: None)
@@ -354,6 +356,8 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
     if not candles_15m or not atr:
         return None
     cut = int(candles_15m[-1][0]) + QUARTER_MS
+    if cut > now_ms:
+        return None  # the supplied ATR and last candle are not yet observable
     last_open = int(candles_15m[-1][0])
     closed_1h = [c for c in candles_1h if c[0] + HOUR_MS <= cut]
     ctx = Context(atr=atr, recent_atr=recent_atr(candles_15m), cut_ms=cut, zones=zones,
