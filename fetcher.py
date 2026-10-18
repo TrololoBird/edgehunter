@@ -21,7 +21,7 @@ from strategies import confirm
 from flow import SPOT_VENUES, Footprint, FlowStore, Sweep, SweepTracker, WhaleBook, absorption_in, minute_atr_15m
 from indicators import RAW_SCHEMA, TIMEFRAME_MS, empty_raw_frame, merge_live_candle, seasonal_factors
 from ratelimit import RATE_LIMIT_ERRORS, BanState, RestGate
-from symbols import SymbolMap, VenueMarket
+from symbols import SymbolMap, VenueMarket, split_base
 from netstate import NETWORK
 from venues import BinanceStream, VENUE_MARKETS, VENUE_STREAMS, venue_market_rows
 
@@ -907,6 +907,8 @@ class DataFetcher:
         USD-M perpetuals above the volume floor, most liquid first; refreshes the reference prices (the other venues'
         mapping check), the spreads (bookTicker, weight 5) and the ids of every USDT perpetual (market baseline).
         """
+        # audit V05: before the loop - every ticker skipped as inactive left it unset for the final log
+        floor = min(CONFIG.exchange.min_24h_quote_volume_usd, CONFIG.exchange.smallcap_min_volume_usd or 1e18)
         tickers = await self._rest_call(self.futures_exchange, 'fetch_tickers', priority=0, weight=40)
         quote = CONFIG.exchange.quote_currency
         excluded_types = set(CONFIG.exchange.excluded_underlying_types)
@@ -939,7 +941,6 @@ class DataFetcher:
             status = str((market.get('info') or {}).get('status') or 'TRADING').upper()
             if market.get('active') is False or status != 'TRADING':
                 continue
-            floor = min(CONFIG.exchange.min_24h_quote_volume_usd, CONFIG.exchange.smallcap_min_volume_usd or 1e18)
             if (pinned or quote_vol >= floor) and is_active:      # eng-99: small caps are candidates too
                 # pinned coins first (CONFIG.exchange.pinned_bases), then by volume
                 usdt_pairs.append((s, float('inf') if pinned else quote_vol))
@@ -1106,10 +1107,9 @@ class DataFetcher:
 
     def _normalize_1000x_symbol(self, futures_symbol: str) -> str:
         """Normalize 1000x futures symbol to spot equivalent, e.g. 1000PEPE/USDT:USDT -> PEPE/USDT."""
-        base = self._to_spot_symbol(futures_symbol)
-        if base.startswith('1000') and '/' in base:
-            return base[4:]
-        return base
+        # audit (2nd part): the one tested prefix parser - base[4:] made 10000WEN '0WEN', 1000000MOG '000MOG'
+        coin, quote = self._to_spot_symbol(futures_symbol).partition('/')[::2]
+        return f"{split_base(coin)[0]}/{quote}" if quote else coin
 
     def needs_alt_spot(self, key: str) -> bool:
         """A universe coin whose spot market is Bybit's (no Binance spot pair): its Bybit spot trades are streamed."""
@@ -1125,11 +1125,8 @@ class DataFetcher:
         return None
 
     def get_volume_multiplier(self, symbol: str) -> float:
-        """Returns 1000.0 for 1000x tokens, 1.0 otherwise."""
-        base = self._to_spot_symbol(symbol)
-        if base.startswith('1000') and '/' in base:
-            return 1000.0
-        return 1.0
+        """The contract's coin multiplier: 1000 for 1000PEPE, 1e4 for 10000WEN, 1e6 for 1000000MOG / 1MBABYDOGE, else 1."""
+        return split_base(self._to_spot_symbol(symbol).split('/')[0])[1]
 
     async def _fetch_klines(self, market: str, symbol: Optional[str], interval: Optional[str] = None,
                             limit: Optional[int] = None) -> List:
@@ -1228,6 +1225,12 @@ class DataFetcher:
         merged = dict(p for p in points if p[1]) | dict(state.samples)
         state.samples.clear()
         state.samples.extend(sorted(merged.items())[-state.samples.maxlen:])
+        price = md.last_price or self._binance_price(symbol)
+        if not state.oi_usd and state.samples and price:
+            # audit (2nd part): the venue's weight in the aggregate OI change - 0 until the first live sample made the
+            # seeded points count for nothing
+            state.oi_ts, coins = state.samples[-1]
+            state.oi_usd = coins * price
 
     def load_htf_background(self, symbol: str):
         """load_htf without waiting for it (at most one request set per coin in flight)."""
@@ -2360,7 +2363,7 @@ class DataFetcher:
                 # a venue whose ring is shorter than the window (Bitget / Hyperliquid / spot venues keep 15 min)
                 # would add only its last part: left out rather than a partial sum skewing the total
                 # ... or that started recording after the window began (a restart / reconnect): capacity is not coverage
-                if vf is None or b - a > vf.H or not vf.covers(a, b):
+                if vf is None or b - a > vf.H or not vf.covers(a, b, row):
                     continue
                 total += vf.row_range_sum(BUY, row, a, b, now_sec) - vf.row_range_sum(SELL, row, a, b, now_sec)
                 counted += 1
@@ -2412,9 +2415,8 @@ class DataFetcher:
                 slope = float(e[-1] - e[-11])
             h = np.asarray(md.h1_long) if len(md.h1_long) else None
             if h is not None and len(h) >= 15:
-                prev = h[:-1, 4]
-                tr = np.maximum(h[1:, 2] - h[1:, 3], np.maximum(abs(h[1:, 2] - prev), abs(h[1:, 3] - prev)))
-                atr = float(tr[-14:].mean())
+                from levels import atr_of
+                atr = atr_of(h[-200:].tolist())             # Wilder's ATR14, the bot's one ATR
         except Exception as e:
             errors.report('fetcher.profile_context', e, md.symbol)
         return slope, atr
@@ -2432,7 +2434,10 @@ class DataFetcher:
             last = base[-1][0] if base else 0
             # the pure-Python resample of the minute ring was run for each direction and every 20 s by the prewarm
             # thread (the GIL it held stalled the loop 1-3 s): once per (coin, tf, last minute, bucket)
-            rkey = (len(minutes), minutes[0][0] if minutes else 0, minutes[-1][0] if minutes else 0, int(until_ms // (size * 60_000)))
+            # audit V07: + the minutes' content - a REST-revised minute (same timestamps, same count) served stale bars
+            from strategies.ind_panel import content_digest
+            rkey = (len(minutes), minutes[0][0] if minutes else 0, minutes[-1][0] if minutes else 0,
+                    int(until_ms // (size * 60_000)), content_digest(minutes[-180:]))   # revisions land on the recent minutes; a patched gap changes the count
             hit = _RESAMPLE_CACHE.get((md.symbol, size))
             if hit is not None and hit[0] == rkey:
                 bars = hit[1]

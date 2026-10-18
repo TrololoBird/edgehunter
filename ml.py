@@ -252,7 +252,10 @@ class RegimeModel:
         if futures_all is None or futures_all.is_empty():
             return {}
         df = futures_all.select('symbol', 'timestamp', 'close', 'ret_std', 'predicted_funding', 'oi_change_short', 'rvol')
-        df = df.with_columns((pl.col('close') / pl.col('close').shift(4) - 1).over('symbol').alias('ret_1h'))
+        # audit (2nd part): the close 1h earlier BY TIME (shift(4) crossed a gap in the candles)
+        prev = df.select('symbol', (pl.col('timestamp') + 3_600_000).alias('timestamp'), pl.col('close').alias('_c1h'))
+        df = df.join(prev, on=['symbol', 'timestamp'], how='left', maintain_order='left') \
+            .with_columns((pl.col('close') / pl.col('_c1h') - 1).alias('ret_1h')).drop('_c1h')
         market = df.group_by('timestamp').agg(
             (pl.col('ret_1h') > 0).mean().alias('breadth_1h'),
             pl.col('predicted_funding').median().alias('funding'),
@@ -389,6 +392,7 @@ class SuccessModel:
         self.detector = drift.ADWIN()
         self.n = 0
         self.correct = 0
+        self.seen = self.hits = 0            # predictions scored since this model started / was reset (accuracy)
 
     @staticmethod
     def features(row) -> Dict[str, float]:
@@ -480,6 +484,8 @@ class SuccessModel:
                 p = self.model.predict_proba_one(x).get(True, 0.5)
                 error = int((p >= 0.5) != label)
                 self.correct += 1 - error
+                self.seen += 1
+                self.hits += 1 - error
                 self.detector.update(error)
                 if self.detector.drift_detected:
                     self.drifts += 1
@@ -507,6 +513,9 @@ class SuccessModel:
         prior = pickle.loads(self._prior)
         self.model, self.n, self.correct = prior['model'], prior['n'], prior['correct']
         self.detector = drift.ADWIN()
+        # audit (2nd part): accuracy is measured from here - the prior's n / correct (400k archive rows) made it the
+        # archive's accuracy, blind to the live errors that had just triggered the drift reset
+        self.seen = self.hits = 0
 
     @property
     def mature(self) -> bool:
@@ -514,7 +523,7 @@ class SuccessModel:
 
     @property
     def accuracy(self) -> Optional[float]:
-        return self.correct / (self.n - 1) if self.n > 1 else None
+        return self.hits / self.seen if self.seen else None
 
 
 def label_of(row, baseline: Optional[float]) -> Optional[bool]:

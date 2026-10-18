@@ -18,7 +18,7 @@ import dataclasses
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -977,6 +977,9 @@ class BriefingConfig:
     span_atr_1d: float = 5.0           # zones within this many daily ATRs of the price (3 resistances / 2 supports)
     shock_z: float = 4.0               # a 15m move of >= this x the coin's typical 15m move ...
     shock_min_pct: float = 0.012       # ... and >= 1.2%
+    # owner 2026-10-18: the weekly background is not 'bull' / 'bear' while the 4h trends the other way with ADX(4h) >=
+    # this (BTC 'bull' in 20 of 20 briefings 10-12..10-18 with 4h down, ADX 4h 22 -> 49): it reads 'conflict' (0 = off)
+    bias_h4_adx: float = 25.0
 
 
 @dataclass(frozen=True)
@@ -995,6 +998,10 @@ class JournalConfig:
     eval_interval_sec: int = 60
     # Rows evaluated per pass; one 1m-kline request fills every due horizon of a row (weight <= 2 each)
     max_evals_per_pass: int = 60
+    # audit #21 (2026-10-18): an entry's outcome (p(TP1) of geometry.HIT_RATE) is replayed over the trade's real life,
+    # not the 8h horizon - live trades have no clock (structural_lifetimes): 25% of demo trades ran > 8h, 10% > 29h.
+    # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
+    outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
     logic_version: str = "eng-141"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
@@ -1028,8 +1035,11 @@ class PretrainConfig:
     download_bytes_per_sec: float = 1_000_000
     # The bot re-runs pretrain.py by itself (a background process at below-normal priority, one worker: the machine
     # has little free memory) when pretrained.pkl is missing or older than this, and reloads the models when done
-    # the bot re-runs pretrain.py by itself (stale / other logic version); off while the logic is still changing
-    auto: bool = True
+    # the bot re-runs pretrain.py by itself (stale / other logic version); off while the logic is still changing.
+    # audit (2nd part): off - pretrain.py still replays the 15m phases A-F / breakout / sweep of eng-7 (deleted live)
+    # and none of the 13 current strategies, so the weekly background run trained P(edge) on setups the bot no
+    # longer trades (and took the small VPS's RAM / CPU for it)
+    auto: bool = False
     auto_refresh_days: int = 7
     auto_workers: int = 1
     auto_bytes_per_sec: float = 300_000
@@ -1079,6 +1089,12 @@ class ExecutorConfig:
     strategy_kill_r: float = 0.0      # no new trades of a strategy whose last strategy_kill_n closed trades sum <= -this R
     strategy_kill_n: int = 30
     day_alert_r: float = 0.0          # a Telegram alert (not a block) once the UTC day's closed trades lost this many R
+    # owner 2026-10-18 (live demo 10-11..10-17: 3 longs in one 15 min all stopped, LDO/ATOM/VIRTUAL, ONDO/FIL/NIGHT,
+    # MAGIC/ALGO/APE): at most one demo entry per direction within cluster_entry_sec (0 = off)
+    cluster_entry_sec: int = 900
+    # owner 2026-10-18: no demo trade of these setups (live demo 10-11..10-17: 23 of 30 lost, -17.8R of -33.8R, BTC up
+    # or down alike); their cards are still journaled
+    demo_off_setups: tuple = ('BB W-BOTTOM', 'VA80 LONG', 'AUCTION LONG')
     daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 
@@ -1129,6 +1145,29 @@ class AppConfig:
 LOCAL_CONFIG_PATH = os.environ.get('EDGEHUNTER_CONFIG') or os.environ.get('PUMP_CONFIG') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.local.toml')
 
 
+# audit F07: the domains of the overrides that size real risk (the type check let risk_pct = NaN, partial_share = 1.5,
+# max_leverage = -2 through). (low, high, low inclusive); None = unbounded
+_RANGES: Dict[Tuple[str, str], Tuple[Optional[float], Optional[float], bool]] = {
+    ('executor', 'risk_pct'): (0.0, 100.0, False),
+    ('executor', 'partial_share'): (0.0, 1.0, True),
+    ('executor', 'max_leverage'): (1, None, True),
+    ('executor', 'max_notional_usd'): (0.0, None, False),
+    ('executor', 'daily_loss_r'): (0.0, None, True),
+    ('executor', 'max_trades_day'): (0, None, True),
+    ('executor', 'pause_losses'): (0, None, True),
+}
+
+
+def _in_range(section: str, key: str, value):
+    rng = _RANGES.get((section, key))
+    if rng is not None:
+        lo, hi, lo_incl = rng
+        if lo is not None and (value < lo or (value == lo and not lo_incl)) or hi is not None and value > hi:
+            raise ValueError(f"[{section}] {key}: {value!r} is outside its domain "
+                             f"{'[' if lo_incl else '('}{lo}, {hi if hi is not None else 'inf'}]")
+    return value
+
+
 def _coerce(section: str, key: str, current: Any, value: Any) -> Any:
     """Type-check one override against the default's type (lists become tuples, ints are accepted for floats)."""
     if isinstance(current, bool):
@@ -1142,11 +1181,16 @@ def _coerce(section: str, key: str, current: Any, value: Any) -> Any:
     if isinstance(current, float):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"[{section}] {key}: expected a number, got {value!r}")
-        return float(value)
+        import math
+        if not math.isfinite(value):
+            raise ValueError(f"[{section}] {key}: must be a finite number, got {value!r}")   # audit F07: NaN passed
+        return _in_range(section, key, float(value))
     if isinstance(current, int):
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"[{section}] {key}: expected an integer, got {value!r}")
-        return value
+        if key.endswith(('_window', '_period', '_bars', '_candles')) and value < 1:
+            raise ValueError(f"[{section}] {key}: a window / period must be >= 1, got {value!r}")
+        return _in_range(section, key, value)
     if isinstance(current, str):
         if not isinstance(value, str):
             raise ValueError(f"[{section}] {key}: expected a string, got {value!r}")

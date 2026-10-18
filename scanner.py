@@ -16,7 +16,7 @@ import polars as pl
 
 from config import CONFIG
 from ml import AnomalyModel, RegimeModel
-from levels import RESAMPLE_QUALITY, resample
+from levels import RESAMPLE_QUALITY, atr_of, resample
 from positioning import Positioning
 import scenarios
 from macro import Macro
@@ -449,10 +449,14 @@ class Scanner:
         if not price:
             return
         last[(symbol, d)] = now_ms
-        try:
-            self.journal.record_rush(symbol, d, price, dict(m, volume_24h=md.quote_volume_24h or None))
-        except Exception as e:
-            logger.debug(f"Rush journal {symbol}: {e!r}")
+        # audit (2nd part): in a thread like every other journal write - the journal's lock held by the evaluation
+        # thread blocked the Tier-0 loop here
+        def write(row=dict(m, volume_24h=md.quote_volume_24h or None)):
+            try:
+                self.journal.record_rush(symbol, d, price, row)
+            except Exception as e:
+                logger.debug(f"Rush journal {symbol}: {e!r}")
+        self._background_thread(write)
 
     async def _check_tier0(self):
         if not self.market_data:
@@ -820,7 +824,7 @@ class Scanner:
         self.detector.skip_log, self.loopside.skip_log = [], []
         self.loopside._skip_seen.clear()
         if self.journal:
-            self.journal.record_history_skips(rows)
+            self._background_thread(self.journal.record_history_skips, rows)   # the journal's lock: off the loop
 
     def _detect_setups(self) -> List[Tuple[str, Dict]]:
         """Detected setups of this scan as signals (the coin's live Tier-0 metrics + the setup's leg / note)."""
@@ -832,7 +836,6 @@ class Scanner:
             bands = self.fetcher.depth.liquidity_bands(symbol)
             setups = self.detector.scan(symbol, self._minute_candles(symbol), md.tier0, now_ms, bands)
             setups.extend(self.loopside.scan(symbol, md, now_ms))
-            self._drain_history_skips()
             if setups:
                 self._recent_setup[symbol] = now_ms
             for setup in setups:
@@ -853,6 +856,7 @@ class Scanner:
                 self._enrich(symbol, md, sig)
                 logger.info(f"Setup detected: {symbol} {setup['setup']} - {setup['setup_note']}")
                 out.append((symbol, sig))
+        self._drain_history_skips()                  # once a scan (was once per coin)
         return out
 
     def _opposite_band(self, symbol: str, direction: int, asof_ms: Optional[int] = None) -> Optional[float]:
@@ -1067,17 +1071,16 @@ class Scanner:
                 md.ret_std, md.oi_std = ret_std, oi_std
 
     def _tf_atrs(self, symbol: str, md=None) -> Dict[str, float]:
-        """ATR14 (simple mean of true ranges, as the bot's 15m ATR) of the coin's closed 1h / 4h / daily candles."""
+        """Wilder's ATR14 (levels.atr_of, the bot's one ATR) of the coin's closed 1h / 4h / daily candles."""
         md = md if md is not None else self.market_data.get(symbol)
         out: Dict[str, float] = {}
         if md is None:
             return out
         now_ms = time.time() * 1000
         for tf, rows, period in (('1h', md.h1, 3_600_000), ('4h', md.h4, 14_400_000), ('1d', md.d1, 86_400_000)):
-            closed = [r for r in list(rows)[-20:] if r[0] + period <= now_ms]
+            closed = [r for r in list(rows)[-200:] if r[0] + period <= now_ms]
             if len(closed) >= 15:
-                trs = [max(c[2] - c[3], abs(c[2] - p[4]), abs(c[3] - p[4])) for p, c in zip(closed[-15:-1], closed[-14:])]
-                out[tf] = sum(trs) / len(trs)
+                out[tf] = atr_of(closed)
         return out
 
     def _update_market_state(self, futures_all: pl.DataFrame):
@@ -1087,9 +1090,14 @@ class Scanner:
         """
         if futures_all.is_empty():
             return
+        # audit (2nd part): the closes 1h / 4h before the last candle BY TIME - tail(5) / tail(17) took the frame's
+        # first row when a coin had fewer candles (a 45-minute move read as 4h); no such candle -> null, left out
+        ts_last = pl.col('timestamp').last()
         last = futures_all.group_by('symbol', maintain_order=True).agg(
-            (pl.col('close').last() / pl.col('close').tail(5).first() - 1).alias('r1h'),
-            (pl.col('close').last() / pl.col('close').tail(17).first() - 1).alias('r4h'))
+            (pl.col('close').last() / pl.col('close').filter(pl.col('timestamp') == ts_last - 3_600_000).first() - 1)
+            .alias('r1h'),
+            (pl.col('close').last() / pl.col('close').filter(pl.col('timestamp') == ts_last - 14_400_000).first() - 1)
+            .alias('r4h'))
         r1h = last['r1h'].drop_nulls()
         r4h = last['r4h'].drop_nulls()
         btc = last.filter(pl.col('symbol') == 'BTC/USDT:USDT')
@@ -1260,7 +1268,7 @@ class Scanner:
         sig.update(hl)
         # the tracked accounts' net position: 0 when none of them holds the coin; no value only where the coin
         # is not listed on Hyperliquid (or before the first positions refresh)
-        on_hl = 'hyperliquid' in self.fetcher.symbol_map.by_key.get(symbol, {}) and self.positioning.hl_ts > 0
+        on_hl = 'hyperliquid' in self.fetcher.symbol_map.by_key.get(symbol, {}) and self.positioning.hl_current()
         sig['hl_net_usd'] = hl['hl_long_usd'] - hl['hl_short_usd'] if on_hl else None
         # relative to the universe median: the raw premium is USD vs USDT and carries the USDT basis (~a few bp)
         premium = self._coinbase_premium(md)
@@ -1511,7 +1519,8 @@ class Scanner:
             scenario = await asyncio.to_thread(scenarios.build, list(md.h1), price, now * 1000, btc_closes,
                                                (), None, self.macro.features(now * 1000),
                                                list(md.htf_1d) or list(md.d1) or None,
-                                               list(md.htf_1h_30d) or list(md.h1) or None)
+                                               list(md.htf_1h_30d) or list(md.h1) or None,
+                                               symbol=symbol, volume_24h=md.quote_volume_24h or None)
             if scenario is not None:
                 scenario['macro'] = self.macro.snapshot(now * 1000)
         except Exception as e:

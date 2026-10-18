@@ -132,8 +132,10 @@ def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
         if t < n - 26:
             continue                                  # too old to be still bouncing
         # review V12: research_pumps.atr1h - the 14 hours BEFORE the dump hour (the dump bar's own range left out)
-        trs = [max(h[k], cl[k - 1]) - min(lo[k], cl[k - 1]) for k in range(t - 14, t)]
-        atr = sum(trs) / len(trs)
+        # owner 2026-10-18: Wilder's ATR14 (the bot's one ATR) of the candles up to the hour before the dump
+        from levels import wilder_of
+        trs = [max(h[k], cl[k - 1]) - min(lo[k], cl[k - 1]) for k in range(max(1, t - 200), t)]
+        atr = wilder_of(trs, 14) or (sum(trs) / len(trs) if trs else 0.0)
         # audit R05 / N26: a causal automaton - the dump's low is FIXED at the exhaustion close (the first close above
         # the previous hour's high) and the bounce is searched only from that hour on; a dump not exhausted yet has
         # no low and no trade (searching from t+1 placed earlier touches against a low found later)

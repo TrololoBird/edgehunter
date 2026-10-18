@@ -242,7 +242,8 @@ def build(candles_1h: Sequence[Sequence[float]], price: Optional[float], now_ms:
           btc_closes_1h: Optional[Sequence[float]] = None, extra_levels: Sequence[RawLevel] = (),
           model=None, macro_feats: Optional[Dict[str, float]] = None,
           candles_1d: Optional[Sequence[Sequence[float]]] = None,
-          candles_1h_30d: Optional[Sequence[Sequence[float]]] = None) -> Optional[Dict]:
+          candles_1h_30d: Optional[Sequence[Sequence[float]]] = None,
+          symbol: Optional[str] = None, volume_24h: Optional[float] = None) -> Optional[Dict]:
     """
     The scenario card of one coin from its 1h candles (>= 50) and the live price. model: None = the saved model when it
     passed, False = the geometric baseline (training), a dict = that model.
@@ -270,7 +271,10 @@ def build(candles_1h: Sequence[Sequence[float]], price: Optional[float], now_ms:
     prob = probability(feats, None if model is False else model if model is not None else load_model())
     react, above, below = lad['reaction'], lad['above'], lad['below']
     buf = 0.25 * atr
-    cost = (CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4) * price
+    # audit (2nd part): the coin's own slippage (liquidity model + measured book), as the entries' geometry.cost_of -
+    # the flat base priced a thin coin's round trip like BTC's
+    from levels import slippage_bps
+    cost = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h, symbol) / 1e4) * price
 
     def rr(entry, stop, target):
         risk = abs(entry - stop)

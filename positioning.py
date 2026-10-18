@@ -298,8 +298,11 @@ class Positioning:
         """audit D03: the snapshot is younger than 6 refresh periods (a stale snapshot is no current level)."""
         return time.time() - self.hl_ts <= 6 * CONFIG.positioning.hl_positions_refresh_sec
 
-    def hl_summary(self, symbol: str) -> Dict[str, float]:
-        rows = self.hl_positions.get(symbol, []) if self.hl_current() else []
+    def hl_summary(self, symbol: str) -> Dict[str, Optional[float]]:
+        if not self.hl_current():
+            # audit V12: a stale snapshot is no reading - None, not a proven 'no positions' (0)
+            return {'hl_long_usd': None, 'hl_short_usd': None, 'hl_longs': None, 'hl_shorts': None}
+        rows = self.hl_positions.get(symbol, [])
         longs = [usd for side, usd, _, _ in rows if side > 0]
         shorts = [usd for side, usd, _, _ in rows if side < 0]
         return {'hl_long_usd': sum(longs), 'hl_short_usd': sum(shorts), 'hl_longs': len(longs), 'hl_shorts': len(shorts)}

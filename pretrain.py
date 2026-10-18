@@ -55,10 +55,9 @@ def _spot_pair(base: str, spot_ids: set) -> Optional[str]:
     """The Binance spot pair of a futures base (1000PEPE -> PEPEUSDT), else None."""
     if f"{base}USDT" in spot_ids:
         return f"{base}USDT"
-    for prefix in ('1000000', '1000', '1M'):
-        if base.startswith(prefix) and f"{base[len(prefix):]}USDT" in spot_ids:
-            return f"{base[len(prefix):]}USDT"
-    return None
+    from symbols import split_base
+    coin = split_base(base)[0]
+    return f"{coin}USDT" if coin != base and f"{coin}USDT" in spot_ids else None
 
 
 def eligible_days(daily: np.ndarray, start: date, end: date, min_volume: float) -> List[int]:

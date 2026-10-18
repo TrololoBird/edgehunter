@@ -83,6 +83,8 @@ def test_continuation_lifecycle_with_orderflow_confirm(rally_frame, monkeypatch)
     # eng-137 (A02): the entry minute itself is judged on the trades after the entry; this is the next whole minute
     t = (int(s.entered_at * 1000) // 60_000 + 1) * 60_000
     tp1, sl = s.levels['tp1'], s.levels['sl']
+    # the entry minute itself (audit V04: a missing minute is a hole the trade waits at, not 'nothing happened')
+    candles['X'] += [[m, 111.4, 111.4, 111.4, 111.4, 1e4, 5e3] for m in range(candles['X'][-1][0] + 60_000, t, 60_000)]
     candles['X'].append([t, 111.4, tp1 * 1.0003, 111.3, tp1, 1e4, 6e3])
     price['X'] = tp1
     book.update([], Frames(rally_frame), pf, cf, now + 60, confirm_of=confirm)

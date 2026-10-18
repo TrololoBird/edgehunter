@@ -197,7 +197,8 @@ def equal_pools(levels: List[RawLevel], candles: Sequence[Sequence[float]], atr:
                 if latest and history:
                     start = candles[0][0] if candles else float('inf')
                     after = [c for c in history if latest < c[0] < start] + after
-                swept = any(c[2] > edge + tol for c in after) if side > 0 else any(c[3] < edge - tol for c in after)
+                # any trade beyond the pool's edge took the stops resting there (as structure.liquidity_pools)
+                swept = any(c[2] > edge for c in after) if side > 0 else any(c[3] < edge for c in after)
                 if not swept:
                     # where the touches were accepted: the body closest to the wicks among them
                     bodies = [l.body for l in group if l.body is not None]
@@ -314,8 +315,10 @@ def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bo
         elif candles_1d:
             days = [c for c in candles_1d if start <= c[0] < end]
             if len(days) * DAY_MS >= end - start:
-                out.append((RawLevel(max(c[2] for c in days), 'pdhl', hi_lb, +1), end))
-                out.append((RawLevel(min(c[3] for c in days), 'pdhl', lo_lb, -1), end))
+                # the body of the extreme day, as the 1h path (a wick-to-body zone, not a line)
+                top, bot = max(days, key=lambda c: c[2]), min(days, key=lambda c: c[3])
+                out.append((RawLevel(top[2], 'pdhl', hi_lb, +1, body=max(top[1], top[4])), end))
+                out.append((RawLevel(bot[3], 'pdhl', lo_lb, -1, body=min(bot[1], bot[4])), end))
     cur = [c for c in candles_1h if c[0] >= today]
     if len(cur) >= 3:
         span(cur, 'day high', 'day low', 0)
@@ -646,7 +649,8 @@ def bars_of(candles_1h: Sequence[Sequence[float]], hours: int) -> List[List[floa
     out = []
     for start in sorted(groups):
         g = sorted(groups[start], key=lambda c: c[0])
-        if len(g) == hours:
+        # audit F05: every hour of the bucket exactly once (a count of 4 accepted 00 / 00 / 02 / 03)
+        if [int(c[0]) for c in g] == [start + i * HOUR_MS for i in range(hours)]:
             out.append([start, g[0][1], max(c[2] for c in g), min(c[3] for c in g), g[-1][4], sum(c[5] for c in g)])
     return out
 
@@ -820,7 +824,8 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
         # measured from the zone's FIRST level, not its growing edge: chaining A-B-C merged levels far apart into one
         # zone covering half the chart (live eng-27: ETH's PWL + EQL + PDL + estimates 3%+ wide)
         top = max([hi] + [_span(x)[1] for x in group])
-        if group and (lo - group_hi > gap or top - group_lo > max_w):
+        inside = bool(group) and lo <= max(_span(x)[1] for x in group)     # overlaps a level already in the zone
+        if group and ((lo - group_hi > gap and not inside) or top - group_lo > max_w):
             close_group()
             group, group_hi = [], float('-inf')
         if not group:

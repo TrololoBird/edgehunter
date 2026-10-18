@@ -963,7 +963,7 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
     table = Table(title=f"Verdict (suspend: >=30 clusters & low < -0.05R; deprecate: >=200 & high < 0); "
                         f"DSR trials N={trials} (ONC; {raw_trials} version x strategy cells)",
                   header_style="bold magenta", border_style="blue")
-    for name in ("Strategy", "Cards", "Clusters", "Mean R", "90% CI", "Skew", "Kurt", "PSR", "DSR", "HL haircut", "MinTRL",
+    for name in ("Strategy", "Cards", "Clusters", "Mean R/blk", "90% CI", "Skew", "Kurt", "PSR", "DSR", "HL haircut", "MinTRL",
                  "Verdict"):
         table.add_column(name, justify="left" if name in ("Strategy", "Verdict") else "right", no_wrap=True)
     groups: Dict[str, List] = {}
@@ -977,7 +977,10 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
             blocks.setdefault(k, []).append(v)
         means = [statistics.fmean(v) for v in blocks.values()]
         k = len(means)
-        ci = bootstrap_ci(rs, clusters=keys)
+        # audit (2nd part): ONE unit for every column - the independent 4h block's mean R. Mean R / CI were per card
+        # (a cluster-weighted mean) while PSR / DSR / HL / MinTRL used the blocks' equal-weight mean: one block of a
+        # -1R card and one of ten +0.2R cards read Mean R +0.09 with PSR / DSR blank (block mean -0.4)
+        ci = bootstrap_ci(means)
         m, sd, g3, g4 = _moments(means)
         sr = m / sd if sd else 0.0
         p = psr(sr, k, g3, g4)
@@ -992,7 +995,7 @@ def verdict_table(console: Console, rows: List, all_rows: Optional[List] = None)
             verdict = Text(f"wait ({k}/30)", style="dim")
         else:
             verdict = Text("keep", style="green")
-        table.add_row(name, str(len(rs)), str(k), f"{statistics.fmean(rs):+.2f}R",
+        table.add_row(name, str(len(rs)), str(k), f"{m:+.2f}R",
                       f"[{ci[0]:+.2f}..{ci[1]:+.2f}]" if ci else "", f"{g3:+.1f}", f"{g4:.1f}",
                       f"{p:.0%}" if p is not None else "", f"{dsr:.0%}" if dsr is not None else "",
                       f"{hl:.0%}" if hl is not None else "-", f"{mt:.0f}" if mt else "-", verdict)

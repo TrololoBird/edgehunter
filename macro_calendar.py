@@ -17,6 +17,8 @@ NY = ZoneInfo('America/New_York')
 EVENTS = (
     ('2026-10-14', '08:30', 'CPI'), ('2026-10-28', '14:00', 'FOMC'), ('2026-11-06', '08:30', 'NFP'),
     ('2026-11-10', '08:30', 'CPI'),
+    # audit V09: NFP for November, BLS schedule (bls.gov/schedule/2026/12_sched_list.htm, checked 2026-10-18)
+    ('2026-12-04', '08:30', 'NFP'),
     ('2026-12-09', '14:00', 'FOMC'), ('2026-12-10', '08:30', 'CPI'),
 )
 

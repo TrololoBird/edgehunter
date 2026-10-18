@@ -83,8 +83,6 @@ def compute_indicators_batch(frames: Dict[str, pl.DataFrame], funding: Dict[str,
                          _over(quote_vol.rolling_sum(window_size=window, min_samples=1)))
 
     df = df.with_columns(
-        _over(pl.max_horizontal(high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs())
-              .rolling_mean(window_size=14, min_samples=7)).alias('atr'),
         sma_vol.alias('sma_vol_50'),
         _safe_div(quote_vol, sma_vol).alias('rvol'),
         (bb_mid - 2 * bb_std).alias('bb_lower'),
@@ -139,7 +137,9 @@ def compute_indicators_batch(frames: Dict[str, pl.DataFrame], funding: Dict[str,
     plus_di = _safe_div(100 * wilder(plus_dm, 1, 13), wilder(tr, 1, 13))
     minus_di = _safe_div(100 * wilder(minus_dm, 1, 13), wilder(tr, 1, 13))
     dx = _safe_div(100 * (plus_di - minus_di).abs(), plus_di + minus_di)
-    df = df.with_columns(wilder(dx, 14, 14).alias('adx'))
+    df = df.with_columns(wilder(dx, 14, 14).alias('adx'),
+                         # Wilder's ATR14 (owner 2026-10-18: one ATR everywhere; was a 14-candle simple mean)
+                         wilder(tr, 1, 14).alias('atr'))
     # the previous candle's ADX: Raschke's Holy Grail needs ADX > 30 AND rising
     df = df.with_columns(_over(pl.col('adx').shift(1)).alias('adx_prev'))
     # Squeeze: width within a small tolerance of its lookback minimum (exact float equality with a rolling

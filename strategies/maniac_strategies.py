@@ -27,6 +27,9 @@ def _finish(x: PlanInput, plan: Dict, entry_est: float, extreme: Optional[float]
         return {'skip': 'no_target'}
     plan['targets'] = [levels['tp1'], levels['tp2'], levels['tp3']]
     plan['target_src'] = [levels['tp1_src'], levels['tp2_src'], levels['tp3_src']]
+    # these targets already sit in front of their levels by the pierce: shown on the card, never re-read as levels
+    # (exit_target's 'map' re-measured them and pulled them by p50 a second time)
+    plan['targets_final'] = True
     return plan
 
 
@@ -215,7 +218,15 @@ class TrendlineStrategy(_System):
         # stops) - the 0.1 x ATR(1h) was ours
         from pierce import overshoot
         pad = overshoot(x.symbol, 'swing_1h', sig['anchor_level']) or 0.0
-        stop = _pivot_stop(h1[-120:], d, sig['anchor_level'], pad)          # beyond the line (the retest entry)
+        line = sig['anchor_level']
+        if sig.get('line_slope') is not None and sig.get('line_ts1') is not None:
+            # audit: the retest is of the SAME sloped line, extended to now (Murphy: the broken line keeps its
+            # slope as it changes role) - not the horizontal price the line had at the break
+            bars = (now_ms - int(sig['line_ts1'])) / float(sig.get('line_period_ms') or 3_600_000)
+            line = sig['line_p1'] + sig['line_slope'] * bars
+        # beyond the line where the retest enters NOW (audit 2026-10-18: measured from the break's level, a rising
+        # line's retest could sit beyond the stop)
+        stop = _pivot_stop(h1[-120:], d, line, pad)
         if stop is None:
             return None
         # classic trendline break (Edwards & Magee): the targets are the next support / resistance levels (the map), not
@@ -226,12 +237,6 @@ class TrendlineStrategy(_System):
         if plan and not plan.get('skip'):
             # eng-58, practice (Edwards & Magee; break -> retest -> move): the entry is a resting limit at the broken
             # line, retested from the other side, not the second close's price; first touch only
-            line = sig['anchor_level']
-            if sig.get('line_slope') is not None and sig.get('line_ts1') is not None:
-                # audit: the retest is of the SAME sloped line, extended to now (Murphy: the broken line keeps its
-                # slope as it changes role) - not the horizontal price the line had at the break
-                bars = (now_ms - int(sig['line_ts1'])) / float(sig.get('line_period_ms') or 3_600_000)
-                line = sig['line_p1'] + sig['line_slope'] * bars
             # eng-84 (breakout-retest write-ups: retest + a confirming candle, not a resting limit; the owner's review):
             # the retest area is the line to half an hour-ATR beyond it on the broken side; the entry is a 15m
             # structure shift with agreeing taker flow there

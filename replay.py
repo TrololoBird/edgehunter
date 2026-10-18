@@ -308,16 +308,16 @@ class Replay:
         return None
 
     def _tf_atrs(self, symbol: str) -> Dict[str, float]:
-        """Scanner._tf_atrs on the archive: ATR14 (simple mean of true ranges) of the closed 1h / 4h / daily candles."""
+        """Scanner._tf_atrs on the archive: Wilder's ATR14 (levels.atr_of) of the closed 1h / 4h / daily candles."""
         c = self.coins.get(symbol) or (self.btc if self.btc is not None and symbol == self.btc.key else None)
         out: Dict[str, float] = {}
         if c is None:
             return out
         for tf, rows, period in (('1h', c.h1, HOUR_MS), ('4h', c.h4, 4 * HOUR_MS), ('1d', c.d1, DAY_MS)):
-            closed = [r for r in list(rows)[-20:] if r[0] + period <= self.now_ms]
+            closed = [r for r in list(rows)[-200:] if r[0] + period <= self.now_ms]
             if len(closed) >= 15:
-                trs = [max(k[2] - k[3], abs(k[2] - p[4]), abs(k[3] - p[4])) for p, k in zip(closed[-15:-1], closed[-14:])]
-                out[tf] = sum(trs) / len(trs)
+                from levels import atr_of
+                out[tf] = atr_of(closed)
         return out
 
     def _band(self, symbol: str, direction: int, asof_ms: Optional[int] = None) -> Optional[float]:

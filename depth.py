@@ -198,7 +198,9 @@ class DepthBook:
         if qty <= 0:
             return
         cell = book.executed.get(key)
-        if cell is None:
+        if cell is None or ts_ms - cell[1] > ATTRIBUTION_MS:
+            # audit (2nd part): a fill older than the attribution window explains nothing any more - it was summed
+            # with the new one for up to 30 s (the purge runs with the heat snapshot) and turned a later pull into a fill
             book.executed[key] = [qty, ts_ms]
         else:
             cell[0] += qty

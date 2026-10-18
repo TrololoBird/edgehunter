@@ -103,11 +103,8 @@ class EventRisk:
 
     @staticmethod
     def _base(symbol: str) -> str:
-        base = symbol.split('/')[0]
-        for prefix in ('1000000', '10000', '1000', '1M'):
-            if base.startswith(prefix) and len(base) > len(prefix):
-                return base[len(prefix):]
-        return base
+        from symbols import split_base
+        return split_base(symbol.split('/')[0])[0]
 
     def refresh(self) -> None:
         """Blocking (run in a thread): both sources; each keeps its last state when its read fails."""

@@ -75,9 +75,9 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
             if sum(v[i] for i in handle) / len(handle) >= cup_vol:
                 break                                # volume did not dry up in the handle
             if not (c[last] > pivot >= c[last - 1]):
-                return None
+                break                                # not this rim's breakout: an older right rim may be
             if c[last] > pivot * 1.05:
-                return None                          # O'Neil: 5% past the pivot the buy point is missed - no chase
+                break                          # O'Neil: 5% past the pivot the buy point is missed - no chase
             # Bulkowski's measure rule as his site states it now (thepatternsite.com/cup.html, 06/2026): the depth from
             # the RIGHT cup lip to the lowest valley x the share of patterns that met the full target (bullish cups in a
             # bull market: 61%, 913 trades), added to the breakout price - TP1; TP2 the full depth. Was half the

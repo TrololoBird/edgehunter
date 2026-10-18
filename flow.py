@@ -46,6 +46,9 @@ class VenueFlow:
         self.last_msg_sec = 0           # the second of the last real write (advance() also runs on reads)
         self.gaps: list = []            # audit B11: [(from_sec, to_sec)] stretches with no message at all (a transport gap)
         self.first_sec = 0              # audit D13: the second the ring started to be written (it holds data only from here)
+        # audit V06: row -> the second this venue first wrote that coin. The venue's own start is no coverage of a coin
+        # it began streaming later (a verified mapping, a new subscription): a coin's window counts from its first print
+        self.row_first: dict = {}
         self.messages = 0
         self.last_event_ms = 0
         self.last_recv_ms = 0
@@ -57,13 +60,17 @@ class VenueFlow:
             self.data = np.concatenate([self.data, np.zeros((self.H, N_FIELDS, extra), np.float32)], axis=2)
             self.counts = np.concatenate([self.counts, np.zeros((self.H, extra), np.int32)], axis=1)
 
-    def covers(self, a: int, b: int) -> bool:
-        """Audit B11: [a, b) lies after the ring started and crosses no recorded transport gap."""
+    def covers(self, a: int, b: int, row: Optional[int] = None) -> bool:
+        """Audit B11: [a, b) lies after the ring started and crosses no recorded transport gap; with `row` (audit V06)
+        also after this venue's first print of that coin."""
+        if row is not None and (row not in self.row_first or a < self.row_first[row] - 60):
+            return False
         return bool(self.first_sec) and a >= self.first_sec - 60 and b <= self.last_msg_sec + GAP_SEC and all(e <= a or s >= b for s, e in self.gaps)
 
     def clear_row(self, row: int):
         self.data[:, :, row] = 0
         self.counts[:, row] = 0
+        self.row_first.pop(row, None)
 
     def advance(self, sec: int):
         """Move the head to `sec`, zeroing the slots of the seconds skipped since the last write."""
@@ -74,6 +81,7 @@ class VenueFlow:
             self.counts[:] = 0
             self.first_sec = sec
             self.gaps = []
+            self.row_first = {}
             self.last_msg_sec = 0
         else:
             a, n = (self.last_sec + 1) % self.H, sec - self.last_sec
@@ -94,6 +102,8 @@ class VenueFlow:
                 # unknown coverage (zeros in the ring there are 'no data', never 'no trades')
                 self.gaps = (self.gaps + [(self.last_msg_sec, sec)])[-100:]
             self.last_msg_sec = sec
+        if row not in self.row_first:
+            self.row_first[row] = sec
         slot = sec % self.H
         self.data[slot, field, row] += usd
         if count:
@@ -144,7 +154,9 @@ class VenueFlow:
 class FlowStore:
     def __init__(self, venues: Iterable[str] = FUTURES_VENUES + SPOT_VENUES, capacity: int = 320):
         cfg = CONFIG.venues
-        long_history = {'binance', 'bybit', 'okx'}
+        # audit (2nd part): every futures venue keeps the hour - with 15 minutes Bitget / Hyperliquid could never reach
+        # the 20 minutes micro_features' lead_venue needs (+~37 MB for the two)
+        long_history = set(FUTURES_VENUES)
         self.capacity = capacity
         self._hour_cache = (0, np.zeros(0))
         self.rows: Dict[str, int] = {}

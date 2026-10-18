@@ -79,7 +79,7 @@ def _phase_a(h1: Sequence[Sequence[float]], d: int, period_ms: int = HOUR_MS) ->
         p = max(after, key=lambda j: hi[j]) if d > 0 else min(after, key=lambda j: lo[j])
         ar = hi[p] if d > 0 else lo[p]
         if (d > 0 and hi[top] <= ar) or (d < 0 and lo[top] >= ar):
-            return None                               # no prior trend into the range
+            continue                                  # no prior trend into this range: an older climax may have one
         tests = list(range(p + 1, last))
         if not tests:
             continue
@@ -90,7 +90,7 @@ def _phase_a(h1: Sequence[Sequence[float]], d: int, period_ms: int = HOUR_MS) ->
         lo_e, hi_e = (extreme, ar) if d > 0 else (ar, extreme)
         # the range intact from the ST to the candle before the spring: no close beyond either edge
         if any(cl[j] < lo_e or cl[j] > hi_e for j in range(k, last)):
-            return None
+            continue                                  # this range broke: an older climax's range may hold
         return {'climax': i, 'ar': p, 'st': k, 'lo': lo_e, 'hi': hi_e}
     return None
 

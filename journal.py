@@ -177,7 +177,7 @@ EXTRA_COLUMNS = {
     # eng-1: the strategy and its anchor (JSON), the market / coin context (universe median and BTC moves, the coin's
     # 1h trend, last hour's ATR / ATR14) and the replay with the stop at breakeven after TP1 (exit at TP2)
     'strategy': 'TEXT', 'anchor': 'TEXT', 'mkt_1h': 'REAL', 'mkt_4h': 'REAL', 'btc_1h': 'REAL', 'coin_trend': 'INTEGER',
-    'vol_ratio': 'REAL', 'r_be': 'REAL',
+    'vol_ratio': 'REAL', 'r_be': 'REAL', 'outcome_h': 'INTEGER',
     # eng-2: the coin's 24h futures quote volume (liquidity: patterns on thin coins are one order's work)
     'volume_24h': 'REAL',
     # eng-4: the 8h horizon (entries replayed over the trade's life), the other venues' funding and long/short
@@ -927,9 +927,11 @@ class SignalJournal:
             rows = self.conn.execute(
                 "SELECT group_key, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
                 "outcome IN ('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL AND tp1 IS NOT NULL AND "
-                "COALESCE(vetoed, '') NOT IN ('flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', "
+                "COALESCE(vetoed, '') NOT IN ('low_rr', 'flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', "
                 "'tl_em_shadow', 'oi_shadow', 'cascade_shadow', 'rsi2_crossback_shadow', 'connors_short_shadow')",
                 (since,)).fetchall()
+        # audit 2026-10-18: not the entries vetoed 'low_rr' either - their TP1 sat too close to pay (79% hit of 4177 in
+        # 30 days vs 29% of the traded ones), which put every setup's p far above what an entry the gate passes reaches
         # eng-102: only entries WITH a TP1 (a target-less system - Bollinger / ORB / breakout rows with tp1 NULL - only
         # ever ends 'SL' here: Bollinger measured p 0% and every entry was vetoed 'expectancy -1.00R') and of the
         # current logic (keep_waiting_from on: the older versions had other targets / stops); the shadow ALTERNATIVE
@@ -941,12 +943,17 @@ class SignalJournal:
             if version_no(lv) < floor:
                 continue
             # audit C13: one key form for writer and reader (the plan asks by 'SWEEP LOW', the row is 'ENTRY SWEEP LOW')
-            c = counts.setdefault(geometry.setup_key(strategy), [0, 0])
-            c[0 if outcome == 'SL' else 1] += 1
+            # [SL, reached TP1, reached TP2, reached TP3]: each third's own p(its target before the stop)
+            c = counts.setdefault(geometry.setup_key(strategy), [0, 0, 0, 0])
+            if outcome == 'SL':
+                c[0] += 1
+            else:
+                for k in range(1, int(outcome[2]) + 1):
+                    c[k] += 1
         # eng-124: no fixed n >= 30 (a 60% rate after 20-50 trades is anywhere in 35-85% / 46-74%): every strategy with
         # decided entries gets its rate AND the upper end of its 95% Wilson interval; the veto uses the upper end
-        rates = {s: (hit / (hit + sl), hit + sl, wilson_upper(hit, hit + sl)) for s, (sl, hit) in counts.items()
-                 if hit + sl > 0}
+        rates = {s: (h1 / (h1 + sl), h1 + sl, wilson_upper(h1, h1 + sl), wilson_upper(h2, h1 + sl),
+                     wilson_upper(h3, h1 + sl)) for s, (sl, h1, h2, h3) in counts.items() if h1 + sl > 0}
         geometry.HIT_RATE.clear()
         geometry.HIT_RATE.update(rates)
         return len(rates)
@@ -1052,6 +1059,7 @@ class SignalJournal:
         while True:
             try:
                 await self._evaluate_pass(fetcher)
+                await self._evaluate_life_pass(fetcher)
                 if time.time() - last_maintenance >= 86_400:
                     last_maintenance = time.time()
                     await asyncio.to_thread(self.maintenance)
@@ -1117,19 +1125,81 @@ class SignalJournal:
             updates['mae_4h'] = min(float(k[3]) for k in window) / price - 1
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
             # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
-            updates.update(simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h'),
-                                    funding_hours=row.get('funding_hours')))
-            if row.get('tp1') is None and updates.get('outcome') in ('SL', 'OPEN'):
-                # eng-84: a method without targets (Bollinger's band, Crabel's session close, the Turtles' channel) can
-                # only read 'SL' / 'OPEN' here - its winners never showed (BB / ORB: 0 TP of 60). Its result is the
-                # card's own exit (card rows, card_r); the entry row says so instead of counting as a stop-out
-                updates['outcome'] = 'NO_TP' if updates['outcome'] == 'OPEN' else 'SL'
+            updates.update(self._replay(row, window))
+            updates['outcome_h'] = minutes // 60
         sets = ', '.join(f"{col} = ?" for col in updates)
         with self._lock:
             self.conn.execute(f"UPDATE signals SET {sets} WHERE id = ?", (*updates.values(), signal_id))
             self.conn.commit()
         if label == '4h' and self.success is not None and row.get('direction') and row.get('kind') not in ('entry', 'card', 'rush'):
             self._learn(signal_id)
+
+    @staticmethod
+    def _replay(row: Dict, window: List) -> Dict:
+        """SL / TP of an entry row replayed on its 1m candles, filled like a human would."""
+        updates = simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h'),
+                           funding_hours=row.get('funding_hours'))
+        if row.get('tp1') is None and updates.get('outcome') in ('SL', 'OPEN'):
+                # eng-84: a method without targets (Bollinger's band, Crabel's session close, the Turtles' channel) can
+                # only read 'SL' / 'OPEN' here - its winners never showed (BB / ORB: 0 TP of 60). Its result is the
+                # card's own exit (card rows, card_r); the entry row says so instead of counting as a stop-out
+                updates['outcome'] = 'NO_TP' if updates['outcome'] == 'OPEN' else 'SL'
+        return updates
+
+    def _pending_life(self, limit: int) -> List[Dict]:
+        """Entry rows whose provisional 8h outcome can still change (OPEN / TP1 / TP2; SL and TP3 are final) and
+        whose full replay window (journal.outcome_life_h) has closed."""
+        hours = CONFIG.journal.outcome_life_h
+        due = int(time.time() * 1000) - (hours * 60 + 1) * 60_000 - CLOSE_MARGIN_MS
+        since = int((time.time() - 35 * 86400) * 1000)      # HIT_RATE reads 30 days: older rows are not replayed again
+        with self._lock:
+            cursor = self.conn.execute(
+                "SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, kind, funding_8h, funding_hours, "
+                "limit_entry, volume_24h FROM signals WHERE kind = 'entry' AND eval_failed = 0 AND entry IS NOT NULL "
+                "AND direction IS NOT NULL AND outcome IN ('OPEN', 'TP1', 'TP2') AND COALESCE(outcome_h, 8) < ? "
+                "AND ts_ms <= ? AND ts_ms >= ? ORDER BY ts_ms LIMIT ?", (hours, due, since, limit))
+            columns = [c[0] for c in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    async def _evaluate_life_pass(self, fetcher):
+        """Relabel entries over the trade's real life (audit #21): 1500-minute pages of 1m klines."""
+        minutes = CONFIG.journal.outcome_life_h * 60
+        done, failed = 0, 0
+        for row in await asyncio.to_thread(self._pending_life, max(1, CONFIG.journal.max_evals_per_pass // 4)):
+            klines: List = []
+            while len(klines) < minutes:
+                start = row['ts_ms'] if not klines else int(klines[-1][0]) + 1     # the next whole minute
+                page = await fetcher.fetch_minute_klines(row['symbol'], start, min(1500, minutes - len(klines)))
+                if page is None:
+                    klines = None
+                    break
+                if not page:
+                    break
+                klines.extend(page)
+                await asyncio.sleep(0.05)
+            if klines is None:
+                failed += 1
+                continue                                   # request failed: retry on a later pass
+            await asyncio.to_thread(self._store_life, row, klines, minutes)
+            done += 1
+        if done or failed:
+            logger.info(f"Journal: {done} entries relabelled over {CONFIG.journal.outcome_life_h}h, {failed} failed")
+
+    def _store_life(self, row: Dict, klines: List, minutes: int):
+        window = klines[:minutes]
+        t0 = -(-row['ts_ms'] // 60_000) * 60_000
+        if not window or int(window[0][0]) != t0 or any(int(k[0]) != t0 + i * 60_000 for i, k in enumerate(window)):
+            # a gap (or a delisting) in the minutes: the provisional 8h label stays, marked as final for this row
+            updates = {'outcome_h': CONFIG.journal.outcome_life_h}
+        else:
+            updates = self._replay(row, window)
+            updates['outcome_h'] = len(window) // 60
+            if len(window) < minutes:
+                updates['outcome_h'] = CONFIG.journal.outcome_life_h     # the exchange has no more: as long as it gets
+        sets = ', '.join(f"{col} = ?" for col in updates)
+        with self._lock:
+            self.conn.execute(f"UPDATE signals SET {sets} WHERE id = ?", (*updates.values(), row['id']))
+            self.conn.commit()
 
     def _learn(self, signal_id: int):
         """Feed a freshly labelled directional row to the online P(edge) model."""

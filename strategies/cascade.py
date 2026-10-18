@@ -142,7 +142,7 @@ class ExhaustionStrategy(Strategy):
         # 2.0 default here demanded 2R of the first target while the trade itself is judged by the BLENDED R:R - a
         # mean-reversion TP1 is near, the zone shrank to the extreme and 68 of 85 FLUSH REVERSALs died 'no_room'
         capped = retracement_of(leg, cap_for_rr(targets[0], stop_est, d, atr, x.recent_atr, min_rr=1.0,
-                                                 volume_24h=x.sig.get('volume_24h')))
+                                                 volume_24h=x.sig.get('volume_24h'), symbol=x.symbol))
         hi_ratio = max(0.0, min(hi_ratio, capped))
         zone = sorted((end, fib_price(leg, hi_ratio)))
         # eng-74: the secondary test is an AREA above the climax (Wyckoff: a narrower, lower-volume retest that holds

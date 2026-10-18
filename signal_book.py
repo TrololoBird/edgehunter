@@ -663,6 +663,10 @@ class SignalBook:
         if s.entered_at and self.untrack:
             self.untrack(s.symbol, int(s.entered_at * 1000))
         s.finish_reason, s.finish_price = reason or status, (s.exit_fill if s.exit_fill is not None else s.last_price)
+        if s.entered_at and (s.plan or {}).get('data_gaps'):
+            # audit V04: the result crossed minutes nobody saw - a stop / target inside them can be neither confirmed
+            # nor excluded
+            s.finish_reason += f" [data gap: {len(s.plan['data_gaps'])} hole(s) in the 1m candles, result uncertain]"
         self.finished_now.append(s)
         label = f"SL after TP{s.best_target}" if status == 'SL' and s.best_target else status
         if status == 'SL' and s.entered_at and s.levels and s.direction * (s.levels['sl'] - s.levels['entry']) > 0:
@@ -1202,7 +1206,10 @@ class SignalBook:
             k -= 1
         edge = (plan or {}).get('zone_hi' if s.direction > 0 else 'zone_lo') if (plan or {}).get('trigger') == 'touch' else None
         for c in allm[k:]:
-            if edge is not None and ((c[3] <= edge) if s.direction > 0 else (c[2] >= edge)):
+            if edge is not None and not CONFIG.executor.touch_confirm_close and \
+                    ((c[3] <= edge) if s.direction > 0 else (c[2] >= edge)):
+                # the resting limit filled there; with touch_confirm_close a touch is no entry (it waits for a close
+                # back), so a run to TP1 after the touch still ends the card - the batch's later minutes are read
                 return None              # the limit's line traded first (or in the same minute): the touch rules decide
             if (c[2] >= tp1) if s.direction > 0 else (c[3] <= tp1):
                 return float(c[2] if s.direction > 0 else c[3])
@@ -1530,6 +1537,8 @@ class SignalBook:
                 s.r_low = d * (lv['sl'] - entry) / risk - self._cost_r(s, risk, end)
         return False
 
+    GAP_WAIT_MS = 5 * 60_000     # audit V04: how long a hole in the minutes holds the management for the patching
+
     def _manage_trade(self, s: TrackedSignal, price: float, now: float, candles_of=None):
         lv, d = s.levels, s.direction
         # eng-58: stops and targets on the final 1m candles' extremes since the last check, as the journal's replay
@@ -1541,6 +1550,24 @@ class SignalBook:
             # a trade restored from a state saved before eng-58: never judge it on candles before its entry
             s.managed_ms = int(((s.entered_at or 0) // 60 + 1) * 60_000)
         candles = [c for c in (list(candles_of(s.symbol)) if candles_of else []) if c[0] >= s.managed_ms]
+        if version_no(s.logic_version) >= 141 and candles:
+            # audit V04: a hole in the minutes (also right after the last managed minute) is UNKNOWN price action - a
+            # bridge knows the two ends, not the hidden high / low. The trade waits at the hole while the minute
+            # patching can still fill it; a hole that stays is crossed with the bridge and the trade is flagged, its
+            # result named as resting on missing data
+            now_ms, expected = int(now * 1000), int(s.managed_ms)
+            for i, c in enumerate(candles):
+                if int(c[0]) > expected:
+                    if now_ms - int(c[0]) < self.GAP_WAIT_MS:
+                        candles = candles[:i]           # judged once the hole is patched (or given up)
+                        break
+                    gaps = (s.plan or {}).setdefault('data_gaps', []) if s.plan is not None else []
+                    if [expected, int(c[0])] not in gaps:
+                        gaps.append([expected, int(c[0])])
+                        logger.warning(f"{s.symbol} {s.group_key}: minutes {time.strftime('%H:%M', time.gmtime(expected / 1000))}"
+                                       f"-{time.strftime('%H:%M', time.gmtime(int(c[0]) / 1000))} UTC missing: the trade "
+                                       f"is managed across the hole, its hidden extremes unknown")
+                expected = int(c[0]) + MINUTE_MS
         if version_no(s.logic_version) >= 141 and len(candles) > 1:
             # audit B09: missing minutes are not 'nothing happened'. The path from the last close before the hole to the
             # next open is certain (price is continuous): a bridge candle with that range stands for the hole, so a
@@ -1860,8 +1887,6 @@ class SignalBook:
             s.confirm_checked = True
             if s.entered_at and not s.plan:
                 s.plan = _exit_flags(s)          # a trade saved before eng-55 kept no plan
-            self.signals[(s.symbol, s.group_key)] = s
-            continue
             self.signals[(s.symbol, s.group_key)] = s
         for item in (state or {}).get('finished_legs', []):
             if len(item) == 4 and isinstance(item[2], list):

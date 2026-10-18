@@ -30,9 +30,9 @@ STATS = {
 
 
 def _atr(c: Sequence[Sequence[float]], t: int, n: int = 14) -> float:
-    trs = [max(c[i][2] - c[i][3], abs(c[i][2] - c[i - 1][4]), abs(c[i][3] - c[i - 1][4]))
-           for i in range(max(1, t - n + 1), t + 1)]
-    return sum(trs) / len(trs) if trs else 0.0
+    """Wilder's ATR(n) at candle t (levels.atr_of, the bot's one ATR) over up to 200 candles before it."""
+    from levels import atr_of
+    return atr_of(c[max(0, t - 200):t + 1], n) or 0.0
 
 
 def scan(candles_1h: Sequence[Sequence[float]]) -> Optional[Dict]:

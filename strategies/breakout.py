@@ -29,8 +29,8 @@ def breakout_at_close(candles_15m: Sequence[Sequence[float]], atr: float,
     # Tightness against the ATR of the day BEFORE the range: ATR14 contains the range itself, so a quiet range
     # shrank its own yardstick (NR-type contraction is measured against a longer baseline)
     before = candles_15m[max(0, len(candles_15m) - n - 2 - 96):-n - 2]
-    base_atr = (sum(max(c[2] - c[3], abs(c[2] - p[4]), abs(c[3] - p[4])) for p, c in zip(before, before[1:]))
-                / (len(before) - 1)) if len(before) >= 25 else atr
+    from levels import atr_of
+    base_atr = (atr_of(before) or atr) if len(before) >= 25 else atr     # Wilder's ATR14 of that day (one ATR)
     if not cfg.breakout_min_width_atr * base_atr <= width <= cfg.breakout_max_width_atr * base_atr:
         return None
     # Volume against the quiet range AND the same hour of the day (volume peaks at the US open: a break then cleared

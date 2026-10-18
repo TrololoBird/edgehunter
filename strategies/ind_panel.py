@@ -51,9 +51,13 @@ def sma(x: np.ndarray, n: int) -> np.ndarray:
 
 
 def rolling_std(x: np.ndarray, n: int) -> np.ndarray:
-    m = sma(x, n)
-    m2 = sma(x * x, n)
-    return np.sqrt(np.maximum(m2 - m * m, 0.0))
+    """Population std of each n-window from the deviations from its own mean (audit F01: sqrt(E[x^2] - E[x]^2)
+    cancelled catastrophically at large prices - std 10.5 for 0.0009, false zeros at 1e8)."""
+    out = np.full_like(x, np.nan, dtype=np.float64)
+    if len(x) >= n:
+        from numpy.lib.stride_tricks import sliding_window_view
+        out[n - 1:] = sliding_window_view(x, n).std(axis=1)
+    return out
 
 
 def rolling_max(x, n):
@@ -131,12 +135,18 @@ def indicators(k: np.ndarray) -> dict:
     macd = ema(c, 12) - ema(c, 26)
     hist = macd - ema(macd, 9)
     lo14, hi14 = rolling_min(l, 14), rolling_max(h, 14)
-    k_raw = 100 * (c - lo14) / np.maximum(hi14 - lo14, 1e-12)
+    # audit F02: 'zero' is relative to the price (an absolute 1e-12 made the unitless stochastic / %B / CCI depend on the
+    # price's unit); a flat window leaves them undefined (NaN), not 0
+    tiny = 1e-12 * np.abs(c)
+    rng = hi14 - lo14
+    with np.errstate(divide='ignore', invalid='ignore'):
+        k_raw = np.where(rng > tiny, 100 * (c - lo14) / rng, np.nan)
     stoch_k = sma(np.nan_to_num(k_raw, nan=50.0), 3)
     stoch_d = sma(np.nan_to_num(stoch_k, nan=50.0), 3)
     mid, sd = sma(c, 20), rolling_std(c, 20)
-    pctb = (c - (mid - 2 * sd)) / np.maximum(4 * sd, 1e-12)
-    bbw = 4 * sd / np.maximum(mid, 1e-12)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        pctb = np.where(4 * sd > tiny, (c - (mid - 2 * sd)) / (4 * sd), np.nan)
+        bbw = np.where(mid > 0, 4 * sd / mid, np.nan)
     tp = (h + l + c) / 3
     # audit N35 / C10: raw money flow = typical price x BASE volume (the classic MFI); quote volume (sum of trade price x
     # qty) only for a row without base volume - it equals tp x base only when the average traded price is HLC3
@@ -154,7 +164,8 @@ def indicators(k: np.ndarray) -> dict:
     if len(tp) >= 20:
         from numpy.lib.stride_tricks import sliding_window_view
         mean_dev[19:] = np.abs(sliding_window_view(tp, 20) - tp_sma[19:, None]).mean(axis=1)
-    cci = (tp - tp_sma) / np.maximum(0.015 * mean_dev, 1e-12)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cci = np.where(mean_dev > tiny, (tp - tp_sma) / (0.015 * mean_dev), np.nan)
     e20, e50, e200 = ema(c, 20), ema(c, 50), ema(c, 200)
     return dict(c=c, l=l, h=h, v=v, e20=e20, e50=e50, e200=e200, rsi=rsi, hist=hist, adx=adx, pdi=pdi, mdi=mdi,
                 stoch_k=stoch_k, stoch_d=stoch_d, pctb=pctb, bbw_rank=pct_rank(bbw, 125), mfi=mfi, obv=obv,
@@ -209,7 +220,8 @@ def rules(ind: dict, d: int) -> dict:
         'adx_range': ind['adx'] < 20,
         # volume (Granville, Quong & Soudack)
         'rvol_1_5': ind['rvol'] >= 1.5,
-        'obv_slope': sgn * obv_slope > 0,
+        # audit F03: no base volume -> OBV unknown -> the rule unknown (None), not False for both directions
+        'obv_slope': np.where(np.isnan(obv_slope), np.nan, (sgn * obv_slope > 0).astype(float)),
         'mfi_50': sgn * (ind['mfi'] - 50) > 0,
         # volatility state (Bollinger squeeze, ATR)
         'squeeze': ind['bbw_rank'] < 0.2,
@@ -221,6 +233,11 @@ def rules(ind: dict, d: int) -> dict:
 _IND_CACHE: dict = {}          # (key, last candle ts, count, direction) -> panel(): one computation per closed candle
 
 
+def content_digest(rows) -> int:
+    """A cheap fingerprint of candles' OHLCV (cache keys: a revised candle keeps its timestamp and the count)."""
+    return hash(tuple(tuple(r[1:6]) for r in rows))
+
+
 def panel(candles, direction: int, key=None) -> dict:
     """{rule: bool} on the LAST of `candles` ([ts, o, h, l, c, quote_volume, ...], closed, oldest first); {} with
     fewer than 250 candles (EMA 200 needs its warm-up). With a key (symbol, timeframe) the indicator arrays are cached
@@ -229,7 +246,8 @@ def panel(candles, direction: int, key=None) -> dict:
         return {}
     # the whole answer per (coin, timeframe, last candle, direction): rules() runs rolling windows too (a second
     # watchdog stall in rolling_min once indicators() was cached)
-    ck = (key, candles[-1][0], len(candles), direction) if key is not None else None
+    # audit F04: the candles' content too - a REST revision of a candle keeps its timestamp and the count
+    ck = (key, candles[-1][0], len(candles), direction, content_digest(candles)) if key is not None else None
     hit = _IND_CACHE.get(ck) if ck is not None else None
     if hit is not None:
         return dict(hit)

@@ -186,7 +186,8 @@ def is_synthetic(label: Optional[str]) -> bool:
 
 # (strategy -> (p(TP1 before the stop), n, upper end of p's 95% Wilson interval)) measured by the journal's replay
 # (journal.refresh_hit_rates, hourly): the entry is vetoed when its expectancy is negative even at the upper end
-HIT_RATE: Dict[str, Tuple[float, int, float]] = {}
+# setup -> (p TP1, n, upper 95% of p TP1, upper of p TP2, upper of p TP3)
+HIT_RATE: Dict[str, Tuple[float, ...]] = {}
 
 
 def setup_key(name: Optional[str]) -> str:
@@ -207,16 +208,20 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
       entry at all (price discovery - the owner's rule);
     - the R:R that decides is the BLENDED one of the actual exit (a third at each target; a missing level slot exits
       at the last level);
-    - risk must be >= 3x the execution cost (the costs are inside R:R already; this only keeps them below a third of
-      the risk - 5x vetoed ordinary 2% stops on thinner coins: TIA, CRV, INJ, 2026-10-02);
-    - with a journal-measured p(TP1 before the stop) for the strategy (>= 30 replays) the entry must have a positive
-      expectancy p x R:R1 - (1 - p); else the method's minimum R:R (Strategy.min_rr, else the global one).
+    - risk must be >= cost_guard x the round-trip execution cost (audit F09: the text said 3x / 'a third of the
+      risk'; the rule is CONFIG.levels.cost_guard, 1 since eng-108 - the risk at least pays one round trip)
+    - with a journal-measured p(TP_k before the stop) for the setup the entry must have a positive expectancy of its
+      three thirds, sum_k (p_k x R:R_k - (1 - p_k)) / 3 at the upper ends of the Wilson intervals; the method's
+      minimum R:R (Strategy.min_rr, else the global one) holds as well.
     """
     risk = direction * (entry - stop)
     if risk <= 0 or not targets:
         return None
     sym, tf = plan.get('symbol'), plan.get('tf', '15m')
     zones: List[Zone] = plan.get('zones') or []
+    # the pierce kind of a target from the zones its timeframe may target (merged lower-timeframe swings outweighed a
+    # 1h swing in the raw zone's kinds and gave it the 15m pierce)
+    kind_zones = htf_zones(zones, plan.get('target_tf') or tf)
     adj, on_map = [], []
     for t, s in zip(targets, sources):
         # a target ON a map zone of any kind (eng-74: was 'a zone of a MEASURED kind' - a Hyperliquid account's
@@ -224,7 +229,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         # made a 0.31 R:R a blended 8.9); the anchor's own objectives (extensions, measured moves) stay exempt
         on_map.append(not is_synthetic(s) and any(z.lo - 1e-9 * abs(t) <= t <= z.hi + 1e-9 * abs(t) for z in zones))
         if not is_synthetic(s):
-            kind = kind_at(zones, t) or kind_of_label(s, tf)
+            kind = kind_at(kind_zones, t) or kind_at(zones, t) or kind_of_label(s, tf)
             p50 = overshoot(sym, kind, t, 'p50') if kind else None
             if p50 and direction * (t - direction * p50 - entry) > 0:
                 t = t - direction * p50
@@ -271,16 +276,27 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         reason = 'no level target'
     blended = sum(b for b in blend if b is not None) / 3 if any(b is not None for b in blend) else None
     if risk < CONFIG.levels.cost_guard * fee:
-        reason = reason or 'costs >= 1/3 of the risk'
+        reason = reason or _cost_reason()
     reason = reason or stop_too_far(plan, entry, stop)
     # audit C09: the setup's own measured rate (SWEEP and SILVER BULLET share the strategy 'sweep', Turtle and BB1
     # 'breakout' - one rate for different stops / targets / methods is no probability of either)
     hit = HIT_RATE.get(setup_key(plan.get('setup')))
     if reason is None:
         hi = (hit[2] if len(hit) > 2 else hit[0]) if hit else None
-        if hit and real[0] and hi * rrs[0] - (1 - hi) <= 0:
-            # proven negative: even the upper end of p's 95% interval does not pay this R:R
-            reason = f"expectancy {hi * rrs[0] - (1 - hi):+.2f}R at p <= {hi:.0%} (measured {hit[0]:.0%} of {hit[1]})"
+        exp = None
+        if hit and real[0]:
+            # audit 2026-10-18: the position exits in thirds and the stop stays put after TP1 (be_after_1r off), so
+            # each third is its own bet: p_k x R_k - (1 - p_k) at its target, 1/3 of the size. p x R1 for the whole
+            # position counted the two thirds that a TP1-then-stop loses as wins. A third that exits at an earlier
+            # level (no level beyond) carries that level's p
+            ps = [hi] + [hit[3 + k] if len(hit) > 3 + k else hi for k in range(2)]
+            for k in range(1, 3):
+                if targets[k] == targets[k - 1]:
+                    ps[k] = ps[k - 1]
+            exp = sum(p * r - (1 - p) for p, r in zip(ps, rrs)) / 3
+        if exp is not None and exp <= 0:
+            # proven negative: even the upper ends of the 95% intervals do not pay these R:Rs
+            reason = f"expectancy {exp:+.2f}R at p <= {hi:.0%} (measured {hit[0]:.0%} of {hit[1]})"
         elif plan.get('min_rr') is not None and real[0] and rrs[0] is not None and rrs[0] < plan['min_rr']:
             # audit C07: a method's OWN minimum (Strategy.min_rr - Seiden's 3:1 to the nearest opposing zone) is a
             # minimum to TP1; far targets lifting the blend (TP1 1.04R, blended 3.6) do not meet it
@@ -308,6 +324,12 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
             'stop_pierce': stop_pierce(plan, stop), 'rr_tp1': rrs[0], 'rr_tp2': rrs[1], 'rr_blend': blended, 'low_rr': bool(low or reason),
             'rr_reason': reason, 'risk_units': risk_units,
             'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
+
+
+def _cost_reason() -> str:
+    """The cost guard's veto as the rule actually stands (CONFIG.levels.cost_guard x the round-trip cost)."""
+    g = CONFIG.levels.cost_guard
+    return f"risk < {g:g}x the round-trip costs" if g != 1 else "costs exceed the risk"
 
 
 def _min_rr(plan: Dict) -> float:
@@ -521,7 +543,7 @@ def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: in
             return None, '', True
         return entry + direction * fallback * risk, f"{fallback:g} R", False
     targets, sources = plan.get('targets') or [], plan.get('target_src') or []
-    if not targets:
+    if not targets or plan.get('targets_final'):
         # a system entering at its signal's close (_confirm_plan) has no planned targets yet: the map's TP1 as of the
         # entry (eng-57, the cloud session's eng-44 fix d90605a: 'map' read the empty list, so trendline and oi_signal
         # never made a plan - journaled 'no_target'); Edwards & Magee: the next support / resistance on the map
@@ -634,7 +656,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         # eng-54: the cost guard holds here too - an ORB range of 0.15% put the stop 0.10% away, under one round trip's
         # cost (live ETH 2026-10-03: -2.2R in the demo); target-less plans skipped finish_levels and with it the guard
         fee = cost_of(entry, plan.get('volume_24h'), plan.get('symbol'))
-        reason = 'costs >= 1/3 of the risk' if risk < CONFIG.levels.cost_guard * fee else None
+        reason = _cost_reason() if risk < CONFIG.levels.cost_guard * fee else None
         reason = reason or stop_too_far(plan, entry, stop)
         out = {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
                'tp3': entry + direction * 300 * risk, 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
@@ -697,12 +719,12 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         out = finish_levels(plan, entry, stop, [entry + direction * risk] * 3, ['n/a'] * 3, direction, sl_src) or {}
         return {**out, 'entry': entry, 'sl': stop, 'low_rr': True,
                 'rr_reason': f"stop {risk / entry:.1%} away > the method's {cap:.0%} limit ({sl_src})"} if out else None
+    if risk <= 0 or (exit.get('min_risk_atr') and risk < exit['min_risk_atr'] * atr):
+        return None
     if fixed_tp and zones:
         targets, sources = select_targets(zones, entry, direction, atr, 'opposite_liquidity')
         if targets and sources[0] != 'ATR step':
             return finish_levels(plan, entry, stop, list(targets[:3]), list(sources[:3]), direction, sl_src)
-    if risk <= 0 or (exit.get('min_risk_atr') and risk < exit['min_risk_atr'] * atr):
-        return None
     tp1, src1, low = exit_target(exit, plan, entry, risk, direction)
     if tp1 is None:
         return None
@@ -813,14 +835,15 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
 
 
 def cap_for_rr(tp1: float, stop_est: float, direction: int, atr: float, recent_atr: Optional[float],
-               min_rr: Optional[float] = None, volume_24h: Optional[float] = None) -> float:
+               min_rr: Optional[float] = None, volume_24h: Optional[float] = None,
+               symbol: Optional[str] = None) -> float:
     """
     The furthest entry (from the extreme toward TP1) that still pays min_rr_tp1 (net of fees) to TP1 with the stop at `stop_est`
     or the stop floor, whichever is wider: a waiting zone ends there.
     """
     rr = CONFIG.levels.min_rr_tp1 if min_rr is None else min_rr
     # R:R is net of the execution cost by the coin's liquidity, as finish_levels judges it (eng-58: was a flat 5 bps)
-    fee = cost_of(tp1, volume_24h)
+    fee = cost_of(tp1, volume_24h, symbol)
     by_stop = (tp1 + rr * stop_est - direction * (1 + rr) * fee) / (1 + rr)
     by_floor = tp1 - direction * (rr * stop_floor(atr, recent_atr) + (1 + rr) * fee)
     return min(by_stop, by_floor) if direction > 0 else max(by_stop, by_floor)

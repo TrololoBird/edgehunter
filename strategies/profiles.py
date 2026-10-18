@@ -83,7 +83,10 @@ def apply_pm(levels: Dict, pm: Dict, direction: int) -> Dict:
     if pm.get('half') and target != 'none':
         # half off at +1R in the research; the live position exits in thirds: a third at +1R, the rest at the target
         levels.update(tp1=entry + d * risk, tp1_src='1 R (profile partial)')
-    levels['rr_tp1'] = abs(levels['tp1'] - entry) / risk if risk else None
+    # audit F08: every derived R:R follows the new geometry (rr_tp2 / rr_blend kept the plan's 4R after a 2R rewrite)
+    rr = [abs(levels[f'tp{k}'] - entry) / risk if risk else None for k in (1, 2, 3)]
+    levels['rr_tp1'], levels['rr_tp2'] = rr[0], rr[1]
+    levels['rr_blend'] = sum(rr) / 3 if risk and target != 'none' else None
     return levels
 
 # ---------------------------------------------------------------------- regime switch (research_optimize_regime.py)

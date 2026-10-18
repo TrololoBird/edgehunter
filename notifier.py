@@ -82,12 +82,15 @@ class Notifier:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 60.0)
                 token, _ = self._creds()
-                keep = []
-                items, self._outbox = self._outbox, []      # a message queued while this pass sends is not lost
-                for item in items:
+                # audit V08: every item stays IN the outbox until Telegram took it (was: the batch was taken out before
+                # the awaits, so a shutdown mid-pass saved an empty outbox and lost an undelivered SL); a message queued
+                # while this pass sends is appended behind it
+                for item in list(self._outbox):
                     age = time.time() - float(item.get('ts') or 0)
                     if age > self.OUTBOX_TTL_SEC:
                         logger.warning(f"Telegram message dropped after {age:.0f}s undelivered: {item['text'][:60]!r}")
+                        self._outbox.remove(item)
+                        self._save_outbox()
                         continue
                     text = item['text']
                     if age > self.LATE_NOTE_SEC:
@@ -95,12 +98,29 @@ class Notifier:
                                 f"проверь актуальность перед действием</i>\n{text}")
                     ok = bool(token) and await self._telegram_to(token, item['chat'], item.get('thread'), text,
                                                                  item.get('html', True), priority=True, queue=False)
-                    if not ok:
-                        keep.append(item)
-                self._outbox = keep + self._outbox
-                self._save_outbox()
+                    if ok:
+                        self._outbox.remove(item)
+                        self._save_outbox()
         finally:
             self._retry_task = None
+
+    SENT_DB_PATH = 'data/tg_sent.db'
+
+    def _log_sent(self, kind: str, chat, thread, text: str, status, ok: bool) -> None:
+        """Every Telegram send attempt with its full text (data/tg_sent.db), so alerts can be reviewed afterwards."""
+        try:
+            import sqlite3
+            con = sqlite3.connect(self.SENT_DB_PATH, timeout=2)
+            try:
+                con.execute("CREATE TABLE IF NOT EXISTS sent (id INTEGER PRIMARY KEY, ts_ms INTEGER, kind TEXT, "
+                            "chat TEXT, thread INTEGER, status TEXT, ok INTEGER, text TEXT)")
+                con.execute("INSERT INTO sent (ts_ms, kind, chat, thread, status, ok, text) VALUES (?,?,?,?,?,?,?)",
+                            (int(time.time() * 1000), kind, str(chat), thread, str(status), int(ok), text))
+                con.commit()
+            finally:
+                con.close()
+        except Exception as e:
+            logger.warning(f"Telegram send log not written: {e!r}")
 
     def _lock(self) -> asyncio.Lock:
         if self._send_lock is None:
@@ -262,9 +282,11 @@ class Notifier:
                 # eng-102: the caption cut at 1024 characters inside a tag - the card goes out with a plain caption
                 plain = re.sub(r'</?[a-zA-Z][^>]*>', '', caption)
                 status, body = await self._post('sendPhoto', 30, data=lambda: form(False, plain))
+            self._log_sent('photo', chat, thread, caption, status, status == 200)
             if status != 200:
                 logger.warning(f"Telegram photo failed: HTTP {status} {body[:200]}")
         except Exception as e:
+            self._log_sent('photo', chat, thread, caption, self._redact(e)[:200], False)
             logger.warning(f"Telegram photo failed: {self._redact(e)}")
 
     async def _send_chunks(self, chunks, topic: str = 'alerts'):
@@ -291,6 +313,7 @@ class Notifier:
                 payload['parse_mode'] = 'HTML'
             status, body = await self._post('sendMessage', 10, priority=priority, json=payload)
             if status == 200:
+                self._log_sent('message', chat, thread, text, status, True)
                 return True
             body = body[:200]
             if html and status == 400 and "can't parse entities" in body:
@@ -300,9 +323,11 @@ class Notifier:
                 return await self._telegram_to(token, chat, thread, re.sub(r'</?[a-zA-Z][^>]*>', '', text), False,
                                                priority, queue)
             retryable = status >= 500 or status == 429
+            self._log_sent('message', chat, thread, text, f"{status} {body}", False)
             logger.warning(f"Telegram notification failed: HTTP {status} {body}")
         except Exception as e:
             retryable = True
+            self._log_sent('message', chat, thread, text, self._redact(e)[:200], False)
             logger.warning(f"Telegram notification failed: {self._redact(e)}")    # repr: a timeout's str() is empty
         if priority and queue and retryable:
             self._outbox.append({'text': text, 'chat': chat, 'thread': thread, 'html': html, 'ts': time.time()})

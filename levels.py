@@ -46,12 +46,25 @@ def min_leg_move() -> float:
     return cfg.impulse_min_move or cfg.cost_guard * cost / cfg.reversal_targets[0]
 
 
+def wilder_of(values: Sequence[float], period: int = 14) -> Optional[float]:
+    """Wilder's smoothing (RMA) of a series at its last value: seeded with the mean of the first `period` values, then
+    y += (x - y) / period (Wilder 1978, TA-Lib). None with fewer than `period` values."""
+    if len(values) < period:
+        return None
+    y = sum(values[:period]) / period
+    for x in values[period:]:
+        y += (x - y) / period
+    return y
+
+
 def atr_of(candles: Sequence[Sequence[float]], period: int = 14) -> Optional[float]:
-    """Average true range of [ts, o, h, l, c, ...] candles (simple mean of the last `period` true ranges)."""
+    """THE bot's ATR (owner 2026-10-18: one formula everywhere): Wilder's ATR(period) - the RMA of the true ranges of
+    [ts, o, h, l, c, ...] candles over all of them given (was the simple mean of the last `period`: after a spike the
+    two differed by 25-40%, the detectors and the stops measured one candle with different rulers)."""
     if len(candles) < period + 1:
         return None
-    trs = [max(c[2], p[4]) - min(c[3], p[4]) for p, c in zip(candles[-period - 1:-1], candles[-period:])]
-    return sum(trs) / period
+    trs = [max(c[2], p[4]) - min(c[3], p[4]) for p, c in zip(candles[:-1], candles[1:])]
+    return wilder_of(trs, period)
 
 
 def resample_htf(candles_1h: Sequence[Sequence[float]], hours: int) -> List[List[float]]:

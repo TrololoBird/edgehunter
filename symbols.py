@@ -171,8 +171,12 @@ class SymbolMap:
         Compare the venue's per-coin price with Binance's; drop the mapping on a large deviation (two different
         tokens under one ticker). Returns True while the mapping is (still) valid.
         """
-        if m.verified or not binance_price or not venue_price:
+        if m.verified:
             return True
+        if not binance_price or not venue_price:
+            # audit (2nd part): nothing to compare with yet (cold start) - this print is skipped, the mapping kept;
+            # was True: a different token under the same ticker streamed into the flow until Binance's first trade
+            return False
         deviation, per_coin_venue, per_coin_binance = self._deviation(m, venue_price, binance_price)
         if deviation > CONFIG.venues.max_price_deviation:
             if (m.venue, m.native) not in self.dropped:

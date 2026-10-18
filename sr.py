@@ -35,10 +35,11 @@ TF_WEIGHT = {'1h': 1.0, '4h': 2.0, '1d': 4.0}          # sources: higher timefra
 def _atr(h: np.ndarray, l: np.ndarray, c: np.ndarray, n: int = 14) -> np.ndarray:
     prev = np.r_[c[0], c[:-1]]
     tr = np.maximum(h - l, np.maximum(abs(h - prev), abs(l - prev)))
+    # Wilder's ATR (the bot's one ATR, levels.atr_of); the first candle has no previous close: from the second on
+    from strategies.ind_panel import rma
     out = np.full(len(tr), np.nan)
-    if len(tr) >= n:
-        cs = np.cumsum(tr)
-        out[n - 1:] = (cs[n - 1:] - np.r_[0.0, cs[:-n]]) / n
+    if len(tr) > 1:
+        out[1:] = rma(tr[1:].astype(float), n)
     return out
 
 

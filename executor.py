@@ -115,8 +115,7 @@ class DemoExecutor:
         try:
             # audit F01: an entry of unknown outcome holds its coin across a restart too
             with open(self.unknown_path, encoding='utf-8') as f:
-                self._unknown_coins = {str(k): float(v) for k, v in json.load(f).items()
-                                       if time.time() - float(v) < UNKNOWN_HOLD_SEC}
+                self._unknown_coins = {str(k): float(v) for k, v in json.load(f).items()}
         except (OSError, ValueError, AttributeError):
             pass
         try:
@@ -269,11 +268,19 @@ class DemoExecutor:
                               'close_reason': 'PAUSE' if limit.startswith('pause') else
                               'STRATEGY_OFF' if limit.startswith('strategy') else 'DAILY_LIMIT'})
                 return
+            gate = self.entry_gate(s)
+            if gate is not None:
+                logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {gate}")
+                self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                              'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': gate,
+                              'closed_ms': int(time.time() * 1000),
+                              'close_reason': 'SETUP_OFF' if gate.startswith('setup') else 'CLUSTER'})
+                return
             coin = _coin(s.symbol)
             busy = next((t for t in self.open.values() if _coin(t['symbol']) == coin), None) or \
                 next((p for p in self.pending.values() if not p.get('skip')
                       and _coin(p.get('symbol', '')) == coin), None)
-            if busy is None and time.time() - self._unknown_coins.get(coin, 0.0) < UNKNOWN_HOLD_SEC:
+            if busy is None and coin in self._unknown_coins:
                 busy = {'setup': 'an entry with an unknown outcome'}   # audit C02: its order may stand on BingX
             if busy is not None:
                 # BingX's one-way mode nets every order of a coin into ONE position: a second card on the same coin would
@@ -400,8 +407,10 @@ class DemoExecutor:
                                    (day0,)).fetchone()[0]
                 last = c.execute("SELECT r, closed_ms FROM demo_trades WHERE r IS NOT NULL ORDER BY closed_ms DESC LIMIT ?",
                                  (pause_n,)).fetchall() if pause_n else []
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as e:
+            # audit T06: limits that are ON but cannot be read block new risk (was None - the entry went through
+            # unchecked)
+            return f"risk limits unreadable: {e!r}"
         # eng-85: a resting limit holds a slot of the day (it fills without asking again)
         opened += sum(1 for p in self.pending.values() if not p.get('skip'))
         day_r = sum(r for (r,) in closed)
@@ -413,6 +422,35 @@ class DemoExecutor:
                 time.time() * 1000 - last[0][1] < cfg.pause_hours * 3_600_000:
             return f"pause after {cfg.pause_losses} losses in a row"
         return None
+
+    def entry_gate(self, s) -> Optional[str]:
+        """Owner 2026-10-18: one demo entry per direction per cluster_entry_sec; demo_off_setups are not traded."""
+        cfg = CONFIG.executor
+        d = s.direction
+        if s.group_key in cfg.demo_off_setups:
+            return f"setup off on demo: {s.group_key}"
+        hit = self.cluster_hit(d)
+        if hit is not None:
+            return f"cluster: {hit} entered {'long' if d > 0 else 'short'} within {cfg.cluster_entry_sec // 60} min"
+        return None
+
+    def cluster_hit(self, d: int) -> Optional[str]:
+        """The coin of a demo entry in direction d within cluster_entry_sec: a filled trade, or a resting limit placed /
+        entered in the window (it fills without asking again), else None."""
+        window = CONFIG.executor.cluster_entry_sec
+        if window <= 0:
+            return None
+        since = int((time.time() - window) * 1000)
+        try:
+            with sqlite3.connect(self.db_path) as c:
+                row = c.execute("SELECT symbol FROM demo_trades WHERE direction = ? AND opened_ms >= ? "
+                                "AND entry_fill IS NOT NULL ORDER BY opened_ms DESC LIMIT 1", (d, since)).fetchone()
+        except sqlite3.Error:
+            row = None
+        if row is not None:
+            return row[0]
+        return next((p.get('symbol') for p in self.pending.values() if not p.get('skip') and p.get('direction') == d
+                     and max(p.get('placed_ms') or 0, p.get('entered_ms') or 0) >= since), None)
 
     async def _open(self, card_id: str, s) -> None:
         cfg = CONFIG.executor
@@ -662,8 +700,13 @@ class DemoExecutor:
         d, plan = s.direction, s.plan
         if self.risk_limit() is not None:
             return                                   # eng-58: the day's risk rules - no new resting limit (retried later)
+        if s.group_key in CONFIG.executor.demo_off_setups:
+            self.pending[key] = {'skip': True, 'reason': f"setup off on demo: {s.group_key}"}
+            return
+        if self.cluster_hit(d) is not None:
+            return                                   # owner 2026-10-18: one entry per direction per window (retried later)
         coin = _coin(s.symbol)
-        if time.time() - self._unknown_coins.get(coin, 0.0) < UNKNOWN_HOLD_SEC:
+        if coin in self._unknown_coins:
             return                                   # audit C02: an entry on the coin of unknown outcome (retried later)
         if any(_coin(t['symbol']) == coin for t in self.open.values()) or                 any(_coin(p.get('symbol', '')) == coin for p in self.pending.values()
                     if not p.get('skip')):
@@ -834,12 +877,42 @@ class DemoExecutor:
         await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(p.get('trail')), bool(p.get('no_tp'))), min_qty)
         logger.info(f"Demo LIMIT FILLED {symbol} {p['setup']} {qty} @ {fill:.6g}, SL {lv['sl']:.6g}")
 
+    def _save_unknown(self) -> None:
+        try:
+            with open(self.unknown_path, 'w', encoding='utf-8') as f:
+                json.dump(self._unknown_coins, f)
+        except OSError as e:
+            errors.report('executor._save_unknown', e, "Demo unknown-entry state")
+
+    async def _release_unknown(self, ex, positions: List[Dict]) -> None:
+        """audit T03: a coin held for an entry of unknown outcome is released only once the outcome is resolved - no
+        position and no open order of that coin on BingX, read after the minimum hold (a late fill / a resting order can
+        still land). The hold was a 900 s timer: a new entry went in without ever confirming the old one."""
+        due = [c for c, ts in self._unknown_coins.items() if time.time() - ts >= UNKNOWN_HOLD_SEC]
+        if not due:
+            return
+        try:
+            orders = await ex.fetch_open_orders()
+        except Exception as e:
+            errors.report('executor._release_unknown', e, "Demo open orders (unknown-entry release)")
+            return                                           # unreadable: the hold stays
+        held = {_coin(p['symbol']) for p in positions if float(p.get('contracts') or 0)} | \
+            {_coin(o.get('symbol') or '') for o in orders}
+        released = [c for c in due if c not in held]
+        for c in released:
+            self._unknown_coins.pop(c, None)
+            logger.info(f"Demo: {c} released - the unknown entry left no position and no order")
+        if released:
+            self._save_unknown()
+
     async def close_untracked(self) -> None:
         """Safety net: a BingX position no trade or resting limit of ours owns (a lost fill) is closed at market."""
         ex = await self._exchange()
         mine = {t['symbol'] for t in self.open.values()} | {p.get('symbol') for p in self.pending.values()
                                                              if not p.get('skip')}
-        for pos in await ex.fetch_positions():
+        positions = await ex.fetch_positions()
+        await self._release_unknown(ex, positions)
+        for pos in positions:
             qty = float(pos.get('contracts') or 0)
             if not qty or pos['symbol'] in mine:
                 continue
@@ -922,8 +995,23 @@ class DemoExecutor:
                 except Exception as e:
                     errors.report('executor._dedupe_stops', e, f"Demo position {trade['symbol']}")
                     left = 0.0
-                covered = sum(float((o.get('info') or {}).get('origQty') or o.get('amount') or 0) for o in stops)
-                if left > 0 and covered and covered < left * 0.999:
+                if left > 0 and trade.pop('add_unknown', False) and \
+                        abs(left - float(trade.get('qty') or 0)) > 1e-9 * max(1.0, left):
+                    # audit V01: the size an add of unknown outcome left, booked once the position reads again
+                    logger.warning(f"Demo {trade['symbol']}: position {left} after an unknown add (booked "
+                                   f"{trade.get('qty')}): booked as is")
+                    trade['qty'] = left
+                    with sqlite3.connect(self.db_path) as c:
+                        c.execute("UPDATE demo_trades SET qty = ? WHERE id = ?", (left, trade['id']))
+                ref0 = float(trade.get('sl') or 0)
+                spx = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice')  # noqa: E731
+                                      or o.get('triggerPrice') or 0)
+                stays = min(stops, key=lambda o: abs(spx(o) - ref0)) if ref0 else \
+                    max(stops, key=lambda o: o.get('timestamp') or 0)
+                # audit V02: the coverage of the stop that STAYS after the dedupe below (two stops of 1 'covered' a
+                # position of 2, then one was cancelled)
+                covered = float((stays.get('info') or {}).get('origQty') or stays.get('amount') or 0)
+                if left > 0 and covered < left * 0.999:
                     logger.warning(f"Demo {trade['symbol']}: stops cover {covered} of the position {left}: re-placed")
                     self.alert(f"⚠️ Демо {trade['symbol']}: стоп покрывал {covered} из {left}, переставлен")
                     try:
@@ -1012,11 +1100,30 @@ class DemoExecutor:
                     logger.warning(f"Demo ADD {symbol}: outcome unknown ({e!r}): resolving by position")
                     order = {}
                     await asyncio.sleep(4)
-                for wait in (0, 3, 6, 10):             # BingX's position snapshot lags the fill by a few seconds
+                after = after_px = None
+                for wait in (0, 3, 6, 10, 20, 30):     # BingX's position snapshot lags the fill by a few seconds
                     await asyncio.sleep(wait)
-                    after, after_px = await self._position_of(symbol, d, strict=True)
+                    try:
+                        after, after_px = await self._position_of(symbol, d, strict=True)
+                    except Exception as e:
+                        logger.warning(f"Demo ADD {symbol}: position unreadable ({e!r}), retrying")
+                        continue
                     if after - before > 0:
                         break
+                if after is None:
+                    # audit V01: the add went out and the position stayed unreadable - the outcome is UNKNOWN. The
+                    # largest position it can be (before + the unit) gets the stop at once (reduce-only: a larger stop
+                    # closes no more than there is); _dedupe_stops re-reads the real size, books it and resizes the stop
+                    worst = before + unit
+                    self.alert(f"⚠️ Демо {symbol}: исход добора неизвестен (позиция не читается), стоп поставлен на "
+                               f"максимально возможный объём {worst:g}")
+                    trade['add_unknown'] = True
+                    try:
+                        new = await self._place_stop(symbol, d, worst, float(trade['sl']))
+                        await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
+                    except Exception as e:
+                        errors.report('executor.on_add', e, f"Demo protective stop after an unknown add {symbol}")
+                    return
                 added = after - before
                 if added <= 0:
                     logger.warning(f"Demo ADD {symbol}: no growth of the position ({before} -> {after}): not added")

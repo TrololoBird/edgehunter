@@ -433,8 +433,8 @@ def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional
     else:
         return None
     extreme = min(x[3] for x in h1[-3:]) if side > 0 else max(x[2] for x in h1[-3:])
-    trs = [max(x[2], p[4]) - min(x[3], p[4]) for p, x in zip(h1[-21:-1], h1[-20:])]
-    atr = sum(trs) / len(trs) if trs else None
+    from levels import atr_of
+    atr = atr_of(h1[-200:])                                # Wilder's ATR14, the bot's one ATR (was a 20-bar mean)
     tag = 'RSI2X' if first == 'orig' else 'RSI2'
     return {'setup': f'{tag} LONG' if side > 0 else f'{tag} SHORT', 'direction': side, 'connors_atr': atr,
             'setup_note': f"daily RSI(2) {r:.0f} {'below ' + format(cfg.connors_rsi_low, 'g') + ' above' if side > 0 else 'above ' + format(cfg.connors_rsi_high, 'g') + ' below'} the SMA200 "

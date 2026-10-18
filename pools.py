@@ -22,9 +22,10 @@ def coin_class(symbol: str, rank: int) -> str:
 def atr_pct_1h(h1: List[List[float]]) -> Optional[float]:
     if not h1 or len(h1) < 15:
         return None
-    rows = h1[-15:]
-    trs = [max(r[2] - r[3], abs(r[2] - p[4]), abs(r[3] - p[4])) for p, r in zip(rows, rows[1:])]
-    return sum(trs) / len(trs) / rows[-1][4] * 100 if rows[-1][4] else None
+    from levels import atr_of
+    rows = h1[-200:]
+    atr = atr_of(rows)                                     # Wilder's ATR14, the bot's one ATR
+    return atr / rows[-1][4] * 100 if atr is not None and rows[-1][4] else None
 
 
 class Pools:

@@ -44,6 +44,23 @@ def _ema_of_tf(x: PlanInput, tf: str, span: int) -> Optional[float]:
     return ema
 
 
+def _to_4h(h1: List[List[float]]) -> List[List[float]]:
+    """1h candles [ts, o, h, l, c, vol] grouped into the 4h candles they make (UTC 4h boundaries)."""
+    out: List[List[float]] = []
+    hours: List[List[int]] = []
+    for c in h1:
+        ts = int(c[0]) // 14_400_000 * 14_400_000
+        if out and out[-1][0] == ts:
+            b = out[-1]
+            b[2], b[3], b[4], b[5] = max(b[2], c[2]), min(b[3], c[3]), c[4], b[5] + c[5]
+            hours[-1].append(int(c[0]))
+        else:
+            out.append([ts, c[1], c[2], c[3], c[4], c[5]])
+            hours.append([int(c[0])])
+    # only complete 4h candles: each of the four hours exactly once (a gap / a repeat is no 4h candle)
+    return [b for b, hs in zip(out, hours) if hs == [b[0] + i * 3_600_000 for i in range(4)]]
+
+
 def broke_structure(candles: List[List[float]], start_ts: int, end: float, direction: int) -> bool:
     """ICT: the impulse must break structure - its end beyond the last 3-candle swing high (up; low down) formed in the
     48 candles before the leg's start (a swing high below the start does not count for an up leg)."""
@@ -104,6 +121,8 @@ class LegContinuation(Strategy):
             return {'skip': 'against_tide'}
         if CONFIG.strategies.require_displacement:
             candles = _rows(x.df) if impulse['tf'] == '15m' else [list(c) for c in (x.h1 or [])]
+            if impulse['tf'] == '4h':
+                candles = _to_4h(candles)        # audit 2026-10-18: a 4h leg's FVG / BOS on its own candles, not 1h
             if not displacement(candles, impulse['start_ts'], impulse['end_ts'], d):
                 return {'skip': 'no_displacement'}
             if not broke_structure(candles, impulse['start_ts'], impulse['end'], d):

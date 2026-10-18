@@ -166,7 +166,6 @@ class Briefing:
         self.sc = scanner
         self.cfg = CONFIG.briefing
         self.zones: Dict[str, List[Dict]] = {}          # symbol -> the last briefing's zones (watched)
-        self.context: Dict[str, List[Dict]] = {}        # symbol -> wide zones the price sits inside (named, not traded)
         self._proxy: Dict[str, Tuple[float, Dict]] = {}  # base -> (fetched at, spot proxy candles)
         self._anom_buf: Dict[str, List[Tuple[int, str, float]]] = {}   # symbol -> the burst being collected
         self.scenario: Dict[str, Dict] = {}
@@ -175,7 +174,32 @@ class Briefing:
         self._last_h1: Dict[str, int] = {}
         self._demo_seen = 0
         self._anom_seen = int(time.time() * 1000)
-        self._done_slots: set = set()
+        self._done_slots: set = self._load_slots()
+
+    SLOTS_PATH = os.path.join('data', 'briefing_slots.json')
+
+    def _load_slots(self) -> set:
+        """The schedule slots already sent (owner 2026-10-18: a restart inside a slot's 10 minutes sent the 10-15 02:30
+        briefing twice - the set lived in memory only)."""
+        import json
+        try:
+            with open(self.SLOTS_PATH, encoding='utf-8') as f:
+                return set(json.load(f))
+        except (OSError, ValueError):
+            return set()
+
+    def _save_slots(self) -> None:
+        import json
+        keep = sorted(self._done_slots)[-40:]          # 'YYYY-MM-DD HH:MM' sorts by time; 10 days of 4 slots
+        self._done_slots = set(keep)
+        try:
+            os.makedirs('data', exist_ok=True)
+            tmp = self.SLOTS_PATH + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(keep, f)
+            os.replace(tmp, self.SLOTS_PATH)
+        except OSError as e:
+            errors.report('briefing._save_slots', e, "Briefing slots state")
 
     # ------------------------------------------------------------------ helpers
     def watched(self) -> List[str]:
@@ -251,7 +275,11 @@ class Briefing:
                 since = (self.PROXY[base], md.d1[0][0] if md.d1 else None)
         b = self.sc.fetcher.htf_bias(src, time.time() * 1000)
         coin = (b or {}).get('coin') or {}
-        return coin.get('bias'), {**coin, 'range_mid': (b or {}).get('range_mid'), 'proxy': since,
+        bias, h4, adx4 = coin.get('bias'), coin.get('h4'), coin.get('adx4')
+        if self.cfg.bias_h4_adx > 0 and bias in ('bull', 'bear') and h4 == (-1 if bias == 'bull' else 1) and \
+                adx4 is not None and adx4 >= self.cfg.bias_h4_adx:
+            bias = 'conflict'                        # owner 2026-10-18: a strong 4h trend against the weeks
+        return bias, {**coin, 'range_mid': (b or {}).get('range_mid'), 'proxy': since,
                                   'days': len(md.d1)}
 
     def _bias_line(self, symbol: str, bias: Optional[str], st: Dict) -> str:
@@ -288,15 +316,6 @@ class Briefing:
             return None, 0
         days = max(len(d1), len(w1) * 7)
         return max(highs), days
-
-    def _context_text(self, symbol: str) -> str:
-        """The wide zones the price sits inside (a big daily candle's order block / breaker): named, not traded."""
-        ctx = self.context.get(symbol) or []
-        if not ctx:
-            return ''
-        z = max(ctx, key=lambda m: m['strength'])
-        return (f"Цена внутри широкой зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} ({' · '.join(z['labels'][:3])}): "
-                f"входы только от краёв, не из середины.")
 
     def key_zones(self, symbol: str, src: Optional[Dict] = None, keep_state: bool = True) -> Tuple[Optional[float], List[Dict]]:
         """
@@ -368,7 +387,7 @@ class Briefing:
             what = f"{z['touches']} касан{'ие' if z['touches'] == 1 else 'ия' if z['touches'] < 5 else 'ий'} ({tfs})"                 + (', смена роли' if z['flip'] else '')
             cands.append({'lo': z['lo'], 'hi': z['hi'], 'mid': z['price'], 'strength': z['strength'],
                           'labels': list(dict.fromkeys(l.label for l in near)), 'tol': tol, 'pad': pad,
-                          'wide': False, 'sr_desc': what})
+                          'sr_desc': what})
         if not cands:
             return price, []
         # zones that overlap are one place: merged (up to a daily ATR wide) - the cap above kept BTC's 81 857-82 500
@@ -405,14 +424,12 @@ class Briefing:
         # context, named in the text, not the zone to trade off)
         inside = [m for m in cands if m['lo'] - m['tol'] <= price <= m['hi'] + m['tol']]
         cur = min(inside, key=lambda m: (m['hi'] - m['lo'], rank(m))) if inside else None
-        # wider than a daily ATR around the price: context (named, not traded); the other zones around the price are
-        # supports / resistances by their level price (a daily low whose candle body reaches above the price - BTC's
-        # 82 500 / 83 461 - is a support at 82 500, not context: as context it vanished from the targets)
-        wide = [m for m in inside if m is not cur and m['wide']]
-        if keep_state:
-            self.context[symbol] = wide
+        # the other zones around the price are supports / resistances by their level price (a daily low whose candle
+        # body reaches above the price - BTC's 82 500 / 83 461 - is a support at 82 500). audit (2nd part): the 'wide'
+        # context branch is gone - sr.zones caps a zone at 1.5 x ATR(1h) and the merge above at the same width, so no
+        # zone was ever wide: the branch, its text and its edge levels never ran
         for m in inside:
-            if m is not cur and not m['wide']:
+            if m is not cur:
                 lo, hi = (min(m['lo'], m['mid']), min(m['mid'], price - m['tol'])) if m['mid'] < price                     else (max(m['mid'], price + m['tol']), max(m['hi'], m['mid']))
                 m['lo'], m['hi'] = min(lo, hi), max(lo, hi)        # never inverted (XAU '4 118 - 4 115')
 
@@ -421,7 +438,7 @@ class Briefing:
             daily-ATR window skipped BTC's 82 500 daily low and ETH's 2 475 edge for weaker or farther ones); the next
             pick must lie beyond the previous one by more than their pierce (closer = one place); a zone of
             15m / 1h levels only was already dropped above."""
-            pool_ = sorted((m for m in cands if m is not cur and m not in wide
+            pool_ = sorted((m for m in cands if m is not cur
                             and (m['lo'] > price if side > 0 else m['hi'] < price)),
                            key=lambda m: m['lo'] if side > 0 else -m['hi'])
             chosen, edge = [], (cur['hi'] if cur and side > 0 else cur['lo'] if cur else price)
@@ -440,13 +457,6 @@ class Briefing:
                 chosen.append(m)
                 edge = m['hi'] if side > 0 else m['lo']
             return chosen
-        # the edges of a wide zone around the price are levels of their own (ETH inside the daily FVG 2 484-2 568: its
-        # low is the first support for a short's target, not 2 469 beyond it)
-        for m in wide:
-            for side, edge in ((-1, m['lo']), (1, m['hi'])):
-                if side * (edge - price) > m['tol'] and not (cur and cur['lo'] <= edge <= cur['hi']):
-                    cands.append({**m, 'lo': edge, 'hi': edge, 'mid': edge, 'wide': False,
-                                  'labels': [f"край: {lb}" for lb in m['labels'][:2]]})
         for m in cands:
             m['lo'], m['hi'] = min(m['lo'], m['hi']), max(m['lo'], m['hi'])
         above, below = ladder(1, 3), ladder(-1, 2)
@@ -456,7 +466,7 @@ class Briefing:
                 labels = sorted(m['labels'], key=_label_rank)
                 out.append({'lo': m['lo'], 'hi': m['hi'], 'mid': m['mid'], 'side': side, 'strength': m['strength'],
                             'tol': m['tol'],
-                            'pad': m['pad'], 'wide': m['wide'], 'label': ' · '.join(labels[:4]),
+                            'pad': m['pad'], 'label': ' · '.join(labels[:4]),
                             'desc': (m.get('sr_desc', '') + (f"; здесь же: {', '.join(describe(m['labels']).split(', ')[:2])}" if m['labels'] else ''))
                             .lstrip('; ') or describe(m['labels'])})
         return price, out
@@ -478,9 +488,6 @@ class Briefing:
         for z in zones:
             tag = {1: '🔴 сопр.', 0: '🔵 цена в зоне', -1: '🟢 подд.'}[z['side']]
             lines.append(f"{tag} {_fmt(z['lo'])}–{_fmt(z['hi'])} [{z['strength']:.0f}] {z['label']}")
-        ctx = self._context_text(symbol)
-        if ctx:
-            lines.append(ctx)
         tf = self.sc._tf_atrs(symbol)
         ath, days = self._history_high(md) if md else (None, 0)
         p = briefing_chart.plan(price, zones, tf.get('1d'), ath, days)
@@ -501,10 +508,10 @@ class Briefing:
         now = time.time() * 1000
         tf: Dict[str, float] = {}
         for k, rows, period in (('1h', h1, 3_600_000), ('4h', h4, 14_400_000), ('1d', d1, 86_400_000)):
-            closed = [r for r in rows[-20:] if r[0] + period <= now]
+            closed = [r for r in rows[-200:] if r[0] + period <= now]
             if len(closed) >= 15:
-                trs = [max(c[2] - c[3], abs(c[2] - p[4]), abs(c[3] - p[4])) for p, c in zip(closed[-15:-1], closed[-14:])]
-                tf[k] = sum(trs) / len(trs)
+                from levels import atr_of
+                tf[k] = atr_of(closed)                       # Wilder's ATR14, the bot's one ATR
         return md, {'price': price, 'levels': [], 'tf': tf, 'md': md}
 
     def analyze(self, symbol: str, md=None, src: Optional[Dict] = None, cards: Optional[List[Dict]] = None) -> Dict:
@@ -618,8 +625,7 @@ class Briefing:
                 png = briefing_chart.render(f"{_short(symbol)}USDT", list(md.h1)[-72:], price,
                                             self.zones.get(symbol) or [], tf.get('1h'), bias_line, tf.get('1d'),
                                             candles_1h=list(md.h1), tf_label='1h',
-                                            ath=ath, ath_days=ath_days, hi24=hi24, lo24=lo24,
-                                            context_text=self._context_text(symbol))
+                                            ath=ath, ath_days=ath_days, hi24=hi24, lo24=lo24)
                 cap = f"<b>{_short(symbol)}</b> · {bias_line}"
                 out.append((png, (head + '\n\n' + cap) if not out else cap))
             except Exception as e:
@@ -1035,8 +1041,8 @@ class Briefing:
                        key=f"anom|{symbol}|{'|'.join(sorted(set(e[1] for e in evs)))}", every_sec=1800)
 
     def _zone_note(self, symbol: str, lo: float, hi: float) -> str:
-        """Which briefing zone (or wide context zone) the events happened at, within its tolerance."""
-        for z in (self.zones.get(symbol) or []) + (self.context.get(symbol) or []):
+        """Which briefing zone the events happened at, within its tolerance."""
+        for z in self.zones.get(symbol) or []:
             t = z.get('tol') or 0.0
             if z['lo'] - t <= hi and lo <= z['hi'] + t:
                 role = {1: 'сопротивления', -1: 'поддержки', 0: 'реакции'}.get(z.get('side'), '')
@@ -1111,6 +1117,7 @@ class Briefing:
                     t = now.replace(hour=h, minute=m, second=0, microsecond=0)
                     if slot not in self._done_slots and timedelta(0) <= now - t <= timedelta(minutes=10):
                         self._done_slots.add(slot)
+                        self._save_slots()             # before sending: a crash mid-send never sends twice
                         if title == 'recap':
                             self.sc.notifier.post(await asyncio.to_thread(self.recap), 'briefing')
                             await asyncio.to_thread(self.snapshot_outcomes)

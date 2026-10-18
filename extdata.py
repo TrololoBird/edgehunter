@@ -216,8 +216,10 @@ class ExternalData:
             return None
         base = symbol.split('/')[0]
         mult = 1.0
-        if base.startswith('1000') and base[4:] in self._upbit:  # 1000PEPE is quoted per 1000 coins
-            base, mult = base[4:], 1000.0
+        from symbols import split_base
+        coin, k = split_base(base)
+        if k != 1.0 and coin in self._upbit:                     # 1000PEPE is quoted per 1000 coins (10000WEN per 1e4)
+            base, mult = coin, k
         krw, traded = self._upbit.get(base, (None, 0))
         if not krw or time.time() - traded > UPBIT_MAX_AGE_S:     # an illiquid pair's last trade is an old price
             return None
@@ -258,7 +260,7 @@ class ExternalData:
         m = sm.lookup('hyperliquid', coin)
         if m is not None:
             return m.key
-        for key in (f"{coin}/USDT:USDT", f"1000{coin}/USDT:USDT"):
+        for key in [f"{coin}/USDT:USDT"] + [f"{p}{coin}/USDT:USDT" for p in ('1000', '10000', '100000', '1000000', '1M')]:
             if key in self.fetcher.markets:
                 return key
         return None

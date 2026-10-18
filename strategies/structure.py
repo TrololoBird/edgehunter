@@ -43,8 +43,11 @@ def true_ranges(candles: Sequence[Sequence[float]]) -> List[float]:
 
 
 def recent_atr(candles_15m: Sequence[Sequence[float]]) -> float:
-    trs = true_ranges(candles_15m)[-CONFIG.strategies.recent_atr_candles:]
-    return sum(trs) / len(trs) if trs else 0.0
+    # Wilder's ATR(recent_atr_candles) (the bot's one ATR) over the last 200 candles' true ranges
+    from levels import wilder_of
+    trs = true_ranges(candles_15m[-201:])
+    n = CONFIG.strategies.recent_atr_candles
+    return (wilder_of(trs, n) if len(trs) >= n else (sum(trs) / len(trs) if trs else 0.0)) or 0.0
 
 
 def coin_trend(candles_1h: Sequence[Sequence[float]]) -> int:
@@ -186,7 +189,8 @@ def hours_from(candles_15m: Sequence[Sequence[float]], h1: Sequence[Sequence[flo
             by_hour.setdefault(hour, []).append(c)
     for hour in sorted(by_hour):
         q = sorted(by_hour[hour], key=lambda c: c[0])
-        if len(q) == 4:
+        # audit F05: the four quarters exactly (a count of 4 accepted :00 / :15 / :15 / :45)
+        if [int(c[0]) for c in q] == [hour + i * 900_000 for i in range(4)]:
             out.append([hour, q[0][1], max(c[2] for c in q), min(c[3] for c in q), q[-1][4],
                         sum(c[5] for c in q), sum(c[6] for c in q),
                         sum(c[7] for c in q) if all(len(c) > 7 and c[7] is not None for c in q) else float('nan')])
@@ -210,6 +214,9 @@ def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
             break
         start = int(c[0]) // size * size
         vol = float(c[5]) if len(c) > 5 and c[5] is not None else 0.0
+        if out and out[-1][0] == start and int(c[0]) != start + n * HOUR_MS:
+            n = -99                            # audit F05: a repeated / skipped hour - the group is no candle
+            continue
         if out and out[-1][0] == start:
             b = out[-1]
             b[2], b[3], b[4], b[5] = max(b[2], c[2]), min(b[3], c[3]), c[4], b[5] + vol

@@ -483,13 +483,17 @@ class BybitStream(VenueStream):
         elif kind == 'tickers':
             state = self._tickers.setdefault(native, {})
             state.update({k: v for k, v in data.items() if v not in (None, '')})
-            oi_usd = _f(state.get('singleOpenInterestValue')) or _f(state.get('openInterestValue'))
+            # audit V11: the USD value and the coin count from ONE convention - the single-side pair when Bybit sends it,
+            # else the plain pair (was single-side USD with the both-side count: native 20 beside USD 1000)
+            single = _f(state.get('singleOpenInterestValue'))
+            oi_usd = single or _f(state.get('openInterestValue'))
+            native = _f(state.get('singleOpenInterest')) if single else _f(state.get('openInterest'))
             interval = _f(state.get('fundingIntervalHour'), 8.0) or 8.0
             funding = state.get('fundingRate')
             self.sink.on_deriv(market, oi_usd=oi_usd or None,
                                funding_8h=_f(funding) * 8 / interval if funding not in (None, '') else None,
                                mark=_f(state.get('markPrice')) or None, ts_ms=payload.get('ts'),
-                               native_oi=_f(state.get('openInterest')) or None)
+                               native_oi=native or None)
         elif kind == 'allLiquidation':
             for liq in data:
                 # S = side of the liquidated position: Buy = a long was liquidated

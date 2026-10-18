@@ -45,12 +45,18 @@ def true_range(h: np.ndarray, l: np.ndarray, c: np.ndarray) -> np.ndarray:
 
 
 def wilder(x: np.ndarray, n: int) -> np.ndarray:
-    """RMA / Wilder smoothing (pandas ewm(alpha=1/n, adjust=False))."""
+    """RMA / Wilder smoothing, seeded with the mean of the first n values as Wilder / TA-Lib (owner 2026-10-18: one
+    ATR everywhere - this was seeded with the first value, a different number than the panel's / geometry's for
+    hundreds of bars). Before the seed: the running mean of the values so far (no NaN for the callers' indexing)."""
+    x = np.asarray(x, dtype=np.float64)
     out = np.empty_like(x)
-    acc = x[0]
-    a = 1.0 / n
-    for i, v in enumerate(x):
-        acc = v if i == 0 else acc + a * (v - acc)
+    if not len(x):
+        return out
+    k = min(n, len(x))
+    out[:k] = np.cumsum(x[:k]) / np.arange(1, k + 1)
+    acc = out[k - 1]
+    for i in range(k, len(x)):
+        acc += (x[i] - acc) / n
         out[i] = acc
     return out
 
