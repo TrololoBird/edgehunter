@@ -674,12 +674,27 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
     """
     exit = plan['exit']
     atr = exit.get('atr') or plan['atr']
+    try:
+        if direction not in (-1, 1) or not all(math.isfinite(v) and v > 0 for v in (entry, atr, plan['atr'])):
+            return None
+        if extreme is not None and not math.isfinite(extreme):
+            return None
+        if any(v is not None and (not math.isfinite(v) or v < 0)
+               for v in (plan.get('tf_atr'), plan.get('leg_atr'), plan.get('recent_atr'))):
+            return None
+    except (TypeError, ValueError):
+        return None
     if exit['tp'][0] == 'trail':
         # a system without a profit target (the Turtles: out on the opposite N-day channel, SignalBook trails it):
         # its own stop; TP1-3 are 100 / 200 / 300 R placeholders the lifecycle never reaches (R:R never vetoes it)
         stop = exit['stop'][1]
-        if exit.get('stop_n'):
-            stop = entry - direction * exit['stop_n']          # review V05: a distance from the entry (Turtles' 2N)
+        try:
+            if exit.get('stop_n'):
+                stop = entry - direction * exit['stop_n']      # review V05: a distance from the entry (Turtles' 2N)
+            if not math.isfinite(stop) or stop <= 0:
+                return None
+        except (TypeError, ValueError):
+            return None
         sl_src = exit.get('stop_src', 'the system stop')
         if exit.get('pad'):
             # a structural stop (Bollinger's retest): beyond it by the pierce / zone buffer, never inside 1 ATR
@@ -690,12 +705,14 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
             if 0 < direction * (entry - stop) < floor:
                 stop, sl_src = entry - direction * floor, f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
         risk = direction * (entry - stop)
-        if risk <= 0:
+        if not math.isfinite(risk) or risk <= 0 or stop <= 0:
             return None
         label = exit.get('tp_src', 'none (trailing exit)')
         # eng-54: the cost guard holds here too - an ORB range of 0.15% put the stop 0.10% away, under one round trip's
         # cost (live ETH 2026-10-03: -2.2R in the demo); target-less plans skipped finish_levels and with it the guard
         fee = cost_of(entry, plan.get('volume_24h'), plan.get('symbol'))
+        if not math.isfinite(fee) or fee < 0:
+            return None
         reason = _cost_reason() if risk < CONFIG.levels.cost_guard * fee else None
         reason = reason or stop_too_far(plan, entry, stop)
         out = {'entry': entry, 'sl': stop, 'tp1': entry + direction * 100 * risk, 'tp2': entry + direction * 200 * risk,
@@ -704,7 +721,14 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
                'tp1_src': label, 'tp2_src': label, 'tp3_src': label, 'sl_src': sl_src,
                'stop_pierce': stop_pierce(plan, stop)}
         tp1 = exit.get('tp1_price')
+        if not all(math.isfinite(out[f'tp{k}']) for k in (1, 2, 3)):
+            return None
         if tp1 is not None:
+            try:
+                if not math.isfinite(tp1) or tp1 <= 0 or direction * (tp1 - entry) <= 0:
+                    return None
+            except (TypeError, ValueError):
+                return None
             # eng-85: a trailing system with a real first target (Bollinger's band at the signal): half out there; it
             # must pay the TP1 floor net of costs after the stop's padding
             rr1 = (direction * (tp1 - entry) - fee) / (risk + fee)
@@ -749,6 +773,8 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         if exit['stop'][0] == 'price' and not exit.get('own_stop'):
             stop, sl_src = clear_pool(zones, stop, entry, direction, plan.get('symbol'), sl_src)
     risk = direction * (entry - stop)
+    if not math.isfinite(risk):
+        return None
     if 0 < risk < floor and not exit.get('own_stop'):                                # eng-58: with the pierce model too (stop_levels)
         stop, risk = entry - direction * floor, floor
         sl_src = f"{sl_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR"
