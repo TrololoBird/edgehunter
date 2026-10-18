@@ -208,6 +208,9 @@ EXTRA_COLUMNS = {
     'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
     'weis_ratio': 'REAL', 'tp1_min': 'REAL', 'limit_entry': 'INTEGER',
+    # audit 2026-10-18: the thirds-model expectancy at the entry (exp_model, exp_note when it was only a shadow) and the
+    # nearest opposing level before TP1 (obstacle_r in R from the entry, its source): diagnostics, never a filter
+    'exp_model': 'REAL', 'exp_note': 'TEXT', 'obstacle_r': 'REAL', 'obstacle_src': 'TEXT',
     # eng-133 shadow features (extdata.macro_loop): TradFi perpetuals' changes %, NYSE session flag, previous VIX close,
     # Fear & Greed, spot-ETF net flow USD m (1 day / 3 days, visible from D+1 08:00 UTC): journal only, never a filter
     'xau_chg_1h': 'REAL', 'xau_chg_24h': 'REAL', 'oil_chg_1h': 'REAL', 'oil_chg_24h': 'REAL', 'spy_chg_1h': 'REAL', 'spy_chg_24h': 'REAL', 'qqq_chg_1h': 'REAL', 'qqq_chg_24h': 'REAL', 'us_session': 'REAL', 'vix_prev': 'REAL', 'fng': 'REAL', 'etf_flow_1d': 'REAL', 'etf_flow_3d': 'REAL',
@@ -616,6 +619,8 @@ class SignalJournal:
                     'tp2': None if no_tp else lv['tp2'], 'tp3': None if no_tp else lv['tp3'],
                     'rr_tp1': lv.get('rr_tp1'), 'low_rr': int(bool(lv.get('low_rr'))),
                     'rr_blend': lv.get('rr_blend'), 'rr_reason': lv.get('rr_reason'),
+                    'exp_model': lv.get('exp_model'), 'exp_note': lv.get('exp_note'),
+                    'obstacle_r': lv.get('obstacle_r'), 'obstacle_src': lv.get('obstacle_src'),
                     'vetoed': getattr(tracked, 'vetoed', None), 'of_confirm': getattr(tracked, 'of_confirm', None),
                     'confirms': json.dumps(getattr(tracked, 'confirms', None) or {}),
                     'conf_n': sum(1 for k, v in (getattr(tracked, 'confirms', None) or {}).items()
@@ -917,9 +922,11 @@ class SignalJournal:
     def refresh_hit_rates(self) -> int:
         """
         p(TP1 before the stop) per SETUP (audit C09) from the replayed entries of the last 30 days (passed and vetoed: the
-        replay is the same), decided ones (TP1 / TP2 / TP3 vs SL) -> strategies.geometry.HIT_RATE (p, n, p_upper), which
-        turns the entry check from a fixed R:R into the expectancy: an entry is vetoed only when it is negative even at
-        the upper end of p's 95% Wilson interval (proven, not a small sample's noise).
+        replay is the same), decided ones (TP1 / TP2 / TP3 vs SL) -> strategies.geometry.HIT_RATE (p, n, p_upper). A
+        DESCRIPTIVE rate of reaching each target before the stop (audit 2026-10-18 P1 #5): the entry check turns it into
+        the expectancy of the three-thirds exit only, vetoing a plan that exits that way when even the upper end of the
+        95% Wilson interval does not pay; it is not the expectancy of the whole exit policy (trail, partials, time
+        exits), and entries of one market move are not independent draws, so the interval is optimistic.
         """
         from strategies import geometry
         since = int((time.time() - 30 * 86400) * 1000)
@@ -990,15 +997,16 @@ class SignalJournal:
 
     def coin_results(self, since_ms: int) -> List[Tuple[str, str, int, int, float]]:
         """(strategy, symbol, ts_ms, direction, net R) of every non-vetoed entry since `since_ms` of the logic family
-        judged now (CONFIG.journal.verdict_since on). eng-97: the trade's own result (card_r, on the entry row since
-        eng-86) where known, else the replay's R to TP1 - target-less methods' r_tp1 could only read a stop-out; and
+        judged now (CONFIG.journal.verdict_since on): the trade's own result (card_r, on the entry row since eng-86) only.
+        audit 2026-10-18 P1 #5: the replay's R to TP1 (r_tp1) is another trade - all out at TP1 - and is no longer
+        substituted for a missing card_r (an open trade or a row before eng-86 is left out, not given a model result);
         no coin is excluded on the results of a logic that no longer runs."""
         from stats import version_no
         floor = version_no(CONFIG.journal.verdict_since)
         with self._lock:
             rows = self.conn.execute(
-                "SELECT strategy, symbol, ts_ms, direction, COALESCE(card_r, r_tp1), logic_version FROM signals "
-                "WHERE kind = 'entry' AND COALESCE(card_r, r_tp1) IS NOT NULL "
+                "SELECT strategy, symbol, ts_ms, direction, card_r, logic_version FROM signals "
+                "WHERE kind = 'entry' AND card_r IS NOT NULL "
                 "AND (vetoed IS NULL OR vetoed = '') AND strategy IS NOT NULL AND ts_ms >= ?", (since_ms,)).fetchall()
         return [r[:5] for r in rows if version_no(r[5]) >= floor]
 

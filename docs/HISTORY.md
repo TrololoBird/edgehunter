@@ -825,3 +825,15 @@ Base: the live tree's uncommitted audit-2026-10-18 fixes (commit d021a9e, runnin
 - cost_guard: the config text no longer calls it "the break-even formula" (a policy cap; costs > 1R can still have positive expectancy).
 Not done (proposals, separate changes): the TP1 hit-rate veto as expectancy (P1 #5), obstacles / horizon diagnostics (P2 #7), sizing /
 leverage assumptions in the UI (P2 #8), the stage-0 parameter-provenance table.
+
+## eng-143 (the rest of the external audit 2026-10-18)
+- P1 #5: the expectancy veto (`HIT_RATE`, the three-thirds model against a fixed stop) vetoes only plans that exit in thirds; a plan with
+  half + trail, the +1R partial, the averaging add, Turtle units or no targets gets the estimate journaled (`exp_model`, `exp_note`
+  "shadow: ...") but is not vetoed by it. `refresh_hit_rates` documents p as a descriptive per-target rate (correlated entries: the
+  interval is optimistic). `coin_results` uses `card_r` only - the replay's all-out-at-TP1 `r_tp1` is no longer substituted for a
+  missing result.
+- P2 #7: `geometry.obstacle_before` - the nearest strong map zone between the entry and TP1, journaled (`obstacle_r` in R, `obstacle_src`)
+  and named in the ENTRY message. Diagnostic only; targets and the reach filter unchanged.
+- P2 #8: `webui.sizing_view` uses the geometry's costs (`cost_of` with the coin's volume and symbol); `max_leverage` is None when no
+  leverage keeps the liquidation beyond the stop under the model (was floored to 1x), and the assumptions are shown.
+- Stage 0: `docs/PARAMETER_PROVENANCE.md`.

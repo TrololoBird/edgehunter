@@ -189,11 +189,14 @@ def _anchor_view(anchor: Optional[Dict]) -> Optional[Dict]:
 
 
 def sizing_view(levels: Optional[Dict], direction: int, funding_8h: Optional[float],
-                symbol: Optional[str] = None) -> Optional[Dict]:
+                symbol: Optional[str] = None, volume_24h: Optional[float] = None) -> Optional[Dict]:
     """
     Sizing facts of an entry for a manual trader (CONFIG.risk): the stop distance, the highest isolated leverage whose
     liquidation stays liq_stop_margin x the stop distance away, the funding the position pays (+) or receives (-) per
     8h at the current rate, and, with an account size configured, the notional and margin for risk_pct of it.
+    audit 2026-10-18 P2 #8: an ESTIMATE under stated assumptions (isolated margin, the contract's first Bybit maintenance
+    tier, no account state): the costs are the geometry's own (cost_of with the coin's volume and symbol), and when no
+    leverage keeps the liquidation beyond the stop under the model, max_leverage is None, not '1x is fine'.
     """
     if not levels or not levels.get('entry') or levels.get('sl') is None or not direction:
         return None
@@ -209,12 +212,15 @@ def sizing_view(levels: Optional[Dict], direction: int, funding_8h: Optional[flo
     max_lev = 1.0 / (cfg.liq_stop_margin * stop_frac + mmr)
     if contract_max:
         max_lev = min(max_lev, contract_max)
-    out = {'stop_pct': stop_frac, 'max_leverage': max(1.0, math.floor(max_lev)),
+    lev = math.floor(max_lev) if max_lev >= 1 else None
+    out = {'stop_pct': stop_frac, 'max_leverage': lev,
+           'assumptions': f"оценка: изолированная маржа, поддерживающая маржа {mmr * 100:.2f}% (первый уровень Bybit), "
+                          f"без состояния счёта",
            'funding_8h': (direction * funding_8h) if funding_8h is not None else None}
     if cfg.account_usd > 0:
         risk_usd = cfg.account_usd * cfg.risk_pct / 100
-        notional = risk_usd / (stop_frac + cost_of(entry) / entry)
-        out.update(risk_usd=risk_usd, notional_usd=notional, margin_usd=notional / out['max_leverage'])
+        notional = risk_usd / (stop_frac + cost_of(entry, volume_24h, symbol) / entry)
+        out.update(risk_usd=risk_usd, notional_usd=notional, margin_usd=notional / lev if lev else None)
     return out
 
 
@@ -267,7 +273,8 @@ def card_view(s, now: float) -> Dict:
         # 100 / 200 / 300 R placeholders the lifecycle never reaches - shown as none (a short's came out negative)
         'levels': {k: (None if plan.get('no_tp') and k in ('tp1', 'tp2', 'tp3') else
                        v if isinstance(v, str) else _num(v)) for k, v in lv.items()} if lv else None,
-        'sizing': sizing_view(lv, s.direction, s.sig.get('funding_rate'), s.symbol) if lv else None,
+        'sizing': sizing_view(lv, s.direction, s.sig.get('funding_rate'), s.symbol,
+                              s.sig.get('volume_24h')) if lv else None,
         'r_now': _num(s.r_now), 'best_target': s.best_target, 'final_r': _num(s.final_r),
         'vetoed_triggers': s.vetoed_triggers, 'veto_log': list(s.veto_log), 'veto_notes': list(s.veto_notes), 'of_confirm': s.of_confirm,
         'confirms': s.confirms, 'required': list(confirm.required(s.mode)), 'crowd': s.sig.get('market_crowd'),

@@ -33,10 +33,12 @@ function pct(v, d = 2, colored = true) {
 }
 // Sizing facts of an entered card (webui.sizing_view): information, never an order
 function sizingText(z) {
-  const parts = [`стоп ${(z.stop_pct * 100).toFixed(2)}%`, `плечо ≤ ${z.max_leverage}× (изолированная маржа: ликвидация дальше стопа)`];
+  const lev = z.max_leverage ? `плечо ≤ ${z.max_leverage}× (ликвидация дальше стопа)` : 'плеча, при котором ликвидация дальше стопа, нет';
+  const parts = [`стоп ${(z.stop_pct * 100).toFixed(2)}%`, lev];
   if (z.funding_8h !== null && z.funding_8h !== undefined)
     parts.push(`фандинг ${z.funding_8h >= 0 ? 'платите' : 'получаете'} ${Math.abs(z.funding_8h * 100).toFixed(3)}%/8ч`);
-  if (z.notional_usd) parts.push(`объём $${usd(z.notional_usd)} (маржа $${usd(z.margin_usd)} при ${z.max_leverage}×, риск $${usd(z.risk_usd)})`);
+  if (z.notional_usd) parts.push(`объём $${usd(z.notional_usd)}` + (z.max_leverage ? ` (маржа $${usd(z.margin_usd)} при ${z.max_leverage}×` : ' (') + `, риск $${usd(z.risk_usd)})`);
+  if (z.assumptions) parts.push(z.assumptions);
   return parts.join(' · ');
 }
 function usd(v) {

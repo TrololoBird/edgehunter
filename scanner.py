@@ -1989,6 +1989,10 @@ class Scanner:
                         if k in self.CONFIRM_RU and v is not None and v != confirm.NA]
                 if conf:
                     lines.append("Подтверждения: " + ", ".join(conf))
+                if lv.get('obstacle_r') is not None and lv.get('rr_tp1'):
+                    # audit 2026-10-18 P2 #7: the nearest strong zone before TP1 (diagnostic, not a rule)
+                    lines.append(f"Уровень на пути к цели 1: {lv['obstacle_r']:.2f}R из {lv['rr_tp1']:.2f}R "
+                                 f"({str(lv.get('obstacle_src') or '')[:60]})")
                 text = "\n".join(lines)
             elif event == 'ZONE' and s.plan:
                 text = f"Зона {px(s.plan['zone_lo'])}–{px(s.plan['zone_hi'])}, ждём триггер {s.plan['trigger_minutes']}m"

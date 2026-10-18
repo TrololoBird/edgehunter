@@ -281,9 +281,9 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     # audit C09: the setup's own measured rate (SWEEP and SILVER BULLET share the strategy 'sweep', Turtle and BB1
     # 'breakout' - one rate for different stops / targets / methods is no probability of either)
     hit = HIT_RATE.get(setup_key(plan.get('setup')))
+    exp, exp_note = None, None
     if reason is None:
         hi = (hit[2] if len(hit) > 2 else hit[0]) if hit else None
-        exp = None
         if hit and real[0]:
             # audit 2026-10-18: the position exits in thirds and the stop stays put after TP1 (be_after_1r off), so
             # each third is its own bet: p_k x R_k - (1 - p_k) at its target, 1/3 of the size. p x R1 for the whole
@@ -294,7 +294,14 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
                 if targets[k] == targets[k - 1]:
                     ps[k] = ps[k - 1]
             exp = sum(p * r - (1 - p) for p, r in zip(ps, rrs)) / 3
-        if exp is not None and exp <= 0:
+        # audit 2026-10-18 P1 #5: the estimate models three thirds at TP1 / TP2 / TP3 against a fixed stop - it is the
+        # expectancy of THAT exit only. A plan that exits otherwise (half + trail, the +1R partial, the averaging add,
+        # Turtle units, no targets) is journaled with it (exp_model / exp_note) but not vetoed by it
+        thirds = not (plan.get('trail_after_tp1') or plan.get('add_half') or plan.get('turtle_n') or plan.get('no_tp')
+                      or CONFIG.executor.partial_share > 0)
+        if exp is not None and exp <= 0 and not thirds:
+            exp_note = f"shadow: expectancy {exp:+.2f}R of the thirds model, the plan exits otherwise"
+        if exp is not None and exp <= 0 and thirds:
             # proven negative: even the upper ends of the 95% intervals do not pay these R:Rs
             reason = f"expectancy {exp:+.2f}R at p <= {hi:.0%} (measured {hit[0]:.0%} of {hit[1]})"
         elif plan.get('min_rr') is not None and real[0] and rrs[0] is not None and rrs[0] < plan['min_rr']:
@@ -320,10 +327,27 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         label = 'none: exit on a daily close beyond the SMA5 (Connors)'
         targets = [entry + direction * k * risk_px for k in (100, 200, 300)]
         rrs, blended, reason, low, sources = [None, None, None], None, None, False, [label] * 3
+    obstacle_r, obstacle_src = obstacle_before(zones, entry, targets[0], direction, risk)
     return {'entry': entry, 'sl': stop, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
             'stop_pierce': stop_pierce(plan, stop), 'rr_tp1': rrs[0], 'rr_tp2': rrs[1], 'rr_blend': blended, 'low_rr': bool(low or reason),
-            'rr_reason': reason, 'risk_units': risk_units,
+            'rr_reason': reason, 'risk_units': risk_units, 'exp_model': exp, 'exp_note': exp_note,
+            'obstacle_r': obstacle_r, 'obstacle_src': obstacle_src,
             'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}
+
+
+def obstacle_before(zones: List[Zone], entry: float, tp1: float, direction: int,
+                    risk: float) -> Tuple[Optional[float], Optional[str]]:
+    """audit 2026-10-18 P2 #7, a diagnostic (journaled, never a filter): the nearest strong map zone the price meets
+    between the entry and TP1 - (its near edge in R from the entry, its label). A method's own objective (a range's far
+    side, an extension) skips the map on purpose; this shows what stands in the way, not that the target is wrong."""
+    if not risk or not zones:
+        return None, None
+    path = [z for z in zones if z.strength >= CONFIG.zones.min_strength
+            and 0 < direction * (_near(z, direction) - entry) < direction * (tp1 - entry) * 0.999]
+    if not path:
+        return None, None
+    z = min(path, key=lambda z: direction * (_near(z, direction) - entry))
+    return round(direction * (_near(z, direction) - entry) / risk, 3), z.label
 
 
 def _cost_reason() -> str:

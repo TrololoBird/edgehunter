@@ -56,6 +56,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
   dashboard / notifications. Read the section of the module you are about to change.
 - `docs/HISTORY.md` - every logic version eng-4 .. eng-76 with what changed and why (audits, source checks, measured
   numbers). Read before re-proposing an idea: most were tried, measured or rejected already.
+- `docs/PARAMETER_PROVENANCE.md` - what supports each trade-shaping parameter (math / exchange / policy / heuristic).
 - `docs/PLAN_server_eng76.md` - the current plan, void research, the owner's pending decisions.
 - `docs/CLOUD_DEPLOY.md` - how a cloud session deploys to the VPS (user claude-cloud, `sudo edgehunter-deploy`).
 - `research/*.md` + the `research-findings` skill - archive study results (check whether a result is void first).
