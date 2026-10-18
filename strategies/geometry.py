@@ -13,6 +13,7 @@ A target is always >= zones.min_target_atr beyond its reference (and beyond the 
 """
 from strategies.base import CardLevels  # noqa: F401  (the return type of entry_levels)
 from typing import Dict, List, Optional, Sequence, Tuple
+import math
 
 from config import CONFIG
 from zones import POOL_KINDS, STRUCTURE_KINDS, Zone, stop_beyond
@@ -214,8 +215,17 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
       three thirds, sum_k (p_k x R:R_k - (1 - p_k)) / 3 at the upper ends of the Wilson intervals; the method's
       minimum R:R (Strategy.min_rr, else the global one) holds as well.
     """
+    if direction not in (-1, 1) or not targets or len(targets) != len(sources):
+        return None
+    try:
+        if not all(math.isfinite(v) for v in (entry, stop, *targets)) or entry <= 0:
+            return None
+        if any(t <= 0 or direction * (t - entry) <= 0 for t in targets):
+            return None
+    except (TypeError, ValueError):
+        return None
     risk = direction * (entry - stop)
-    if risk <= 0 or not targets:
+    if not math.isfinite(risk) or risk <= 0:
         return None
     sym, tf = plan.get('symbol'), plan.get('tf', '15m')
     zones: List[Zone] = plan.get('zones') or []
@@ -245,7 +255,13 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         sources.append(sources[-1])
         on_map.append(on_map[-1])
     fee = cost_of(entry, plan.get('volume_24h'), plan.get('symbol'))
-    rrs = [(abs(t - entry) - fee) / (risk + fee) for t in targets[:3]]
+    if not math.isfinite(fee) or fee < 0:
+        return None
+    if any(not math.isfinite(t) or direction * (t - entry) <= 0 for t in targets):
+        return None
+    rrs = [(direction * (t - entry) - fee) / (risk + fee) for t in targets[:3]]
+    if not all(math.isfinite(r) for r in rrs):
+        return None
     beyond_map = not any(direction * ((z.lo if direction > 0 else z.hi) - entry) > 0 for z in zones)
     real = [not is_synthetic(s) or (s == 'ATR step' and beyond_map) for s in sources[:3]]
     # a MAP zone the trade cannot reach in its lifetime is no target: 3 sd of a random walk over the time stop's bars

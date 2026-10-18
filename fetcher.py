@@ -2430,7 +2430,7 @@ class DataFetcher:
         minutes = [c for c in md.minute_klines if c[0] + 60_000 <= until_ms]
         out = {}
         for tf, size, hist in (('15m', 15, md.m15_long), ('1h', 60, md.h1_long)):
-            base = [list(r) for r in hist] if len(hist) else []
+            base = [list(r) for r in hist if r[0] + size * 60_000 <= until_ms] if len(hist) else []
             last = base[-1][0] if base else 0
             # the pure-Python resample of the minute ring was run for each direction and every 20 s by the prewarm
             # thread (the GIL it held stalled the loop 1-3 s): once per (coin, tf, last minute, bucket)

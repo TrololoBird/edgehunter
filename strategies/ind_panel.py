@@ -34,11 +34,14 @@ def ema(x: np.ndarray, n: int) -> np.ndarray:
 
 def rma(x: np.ndarray, n: int) -> np.ndarray:
     """Wilder's smoothing (RSI, ADX, ATR as their authors define them)."""
+    x = np.asarray(x, dtype=float)
     out = np.full_like(x, np.nan)
-    if len(x) < n:
+    finite = np.flatnonzero(np.isfinite(x))
+    start = int(finite[0]) if len(finite) else len(x)
+    if len(x) - start < n:
         return out
-    out[n - 1] = np.nanmean(x[:n])
-    for i in range(n, len(x)):
+    out[start + n - 1] = x[start:start + n].mean()
+    for i in range(start + n, len(x)):
         out[i] = (out[i - 1] * (n - 1) + x[i]) / n
     return out
 
@@ -124,10 +127,12 @@ def indicators(k: np.ndarray) -> dict:
     base = k[:, 7] if k.shape[1] > 7 else np.full(len(k), np.nan)
     prev_c = np.concatenate(([c[0]], c[:-1]))
     tr = np.maximum(h - l, np.maximum(abs(h - prev_c), abs(l - prev_c)))
+    tr[0] = np.nan  # the first bar has no previous close; match levels.atr_of
     atr = rma(tr, 14)
     pdi, mdi, adx = adx_talib(h, l, c, 14)          # audit E06: TA-Lib's seed (as the heavy scorer), not rma over zeros
     delta = np.diff(c, prepend=c[0])
-    gain, loss = rma(np.maximum(delta, 0), 14), rma(np.maximum(-delta, 0), 14)
+    rsi_delta = np.concatenate(([np.nan], delta[1:]))  # 14 actual changes; OBV keeps its zero origin
+    gain, loss = rma(np.maximum(rsi_delta, 0), 14), rma(np.maximum(-rsi_delta, 0), 14)
     # audit E05: no absolute floor (it made RSI depend on the price scale); a flat series is neutral (no loss, no gain)
     with np.errstate(divide='ignore', invalid='ignore'):
         rsi = np.where(loss == 0, np.where(gain == 0, 50.0, 100.0), 100 - 100 / (1 + gain / loss))
