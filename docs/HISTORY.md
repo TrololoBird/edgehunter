@@ -805,3 +805,4 @@ is the Binance price; only used when the position gives no average). Not measure
 - `Briefing.outcomes` tallies the saved briefings' scenarios (TP1 / stop / open / cancelled / no entry) per watched coin;
   `_score_record` is the shared scorer. Week sample (60 briefings, BTC/ETH/XAU): long 4 TP1 / 10 stops, short 6 TP1 / 0 stops
   in a bearish week - too small and correlated for any rule change.
+- Silent briefing records for every pinned coin (`_save`, `silent: true`; posts still BTC/ETH/XAU), `snapshot_outcomes` at the 23:30 recap -> data/briefing_outcomes.jsonl (14-day tally per coin), `outcomes_total` on the analysis tab.

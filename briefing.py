@@ -531,7 +531,7 @@ class Briefing:
                'atr1h': atr1h, 'atr1d': atr1d,
                'zones': [{k: z[k] for k in ('lo', 'hi', 'side', 'strength', 'label')} for z in zones],
                'macro': [f"{dt:%H:%M} {name}" for dt, name in events], 'scenarios': {}, 'cards': cards or []}
-        if _short(symbol) in self.cfg.coins and src is None:
+        if src is None:
             out['outcomes'] = self.outcomes(symbol, 14, md)
         for side, d, name in (('long', 1, 'Лонг'), ('short', -1, 'Шорт')):
             sc = p.get(side)
@@ -653,6 +653,56 @@ class Briefing:
                                     'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
                                     'zones': self.zones.get(symbol) or [], 'scenario': self.scenario.get(symbol)},
                                    ensure_ascii=False, default=str) + '\n')
+            # the other pinned coins: the same forecast kept silently (no post) so their scenarios are scored too
+            import briefing_chart
+            watched = set(self.watched())
+            for base in CONFIG.exchange.pinned_bases:
+                symbol = f"{base}/USDT:USDT"
+                md = self.sc.market_data.get(symbol)
+                if symbol in watched or md is None:
+                    continue
+                try:
+                    price, zones = self.key_zones(symbol, keep_state=False)
+                    if not price or not zones:
+                        continue
+                    bias, st = self._bias_of(symbol)
+                    ath, days = self._history_high(md)
+                    p = briefing_chart.plan(price, zones, self.sc._tf_atrs(symbol).get('1d'), ath, days)
+                except Exception as e:
+                    errors.report('briefing._save', e, f"Silent briefing record failed for {symbol}")
+                    continue
+                f.write(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'silent': True,
+                                    'price': price, 'bias': bias,
+                                    'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
+                                    'zones': zones, 'scenario': {'long': p['long'], 'short': p['short'], 'price': price,
+                                                                 'ts': time.time()}},
+                                   ensure_ascii=False, default=str) + '\n')
+
+    def outcomes_total(self, days: int = 14) -> Dict:
+        """The tally over every pinned coin (long / short x outcome class) for the analysis page's header."""
+        total: Dict[str, Dict[str, int]] = {}
+        for base in CONFIG.exchange.pinned_bases:
+            for side, m in (self.outcomes(f"{base}/USDT:USDT", days).get('tally') or {}).items():
+                for k, n in m.items():
+                    total.setdefault(side, {}).setdefault(k, 0)
+                    total[side][k] += n
+        return {'days': days, 'tally': total}
+
+    def snapshot_outcomes(self) -> None:
+        """The evening tally of the last 14 days per coin to data/briefing_outcomes.jsonl (one line a day): the trend of
+        the plan rules' results over time, kept apart from the Telegram recaps."""
+        import json
+        coins = {}
+        for base in CONFIG.exchange.pinned_bases:
+            symbol = f"{base}/USDT:USDT"
+            o = self.outcomes(symbol, 14)
+            if o.get('tally'):
+                coins[base] = o['tally']
+        if not coins:
+            return
+        os.makedirs('data', exist_ok=True)
+        with open(os.path.join('data', 'briefing_outcomes.jsonl'), 'a', encoding='utf-8') as f:
+            f.write(json.dumps({'day': f"{datetime.now(MSK):%Y-%m-%d}", 'days': 14, 'coins': coins}, ensure_ascii=False) + '\n')
 
     @staticmethod
     def reaction(sc: Dict, side: int, c) -> bool:
@@ -1063,6 +1113,7 @@ class Briefing:
                         self._done_slots.add(slot)
                         if title == 'recap':
                             self.sc.notifier.post(await asyncio.to_thread(self.recap), 'briefing')
+                            await asyncio.to_thread(self.snapshot_outcomes)
                         else:
                             for png, cap in await asyncio.to_thread(self.cards, title):
                                 self.sc.notifier.post_photo(png, cap)

@@ -659,13 +659,20 @@ async function refreshAnalysis() {
     anQuery ? api('/api/analysis?symbol=' + encodeURIComponent(anQuery), 20).catch(() => null) : null]);
   if (tab !== 'analysis') return;
   res.innerHTML = anQuery ? (one ? anCard(one) : '<div class="empty">Ошибка запроса</div>') : '';
+  const ot = $('#an-total');
+  if (ot) {
+    const T = (p && p.outcomes && p.outcomes.tally) || {};
+    const NM = { tp1: 'TP1', stop: 'стоп', open: 'вход без исхода', cancelled: 'отменён', no_entry: 'не сработал' };
+    ot.innerHTML = Object.keys(T).length ? `<div class="dim">Исходы сценариев брифингов, все закреплённые монеты, ${p.outcomes.days} дн. (копится с трёх сводок в день, 12 ч на сценарий): `
+      + Object.entries(T).map(([side, m]) => `<b>${esc(side)}</b>: ` + Object.entries(m).map(([k, n]) => `${NM[k] || k} ${n}`).join(', ')).join(' · ') + '</div>' : '';
+  }
   pin.innerHTML = p && p.coins.length ? p.coins.map(anCard).join('') : '<div class="empty">Нет данных</div>';
 }
 function renderAnalysis() {
   if (!$('#an-pinned')) {
     $('#view').innerHTML = `<div class="box"><form id="an-form"><input id="an-q" placeholder="Тикер любой монеты, например PEPE или SOL" value="${esc(anQuery)}" autocomplete="off" maxlength="24"> <button>Показать</button></form>
       <div class="dim">Уровни и чек-лист — механические правила (зоны разворотов 1h/4h/1d, ATR, старший ТФ, макро, карточки бота), не совет и не гарантия. R:R брутто, без комиссий и проскальзывания; пороги чек-листа не измерены. *Шанс TP1 по расстоянию — модель случайного блуждания без дрейфа.</div></div>
-      <div id="an-result"></div><h3>Закреплённые монеты</h3><div id="an-pinned"><div class="empty">Загрузка…</div></div>`;
+      <div id="an-result"></div><h3>Закреплённые монеты</h3><div id="an-total"></div><div id="an-pinned"><div class="empty">Загрузка…</div></div>`;
   }
   return refreshAnalysis();
 }

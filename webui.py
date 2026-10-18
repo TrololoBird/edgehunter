@@ -774,7 +774,9 @@ class WebUI:
         want = CONFIG.exchange.pinned_bases
         syms = [s for b_ in want for s in self.scanner.market_data if s.split('/')[0] == b_]
         res = await asyncio.gather(*[self._analysis_of(s) for s in syms])
-        return self._json({'coins': [r for r in res if not r.get('error')], 'ts': time.time()})
+        b = getattr(self.scanner, 'briefing', None)
+        total = await asyncio.to_thread(b.outcomes_total, 14) if b is not None else {}
+        return self._json({'coins': [r for r in res if not r.get('error')], 'ts': time.time(), 'outcomes': total})
 
     async def _briefing_card(self, request):
         """The briefing card of one coin as it would be sent now (PNG), for checking - nothing is posted (local only)."""
