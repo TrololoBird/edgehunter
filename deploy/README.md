@@ -15,8 +15,8 @@
 ## Установка (Ubuntu 24.04, от root)
 
 ```bash
-git clone <ваш репозиторий> /opt/pump        # или scp -r папку проекта (без .venv, data, history_cache)
-bash /opt/pump/deploy/install.sh
+git clone <ваш репозиторий> /opt/edgehunter        # или scp -r папку проекта (без .venv, data, history_cache)
+bash /opt/edgehunter/deploy/install.sh
 ```
 
 Скрипт ставит пакеты, синхронизацию времени (chrony — подписанные запросы к BingX требуют точных часов), swap 2 ГБ,
@@ -25,11 +25,11 @@ Python 3.14 через uv, venv с зависимостями, фаервол (�
 Затем перенесите локальные файлы (они не в git):
 
 ```bash
-scp config.local.toml root@SERVER:/opt/pump/          # ключи демо BingX; добавьте [web] open_browser = false
-scp signals.db demo_trades.db scanner_state.json root@SERVER:/opt/pump/     # журнал, демо, открытые карточки
-scp -r models root@SERVER:/opt/pump/                   # модель проколов overshoot.json, секторы
-chown -R pump:pump /opt/pump
-systemctl start pump-bot
+scp config.local.toml root@SERVER:/opt/edgehunter/          # ключи демо BingX; добавьте [web] open_browser = false
+scp signals.db demo_trades.db scanner_state.json root@SERVER:/opt/edgehunter/     # журнал, демо, открытые карточки
+scp -r models root@SERVER:/opt/edgehunter/                   # модель проколов overshoot.json, секторы
+chown -R edgehunter:edgehunter /opt/edgehunter
+systemctl start edgehunter-bot
 ```
 
 Перед копированием остановите бот на ноутбуке, чтобы журнал не писался в два места.
@@ -38,14 +38,14 @@ systemctl start pump-bot
 
 | Что | Команда |
 |---|---|
-| статус | `systemctl status pump-bot` |
-| лог в реальном времени | `journalctl -u pump-bot -f` (и `/opt/pump/scanner.log`) |
-| перезапуск (корректный, с сохранением) | `systemctl restart pump-bot` |
-| обновление кода | `cd /opt/pump && sudo -u pump git pull && systemctl restart pump-bot` |
+| статус | `systemctl status edgehunter-bot` |
+| лог в реальном времени | `journalctl -u edgehunter-bot -f` (и `/opt/edgehunter/scanner.log`) |
+| перезапуск (корректный, с сохранением) | `systemctl restart edgehunter-bot` |
+| обновление кода | `cd /opt/edgehunter && sudo -u edgehunter git pull && systemctl restart edgehunter-bot` |
 | дашборд с ноутбука | `ssh -L 8765:127.0.0.1:8765 root@SERVER`, затем открыть http://127.0.0.1:8765 |
-| статистика | `cd /opt/pump && sudo -u pump .venv/bin/python stats.py --days 7` |
+| статистика | `cd /opt/edgehunter && sudo -u edgehunter .venv/bin/python stats.py --days 7` |
 
-Всё после install.sh одной командой: `bash /opt/pump/deploy/setup_server.sh` (свежий код, polars 1.44.2, конфиг,
+Всё после install.sh одной командой: `bash /opt/edgehunter/deploy/setup_server.sh` (свежий код, polars 1.44.2, конфиг,
 публичный дашборд, запуск). Бот слушает только 127.0.0.1; снаружи дашборд открыт ПУБЛИЧНО (без логина) через Caddy по
 HTTPS на `https://<ip>.sslip.io` (`deploy/web_access.sh`). Пост в Telegram (`/api/briefing?send=1`) и `/api/debug`
 отвечают только локальным запросам (`webui._local`).
@@ -55,7 +55,7 @@ HTTPS на `https://<ip>.sslip.io` (`deploy/web_access.sh`). Пост в Telegra
 Раз в сутки (cron от root):
 
 ```bash
-0 4 * * * sqlite3 /opt/pump/signals.db ".backup /opt/pump/backup/signals-$(date +\%F).db" && find /opt/pump/backup -mtime +14 -delete
+0 4 * * * sqlite3 /opt/edgehunter/signals.db ".backup /opt/edgehunter/backup/signals-$(date +\%F).db" && find /opt/edgehunter/backup -mtime +14 -delete
 ```
 
 ## Архивные прогоны

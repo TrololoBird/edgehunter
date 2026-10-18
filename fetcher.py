@@ -1541,7 +1541,7 @@ class DataFetcher:
         while self._running:
             try:
                 def fetch():
-                    req = urllib.request.Request(url, headers={'User-Agent': 'pump-scanner'})
+                    req = urllib.request.Request(url, headers={'User-Agent': 'edgehunter'})
                     with urllib.request.urlopen(req, timeout=20) as resp:
                         return json.load(resp)
                 data = (await asyncio.to_thread(fetch)).get('data') or {}
@@ -1565,7 +1565,7 @@ class DataFetcher:
         import macro_calendar
 
         def get(url):
-            req = urllib.request.Request(url, headers={'User-Agent': 'pump-scanner'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'edgehunter'})
             with urllib.request.urlopen(req, timeout=25) as resp:
                 return json.load(resp)
         last = {'cal': 0.0, 'strikes': 0.0}

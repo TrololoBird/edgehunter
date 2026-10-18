@@ -8,7 +8,7 @@ Daily job OUTSIDE the bot (systemd timer / cron, ~08:30 UTC): spot-ETF net flows
 - us_calendar.json  {"closed": [weekday holidays], "early": [13:00 ET closes]} for the next 400 days, from
   exchange_calendars (XNYS): the bot gets the NYSE session flag without importing pandas.
 
-    python tools/farside_flows.py [--out-dir /opt/pump] [--html saved_page.html]   # --html: parse a local file (no network)
+    python tools/farside_flows.py [--out-dir /opt/edgehunter] [--html saved_page.html]   # --html: parse a local file (no network)
 """
 import argparse
 import json

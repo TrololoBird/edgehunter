@@ -3,7 +3,7 @@
 import sqlite3
 import sys
 
-path = sys.argv[1] if len(sys.argv) > 1 else '/opt/pump/demo_trades.db'
+path = sys.argv[1] if len(sys.argv) > 1 else '/opt/edgehunter/demo_trades.db'
 with sqlite3.connect(path) as c:
     for dup, orig in ((110, 55), (111, 56), (112, 57)):
         c.execute("UPDATE demo_trades SET error = ? WHERE id = ? AND setup = 'UNTRACKED' AND pnl_usd = "

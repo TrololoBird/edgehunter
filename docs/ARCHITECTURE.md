@@ -88,7 +88,7 @@ The market regime changes, so nothing is fitted once on the past: models start f
    taker rate on the entry + BingX's own fee on the exit fills (`_fees`). A missing fill -> `exit fill pending`, retried 3 days.
 5. Guards: the day rules (`daily_loss_r`, `max_trades_day`, `pause_*`) and the per-strategy kill-switch
    (`strategy_kill_r` / `strategy_kill_n`) are 0 = off; `day_alert_r` only alerts. Credentials: `BINGX_API_KEY` /
-   `BINGX_API_SECRET` (systemd `EnvironmentFile=/etc/pump-bot.env`) before `config.local.toml`.
+   `BINGX_API_SECRET` (systemd `EnvironmentFile=/etc/edgehunter.env`) before `config.local.toml`.
 6. Reporting: the daily per-strategy summary (00:05 UTC, demo topic); `/api/demo` (equity curve, per-strategy daily R,
    `?symbol=` the coin's trades for the chart's markers); `/api/health` (the minute's Health line as JSON, 503 when stale
    or a venue is DOWN).

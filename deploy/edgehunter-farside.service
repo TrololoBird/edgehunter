@@ -5,14 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=pump
-WorkingDirectory=/opt/pump
-ExecStart=/opt/pump/.venv/bin/python tools/farside_flows.py --out-dir /opt/pump
+User=edgehunter
+WorkingDirectory=/opt/edgehunter
+ExecStart=/opt/edgehunter/.venv/bin/python tools/farside_flows.py --out-dir /opt/edgehunter
 Nice=10
 TimeoutStartSec=120
 MemoryMax=400M
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/pump
+ReadWritePaths=/opt/edgehunter
 ProtectHome=yes
 PrivateTmp=yes

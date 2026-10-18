@@ -1125,8 +1125,8 @@ class AppConfig:
     iceberg: IcebergConfig = field(default_factory=IcebergConfig)
 
 
-# PUMP_CONFIG points at another overrides file (a dev / test run beside the live bot, its own ports and switches)
-LOCAL_CONFIG_PATH = os.environ.get('PUMP_CONFIG') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.local.toml')
+# EDGEHUNTER_CONFIG (legacy PUMP_CONFIG) points at another overrides file (a dev / test run beside the live bot, its own ports and switches)
+LOCAL_CONFIG_PATH = os.environ.get('EDGEHUNTER_CONFIG') or os.environ.get('PUMP_CONFIG') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.local.toml')
 
 
 def _coerce(section: str, key: str, current: Any, value: Any) -> Any:

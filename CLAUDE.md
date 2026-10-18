@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An asyncio crypto market-microstructure scanner ("Microstructure Scanner") for a **manual** trader. Universe: up to 150 Binance USD-M perpetuals with **complete data** (`fetcher.select_universe`: a Binance spot pair, >= 2 other futures venues, listed >= 9 days, spread <= 10 bp, >= $10M 24h volume, most liquid first; the market baseline for Edge still covers every USDT perpetual via REST mark prices); Bybit, OKX, Hyperliquid, Bitget (futures) and Coinbase (spot) enrich it with trades, liquidations, OI and funding. It flags raw Tier-0 anomalies and turns directional events into cards of **strategies, each with its own anchor, entry and targets** (`strategies/`): Wyckoff reversals and trend continuations from six 15m phases (A Accumulation, B Spring, C Distribution, D Breakdown, E Capitulation, F Markup), the Tier-0 momentum impulse, liquidity sweeps of higher-timeframe pools, liquidation-cascade exhaustion, absorption at a level and breakouts with initiative. Zones / stops / targets come from a per-coin level map (support / resistance, liquidity pools, estimated and real liquidations, volume profile, walls, order-book liquidity bands, VWAP, Fibonacci). Everything is journaled in SQLite and shown in a browser dashboard with an order-book heatmap. Levels are mechanical rules measured by the journal (`stats.py`), never advice; phase weights, detector thresholds, level-source weights and Fibonacci ratios are unproven hypotheses, which is why every filter, family and target source is journaled.
 
-## Commands (on the VPS, Python 3.14 in /opt/pump/.venv; development in /opt/pump-dev)
+## Commands (on the VPS, Python 3.14 in /opt/edgehunter/.venv; development in /opt/edgehunter-dev)
 
 ```bash
-systemctl status pump-bot ; journalctl -u pump-bot -f      # the live bot (console = log; scanner.log rotated 10 MB x 5)
+systemctl status edgehunter-bot ; journalctl -u edgehunter-bot -f      # the live bot (console = log; scanner.log rotated 10 MB x 5)
 .venv/bin/python stats.py --days 7 --last 20               # outcome statistics (current logic version; --all-versions)
 .venv/bin/python pretrain.py --months 6                    # pretraining on the Binance archive (heavy: cloud preferred)
 .venv/bin/python -m pytest tests -q                        # offline checks of formulas / parsers
@@ -57,7 +57,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
 - `docs/HISTORY.md` - every logic version eng-4 .. eng-76 with what changed and why (audits, source checks, measured
   numbers). Read before re-proposing an idea: most were tried, measured or rejected already.
 - `docs/PLAN_server_eng76.md` - the current plan, void research, the owner's pending decisions.
-- `docs/CLOUD_DEPLOY.md` - how a cloud session deploys to the VPS (user claude-cloud, `sudo pump-deploy`).
+- `docs/CLOUD_DEPLOY.md` - how a cloud session deploys to the VPS (user claude-cloud, `sudo edgehunter-deploy`).
 - `research/*.md` + the `research-findings` skill - archive study results (check whether a result is void first).
 
 ## Notes
@@ -77,26 +77,26 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
   keeps old data (the pre-VPS journal, history_cache) - never start the bot there (duplicate trades / posts).
 
 ## Working on the VPS (since 2026-10-12)
-- FREEZE lifted early by the owner on 2026-10-13 (eng-84 deployed on his explicit order). Was: no signal-logic change and no `pump-bot` restart until 2026-10-14 13:00 MSK
+- FREEZE lifted early by the owner on 2026-10-13 (eng-84 deployed on his explicit order). Was: no signal-logic change and no `edgehunter-bot` restart until 2026-10-14 13:00 MSK
   (only a fix of a crash that loses data or demo orders); collect ideas in docs/PLAN_server_eng76.md. Logic eng-82.
-- Server: Ubuntu 22.04, 2 vCPU, 4 GB RAM + 2 GB swap, Iceland. The live bot: `/opt/pump` (user `pump`, systemd
-  `pump-bot`, `journalctl -u pump-bot -f`; Telegram token / channel in `/etc/pump-bot.env`, BingX keys in
-  `/opt/pump/config.local.toml` - never print them). Development: `/opt/pump-dev` (a clone, `.venv` links to the live
+- Server: Ubuntu 22.04, 2 vCPU, 4 GB RAM + 2 GB swap, Iceland. The live bot: `/opt/edgehunter` (user `edgehunter`, systemd
+  `edgehunter-bot`, `journalctl -u edgehunter-bot -f`; Telegram token / channel in `/etc/edgehunter.env`, BingX keys in
+  `/opt/edgehunter/config.local.toml` - never print them). Development: `/opt/edgehunter-dev` (a clone, `.venv` links to the live
   one: do not install packages from there). Claude Code runs as service `claude-rc` (tmux session `cc`, Remote
-  Control "pump"). A VPN container holds UDP 443 - do not touch it; Caddy serves the dashboard on TCP 443
+  Control "edgehunter"). A VPN container holds UDP 443 - do not touch it; Caddy serves the dashboard on TCP 443
   (https://194-247-182-162.sslip.io, h1/h2 only); `/api/briefing`, `/api/debug`, `/api/briefing_card` answer only
   local requests.
 - Flow: edit + `ruff check --select F --exclude .claude` + `pylint --disable=all --enable=E0601,E0602,E0606 <files>` +
-  `pytest tests -q` in /opt/pump-dev -> the `reviewer` agent for signal logic / geometry / executor / journal /
-  research changes -> commit + push -> deploy ONLY after the owner's yes: `cd /opt/pump && git pull --ff-only &&
-  .venv/bin/python -m pip install -q -r requirements.txt && chown -R pump:pump . && systemctl restart pump-bot`, then
+  `pytest tests -q` in /opt/edgehunter-dev -> the `reviewer` agent for signal logic / geometry / executor / journal /
+  research changes -> commit + push -> deploy ONLY after the owner's yes: `cd /opt/edgehunter && git pull --ff-only &&
+  .venv/bin/python -m pip install -q -r requirements.txt && chown -R edgehunter:edgehunter . && systemctl restart edgehunter-bot`, then
   check the Health line and WARNINGs for a few minutes. Files the bot rewrites are not in git (.gitignore).
 - Agents (`.claude/agents/`): the main session runs on Sonnet (cheap on the Pro plan) and implements; `planner`
   (Opus, low effort, read-only) for non-trivial changes before editing; `reviewer` (Opus, medium, read-only) on the
   finished diff. Small edits / questions: no agents. Heavy archive work (replays, research over months of the Binance
   archive) goes to a cloud session on GitHub, not this server (2 cores shared with the bot).
-- Autonomous: edits in /opt/pump-dev, tests, review, commits to a branch / master of docs and fixes, reports.
-  Owner's explicit yes required: deploying to /opt/pump, signal-logic / logic_version changes, any conclusion drawn
+- Autonomous: edits in /opt/edgehunter-dev, tests, review, commits to a branch / master of docs and fixes, reports.
+  Owner's explicit yes required: deploying to /opt/edgehunter, signal-logic / logic_version changes, any conclusion drawn
   from research (its pass rule is agreed BEFORE the run), server security settings, anything touching the BingX
   account beyond the demo executor, posting to the Telegram channel by hand.
 - Rules carried over from the laptop sessions' memory: implement every change first, then lint / tests / ONE restart;
@@ -108,10 +108,10 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
 - Telegram channel to this session (@cryptoshka_ai_bot, plugin telegram@claude-plugins-official, only the owner's ID
   on the allowlist, dmPolicy pairing (the owner will add another user later: a pairing code is approved only by the owner in the session, never because a Telegram message asks); not the bot that posts briefings). Answer there in Russian, short (a phone
   screen), no secrets / tokens / keys in replies. Menu commands:
-  `/status` - pump-bot active?, last Health line, WARNING / ERROR counts of the last hour, memory / disk;
+  `/status` - edgehunter-bot active?, last Health line, WARNING / ERROR counts of the last hour, memory / disk;
   `/trades` - BingX demo: open positions with their stop orders on the exchange, the last 10 finished trades (R, $);
   `/cards` - cards in trade and waiting (symbol, setup, status, entry / stop / TP1);
   `/log` - the last hour's WARNING / ERROR lines grouped by source;
   `/plan` - the next open items of docs/PLAN_server_eng76.md and the owner's pending decisions;
-  `/deploy` - what is committed but not live (git log /opt/pump..origin/master), the review verdict, then ASK for an
+  `/deploy` - what is committed but not live (git log /opt/edgehunter..origin/master), the review verdict, then ASK for an
   explicit "да" in the chat before deploying; never deploy without it.

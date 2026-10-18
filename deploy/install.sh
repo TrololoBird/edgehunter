@@ -3,7 +3,7 @@
 #   curl -O .../install.sh   (or copy the repo first)   then:   bash deploy/install.sh
 set -euo pipefail
 
-APP=/opt/pump
+APP=/opt/edgehunter
 USER_NAME=pump
 
 # 1. system packages, time sync (signed exchange requests need an exact clock), a 2 GB swap file
@@ -23,13 +23,13 @@ mkdir -p "$APP"
 chown -R "$USER_NAME":"$USER_NAME" "$APP"
 
 # 4. Python 3.14 + the venv through uv (Ubuntu's python3 is older). The interpreter goes to a shared directory:
-#    uv's default is root's home, which the pump user cannot read (the venv step failed with Permission denied)
+#    uv's default is root's home, which the edgehunter user cannot read (the venv step failed with Permission denied)
 export UV_PYTHON_INSTALL_DIR=/opt/uv-python
 if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="$HOME/.local/bin:$PATH"
 fi
-# the pump user runs uv below and cannot enter root's home
+# the edgehunter user runs uv below and cannot enter root's home
 [ "$(command -v uv)" = /usr/local/bin/uv ] || install -m 755 "$(command -v uv)" /usr/local/bin/uv
 cd "$APP"
 uv python install 3.14
@@ -41,9 +41,9 @@ ufw allow OpenSSH
 ufw --force enable
 
 # 6. the service
-cp "$APP/deploy/pump-bot.service" /etc/systemd/system/pump-bot.service
+cp "$APP/deploy/edgehunter-bot.service" /etc/systemd/system/edgehunter-bot.service
 systemctl daemon-reload
-systemctl enable pump-bot
+systemctl enable edgehunter-bot
 echo
 echo "Done. Put config.local.toml (the BingX demo keys, [web] open_browser = false) into $APP, then:"
-echo "  systemctl start pump-bot && journalctl -u pump-bot -f"
+echo "  systemctl start edgehunter-bot && journalctl -u edgehunter-bot -f"

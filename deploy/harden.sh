@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Server hardening - the OWNER runs it (Claude does not change security settings):   bash /opt/pump/deploy/harden.sh
+# Server hardening - the OWNER runs it (Claude does not change security settings):   bash /opt/edgehunter/deploy/harden.sh
 #  1. SSH: keys only (no password logins), root only with a key
 #  2. fail2ban: bans an address after 5 failed SSH logins for 1 hour
 #  3. unattended-upgrades: security updates installed automatically (no automatic reboot)
