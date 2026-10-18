@@ -1149,6 +1149,10 @@ LOCAL_CONFIG_PATH = os.environ.get('EDGEHUNTER_CONFIG') or os.environ.get('PUMP_
 # audit F07: the domains of the overrides that size real risk (the type check let risk_pct = NaN, partial_share = 1.5,
 # max_leverage = -2 through). (low, high, low inclusive); None = unbounded
 _RANGES: Dict[Tuple[str, str], Tuple[Optional[float], Optional[float], bool]] = {
+    ('levels', 'resample_min_coverage'): (0.0, 1.0, False),
+    ('levels', 'stop_buffer_atr'): (0.0, None, True),
+    ('executor', 'partial_r'): (0.0, None, False),
+    ('web', 'port'): (1, 65535, True),
     ('executor', 'risk_pct'): (0.0, 100.0, False),
     ('executor', 'partial_share'): (0.0, 1.0, True),
     ('executor', 'max_leverage'): (1, None, True),

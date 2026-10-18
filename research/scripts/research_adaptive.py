@@ -103,7 +103,9 @@ def main():
     rng = np.random.default_rng(7)
     res = {'fixed': [], 'per coin': [], 'per volatility class': [], 'random': [], 'oracle (look-ahead, bound)': []}
     for m in months:
-        past = (month >= m - 6) & (month < m)
+        # Purge labels not fully known at the test boundary.
+        past = ((month >= m - 6) & (month < m)
+                & (ts_arr + HOLD * rh.HOUR <= m * 30 * 86_400_000))
         cur = month == m
         if past.sum() < 2000 or not cur.any():
             continue
@@ -126,7 +128,7 @@ def main():
             res['oracle (look-ahead, bound)'].append(R[i, oracle])
     lines = ['# Per-coin / per-volatility tuning of the exit geometry, walk-forward', '',
              f"{len(R)} trades (the scenario-card triggers' entries), {len(GEOMS)} geometries (stop in ATR14(1h) or "
-             "in fixed %, target 1-3x the stop). Each month the choice is made on the 6 months before. Rules: the "
+             "in fixed %, target 1-3x the stop). Choices use six preceding fixed 30-day periods, purging entries whose full 168h horizon crosses the test boundary. Rules: the "
              "docstring of `research_adaptive.py`.", '',
              '| choice | trades | mean net R |', '|---|---:|---:|']
     for k, v in res.items():
