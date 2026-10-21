@@ -1331,7 +1331,7 @@ class Scanner:
         md = self.market_data.get(symbol)
         if md is None:
             return []
-        return [c for c in md.minute_klines if c[0] <= md.minute_closed_until]
+        return [c for c in list(md.minute_klines) if c[0] <= md.minute_closed_until]
 
     PRICE_MAX_AGE_SEC = 60
 
@@ -1552,7 +1552,7 @@ class Scanner:
             'candles_4h': forming([list(r) for r in md.h4][-200:], 14_400_000) if len(md.h4) else [],
             'candles_1d': forming([list(r) for r in md.d1][-370:], 86_400_000) if len(md.d1) else [],
             'zones': [z.as_dict() for z in zones],
-            'cards': [card_view(s, now) for s in cards],
+            'cards': [card_view(s, now, md.d1) for s in cards],
             'liquidations': [list(e) for e in md.liq_events if now * 1000 - e[0] <= 86_400_000][-300:],
             'heatmap': self.fetcher.depth.heatmap(symbol),
             'htf_loaded': md.htf_loaded,

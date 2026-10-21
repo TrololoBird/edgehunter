@@ -109,8 +109,9 @@ pre.rich { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; l
   .heat-toggle { font-size: 11px; }
 }
 /* the chart while /api/coin loads */
-#chart.loading::after { content: 'Загрузка…'; position: absolute; inset: 0; display: flex; align-items: center;
-  justify-content: center; color: var(--dim); background: color-mix(in srgb, var(--bg) 55%, transparent); pointer-events: none; }
+/* a small badge in the corner, not a centered text over the candles and markers (it covered «вход» on 4h) */
+#chart.loading::after { content: 'Загрузка…'; position: absolute; top: 6px; left: 8px; z-index: 5; padding: 2px 8px;
+  border-radius: 4px; font-size: 11px; color: var(--dim); background: color-mix(in srgb, var(--bg) 80%, transparent); pointer-events: none; }
 .spark { vertical-align: middle; margin-left: 6px; opacity: .9; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 

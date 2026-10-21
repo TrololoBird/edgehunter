@@ -246,7 +246,16 @@ def fib_view(plan: Dict, levels: Optional[Dict], direction: int) -> Optional[Dic
     return out
 
 
-def card_view(s, now: float) -> Dict:
+def _trail_exit(daily, days, direction):
+    """The level the lifecycle exits a Turtle trade on (signal_book: the N-day low / high of closed days)."""
+    if not daily or not days:
+        return None
+    from strategies.turtle import trail_level
+    return trail_level(list(daily), days, direction)
+
+
+def card_view(s, now: float, daily=None) -> Dict:
+    """`daily`: the coin's closed daily candles, for the Turtles' N-day exit channel on the chart (coin view only)."""
     plan = s.plan or {}
     lv = s.levels or {}
     price = s.last_price
@@ -269,6 +278,9 @@ def card_view(s, now: float) -> Dict:
         'anchor': _anchor_view(plan.get('anchor')), 'tf': plan.get('tf'),
         'fib': fib_view(plan, lv, s.direction),
         'trigger_minutes': plan.get('trigger_minutes'),
+        # the Turtles' pyramid (entry prices of units 1..4) and the N-day channel exit, drawn on the chart
+        'units': [_num(u[0]) for u in (s.units or [])], 'trail_days': plan.get('trail_days'),
+        'exit_level': _num(_trail_exit(daily, plan.get('trail_days'), s.direction)),
         # a method without profit targets (Turtles / Connors / ORB / Bollinger's live band, plan no_tp): its TP1-3 are
         # 100 / 200 / 300 R placeholders the lifecycle never reaches - shown as none (a short's came out negative)
         'levels': {k: (None if plan.get('no_tp') and k in ('tp1', 'tp2', 'tp3') else

@@ -2433,7 +2433,9 @@ class DataFetcher:
         (refreshed hourly) extended by the 1m stream's closed buckets since."""
         from levels import resample
         from strategies.ind_panel import panel
-        minutes = [c for c in md.minute_klines if c[0] + 60_000 <= until_ms]
+        # a snapshot: this runs in the prewarm thread while the loop appends to the deque (a bare iteration raised
+        # 'deque mutated during iteration'); list() copies it in one C call under the GIL
+        minutes = [c for c in list(md.minute_klines) if c[0] + 60_000 <= until_ms]
         out = {}
         for tf, size, hist in (('15m', 15, md.m15_long), ('1h', 60, md.h1_long)):
             base = [list(r) for r in hist if r[0] + size * 60_000 <= until_ms] if len(hist) else []

@@ -1056,7 +1056,13 @@ function drawCoin(fit) {
     }
     if (card.levels) {
       const lv = card.levels;
-      line(lv.entry, '#3cc7e8', 'вход', 0, 2); line(lv.sl, '#ff5c5c', 'стоп', 0, 2);
+      // a Turtle pyramid: unit 1 is the entry, units 2..4 dashed; the stop follows the LAST unit (2N below it)
+      const units = card.units || [];
+      line(lv.entry, '#3cc7e8', units.length > 1 ? 'вход · юнит 1' : 'вход', 0, 2);
+      units.slice(1).forEach((u, i) => line(u, '#3cc7e8', `юнит ${i + 2}`, 2, 1, false));
+      const slNote = /from unit (\d)/.exec(lv.sl_src || ''), be = /break-even/.test(lv.sl_src || ''), tr = /trail/.test(lv.sl_src || '');
+      line(lv.sl, '#ff5c5c', slNote ? `стоп · 2N от юнита ${slNote[1]}` : be ? 'стоп · безубыток' : tr ? 'стоп · трейлинг' : 'стоп', 0, 2);
+      if (card.exit_level) line(card.exit_level, '#ff9f43', `выход · ${card.trail_days}-дн. ${card.direction > 0 ? 'минимум' : 'максимум'}`, 1, 2);
       [lv.tp1, lv.tp2, lv.tp3].forEach((t, i) => line(t, '#2ecc71', 'TP' + (i + 1), 0, 2));
     } else (card.targets || []).forEach((t, i) => line(t, '#2ecc71', 'TP' + (i + 1), 2, 1));
   }
@@ -1087,7 +1093,28 @@ function drawCoin(fit) {
       markers.push({ time: at(t.closed_ms), position: t.direction > 0 ? 'aboveBar' : 'belowBar', color: t.r >= 0 ? '#2ecc71' : '#ff5c5c', shape: 'square', text: `${t.r >= 0 ? '+' : ''}${t.r.toFixed(1)}R` });
   }
   markers.sort((a, b) => a.time - b.time);
-  seriesMarkers.setMarkers(markers);
+  // several events on one bar (a daily candle holds a whole day of them) stacked into an unreadable column and their
+  // texts overlapped at the top: one marker per bar and side, the most important kind kept, the rest counted
+  const RANK = { 'демо': 5, 'вход': 4 };
+  const merged = new Map();
+  for (const m of markers) {
+    const k = m.time + '|' + m.position, prev = merged.get(k);
+    if (!prev) { merged.set(k, { ...m, n: 1 }); continue; }
+    const keep = (RANK[m.text] || (m.shape === 'square' ? 3 : 1)) > (RANK[prev.text] || (prev.shape === 'square' ? 3 : 1)) ? { ...m, n: prev.n } : prev;
+    keep.n = prev.n + 1; merged.set(k, keep);
+  }
+  seriesMarkers.setMarkers([...merged.values()].map(({ n, ...m }) => (n > 1 ? { ...m, text: `${m.text} +${n - 1}` } : m))
+    .sort((a, b) => a.time - b.time));
+  // price-axis labels closer than ~16px overlapped (0.014000 under the price, 0.008000 under «1w high»): the first drawn
+  // keeps its label (the card's lines are drawn last, so walk backwards: card > zones)
+  const hPx = $('#chart').clientHeight || 300, shown = bars.length ? [bars[bars.length - 1].close] : [];
+  const vis = bars.length ? bars.slice(-150) : [];
+  const span = vis.length ? Math.max(...vis.map(b => b.high)) - Math.min(...vis.map(b => b.low)) : 0;
+  if (span > 0) for (const pl of [...priceLines].reverse()) {
+    const o = pl.options(); if (!o.axisLabelVisible) continue;
+    if (shown.some(p => Math.abs(p - o.price) / span * hPx < 16)) pl.applyOptions({ axisLabelVisible: false, title: '' });
+    else shown.push(o.price);
+  }
   drawFlow(bars);
   if (fit) {
     // a drag / wheel on the price axis turns its auto-scale off for good: the next coin (TAO ~300 -> NEAR ~5.9) kept the
@@ -1261,7 +1288,7 @@ $('#flow-on').addEventListener('change', () => drawCoin(false));
 document.querySelectorAll('.heat-toggle[title]').forEach(l => {
   const q = document.createElement('button'); q.className = 'ghost q'; q.type = 'button'; q.textContent = '?'; q.setAttribute('aria-label', 'пояснение');
   q.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const p = $('#pop'), same = !p.hidden && p.dataset.src === l.title; p.textContent = l.title; p.dataset.src = l.title; p.hidden = same; });
-  l.after(q);
+  l.appendChild(q);       // inside the label: a narrow screen wrapped a lone «?» to the next line
 });
 document.addEventListener('click', e => { const p = $('#pop'); if (p && !p.hidden && !e.target.classList.contains('q')) p.hidden = true; });
 $('#fib-on').addEventListener('change', () => drawCoin(false));
