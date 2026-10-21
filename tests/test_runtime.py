@@ -197,6 +197,7 @@ def test_state_save_and_restore(tmp_path, monkeypatch):
     from flow import Sweep
     sc.fetcher.whales.add(Sweep('binance', 'A', 1, 1, 1, 9e4, 1, 1, 1, 1))
     sc.book.session_results['TP2'] += 1
+    sc._state_loaded = True
     sc._save_state()
     sc2 = scanner_with({})
     sc2._load_state()

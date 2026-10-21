@@ -126,7 +126,7 @@ class Scanner:
         from executor import DemoExecutor
         self.demo = DemoExecutor()
         self.demo.alert = lambda text: self.notifier.post(html.escape(text), topic='demo')
-        self.demo.card_is_open = lambda card_id: any(
+        self.demo.card_is_open = lambda card_id: not getattr(self, '_state_loaded', False) or any(
             card_id in (f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}", f"{s.symbol}|{s.group_key}|c{int(s.created)}")
             and not s.finished for s in self.book.signals.values())
         self._limits_synced = 0.0
@@ -1746,6 +1746,11 @@ class Scanner:
                     errors.report('scanner.memreport', e)
 
     def _save_state(self):
+        if not getattr(self, '_state_loaded', False):
+            # a stop during start-up, before _load_state: saving now would overwrite the open cards with an empty
+            # book, and the demo then closes every position as an orphan (2026-10-21 12:06 -> 11 ORPHAN closes)
+            logger.warning("State not saved: the start-up stopped before the saved state was loaded")
+            return
         path = CONFIG.journal.state_path
         try:
             import pickle
@@ -1793,6 +1798,7 @@ class Scanner:
     def _load_state(self):
         path = CONFIG.journal.state_path
         if not os.path.exists(path):
+            self._state_loaded = True
             return
         try:
             with open(path, encoding='utf-8') as f:
@@ -1802,8 +1808,16 @@ class Scanner:
             self.detector.load_state(state.get('fired_events'), int(time.time() * 1000))
             open_cards = sum(1 for s in self.book.signals.values() if not s.finished)
             logger.info(f"State restored: {open_cards} open cards, {len(state.get('whales') or {})} whale histograms")
+            self._state_loaded = True
         except Exception as e:
-            logger.warning(f"State restore failed ({e}); starting fresh")
+            # keep the file and never close demo trades as orphans this run (their stops stay on BingX); the state
+            # stays unsaved until a restart reads it, so a bad read cannot wipe the open cards
+            logger.warning(f"State restore failed ({e}); state is not saved and orphans are not closed this run")
+            try:
+                import shutil
+                shutil.copy2(path, path + '.bad')
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------ output
 
