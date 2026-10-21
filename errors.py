@@ -16,6 +16,8 @@ WARN_EVERY_SEC = 300.0
 
 _lock = threading.Lock()
 _minute: Counter = Counter()          # failures since the last Health line
+_alert: Counter = Counter()           # failures since the last alert check (the Health line drains _minute every minute,
+                                      # so an alert reading _minute saw only the last few seconds)
 _suppressed: Counter = Counter()      # failures not logged since the source's last WARNING
 _last_warn: Dict[str, float] = {}
 
@@ -24,6 +26,7 @@ def report(source: str, exc: BaseException, detail: str = '') -> None:
     now = time.time()
     with _lock:
         _minute[source] += 1
+        _alert[source] += 1
         if now - _last_warn.get(source, 0.0) < WARN_EVERY_SEC:
             _suppressed[source] += 1
             return
@@ -39,3 +42,11 @@ def health_text() -> str:
         items = _minute.most_common()
         _minute.clear()
     return ('errors: ' + ', '.join(f"{k} {v}" for k, v in items)) if items else ''
+
+
+def alert_text() -> str:
+    """'src N, ...' of the failures since the previous call ('' when none): for the Telegram alert, not the Health line."""
+    with _lock:
+        items = _alert.most_common()
+        _alert.clear()
+    return ', '.join(f"{k} {v}" for k, v in items)

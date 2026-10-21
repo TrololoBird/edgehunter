@@ -204,6 +204,7 @@ class Scanner:
         self._oi_fired: Dict[str, int] = {}
         self._context_task: Optional[asyncio.Task] = None
         self._maps_pool = None          # ProcessPoolExecutor (one worker) for level maps: see _maps_executor
+        self._blind_at: Dict[Tuple[str, str], float] = {}   # (symbol, strategy) -> when a history gate last stopped it
         from strategies.loopside import LoopDetectors
         # eng-59: the loop-side detectors live in strategies/loopside.py (the archive replay runs the same code)
         self.loopside = LoopDetectors(self._minute_candles,
@@ -824,8 +825,22 @@ class Scanner:
             return
         self.detector.skip_log, self.loopside.skip_log = [], []
         self.loopside._skip_seen.clear()
+        now = time.time()
+        for symbol, strategy, *_ in rows:
+            self._blind_at[(symbol, strategy)] = now
         if self.journal:
             self._background_thread(self.journal.record_history_skips, rows)   # the journal's lock: off the loop
+
+    def blind_text(self, window_sec: float = 900.0, min_coins: int = 20) -> str:
+        """'pump 284 coins, ...': the strategies a history gate stopped on at least `min_coins` coins within the window
+        (after a restart the 1h / 1d histories load for about an hour: those strategies see nothing until then)."""
+        cutoff = time.time() - window_sec
+        for key in [k for k, t in self._blind_at.items() if t < cutoff]:
+            del self._blind_at[key]
+        per: Dict[str, int] = {}
+        for _, strategy in self._blind_at:
+            per[strategy] = per.get(strategy, 0) + 1
+        return ', '.join(f"{s} {n} coins" for s, n in sorted(per.items(), key=lambda x: -x[1]) if n >= min_coins)
 
     def _detect_setups(self) -> List[Tuple[str, Dict]]:
         """Detected setups of this scan as signals (the coin's live Tier-0 metrics + the setup's leg / note)."""
@@ -1704,6 +1719,9 @@ class Scanner:
             macro_bad = macro_calendar.coverage(time.time() * 1000)
             if macro_bad:
                 failed = (failed + '; ' if failed else '') + f"macro veto degraded: {macro_bad}"
+            blind = self.blind_text()
+            if blind:
+                failed = (failed + '; ' if failed else '') + f"history gate stopped: {blind}"
             gc_line = self.watchdog.gc_text()
             # the same reading for /api/health (external monitoring, the dashboard's health tab)
             self.health = {'ts': time.time(), 'tier0_sec': self.last_tier0_sec, 'scan_sec': self.last_scan_sec,

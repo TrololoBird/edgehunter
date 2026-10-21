@@ -71,6 +71,8 @@ def regions(pid: int = 0) -> Tuple[Dict[int, int], int, int]:
 
 def process_breakdown(pid: int = 0) -> Dict[str, float]:
     """MB by class: private, arenas (pymalloc 1 MB blocks), small (< 1 MB), mid (1-8 MB), large (>= 8 MB), image."""
+    if sys.platform.startswith('linux'):
+        return _linux_breakdown(pid)
     if sys.platform != 'win32':
         return {}
     alloc, image, mapped = regions(pid)
@@ -86,6 +88,51 @@ def process_breakdown(pid: int = 0) -> Dict[str, float]:
         else:
             out['large'] += size
     out['image'], out['mapped'] = image, mapped
+    return {k: v / 2 ** 20 for k, v in out.items()}
+
+
+def _linux_breakdown(pid: int = 0) -> Dict[str, float]:
+    """
+    The same view from /proc/<pid>/smaps (0 = this process): MB resident + swapped by class. `private` = anonymous
+    writable memory, split into `heap` (brk), `small` (< 1 MB), `mid` (1-8 MB), `large` (>= 8 MB) by the size of the
+    mapping; `swap` = the part of it that is swapped out; `image` = file-backed mappings. The kernel merges adjacent
+    anonymous mappings, so a block of several allocator segments reads as one `large`; pymalloc arenas cannot be told
+    apart (no `arenas` key).
+    """
+    out = Counter()
+    kind, size, rss, swap = None, 0, 0, 0
+
+    def flush():
+        if kind is None:
+            return
+        mb = rss + swap
+        if kind == 'file':
+            out['image'] += mb
+            return
+        out['private'] += mb
+        out['swap'] += swap
+        out['heap' if kind == 'heap' else 'small' if size < ARENA else 'mid' if size < 8 * ARENA else 'large'] += mb
+
+    try:
+        with open(f"/proc/{pid or 'self'}/smaps") as f:
+            for line in f:
+                head = line.split(None, 5)
+                if '-' in head[0] and len(head) >= 5 and not line.endswith(' kB\n'):
+                    flush()
+                    lo, hi = head[0].split('-')
+                    size, rss, swap = int(hi, 16) - int(lo, 16), 0, 0
+                    path = head[5].strip() if len(head) > 5 else ''
+                    kind = 'heap' if path == '[heap]' else 'anon' if path in ('', '[stack]') or path.startswith('[anon') \
+                        else 'file' if path.startswith('/') else None
+                    if kind == 'anon' and 'w' not in head[1]:
+                        kind = None
+                elif head[0] == 'Rss:':
+                    rss = int(head[1]) << 10
+                elif head[0] == 'Swap:':
+                    swap = int(head[1]) << 10
+        flush()
+    except OSError:
+        return {}
     return {k: v / 2 ** 20 for k, v in out.items()}
 
 
@@ -167,7 +214,7 @@ def report(fetcher, scanner, top: int = 12) -> str:
     proc = process_breakdown()
     parts = structures(fetcher, scanner)
     known = sum(mb for _, mb in parts)
-    proc_text = ', '.join(f"{k} {proc[k]:.0f}" for k in ('private', 'arenas', 'large', 'mid', 'small', 'image')
+    proc_text = ', '.join(f"{k} {proc[k]:.0f}" for k in ('private', 'heap', 'swap', 'arenas', 'large', 'mid', 'small', 'image')
                           if k in proc)
     top_text = ', '.join(f"{k} {mb:.0f}" for k, mb in parts[:top] if mb >= 1)
     return (f"Memory MB: {proc_text} | structures ~{known:.0f}: {top_text} "

@@ -67,8 +67,8 @@ def us_session(now_s: float) -> Optional[int]:
                 with open(CAL_FILE, encoding='utf-8') as f:
                     c = json.load(f)
                 _CAL = (mt, set(c.get('closed', ())), set(c.get('early', ())))
-        except Exception:                    # a missing / broken / wrong-typed file: weekday and hours decide
-            pass
+        except Exception as e:               # a missing / broken / wrong-typed file: weekday and hours decide
+            errors.report('extdata.nyse_calendar', e, f"{CAL_FILE}: weekday and hours decide")
     t = datetime.fromtimestamp(now_s, timezone.utc).astimezone(NY)
     if t.weekday() >= 5 or t.strftime('%Y-%m-%d') in _CAL[1]:
         return 0
@@ -82,7 +82,8 @@ def etf_flows_visible(flows: Dict[str, float], now_s: float):
     for d, v in sorted(flows.items()):
         try:
             t = datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp()
-        except ValueError:
+        except ValueError as e:
+            errors.report('extdata.etf_flows', e, f"flow date {d!r} skipped")
             continue
         if t + ETF_LAG_H * 3600 <= now_s and v is not None:
             vis.append(float(v))
