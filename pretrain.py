@@ -37,6 +37,7 @@ import numpy as np
 import polars as pl
 
 from config import CONFIG
+from storage import atomic_write
 
 logger = logging.getLogger('pretrain')
 
@@ -710,11 +711,10 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
     state = {
         'created': time.time(), 'start': start.isoformat(), 'end': end.isoformat(), 'coins': len(results),
         'rows': learned, 'logic_version': CONFIG.journal.logic_version,
+        'success_generator': 'legacy-phases-v1',
         'success': success.state(), 'regime_history': regime_model.history, 'summary': summary,
     }
-    with open(CONFIG.pretrain.path + '.tmp', 'wb') as fh:
-        pickle.dump(state, fh)
-    os.replace(CONFIG.pretrain.path + '.tmp', CONFIG.pretrain.path)
+    atomic_write(CONFIG.pretrain.path, pickle.dumps(state))
     logger.info(f"pretrain: P(edge) learned {learned} rows ({success.drifts} drift resets, accuracy "
                 f"{(success.accuracy or 0):.1%}); saved {CONFIG.pretrain.path} in {time.time() - started:.0f}s")
     for g, (n, e) in sorted(summary.items(), key=lambda kv: -kv[1][0]):

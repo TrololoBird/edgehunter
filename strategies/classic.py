@@ -91,6 +91,12 @@ def _day_candles(m15: Sequence[Sequence[float]], day_start: int) -> List[Sequenc
     return [c for c in m15 if day_start <= c[0] < day_start + DAY_MS]
 
 
+def _complete_quarters(rows: Sequence[Sequence[float]], start: int, cut: int) -> bool:
+    """Exact closed 15m grid; an off-grid session open needs finer source data."""
+    return (cut > start and start % QUARTER_MS == 0 and cut % QUARTER_MS == 0
+            and [c[0] for c in rows] == list(range(start, cut, QUARTER_MS)))
+
+
 def value_area_event(m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]:
     """Dalton's 80% rule at the close of a 30-minute period (`cut` = close time of the last 15m candle)."""
     if cut % (2 * QUARTER_MS) or len(m15) < 100:
@@ -98,7 +104,7 @@ def value_area_event(m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]
     today = cut - cut % DAY_MS
     prev = _day_candles(m15, today - DAY_MS)
     day = [c for c in _day_candles(m15, today) if c[0] < cut]
-    if len(prev) < 90 or len(day) < 4:
+    if len(prev) < 90 or len(day) < 4 or not _complete_quarters(day, today, cut):
         return None
     va = value_area(prev, tpo=True)               # Dalton's value area is TPO (time), not volume (eng-58)
     if va is None:
@@ -249,7 +255,7 @@ def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Opt
         if len(pc) < 0.8 * (prev[1] - prev[0]) / QUARTER_MS:
             continue
         day = [c for c in m15 if open_ms <= c[0] < cut]
-        if len(day) < 4 or len(day) % 2:
+        if len(day) < 4 or len(day) % 2 or cut >= close_ms or not _complete_quarters(day, open_ms, cut):
             continue
         va = value_area(pc, tpo=True)
         if va is None:
@@ -296,7 +302,7 @@ def failed_auction_event(base: str, m15: Sequence[Sequence[float]], cut: int) ->
         if len(pc) < 0.8 * (prev[1] - prev[0]) / QUARTER_MS:
             continue
         day = [c for c in m15 if open_ms <= c[0] < cut]
-        if len(day) < 2 or len(day) % 2:
+        if len(day) < 2 or len(day) % 2 or cut >= close_ms or not _complete_quarters(day, open_ms, cut):
             continue
         va = value_area(pc, tpo=True)
         if va is None:
@@ -369,7 +375,7 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
                               f"{'up' if side > 0 else 'down'}, out at the session's close",
                 'anchor_level': level, 'anchor_extreme': other, 'anchor_label': f'{name} opening range',
                 'anchor_ts': open_ms, 'anchor_close': level, 'orb_hi': hi, 'orb_lo': lo, 'orb_session': name,
-                'session_end_ms': close_ms, 'event_ts': int(now_ms // 60_000 * 60_000) + 60_000}
+                'session_end_ms': close_ms, 'event_ts': int(b[0]) + 60_000}
     return None
 
 

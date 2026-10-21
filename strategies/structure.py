@@ -180,21 +180,20 @@ def merge_candles(older: Sequence[Sequence[float]], newer: Sequence[Sequence[flo
 
 def hours_from(candles_15m: Sequence[Sequence[float]], h1: Sequence[Sequence[float]], cut_ms: int) -> List[List[float]]:
     """Closed 1h candles up to `cut_ms`; an hour REST has not published yet is built from its four 15m candles."""
-    out = [list(c) for c in h1 if c[0] + HOUR_MS <= cut_ms]
-    last = out[-1][0] if out else None
+    out = {int(c[0]): list(c) for c in h1 if c[0] + HOUR_MS <= cut_ms}
     by_hour: Dict[int, List] = {}
     for c in candles_15m:
         hour = int(c[0]) // HOUR_MS * HOUR_MS
-        if (last is None or hour > last) and hour + HOUR_MS <= cut_ms:
+        if hour not in out and hour + HOUR_MS <= cut_ms:
             by_hour.setdefault(hour, []).append(c)
     for hour in sorted(by_hour):
         q = sorted(by_hour[hour], key=lambda c: c[0])
         # audit F05: the four quarters exactly (a count of 4 accepted :00 / :15 / :15 / :45)
         if [int(c[0]) for c in q] == [hour + i * 900_000 for i in range(4)]:
-            out.append([hour, q[0][1], max(c[2] for c in q), min(c[3] for c in q), q[-1][4],
+            out[hour] = [hour, q[0][1], max(c[2] for c in q), min(c[3] for c in q), q[-1][4],
                         sum(c[5] for c in q), sum(c[6] for c in q),
-                        sum(c[7] for c in q) if all(len(c) > 7 and c[7] is not None for c in q) else float('nan')])
-    return out
+                        sum(c[7] for c in q) if all(len(c) > 7 and c[7] is not None for c in q) else float('nan')]
+    return [out[t] for t in sorted(out)]
 
 
 def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
@@ -227,7 +226,7 @@ def bars_4h(h1: Sequence[Sequence[float]], cut: int) -> List[List[float]]:
             if out and n != 4:
                 out.pop()                      # an incomplete 4h group (a gap): not a candle
             out.append([start, c[1], c[2], c[3], c[4], vol, fld(c, 6), fld(c, 7)])
-            n = 1
+            n = 1 if int(c[0]) == start else -99  # the first hour must start on the bucket's boundary
     if out and (n != 4 or out[-1][0] + size > cut):
         out.pop()
     return out
@@ -260,6 +259,8 @@ def maniac_events(symbol: Optional[str], m15: List[List[float]], h1: List[List[f
                   skips: Optional[List] = None) -> List[Dict]:
     """crypto_maniac's systems on the candle that just closed (15m), and on the hour when one closed (1h)."""
     from strategies import maniac
+    h4 = merge_candles(h4, [], cut, 4 * HOUR_MS)
+    d1 = merge_candles(d1, [], cut, 24 * HOUR_MS)
     log = logging.getLogger(__name__)
     events: List[Dict] = []
     short = skips.append if skips is not None else (lambda _: None)
@@ -354,6 +355,8 @@ def build_context(candles_15m: Sequence[Sequence[float]], candles_1h: Sequence[S
     if not candles_15m or not atr:
         return None
     cut = int(candles_15m[-1][0]) + QUARTER_MS
+    if cut > now_ms:
+        return None  # the supplied ATR and last candle are not yet observable
     last_open = int(candles_15m[-1][0])
     closed_1h = [c for c in candles_1h if c[0] + HOUR_MS <= cut]
     ctx = Context(atr=atr, recent_atr=recent_atr(candles_15m), cut_ms=cut, zones=zones,

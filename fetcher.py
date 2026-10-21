@@ -385,9 +385,10 @@ class VenueDeriv:
 
 def _pct_change(samples: deque, now_ms: float, window_ms: float) -> Optional[float]:
     """Change of the last sample vs the first one at least ~window old (time-ordered samples, bisect lookup)."""
-    if len(samples) < 2 or now_ms - samples[-1][0] > 3 * 60_000:
+    last_idx = bisect.bisect_right(samples, now_ms, key=lambda s: s[0]) - 1
+    if last_idx < 1 or now_ms - samples[last_idx][0] > 3 * 60_000:
         return None
-    last_ts, last = samples[-1]
+    last_ts, last = samples[last_idx]
     target = last_ts - window_ms
     # Prefer the newest sample at or before the window start (sparse samples: Binance OI once a minute) as long
     # as it is not much older; else the first one inside the window if it still spans >= 80% of it
@@ -854,9 +855,9 @@ class DataFetcher:
         Cached per coin for DERIV_CACHE_MS: the inputs update every 10-60s, and recomputing all venues' windows
         for 300 coins on every 2s Tier-0 pass was a tenth of the event loop's busy time (profiled).
         """
-        now_ms = now_ms or time.time() * 1000
+        now_ms = time.time() * 1000 if now_ms is None else now_ms
         cached = self._deriv_cache.get(key)
-        if cached is not None and now_ms - cached[0] < self.DERIV_CACHE_MS:
+        if cached is not None and 0 <= now_ms - cached[0] < self.DERIV_CACHE_MS:
             return cached[1]
         out = self._deriv_snapshot(key, now_ms)
         self._deriv_cache[key] = (now_ms, out)
@@ -869,6 +870,8 @@ class DataFetcher:
         for label, window in (('agg_oi_change_5m', 300_000), ('agg_oi_change_1h', 3_600_000)):
             num = den = 0.0
             for state in states.values():
+                if not state.oi_usd or not 0 <= now_ms - state.oi_ts < 600_000:
+                    continue  # the current weight cannot stand in for an unavailable historical weight
                 change = _pct_change(state.samples, now_ms, window)
                 if change is not None and state.oi_usd:
                     num += change * state.oi_usd
@@ -876,12 +879,12 @@ class DataFetcher:
             out[label] = num / den if den else None
         num = den = 0.0
         for state in states.values():
-            if state.funding_8h is not None and state.oi_usd and now_ms - state.funding_ts < 600_000 \
-                    and now_ms - state.oi_ts < 600_000:
+            if state.funding_8h is not None and state.oi_usd and 0 <= now_ms - state.funding_ts < 600_000 \
+                    and 0 <= now_ms - state.oi_ts < 600_000:
                 num += state.funding_8h * state.oi_usd
                 den += state.oi_usd
         out['agg_funding_8h'] = num / den if den else None
-        out['oi_venues'] = sum(1 for s in states.values() if s.oi_usd and now_ms - s.oi_ts < 600_000)
+        out['oi_venues'] = sum(1 for s in states.values() if s.oi_usd and 0 <= now_ms - s.oi_ts < 600_000)
         return out
 
     def _binance_to_ccxt_symbol(self, binance_symbol: str) -> Optional[str]:
@@ -2339,7 +2342,7 @@ class DataFetcher:
         spot = list(md.spot_minute_klines) if self._spot_symbol_for(symbol) or self.needs_alt_spot(symbol) else None
         # OI over the last hour: across venues (OI-weighted, as the phases' agg_oi_change_1h) when >= 2 report, else
         # Binance's samples (seeded with the last hour at start-up); the entry is evaluated at its trigger, i.e. now
-        derivs = self.deriv_snapshot(symbol)
+        derivs = self.deriv_snapshot(symbol, until_ms)
         if derivs['oi_venues'] >= 2 and derivs['agg_oi_change_1h'] is not None:
             oi = derivs['agg_oi_change_1h']
         else:
@@ -2384,13 +2387,13 @@ class DataFetcher:
         # the classic indicator panel on 15m and 1h (journaled, not a vote: research/indicator_confirms.md decides
         # which of them confirm an entry)
         out['_ind'] = self.indicator_panel(md, direction, until_ms)
-        out['_btc_slope'], out['_atr_1h'] = self.profile_context(md)
+        out['_btc_slope'], out['_atr_1h'] = self.profile_context(md, until_ms)
         out['_dom'] = self.dominance_reading()
         out['_bias'] = self.htf_bias(md, until_ms)
         btc = self.markets.get('BTC/USDT:USDT')
         try:
             from strategies.profiles import btc_regime
-            out['_regime'] = btc_regime(list(btc.h4)) if btc is not None else None
+            out['_regime'] = btc_regime([c for c in btc.h4 if c[0] + 4 * 3_600_000 <= until_ms]) if btc is not None else None
         except Exception as e:
             errors.report('fetcher.btc_regime', e)
             out['_regime'] = None
@@ -2403,17 +2406,20 @@ class DataFetcher:
             out['_book']['slip_50k_bps'] = self.depth.slippage_bps(symbol, 50_000, direction)
         return out
 
-    def profile_context(self, md: 'MarketData'):
+    def profile_context(self, md: 'MarketData', until_ms: Optional[float] = None):
         """For the optimized profiles (strategies/profiles.py), as research_optimize.py measured them: BTC's 1h EMA50
-        slope over 10 closed hours and the coin's 1h ATR14 (simple mean of true ranges)."""
+        slope over 10 closed hours and the coin's Wilder ATR14, using bars closed by until_ms."""
         from strategies.ind_panel import ema
+        until_ms = time.time() * 1000 if until_ms is None else until_ms
         slope = atr = None
         try:
             btc = self.markets.get('BTC/USDT:USDT')
-            if btc is not None and len(btc.h1_long) >= 60:
-                e = ema(np.asarray(btc.h1_long)[:, 4], 50)
+            btc_h1 = [r for r in btc.h1_long if r[0] + 3_600_000 <= until_ms] if btc is not None else []
+            if len(btc_h1) >= 60:
+                e = ema(np.asarray(btc_h1)[:, 4], 50)
                 slope = float(e[-1] - e[-11])
-            h = np.asarray(md.h1_long) if len(md.h1_long) else None
+            closed = [r for r in md.h1_long if r[0] + 3_600_000 <= until_ms]
+            h = np.asarray(closed) if closed else None
             if h is not None and len(h) >= 15:
                 from levels import atr_of
                 atr = atr_of(h[-200:].tolist())             # Wilder's ATR14, the bot's one ATR
@@ -2430,7 +2436,7 @@ class DataFetcher:
         minutes = [c for c in md.minute_klines if c[0] + 60_000 <= until_ms]
         out = {}
         for tf, size, hist in (('15m', 15, md.m15_long), ('1h', 60, md.h1_long)):
-            base = [list(r) for r in hist] if len(hist) else []
+            base = [list(r) for r in hist if r[0] + size * 60_000 <= until_ms] if len(hist) else []
             last = base[-1][0] if base else 0
             # the pure-Python resample of the minute ring was run for each direction and every 20 s by the prewarm
             # thread (the GIL it held stalled the loop 1-3 s): once per (coin, tf, last minute, bucket)

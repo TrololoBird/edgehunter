@@ -119,11 +119,15 @@ def main():
         d = df.filter(pl.col(feat).is_not_null() & pl.col(feat).is_not_nan())
         if len(d) < 1000:
             continue
-        lo_q, hi_q = d[feat].quantile(0.1), d[feat].quantile(0.9)
-        lines += [f"## {feat} (bottom decile < {lo_q:.4g}, top decile > {hi_q:.4g})", '',
+        # The 72h outcome uses an hourly close, available after 73 hours.
+        train = d.filter(pl.col('ts') + 73 * rh.HOUR <= mid)
+        if train.is_empty():
+            continue
+        lo_q, hi_q = train[feat].quantile(0.1), train[feat].quantile(0.9)
+        lines += [f"## {feat} (train-only cutoffs: bottom < {lo_q:.4g}, top > {hi_q:.4g}; 73h purge)", '',
                   '| half | horizon | bottom decile | middle 80% | top decile | spread bottom - top [90%] |',
                   '|---|---|---:|---:|---:|---|']
-        for half, cond in (('older', pl.col('ts') < mid), ('newer', pl.col('ts') >= mid)):
+        for half, cond in (('older', pl.col('ts') + 73 * rh.HOUR <= mid), ('newer', pl.col('ts') >= mid)):
             h = d.filter(cond)
             for hz in ('fwd_24h', 'fwd_72h'):
                 b = h.filter(pl.col(feat) < lo_q)

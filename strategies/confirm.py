@@ -95,7 +95,8 @@ def oi_change(samples: Sequence[Tuple[float, float]], since_ms: int, until_ms: i
     than the window: over its available history, at least 5 minutes). None without two such samples.
     """
     window = [(t, v) for t, v in samples if since_ms <= t <= until_ms and v]
-    if len(window) < 2 or window[-1][0] - window[0][0] < 5 * MINUTE_MS:
+    if len(window) < 2 or window[-1][0] - window[0][0] < 5 * MINUTE_MS \
+            or until_ms - window[-1][0] > 3 * MINUTE_MS:
         return None
     return window[-1][1] / window[0][1] - 1
 
