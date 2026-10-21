@@ -669,6 +669,9 @@ class StrategiesConfig:
                             'htf_bias', 'htf_conflict', 'rg_breakout_in_range', 'rg_countertrend',
                             'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day')
     disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'PUMP START',
+                             # eng-144: OI BUILD - 5387 cards in 2.5 days (eng-143), none entered (R:R at the signal close
+                             # < 1), and its opposite cards cancelled 105 SWEEP cards; demo -3.3R
+                             'OI BUILD LONG', 'OI BUILD SHORT',
                              # eng-127: the setups switched off in eng-109 for invented thresholds are rewritten from
                              # their sources or deleted - Seiden's odds enhancers (SD), the failed auction (AUCTION),
                              # Bollinger's Method I (BB1, replaces BULL F / BEAR D), Connors without a stop at 1x,
@@ -785,7 +788,7 @@ class StrategiesConfig:
     # eng-51: at most crowd_max OPEN trades in one direction across all strategies (the rest journaled vetoed
     # 'crowded'). The Turtles allowed 6 units in closely correlated markets (Faith, Original Turtle Rules); alts move
     # with BTC as one market - 12 Silver Bullet longs on 2026-10-02 were one bet. Turtle units counted by the
-    # Turtles' own 12-unit limit, not here
+    # Turtles' own 12-unit limit; eng-144: Turtle / Connors cards count here too (one card = one slot)
     crowd_max: int = 6
     # eng-128: the data-mined layers (models/profiles.json, profiles_regime.json: research_optimize's filters, stops,
     # break-even, time stops, the 'regime_off' veto; models/exit_overlays.json: research_overlays' early exits and the
@@ -1004,7 +1007,7 @@ class JournalConfig:
     # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
     outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-143"
+    logic_version: str = "eng-144"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

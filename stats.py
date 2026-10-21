@@ -1014,7 +1014,7 @@ def demo_gap_table(console: Console, db: str = 'demo_trades.db'):
     conn.row_factory = sqlite3.Row
     try:
         cols = {c[1] for c in conn.execute("PRAGMA table_info(demo_trades)")}
-        rows = conn.execute("SELECT * FROM demo_trades").fetchall()
+        rows = conn.execute("SELECT * FROM demo_trades" + _demo_where(cols), _demo_args(cols)).fetchall()
     finally:
         conn.close()
     if not rows or not {'entry_fill', 'exit_avg', 'direction'} <= cols:
@@ -1060,8 +1060,9 @@ def demo_table(console: Console, db: str = 'demo_trades.db', journal_db: str = C
         return
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
+        cols = {c[1] for c in conn.execute("PRAGMA table_info(demo_trades)")}
         raw = conn.execute("SELECT strategy, close_reason, r, symbol, direction, opened_ms, card_id, setup "
-                           "FROM demo_trades").fetchall()
+                           "FROM demo_trades" + _demo_where(cols), _demo_args(cols)).fetchall()
     finally:
         conn.close()
     rows = []
@@ -1152,7 +1153,21 @@ def main():
     report(Console(), args.db, args.days, args.last, args.all_versions)
 
 
+# eng-144: demo trades of the current logic version only (None = every version; rows before eng-144 have none)
+_DEMO_VERSION: Optional[str] = None
+
+
+def _demo_where(cols) -> str:
+    return " WHERE logic_version = ?" if _DEMO_VERSION and 'logic_version' in cols else ""
+
+
+def _demo_args(cols) -> tuple:
+    return (_DEMO_VERSION,) if _DEMO_VERSION and 'logic_version' in cols else ()
+
+
 def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[float], last: int, all_versions: bool):
+    global _DEMO_VERSION
+    _DEMO_VERSION = None if all_versions else CONFIG.journal.logic_version
     since = int((time.time() - days * 86400) * 1000) if days else 0
     all_rows = conn.execute("SELECT * FROM signals WHERE ts_ms >= ? ORDER BY ts_ms", (since,)).fetchall()
     version = CONFIG.journal.logic_version

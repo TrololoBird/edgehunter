@@ -837,3 +837,20 @@ leverage assumptions in the UI (P2 #8), the stage-0 parameter-provenance table.
 - P2 #8: `webui.sizing_view` uses the geometry's costs (`cost_of` with the coin's volume and symbol); `max_leverage` is None when no
   leverage keeps the liquidation beyond the stop under the model (was floored to 1x), and the assumptions are shown.
 - Stage 0: `docs/PARAMETER_PROVENANCE.md`.
+
+## eng-128 (2026-10-15, 445fa83, recorded late)
+- The data-mined profiles (eng-63) off: `config.optimized_profiles=False`, signal_book drops them (no source behind
+  the mined cut-offs).
+
+## eng-144 (2026-10-21) - the restart / audit package
+- State: `scanner_state.json` is never written before it was loaded (a stop during start-up wrote an empty book over
+  it, the demo then closed 11 positions as ORPHAN); a failed read keeps the file (`.bad` copy) and disables saving and
+  orphan closes for that run.
+- Demo: a position without a card is no longer closed at market - it ends on its BingX stop / targets (ORPHAN 30 trades
+  -9.2R on 11-21.10). Connors gets a catastrophe stop 3 R units away (the SMA5 exit unchanged).
+- Restored cards waiting for history expire by their watch TTL counted from the start-up (112 SWEEP cards expired in
+  three restart bursts).
+- OI BUILD off (5387 cards in 2.5 days, no entry, cancelled 105 SWEEP cards as the opposite setup).
+- Turtle / Connors cards count and are capped by `crowd_max` (crowded signals -0.22R vs clean +0.01R; Turtle -11.6R).
+- `leg.broke_structure`: no swing in reach is no break of structure (was True).
+- Stats: the new logic_version separates every journal / demo statistic from the eng-143 rows.

@@ -988,7 +988,9 @@ class SignalBook:
                 # the coin's history is not in yet (after a start: the 15m / 1h / 4h history loads in the background):
                 # no plan says nothing about the setup - it waits (every restart expired 14-59 restored cards here),
                 # at most its watch TTL (a coin whose data never comes - it left the universe)
-                if age > watch_ttl:
+                # eng-144: counted from the start-up too (journal 18-21.10: 112 restored SWEEP cards of liquid coins expired
+                # here in three bursts, one per restart - their age counted from the setup, before the restart)
+                if now - max(s.created, self._born) > watch_ttl:
                     self._finish(s, 'EXPIRED', now, f"no data for a plan within {_dur(watch_ttl)}")
             elif CONFIG.strategies.structural_lifetimes:
                 # eng-108: no plan = no setup (was: waiting an invented watch_ttl for the leg to come back)
@@ -1295,7 +1297,7 @@ class SignalBook:
             reason = shadow_of(s.group_key)
         if reason is None and s.mode == 'supply_demand' and (s.plan or {}).get('sd_score', 10) < 8:
             reason = 'sd_score'          # eng-127: Seiden / OTA - below 8 of 10 odds enhancer points no trade
-        if reason is None and not (s.plan or {}).get('trail_days') and self.crowded(s.mode, s.direction, entered_at):
+        if reason is None and self.crowded(s.mode, s.direction, entered_at):
             reason = 'crowded'
         hb = (confirms or {}).get('_bias') or {}
         if reason is None:
@@ -1779,8 +1781,9 @@ class SignalBook:
 
     def crowded(self, mode: str, direction: int, now: float) -> bool:
         """eng-51: crowd_max open trades in this direction across all strategies (Turtles' correlated-markets limit)."""
-        n = sum(1 for o in self.signals.values() if o.entered_at and not o.finished and o.direction == direction
-                and not (o.plan or {}).get('trail_days'))
+        # eng-144: Turtle / Connors cards count and are capped too (Faith: a limit on closely correlated markets;
+        # live 11-21.10 Turtle 10 trades -11.6R, 0 winners, entered together; crowded signals -0.22R vs clean +0.01R)
+        n = sum(1 for o in self.signals.values() if o.entered_at and not o.finished and o.direction == direction)
         return n >= CONFIG.strategies.crowd_max
 
     def _time_exit(self, s: TrackedSignal, now: float) -> Tuple[Optional[str], Optional[float]]:

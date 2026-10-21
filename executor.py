@@ -34,6 +34,8 @@ BINGX_ALIAS = {'XAU': 'NCCOGOLD2USD/USDT:USDT', 'XAG': 'NCCOXAG2USD/USDT:USDT',
 
 # eng-84: a limit-filled trade whose card ended keeps its exchange stop / targets this long, then is closed
 ORPHAN_LIMIT_HOLD_MS = 24 * 3600_000
+# eng-144: a position without a card rides its exchange stop / targets at most this long, then it is closed at market
+ORPHAN_EXCHANGE_HOLD_MS = 3 * 24 * 3600_000
 # eng-86: no market entry when BingX's price already ran this share of the planned risk past the plan's entry (laptop
 # demo journal: a chase >= 0.25R cost -0.64R against the journal, n=15; < 0.25R -0.07R; live GRASS +3.6%: -2.32R)
 CHASE_MAX_R = float('inf')       # eng-113: removed (the size follows the price)
@@ -136,7 +138,8 @@ class DemoExecutor:
             for col, kind in (('basis', 'REAL'), ('exit_ref', 'REAL'), ('no_stop', 'INTEGER'), ('scale', 'REAL'),
                               ('entry_order', 'TEXT'), ('fill_confirmed', 'INTEGER'), ('funding_usd', 'REAL'),
                               ('close_pending_reason', 'TEXT'), ('close_pending_r', 'REAL'),
-                              ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER')):
+                              ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER'),
+                              ('logic_version', 'TEXT')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
@@ -628,6 +631,14 @@ class DemoExecutor:
                 await ex.create_order(symbol, 'market', exit_side, qty, None,
                                       {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True,
                                        'workingType': 'MARK_PRICE'})
+            elif lv.get('sl'):
+                # eng-144: a perpetual is never left without a stop - a catastrophe stop 3 R units away (Connors trades
+                # without one in his book; the exit stays the SMA5 close, this only caps a gap / delisting tail)
+                far = fill - 3 * (lv['entry'] - lv['sl']) if lv.get('entry') else None
+                if far and far > 0:
+                    await ex.create_order(symbol, 'market', exit_side, qty, None,
+                                          {'stopLossPrice': float(ex.price_to_precision(symbol, far)), 'reduceOnly': True,
+                                           'workingType': 'MARK_PRICE'})
         except Exception as e:
             # never an unprotected position: recorded and closed at market
             trade['id'] = self._insert(trade)
@@ -1684,6 +1695,13 @@ class DemoExecutor:
                                 # stop and targets already rested on BingX (live SOL / DOGE PO3: closed -0.5R, then went
                                 # to TP3). A filled limit keeps its exchange stop / targets; only a stale one is closed
                                 pass
+                            elif not trade.get('no_stop') and age_ms < ORPHAN_EXCHANGE_HOLD_MS:
+                                # eng-144: no market close - the position keeps its stop / targets on BingX and ends
+                                # there (EXCHANGE); a market close of 30 orphans cost -9.2R on 11-21.10
+                                if not trade.get('orphan_seen'):
+                                    trade['orphan_seen'] = True
+                                    logger.warning(f"Demo: {trade['symbol']} has no open card: left to its exchange stop")
+                                    self.alert(f"⚠️ Демо {trade['symbol']}: карточки нет, позиция оставлена под стопом на бирже")
                             else:
                                 logger.info(f"Demo: {trade['symbol']} has no open card any more: closing the orphan")
                                 await self._close(trade, 'ORPHAN', None)
@@ -1721,6 +1739,7 @@ class DemoExecutor:
             c.execute("UPDATE demo_trades SET basis = ? WHERE id = ?", (basis, trade_id))
 
     def _insert(self, row: Dict) -> int:
+        row.setdefault('logic_version', CONFIG.journal.logic_version)   # eng-144: demo statistics per logic version
         cols = [k for k in row if k != 'id']
         with sqlite3.connect(self.db_path) as c:
             cur = c.execute(f"INSERT INTO demo_trades ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",

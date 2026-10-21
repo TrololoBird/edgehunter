@@ -80,7 +80,8 @@ def broke_structure(candles: List[List[float]], start_ts: int, end: float, direc
             return end > b[2]
         if direction < 0 and b[3] < a[3] and b[3] < c[3]:
             return end < b[3]
-    return True                     # no swing in reach: nothing to break (a leg out of price discovery)
+    # eng-144 (external audit): no swing in reach is no proven break of structure - the ICT rule needs one
+    return False
 
 
 def displacement(candles: List[List[float]], start_ts: int, end_ts: int, direction: int,
