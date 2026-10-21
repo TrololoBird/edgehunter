@@ -1012,8 +1012,8 @@ class DataFetcher:
                 out[s] = float('inf') if a is None or b is None else max(a, b)
             except RATE_LIMIT_ERRORS:
                 raise
-            except Exception:
-                pass
+            except Exception as e:
+                errors.report('fetcher.depth_walk', e, f"Depth failed for {s}")
         await asyncio.gather(*(one(s) for s in candidates[:limit] if s in ids))
         if out:
             import levels

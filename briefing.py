@@ -1073,9 +1073,23 @@ class Briefing:
         down = [v for v, st in status.items() if not st.get('connected', 1)]
         if down:
             self._post(f"🛠 Бот: нет потока {', '.join(down)}", key='health|down|' + ','.join(sorted(down)), every_sec=3600, topic='service')
-        failed = errors.health_text()
+        failed = errors.alert_text()      # its own accumulator: the Health line drains health_text() every minute
         if failed:
-            self._post(f"🛠 Бот: ошибки компонентов — {failed}", key='health|errors', every_sec=3 * 3600, topic='service')
+            self._post(f"🛠 Бот: ошибки компонентов за 15 мин — {failed}", key='health|errors', every_sec=3600, topic='service')
+        blind = self.sc.blind_text()
+        if blind:
+            self._post(f"🛠 Бот: стратегии без истории, сигналов от них нет — {blind}. После рестарта история "
+                       f"грузится около часа", key='health|blind', every_sec=3600, topic='service')
+        rss = (getattr(self.sc, 'health', None) or {}).get('rss_mb')
+        try:
+            import psutil
+            total_mb = psutil.virtual_memory().total / 2**20
+        except Exception as e:
+            errors.report('briefing.memory', e)
+            total_mb = 0.0
+        if rss and total_mb and rss > 0.55 * total_mb:
+            self._post(f"🛠 Бот: память {rss:.0f} МБ из {total_mb:.0f} МБ — ядро может убить процесс (OOM), "
+                       f"перезапуск сбросит рост", key='health|memory', every_sec=2 * 3600, topic='service')
         ex = (self.sc.demo if self.sc.demo.enabled else None)
         if ex is not None:
             try:
