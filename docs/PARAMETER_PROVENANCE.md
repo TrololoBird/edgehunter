@@ -25,6 +25,12 @@ those was re-run for this table, so none is promoted to **empirical**.
 | SL-first on a candle touching both (signal_book, levels.simulate) | - | ambiguity rule | conservative convention | A convention: biases results down, never up | policy |
 | gap fill (signal_book._manage_trade) | next observed open | a stop / target crossed inside a minute hole | eng-142 | The price inside the hole is unknown; the next open is the first OBSERVED price, still an estimate (the hole is flagged `data_gaps`) | heuristic (flagged) |
 | `stop_buffer_atr` | 0.3 ATR of the anchor TF | stop beyond structure | "0.1 sat where stops cluster (Osler)"; "47% of 0.1-ATR stops ... (history 2026-09)" | Osler documents clustering at round numbers, not a 0.3 ATR buffer; the 47% is an unreproduced comment | heuristic |
+| `levels.min_rr_tp1_floor` (eng-147) | 1.0 | min R:R to TP1 when TP1 is a real level | owner; VPS journal eng-135..144: 8 entries < 1R, -4.74R | In-sample, n = 8; eng-86 had turned it off on laptop data (< 0.5R near 0) | policy |
+| TP2 / TP3 '1R step' (geometry.finish_levels, eng-147) | +1R each | slots the map cannot fill (not the methods' own targets) | owner | No measurement; lifts the blended R:R of single-level plans | policy |
+| `levels.moved_pad_atr` / `pierce_cap_atr` (geometry.capped_pad, eng-147) | 0.2 / 0.5 ATR (working tf) | pad past a stop_beyond pool / cap on the measured pierce | owner; journal stop widths | n = 52, no control; a deep raid of the pool itself can reach the moved stop | heuristic |
+| `levels.max_trigger_overshoot_atr` (signal_book._overshoot, eng-147) | 0.6 ATR | veto a trigger close this far past the anchor level / zone edge | owner; journal: 11 entries > 0.6, -7.00R | In-sample, n = 11, threshold chosen on the same rows | heuristic |
+| `executor.chase_limit_n` / `chase_limit_atr` (eng-147) | 0.5 N / 0.5 ATR | no demo open of a target-less plan after a run past the signal price | owner | No measurement | policy |
+| crowd ranking (signal_book.crowd_rank, eng-147) | shadow vetoes, RVOL, min(rr_tp1, 2.5) | order of one pass's entries for crowd_max | owner | No measurement | policy |
 | `min_stop_atr` | 1.0 x 15m ATR | stop floor | "8 of 10 live entries hit" | n = 10, no control | heuristic |
 | `max_stop_atr` | 3.0 ATR | no trade with a farther stop | eng-91 | No source | heuristic |
 | `continuation_zone` | 0.62-0.79 | pullback entry band of the leg | ICT OTE | ICT material names these ratios; no test that the band beats another | heuristic (author's rule) |

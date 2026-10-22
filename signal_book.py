@@ -1183,17 +1183,7 @@ class SignalBook:
         levels['zone_src'] = s.plan.get('zone_src')
         levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], d)
         reason = None
-        # eng-147 (journal eng-135..144: 11 entries whose trigger closed > 0.6 ATR past the zone, -7.00R): a trigger
-        # close that ran far beyond the zone's trade-side edge is a chase, not the zone's entry. ORB / Turtles have
-        # no pullback zone; the edge and the overshoot are journaled for every plan with a zone
-        zlo, zhi = s.plan.get('zone_lo'), s.plan.get('zone_hi')
-        work = s.plan.get('tf_atr') or s.plan.get('leg_atr') or s.plan.get('atr')
-        if zlo is not None and zhi is not None and work:
-            edge = zhi if d > 0 else zlo
-            over = d * (trigger['entry'] - edge) / work
-            levels['zone_edge'], levels['trigger_over_atr'] = edge, over
-            if s.mode not in ('orb', 'breakout') and over > CONFIG.levels.max_trigger_overshoot_atr:
-                reason = 'trigger_overshoot'
+        reason = self._overshoot(s, trigger['entry'], levels)
         # the spring candle's average FUTURES minute (the pullback minutes are futures candles); a card restored from
         # an older state has only the spot figure: no test rather than a test in the wrong units
         spring_minute = s.sig.get('fut_candle_minute_usd')
@@ -1329,10 +1319,39 @@ class SignalBook:
         # a reversal's confirmation follows the reversed leg's end: that is its extreme
         extreme_ms = int(anchor['end_ts']) if anchor.get('end_ts') and s.mode in confirm.REVERSALS else None
         confirms = confirm_of(s.symbol, s.mode, s.direction, since, now_ms, extreme_ms) if confirm_of else {}
+        # an entry AT the signal's close (VA80, AUCTION, BB W / M, cup): the method's own rule puts that close past
+        # its level by design - journaled, not vetoed (review of eng-147)
+        self._overshoot(s, levels['entry'], levels, block=False)
         reason = shadow_veto(s.sig, confirm.missing(s.mode, confirms))
         if reason is None and CONFIG.levels.veto_low_rr and levels.get('low_rr'):
             reason = 'low_rr'
         return self._enter(s, levels, now_ms, reason, confirms)
+
+    OVERSHOOT_EXEMPT = ('orb', 'breakout', 'connors', 'pump')    # stop-order / channel / close entries: no zone edge
+
+    @staticmethod
+    def _overshoot(s: TrackedSignal, entry: float, levels: Dict, block: bool = True) -> Optional[str]:
+        """
+        eng-147 (journal eng-135..144: 11 entries > 0.6 ATR past their level, -7.00R): a trigger close far beyond
+        the setup's level is a chase, not the level's entry. The edge is the anchor's level (the swept high / low, the
+        band, the value-area edge) where the plan has one, else the zone's trade-side edge (an armed sweep's zone is
+        its FVG's CE, not the swept level). Edge and overshoot are journaled for every plan; blocking 'trigger_overshoot'.
+        """
+        plan, d = s.plan or {}, s.direction
+        anchor = plan.get('anchor') or {}
+        # the swept level for sweeps (the retrospective's measure; an armed sweep's zone is its CE); every other plan
+        # from its zone's edge (a trendline's zone is the line extended to now, its anchor the line at the break)
+        edge = anchor.get('level') if s.mode == 'sweep' and anchor.get('type') == 'level' else None
+        if edge is None and plan.get('zone_lo') is not None and plan.get('zone_hi') is not None:
+            edge = plan['zone_hi'] if d > 0 else plan['zone_lo']
+        work = plan.get('tf_atr') or plan.get('leg_atr') or plan.get('atr')
+        if edge is None or not work or entry is None:
+            return None
+        over = d * (entry - edge) / work
+        levels['zone_edge'], levels['trigger_over_atr'] = edge, over
+        if block and s.mode not in SignalBook.OVERSHOOT_EXEMPT and over > CONFIG.levels.max_trigger_overshoot_atr:
+            return 'trigger_overshoot'
+        return None
 
     def _enter(self, s: TrackedSignal, levels: Dict, now_ms: int, reason: Optional[str],
                confirms: Dict) -> TrackedSignal:

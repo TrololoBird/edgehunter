@@ -280,7 +280,8 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     last_real = None
     for k in range(3):
         repeat = k > 0 and direction * (targets[k] - targets[k - 1]) <= 0
-        if last_real is not None and (not real[k] or repeat) and plan.get('own_repeats'):
+        if last_real is not None and (not real[k] or repeat) and \
+                (plan.get('own_repeats') or plan.get('intent') in ('range', 'extension')):
             # the method's own targets only (eng-115 / 116: Dalton's far edge, Bulkowski's height): the last repeats
             targets[k], rrs[k] = targets[k - 1], rrs[k - 1]
             sources[k] = sources[k - 1]
