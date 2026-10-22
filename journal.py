@@ -178,7 +178,7 @@ EXTRA_COLUMNS = {
     'ls_global': 'REAL', 'ls_top': 'REAL', 'hl_net_usd': 'REAL', 'cb_premium': 'REAL', 'market_crowd': 'INTEGER',
     # eng-1: the strategy and its anchor (JSON), the market / coin context (universe median and BTC moves, the coin's
     # 1h trend, last hour's ATR / ATR14) and the replay with the stop at breakeven after TP1 (exit at TP2)
-    'strategy': 'TEXT', 'anchor': 'TEXT', 'mkt_1h': 'REAL', 'mkt_4h': 'REAL', 'btc_1h': 'REAL', 'coin_trend': 'INTEGER',
+    'strategy': 'TEXT', 'anchor': 'TEXT', 'mkt_1h': 'REAL', 'mkt_4h': 'REAL', 'btc_1h': 'REAL', 'btc_4h': 'REAL', 'mkt_1d': 'REAL', 'btc_1d': 'REAL', 'coin_trend': 'INTEGER',
     'vol_ratio': 'REAL', 'r_be': 'REAL', 'outcome_h': 'INTEGER',
     # eng-2: the coin's 24h futures quote volume (liquidity: patterns on thin coins are one order's work)
     'volume_24h': 'REAL',
@@ -226,7 +226,7 @@ FEATURE_KEYS = {
     'liq_long_5m': 'liq_long_5m', 'liq_short_5m': 'liq_short_5m', 'depth_imb': 'depth_imb', 'top_ratio': 'top_ratio',
     'basis': 'basis', 'ml_score': 'ml_score', 'regime': 'regime',
     'ls_global': 'ls_global', 'ls_top': 'ls_top', 'hl_net_usd': 'hl_net_usd', 'cb_premium': 'cb_premium',
-    'market_crowd': 'market_crowd', 'mkt_1h': 'mkt_1h', 'mkt_4h': 'mkt_4h', 'btc_1h': 'btc_1h',
+    'market_crowd': 'market_crowd', 'mkt_1h': 'mkt_1h', 'mkt_4h': 'mkt_4h', 'btc_1h': 'btc_1h', 'btc_4h': 'btc_4h', 'mkt_1d': 'mkt_1d', 'btc_1d': 'btc_1d',
     'coin_trend': 'coin_trend', 'vol_ratio': 'vol_ratio', 'volume_24h': 'volume_24h',
     'agg_funding_8h': 'agg_funding_8h', 'ls_bybit': 'ls_bybit', 'ls_okx': 'ls_okx', 'hour_utc': 'hour_utc',
     'weekend': 'weekend', 'liq_on_wick': 'liq_on_wick', 'oi_change_sweep': 'oi_change_sweep', 'adx': 'adx',

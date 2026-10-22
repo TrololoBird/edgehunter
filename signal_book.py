@@ -1790,7 +1790,7 @@ class SignalBook:
         return True
 
     # the owner's live journal (eng-141..144: 6 of 6 longs stopped; earlier 31 of 36): no long while BTC AND the alt
-    # market (the universe's median) both fell over the last 4h AND the last 24h. The Turtles' rules are not changed and
+    # market (the universe's median) both fell over the last 24h (eng-146: 24h only). The Turtles' rules are not changed and
     # Connors buys the dip by design: both exempt. Blocking (not shadow); journaled as vetoed 'market_down'
     MARKET_DOWN_EXEMPT = ('BREAKOUT UP', 'RSI2 LONG', 'RSI2X LONG')    # the Turtles and Connors (not BB1)
 
@@ -1798,7 +1798,8 @@ class SignalBook:
         if s.direction <= 0 or s.group_key in self.MARKET_DOWN_EXEMPT or self.market_state_of is None:
             return False
         m = self.market_state_of() or {}
-        vals = [m.get(k) for k in ('btc_4h', 'mkt_4h', 'btc_1d', 'mkt_1d')]
+        # eng-146: the 24h moves only - requiring the 4h ones too let every 4h bounce inside a falling day through
+        vals = [m.get(k) for k in ('btc_1d', 'mkt_1d')]
         return all(v is not None for v in vals) and all(v < 0 for v in vals)
 
     def crowded(self, mode: str, direction: int, now: float) -> bool:

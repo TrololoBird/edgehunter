@@ -2013,7 +2013,7 @@ class Scanner:
                 if (s.plan or {}).get('no_tp') or lv.get('rr_tp1') is None:
                     exit_ru = {'bollinger': 'выход у противоположной полосы Боллинджера',
                                'breakout': 'выход по противоположному каналу Дончиана (Turtles)',
-                               'orb': 'выход по Parabolic SAR 15m (eng-145)',
+                               'orb': 'выход в конце торговой сессии (Crabel)',
                                'connors': 'выход по закрытию дня за SMA5 (Connors)'}
                     lines.append("Целей нет: " + exit_ru.get(self.book.strategy(s).name if self.book.strategy(s)
                                                              else '', lv.get('tp1_src') or 'выход по правилу метода'))

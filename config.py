@@ -790,8 +790,10 @@ class StrategiesConfig:
     # eng-51: at most crowd_max OPEN trades in one direction across all strategies (the rest journaled vetoed
     # 'crowded'). The Turtles allowed 6 units in closely correlated markets (Faith, Original Turtle Rules); alts move
     # with BTC as one market - 12 Silver Bullet longs on 2026-10-02 were one bet. Turtle units counted by the
-    # Turtles' own 12-unit limit; eng-144: Turtle / Connors cards count here too (one card = one slot)
-    crowd_max: int = 6
+    # Turtles' own 12-unit limit; eng-144: Turtle / Connors cards count here too (one card = one slot).
+    # eng-146: 3 (was 6): alts correlate 0.8-0.9 in falls, so 6 positions at 1R were one ~5.6R bet; 3 caps the
+    # cluster at ~3R per direction (policy, not fitted)
+    crowd_max: int = 3
     # eng-128: the data-mined layers (models/profiles.json, profiles_regime.json: research_optimize's filters, stops,
     # break-even, time stops, the 'regime_off' veto; models/exit_overlays.json: research_overlays' early exits and the
     # alts_with filter) have no source - fitted on the archive, several negative on their own validation: off
@@ -1009,12 +1011,12 @@ class JournalConfig:
     # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
     outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-145"
+    logic_version: str = "eng-146"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
-    keep_waiting_from: str = "eng-143"
+    keep_waiting_from: str = "eng-146"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

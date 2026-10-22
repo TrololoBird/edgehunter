@@ -868,3 +868,11 @@ Owner's order, from the live journal only (no archive research):
   close, break-even / partials that are off since eng-111 / eng-123, 3R caps removed in eng-110); dead code deleted:
   `level.absorption_at`, `classic.orb_event`, `breakout.breakout_donchian`, the unreachable `['map', 1.0]` TP1
   branches of PO3 / Silver Bullet.
+
+## eng-146 (2026-10-22) - fresh statistics; ORB back to the session close; 24h market gate; cluster cap 3
+- The owner: old statistics are reset (the new logic_version starts the count); focus on the logic.
+- ORB: the eng-145 Parabolic SAR exit reverted to Crabel's session-close exit (external research: Crabel's rules
+  exit on the session; the SAR was ours, fitted to 35 trades).
+- market_down: a long is blocked when BTC's and the universe median's 24h moves are both < 0 (eng-145 also
+  required both 4h moves < 0, so every 4h bounce inside a falling day let longs through). Turtles / Connors exempt.
+- crowd_max 6 -> 3 per direction: alts correlate 0.8-0.9 in falls, 6 positions at 1R were one ~5.6R bet (policy).
