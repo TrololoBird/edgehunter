@@ -10,7 +10,8 @@ Classic published methods added as their authors define them (eng-29), on the se
 - orb         Toby Crabel's opening range breakout ("Playing the Opening Range Breakout", Stocks & Commodities): the
               range of a session's first 5 minutes, stop orders the Stretch (10-day SMA of min(High - Open,
               Open - Low)) beyond its high / low; the first level traded through is the entry (ON THE TOUCH, a stop
-              order), the other level the stop; exit on Wilder's Parabolic SAR of 15m bars (eng-145). Checked
+              order), the other level the stop; out at the session's close (eng-146; eng-145's 15m
+              Parabolic SAR exit reverted). Checked
               loop-side on every final minute (session_orb via strategies.loopside.LoopDetectors).
 - connors     Larry Connors' RSI(2) on DAILY candles, with the trend (close above / below the 200-day SMA): RSI2X = his
               original rule (a close with RSI(2) < 5, buy on the close; the mirrored short is shadow), RSI2 = the
@@ -243,7 +244,7 @@ def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Opt
         return {'setup': 'VA80 LONG' if side > 0 else 'VA80 SHORT', 'direction': side,
                 'setup_note': f"{name} session opened {'below' if side > 0 else 'above'} the previous {name} session's "
                               f"value area {val:.6g}-{vah:.6g} (POC {poc:.6g}), back inside for two 30m periods: "
-                              f"Dalton's 80% rule -> the far edge, out on the 15m Parabolic SAR",
+                              f"Dalton's 80% rule -> the far edge, out at the session's close",
                 'anchor_level': edge, 'anchor_extreme': extreme,
                 'anchor_label': f"{name} value area {'low' if side > 0 else 'high'}",
                 'anchor_ts': open_ms, 'anchor_close': last[4], 'va_far': far, 'va_poc': poc,
@@ -338,7 +339,7 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
         return {'setup': 'ORB UP' if side > 0 else 'ORB DOWN', 'direction': side,
                 'setup_note': f"{name} session: traded through the {or_minutes}-minute opening range +- Crabel's Stretch "
                               f"{lo:.6g}-{hi:.6g} "
-                              f"{'up' if side > 0 else 'down'}, out on the 15m Parabolic SAR",
+                              f"{'up' if side > 0 else 'down'}, out at the session's close",
                 'anchor_level': level, 'anchor_extreme': other, 'anchor_label': f'{name} opening range',
                 'anchor_ts': open_ms, 'anchor_close': level, 'orb_hi': hi, 'orb_lo': lo, 'orb_session': name,
                 'session_end_ms': close_ms, 'event_ts': int(b[0]) + 60_000}

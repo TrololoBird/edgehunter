@@ -169,6 +169,26 @@ def shadow_veto(sig: Dict, reason: Optional[str]) -> Optional[str]:
     return reason
 
 
+DEFERRED = object()     # eng-147: SignalBook._enter's 'entry held for the crowd ranking' marker
+
+
+def crowd_rank(s, levels: Dict, candles_of) -> Tuple[int, float, float]:
+    """eng-147 (the owner): the order in which one pass's entries take the crowd_max slots - fewer shadow vetoes, then
+    the higher RVOL of the last 15 minutes (vs the 20 quarters before), then min(R:R to TP1, 2.5) (2.0 without a TP1)."""
+    n_veto = len([v for v in (s.sig.get('shadow_veto') or '').split(',') if v])
+    rvol = 0.0
+    try:
+        m = list(candles_of(s.symbol))[-315:]
+        if len(m) == 315:
+            base = sum(c[5] for c in m[:300]) / 20
+            rvol = sum(c[5] for c in m[300:]) / base if base > 0 else 0.0
+    except (TypeError, IndexError, ValueError):
+        pass
+    rr = levels.get('rr_tp1')
+    score = min(rr, 2.5) if rr is not None and not (s.plan or {}).get('no_tp') else 2.0
+    return n_veto, -rvol, -score
+
+
 # eng-138 (audit R06): (symbol, t0_ms, t1_ms) -> the sum of the funding rates SETTLED in (t0, t1] (as paid, not
 # normalized), None when unknown; set by the replay from the archive ledger. Live keeps the entry-rate model (the real
 # ledger is the executor's)
@@ -373,6 +393,7 @@ class SignalBook:
         self._candles_of = candles_of
         self.watchlist = []
         self.vetoed = []
+        self._deferred, self._deferring = [], False
         self.events = []
         self.finished_now = []
         # cards of an older signal logic (restored from the state): an entered one closes at market, a waiting one
@@ -468,15 +489,26 @@ class SignalBook:
             created.append(tracked)
 
         entries: List[TrackedSignal] = []
-        for tracked in self.signals.values():
-            if tracked.finished:
-                continue
-            price = price_of(tracked.symbol)
-            if not price:
-                continue
-            result = self._advance(tracked, price, now, frames, candles_of, confirm_of)
+        # eng-147 (the owner): the entries that passed every check in this pass are held and entered best first, so
+        # crowd_max keeps the best candidates of one candle, not the first ones iterated
+        self._deferred, self._deferring = [], True
+        try:
+            for tracked in self.signals.values():
+                if tracked.finished:
+                    continue
+                price = price_of(tracked.symbol)
+                if not price:
+                    continue
+                result = self._advance(tracked, price, now, frames, candles_of, confirm_of)
+                if result is not None and result is not DEFERRED:
+                    entries.append(result)
+        finally:
+            self._deferring = False
+        for s, lv, t_ms, cf in sorted(self._deferred, key=lambda c: crowd_rank(c[0], c[1], candles_of)):
+            result = self._enter(s, lv, t_ms, None, cf)
             if result is not None:
                 entries.append(result)
+        self._deferred = []
 
         # Forget finished signals / stale anomalies once they have been on screen long enough
         keep_for = max(CONFIG.levels.finished_display_sec, CONFIG.journal.cooldown_sec)
@@ -1151,6 +1183,17 @@ class SignalBook:
         levels['zone_src'] = s.plan.get('zone_src')
         levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], d)
         reason = None
+        # eng-147 (journal eng-135..144: 11 entries whose trigger closed > 0.6 ATR past the zone, -7.00R): a trigger
+        # close that ran far beyond the zone's trade-side edge is a chase, not the zone's entry. ORB / Turtles have
+        # no pullback zone; the edge and the overshoot are journaled for every plan with a zone
+        zlo, zhi = s.plan.get('zone_lo'), s.plan.get('zone_hi')
+        work = s.plan.get('tf_atr') or s.plan.get('leg_atr') or s.plan.get('atr')
+        if zlo is not None and zhi is not None and work:
+            edge = zhi if d > 0 else zlo
+            over = d * (trigger['entry'] - edge) / work
+            levels['zone_edge'], levels['trigger_over_atr'] = edge, over
+            if s.mode not in ('orb', 'breakout') and over > CONFIG.levels.max_trigger_overshoot_atr:
+                reason = 'trigger_overshoot'
         # the spring candle's average FUTURES minute (the pullback minutes are futures candles); a card restored from
         # an older state has only the spot figure: no test rather than a test in the wrong units
         spring_minute = s.sig.get('fut_candle_minute_usd')
@@ -1390,6 +1433,10 @@ class SignalBook:
                 s.veto_notes = (s.veto_notes + [text])[-5:]
             s.veto_log.append(reason)
             return vetoed
+        # a system that enters at its signal's close or never (confirm_only: Turtles / Connors / PUMP) is not held
+        if getattr(self, '_deferring', False) and not (s.plan or {}).get('confirm_only'):
+            self._deferred.append((s, levels, now_ms, confirms))
+            return DEFERRED                 # an entry, held: the card's other entry paths stay quiet this pass
         if prof and prof.get('pm'):
             # the profile's position management: stop / targets now, breakeven / trail / time stop in _manage_trade
             profiles.apply_pm(levels, prof['pm'], s.direction)

@@ -80,7 +80,8 @@ def all_strategies_enabled(monkeypatch):
     # NOTE: the lifecycle fixtures' prices were built for R:R 1 and the OLD 0.382-0.618 zone / 0.786 invalidation, so
     # they test the lifecycle, NOT the live continuation geometry (OTE 0.62-0.79, invalid beyond the leg's start)
     monkeypatch.setattr(config_mod.CONFIG, 'levels', dataclasses.replace(
-        config_mod.CONFIG.levels, min_rr_tp1=1.0, continuation_zone=(0.382, 0.618), continuation_invalid=0.786))
+        config_mod.CONFIG.levels, min_rr_tp1=1.0, continuation_zone=(0.382, 0.618), continuation_invalid=0.786,
+        min_rr_tp1_floor=0.0))      # eng-147's TP1 floor is a deployment rule: the fixtures' TP1s sit below 1R
     monkeypatch.setattr(config_mod.CONFIG, 'orderflow', dataclasses.replace(config_mod.CONFIG.orderflow,
                                                                             min_confirmations=0))
 

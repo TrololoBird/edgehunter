@@ -197,6 +197,10 @@ EXTRA_COLUMNS = {
     'trend_w': 'REAL', 'breadth_w': 'REAL',
     # ICT premium / discount: the entry's place in the 48h dealing range for its direction (0 = cheapest end)
     'range_pos': 'REAL',
+    # eng-147: the zone's trade-side edge at the trigger and how far the trigger close ran past it (working-tf ATRs);
+    # the excursions over 4h from the ENTRY in R, signed by the direction (mfe_4h / mae_4h are raw highs / lows vs
+    # the signal price, whatever the direction)
+    'zone_edge': 'REAL', 'trigger_over_atr': 'REAL', 'mfe_r': 'REAL', 'mae_r': 'REAL',
     # extdata.py: Deribit BTC DVOL and its 1h change, BTC options put / call OI; the next-funding spread across
     # Binance / Bybit / Hyperliquid (8h-equivalent); OKX / Bybit book imbalance within 0.5%
     'dvol_btc': 'REAL', 'dvol_chg_1h': 'REAL', 'pc_oi_btc': 'REAL', 'funding_spread': 'REAL',
@@ -630,6 +634,7 @@ class SignalJournal:
                     'perp_led': 0, 'p_edge': tracked.sig.get('p_edge'),
                     'tp1_src': lv.get('tp1_src'), 'tp2_src': lv.get('tp2_src'), 'tp3_src': lv.get('tp3_src'),
                     'range_pos': lv.get('range_pos'),
+                    'zone_edge': lv.get('zone_edge'), 'trigger_over_atr': lv.get('trigger_over_atr'),
                     # eng-58: a resting limit (Seiden's line, ICT's CE / OTE): the replay fills it at the entry price
                     'limit_entry': int((tracked.plan or {}).get('trigger') == 'touch'
                                        and not CONFIG.executor.touch_confirm_close),
@@ -1133,6 +1138,11 @@ class SignalJournal:
         if label == '4h':
             updates['mfe_4h'] = max(float(k[2]) for k in window) / price - 1
             updates['mae_4h'] = min(float(k[3]) for k in window) / price - 1
+            e, sl, d = row.get('entry'), row.get('sl'), row.get('direction')
+            if e and sl and d in (-1, 1) and d * (e - sl) > 0:
+                hi, lo = max(float(k[2]) for k in window), min(float(k[3]) for k in window)
+                updates['mfe_r'] = d * ((hi if d > 0 else lo) - e) / (d * (e - sl))
+                updates['mae_r'] = d * ((lo if d > 0 else hi) - e) / (d * (e - sl))
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
             # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
             updates.update(self._replay(row, window))

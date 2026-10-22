@@ -443,6 +443,16 @@ class LevelsConfig:
     # eng-113 (eng-69: "beyond the zone with a 3-5% margin" - on altcoins' 4h zones ~1.5 ATR of the
     # zone's timeframe): the stop sits beyond its structure by max(measured pierce, this x the structure tf's ATR)
     zone_buffer_atr: float = 0.0     # eng-123: the sources: 'slightly beyond the distal line', no size - the measured pierce
+    # eng-147 (the owner, journal eng-135..144: sweep stops 2-7 ATR(15m) from stacked buffers): once stop_beyond moved
+    # the stop past a pool / swing (that pool's p90 already covered), only this many ATRs of the working timeframe
+    # beyond it, not a second full pierce; otherwise the measured pierce, capped at pierce_cap_atr ATRs (the pierce
+    # model is a % of price per coin, not tied to its volatility)
+    moved_pad_atr: float = 0.2
+    pierce_cap_atr: float = 0.5
+    # eng-147: the trigger's close farther than this many ATRs of the working timeframe beyond the zone's edge (the
+    # anchor level) = an entry at the end of the impulse candle: vetoed 'trigger_overshoot' (journal eng-135..144:
+    # 11 such entries -7.00R; the threshold was read off that sample). 0 = off
+    max_trigger_overshoot_atr: float = 0.6
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
     # (vetoed='low_rr') and the card keeps waiting, so the screen only shows entries worth taking by hand
     # 2:1, the practitioners' minimum for intraday trades (breakeven win rate 33% before costs); was 1.0
@@ -488,7 +498,8 @@ class LevelsConfig:
     # TP1s 0.1-0.3% away pass on a TP3 13% away (BCH VA80 0.09, VIRTUAL -0.10 on 2026-10-02)
     # eng-86: off again. eng-85's 1.0 was reasoned, not measured: the laptop journal (30.09-11.10, 961 closed entries) had
     # rr_tp1 < 0.5 near zero (+0.07R) and >= 1.5 at -0.6..-0.74R - the floor kept the worse buckets
-    min_rr_tp1_floor: float = 0.0
+    # eng-147 (the owner): on again - the VPS journal eng-135..144 had 8 entries with TP1 < 1R at -4.74R
+    min_rr_tp1_floor: float = 1.0
     # Finished signals stay on screen this long
     finished_display_sec: int = 1800
 
@@ -1011,12 +1022,12 @@ class JournalConfig:
     # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
     outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-146"
+    logic_version: str = "eng-147"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
-    keep_waiting_from: str = "eng-146"
+    keep_waiting_from: str = "eng-147"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"
@@ -1070,6 +1081,10 @@ class ExecutorConfig:
     # BingX DEMO trading of every card that reaches ENTRY (executor.py; sandbox forced, never a real balance). Turned on
     # by an api_key / api_secret in config.local.toml ([executor], a trade-only key)
     enabled: bool = True
+    # eng-147 (the owner): a plan without targets (no R:R to re-check at BingX's price) is not opened when BingX ran
+    # past the signal price in the trade's direction by more than this: N for the Turtles, the working-tf ATR otherwise
+    chase_limit_n: float = 0.5
+    chase_limit_atr: float = 0.5
     api_key: str = ""
     api_secret: str = ""
     risk_pct: float = 1.0           # the stop costs this share of account_usd

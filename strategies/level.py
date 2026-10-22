@@ -3,9 +3,9 @@ Level strategies: the anchor is a price level and the extreme made at it, not a 
 
 - sweep (SWEEP LOW / SWEEP HIGH): a closed 15m candle pierces a higher-timeframe resting-stop pool (structure.py) -
   at most the pool kind's measured pierce p90 (no minimum with the pierce model) - and closes back beyond it on
-  volume. Bias: the weekly bias, else the daily, else the coin's trend (context_veto: 'against_bias' /
-  'against_trend' - both SHADOW vetoes, journaled, not blocking). A raid outside a 1h+ POI ('no_htf_poi') and an
-  entry in premium / discount of the dealing range are shadow too.
+  volume. Bias: the weekly bias, else the daily, else the coin's trend (context_veto: 'sweep_against_bias' /
+  'sweep_against_trend'). A raid outside a 1h+ POI ('sweep_no_htf_poi') and an entry in premium / discount of the
+  dealing range ('sweep_premium' / 'sweep_discount') block too (eng-147; they were shadow since eng-107).
 - the entry (trigger 'fvg', ICT's 2022 model, eng-58): a displacement that breaks the swing the raid came from and
   leaves a gap arms the gap's CE (ict.fvg_setup); with executor.touch_confirm_close the trade opens at the CLOSE of
   the trigger candle that touched the CE and closed back on the trade's side (no resting limit).
@@ -125,10 +125,12 @@ class SweepStrategy(Strategy):
         # ICT: a sweep is traded in the direction of the higher-timeframe bias (the daily one); with no daily bias the
         # coin's 1h trend decides, as before
         # ICT's top-down order: the weekly bias first, the daily one when the week has none
+        # eng-147 (the owner; journal eng-135..144: 9 sweeps -6.77R, the 6 against the context -4.64R): BLOCKING for
+        # SWEEP LOW / HIGH - own names, so strategies.shadow_vetoes (against_bias / against_trend) does not shadow them
         bias = sig.get('weekly_bias') or sig.get('daily_bias')
         if bias:
-            return 'against_bias' if bias == -direction else None
-        return 'against_trend' if sig.get('coin_trend') == -direction else None
+            return 'sweep_against_bias' if bias == -direction else None
+        return 'sweep_against_trend' if sig.get('coin_trend') == -direction else None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr
@@ -140,19 +142,20 @@ class SweepStrategy(Strategy):
         # (order block, FVG, BPR, breaker), and the entry (5m FVG). A raid in empty space is no ICT setup.
         poi = [z for z in zones if any(re.match(r'(ob|fvg|bpr|breaker)_(1h|4h|1d|1w)$', k) for k in z.kinds)
                and z.lo <= max(extreme, level) and z.hi >= min(extreme, level)]
-        from signal_book import shadow_veto
         if not poi:
-            # eng-107: an ICT confluence, not the sweep rule itself (the sources: liquidity -> sweep -> shift -> FVG):
-            # journaled in shadow, the card goes on
-            shadow_veto(sig, 'no_htf_poi')
+            # eng-147: blocking again (eng-107 had put it in shadow): a raid outside a 1h+ PD array is no ICT setup
+            return {'skip': 'sweep_no_htf_poi'}
         # premium / discount of the dealing range (1h pivots, ict.dealing_range): longs only in its discount half, shorts only in its premium
         from strategies.ict import dealing_range, range_position
         pos = range_position(dealing_range(x.h1 or []), extreme, d)
         if pos is not None and pos > 0.5:
-            shadow_veto(sig, 'premium' if d > 0 else 'discount')     # eng-107: shadow, as no_htf_poi
+            return {'skip': 'sweep_premium' if d > 0 else 'sweep_discount'}     # eng-147: blocking
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         from pierce import overshoot as _pierce
-        invalid = base - d * (_pierce(x.symbol, 'swing_15m', base) or CONFIG.levels.stop_buffer_atr * atr)
+        from strategies.geometry import capped_pad
+        # eng-147: past a further pool only the small pad, else the measured pierce capped in ATR (no double buffer)
+        pad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', base), atr, base != extreme)
+        invalid = base - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
         targets, sources = select_targets(zones, reached, d, atr, 'draw_liquidity')
         # ICT: the sweep is only the setup, a wick is not yet a reversal: the entry waits for the displacement's FVG

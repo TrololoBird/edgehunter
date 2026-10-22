@@ -457,6 +457,18 @@ class DemoExecutor:
         return next((p.get('symbol') for p in self.pending.values() if not p.get('skip') and p.get('direction') == d
                      and max(p.get('placed_ms') or 0, p.get('entered_ms') or 0) >= since), None)
 
+    @staticmethod
+    def _chase(s, lv: Dict, fill_est: float, d: int, n_turtle, ratio: float) -> Optional[str]:
+        """eng-147: why the BingX price ran too far past the signal price for a plan without targets, else None."""
+        plan = getattr(s, 'plan', None) or {}
+        unit = n_turtle or plan.get('tf_atr') or plan.get('leg_atr') or plan.get('atr')
+        if not unit or lv.get('entry') is None:
+            return None
+        k = CONFIG.executor.chase_limit_n if n_turtle else CONFIG.executor.chase_limit_atr
+        ran = d * (fill_est - lv['entry']) / (unit * ratio)
+        return f"BingX {fill_est:.6g} {ran:.2f} {'N' if n_turtle else 'ATR'} past the signal {lv['entry']:.6g} > {k:g}" \
+            if ran > k else None
+
     async def _open(self, card_id: str, s) -> None:
         cfg = CONFIG.executor
         d = s.direction
@@ -489,6 +501,10 @@ class DemoExecutor:
             reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"
         # eng-113 (the owner): no invented chase cap - the size is recomputed at BingX's price (stop_dist below), so the
         # risk stays 1 R; the trade is judged by the formula alone (TP1 ahead, positive expectancy at that price)
+        elif s.levels.get('rr_tp1') is None and self._chase(s, lv, fill_est, d, n_turtle, ratio):
+            # eng-147 (the owner): a plan without targets has no R:R to re-check, so a run past the signal price is
+            # capped: 0.5 N for the Turtles, 0.5 ATR of the working timeframe for the others
+            reject = f"chase_limit: {self._chase(s, lv, fill_est, d, n_turtle, ratio)}"
         elif d * (lv['tp1'] - fill_est) <= 0 and s.levels.get('rr_tp1') is not None:
             reject = f"BingX {fill_est:.6g} already beyond TP1 {lv['tp1']:.6g}"
         elif s.levels.get('rr_tp1') is not None:
@@ -518,7 +534,8 @@ class DemoExecutor:
             logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {reject} (basis {basis:+.3%})")
             self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
                           'direction': d, 'opened_ms': int(time.time() * 1000), 'error': f"{reject}; basis {basis:+.3%}",
-                          'closed_ms': int(time.time() * 1000), 'close_reason': 'PRICE_GAP'})
+                          'closed_ms': int(time.time() * 1000),
+                          'close_reason': 'CHASE_LIMIT' if reject.startswith('chase_limit') else 'PRICE_GAP'})
             return
         scale = ratio                      # every later conversion (pyramid / averaging stops) uses the same ratio
         ex = await self._exchange()

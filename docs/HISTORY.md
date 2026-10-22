@@ -876,3 +876,27 @@ Owner's order, from the live journal only (no archive research):
 - market_down: a long is blocked when BTC's and the universe median's 24h moves are both < 0 (eng-145 also
   required both 4h moves < 0, so every 4h bounce inside a falling day let longs through). Turtles / Connors exempt.
 - crowd_max 6 -> 3 per direction: alts correlate 0.8-0.9 in falls, 6 positions at 1R were one ~5.6R bet (policy).
+
+## eng-147 (2026-10-22) - stop / target geometry, blocking sweep filters, swept levels, honest MFE, chase cap, crowd ranking
+Retrospective on the VPS journal eng-135..144 (52 entries, -11.42R, true MFE / MAE recomputed from Binance 1m klines).
+The owner's decisions:
+- Stop: past `stop_beyond`'s pool only +0.2 ATR (`levels.moved_pad_atr`), else the measured pierce capped at 0.5 ATR
+  of the working timeframe (`pierce_cap_atr`; `geometry.capped_pad`, also the sweep stop).
+- `trigger_overshoot` (blocking): the trigger close > 0.6 ATR past the zone's trade-side edge (11 entries, -7.00R);
+  ORB / Turtles exempt. `zone_edge` / `trigger_over_atr` journaled.
+- `min_rr_tp1_floor` 0 -> 1.0 (8 entries with TP1 < 1R: -4.74R). Fewer than 3 map targets: TP2 / TP3 are projected
+  +1R past the previous one ('1R step', synthetic) instead of repeating the last level.
+- SWEEP LOW / HIGH: against the bias / trend (`sweep_against_bias` / `sweep_against_trend`), premium / discount and
+  `sweep_no_htf_poi` block (6 of 9 sweeps, -4.64R). Silver Bullet unchanged.
+- Swept levels: PDH/PDL, PWH/PWL traded through since (today / this week) and PMH/PML through this month carry
+  `swept`; zones whose pool / liquidity parts are all swept (incl. 1h+ swings flagged since audit D09) are skipped
+  by `stop_beyond` and the liquidity targets. Methods with their own targets (own_targets / no_atr_steps) keep
+  repeating them, no +1R steps.
+  (The 365-day high / low cannot be swept inside its own window.)
+- Journal: `mfe_r` / `mae_r` over 4h from the entry in R, direction-aware (`mfe_4h` stays raw).
+- Executor `chase_limit`: a plan without targets is not opened when BingX ran > 0.5 N (Turtles) / 0.5 ATR past the
+  signal price (`close_reason` CHASE_LIMIT).
+- crowd_max: one pass's entries are held and entered best first: fewer shadow vetoes, higher 15-minute RVOL, then
+  min(rr_tp1, 2.5) (2.0 without a TP1).
+- VA80 / ORB notes: "out at the session's close" (the SAR text was stale).
+Dropped on data: Bollinger W window / bridge, the VA80 stop, break-even after TP1.

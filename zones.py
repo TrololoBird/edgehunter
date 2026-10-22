@@ -274,6 +274,8 @@ def htf_swings(candles_1d: Optional[Sequence[Sequence[float]]], candles_1w: Opti
             out.append(RawLevel(hi[2], 'pmhl', 'PMH', +1, body=max(hi[1], hi[4])))
             out.append(RawLevel(lo[3], 'pmhl', 'PML', -1, body=min(lo[1], lo[4])))
         cur = [c for c in d1 if c[0] >= m0]
+        for level in out[-2:] if prev else []:
+            mark_swept(level, cur)          # eng-147: traded through this month = no pool / liquidity any more
         if cur:
             out.append(RawLevel(cur[0][1], 'open', 'month open'))
         year = d1[-365:]
@@ -324,7 +326,26 @@ def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bo
         span(cur, 'day high', 'day low', 0)
     for name, start, end in session_windows(now_ms):
         span([c for c in candles_1h if start <= c[0] < end], f"{name} high", f"{name} low", end)
+    # eng-147: a previous day / week extreme the price has already traded through since (a wick is enough: its
+    # stops are gone) is still drawn, but it is no pool to hide a stop behind and no liquidity to target
+    for level, _ in out:
+        since = {'PDH': today, 'PDL': today, 'PWH': week, 'PWL': week}.get(level.label)
+        if since is not None:
+            mark_swept(level, [c for c in candles_1h if c[0] >= since])
     return out if with_ts else [level for level, _ in out]
+
+
+def mark_swept(level: 'RawLevel', candles: Sequence[Sequence[float]]) -> None:
+    """eng-147: flags `level` swept when any of `candles` wicked beyond it on its side."""
+    if level.side > 0 and any(c[2] > level.price for c in candles) or \
+            level.side < 0 and any(c[3] < level.price for c in candles):
+        level.swept = True
+
+
+def swept_zone(z: 'Zone', kinds) -> bool:
+    """eng-147: every part of `z` of one of `kinds` was swept (a zone with no such parts is not)."""
+    own = [p for p in z.parts if p[0] in kinds]
+    return bool(own) and all(p[4] for p in own)
 
 
 def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> List[RawLevel]:
@@ -895,6 +916,8 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
         for z in zones:
             if not any((k in POOL_KINDS and k != 'liq_est') or k in STOP_SWINGS for k in z.kinds):
                 continue
+            if swept_zone(z, tuple(k for k in POOL_KINDS if k != 'liq_est') + STOP_SWINGS):
+                continue                    # eng-147: its stops were taken already - nothing to hide behind
             edge = z.lo if direction > 0 else z.hi
             reach = overshoot(symbol, measured_kind(z.kinds) or 'equal', invalidation, 'p90')
             if reach is not None and 0 <= direction * (invalidation - edge) <= reach:
@@ -906,6 +929,7 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
     # Real resting stops only: an ESTIMATED liquidation cluster is a model, not orders (live eng-6: stops pushed beyond
     # one were the widest, 3.4% median, -0.16R, and 0 of 22 stopped trades reached TP1 afterwards)
     behind = [z for z in zones if any((k in POOL_KINDS and k != 'liq_est') or k in STOP_SWINGS for k in z.kinds)
+              and not swept_zone(z, tuple(k for k in POOL_KINDS if k != 'liq_est') + STOP_SWINGS)
               and 0 <= direction * (invalidation - (z.lo if direction > 0 else z.hi)) <= cfg.stop_pool_atr * atr]
     if behind:
         far = min(behind, key=lambda z: z.lo) if direction > 0 else max(behind, key=lambda z: z.hi)

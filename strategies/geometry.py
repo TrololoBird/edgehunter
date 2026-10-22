@@ -182,7 +182,7 @@ def is_synthetic(label: Optional[str]) -> bool:
     if not label:
         return True
     import re
-    return label == 'ATR step' or bool(re.fullmatch(r'[0-9.]+ R', label)) or label.startswith('none')
+    return label in ('ATR step', '1R step') or bool(re.fullmatch(r'[0-9.]+ R', label)) or label.startswith('none')
 
 
 # (strategy -> (p(TP1 before the stop), n, upper end of p's 95% Wilson interval)) measured by the journal's replay
@@ -278,14 +278,21 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
                 sources[k] = f"{sources[k]} (beyond reach)"
     blend = []
     last_real = None
-    for k, (rr, ok) in enumerate(zip(rrs, real)):
-        if ok:
-            last_real = rr
-        elif last_real is not None:
-            # no level beyond: this third exits at the last level too (the demo places its order there, not at an
-            # ATR step / R multiple in empty space)
+    for k in range(3):
+        repeat = k > 0 and direction * (targets[k] - targets[k - 1]) <= 0
+        if last_real is not None and (not real[k] or repeat) and plan.get('own_repeats'):
+            # the method's own targets only (eng-115 / 116: Dalton's far edge, Bulkowski's height): the last repeats
             targets[k], rrs[k] = targets[k - 1], rrs[k - 1]
-            sources[k] = f"{sources[k - 1]} (no level beyond)" if 'no level beyond' not in sources[k - 1] else sources[k - 1]
+            sources[k] = sources[k - 1]
+        elif last_real is not None and (not real[k] or repeat):
+            # eng-147 (the owner): fewer than 3 levels on the map -> this third is projected +1R past the previous
+            # target (TP2 = TP1 + 1R, TP3 = TP2 + 1R) instead of repeating the last level
+            targets[k] = targets[k - 1] + direction * risk
+            rrs[k] = (direction * (targets[k] - entry) - fee) / (risk + fee)
+            sources[k] = '1R step'
+            last_real = rrs[k]
+        elif real[k]:
+            last_real = rrs[k]
         blend.append(last_real)
     reason = None
     if last_real is None and not any(real):
@@ -304,7 +311,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
             # audit 2026-10-18: the position exits in thirds and the stop stays put after TP1 (be_after_1r off), so
             # each third is its own bet: p_k x R_k - (1 - p_k) at its target, 1/3 of the size. p x R1 for the whole
             # position counted the two thirds that a TP1-then-stop loses as wins. A third that exits at an earlier
-            # level (no level beyond) carries that level's p
+            # level carries that level's p (eng-147: projected thirds lie beyond it, so they never share it)
             ps = [hi] + [hit[3 + k] if len(hit) > 3 + k else hi for k in range(2)]
             for k in range(1, 3):
                 if targets[k] == targets[k - 1]:
@@ -421,7 +428,10 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
         # the opposite LIQUIDITY only - old highs / lows (1h and higher swings), equal highs / lows, the previous day /
         # week / month / year and the sessions. Not any strong zone of the map (OB, FVG, VAL, VWAP) and no ATR step:
         # sweeps of 12-14.10 took TP1 0.2-0.8 R away from such zones and 'ATR steps'
-        primary = [z for z in beyond if any(k in LIQUIDITY_KINDS for k in z.kinds)]
+        # eng-147: liquidity already taken (every liquidity part of the zone swept) is no draw
+        from zones import swept_zone
+        primary = [z for z in beyond if any(k in LIQUIDITY_KINDS for k in z.kinds)
+                   and not swept_zone(z, tuple(LIQUIDITY_KINDS))]
     elif intent == 'mean':
         primary = [z for z in beyond if any(k in MEAN_KINDS for k in z.kinds)]
     else:
@@ -489,16 +499,33 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     return prices, labels
 
 
-def zone_pad(plan: Dict, measured: Optional[float]) -> Tuple[Optional[float], str]:
+def zone_pad(plan: Dict, measured: Optional[float], moved: bool = False) -> Tuple[Optional[float], str]:
     """The buffer beyond the stop's structure: the larger of the measured pierce of the level and
     zone_buffer_atr x the ATR of the structure's own timeframe (Seiden-style: 1-2 ATR of the zone's timeframe beyond
     its distal line; the owner: beyond the zone with a 3-5% margin - on alts' 4h that is ~1.5 ATR). eng-69."""
+    work = plan.get('tf_atr') or plan.get('leg_atr') or plan.get('atr')
+    if moved:
+        return capped_pad(None, work, True)
     k = CONFIG.levels.zone_buffer_atr
     tf_pad = k * (plan.get('tf_atr') or 0.0)
     if measured is None and not tf_pad:
         return None, ''
     if measured is None or tf_pad > measured:
         return tf_pad, f"{k:g} ATR {plan.get('tf', '15m')}"
+    return capped_pad(measured, work, False)
+
+
+def capped_pad(measured: Optional[float], work_atr: Optional[float], moved: bool) -> Tuple[Optional[float], str]:
+    """eng-147: the buffer beyond a stop's structure. Moved past a pool / swing by stop_beyond: only moved_pad_atr x
+    the working ATR (the stop sits at the pool's far edge; a deep raid of the pool itself can still reach it). Else the measured pierce, capped at pierce_cap_atr x
+    the working ATR."""
+    cfg = CONFIG.levels
+    if moved and work_atr:
+        return cfg.moved_pad_atr * work_atr, f"{cfg.moved_pad_atr:g} ATR past the pool"
+    if measured is None:
+        return None, ''
+    if work_atr and cfg.pierce_cap_atr > 0 and measured > cfg.pierce_cap_atr * work_atr:
+        return cfg.pierce_cap_atr * work_atr, f"measured pierce capped at {cfg.pierce_cap_atr:g} ATR"
     return measured, 'measured pierce'
 
 
@@ -510,6 +537,7 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
     cfg = CONFIG.levels
     atr = plan['atr']
     zones: List[Zone] = plan.get('zones') or []
+    moved = False
     if plan.get('stop_mid') is not None:
         base, src = plan['stop_mid'], plan.get('stop_mid_src', 'range middle')
     else:
@@ -525,9 +553,10 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
             # ICT: the stop beyond the swing that broke structure, not right behind an unswept pool
             ref, label = prot, 'beyond the protected swing (BOS)'
         base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label, plan.get('symbol'))
+        moved = ref is not None and base != ref
     kind = kind_at(zones, base) or kind_of_label(src, plan.get('tf', '15m'))
     measured = overshoot(plan.get('symbol'), kind, base)
-    pad, how = zone_pad(plan, measured)
+    pad, how = zone_pad(plan, measured, moved)
     if pad is not None:
         # beyond the level by its measured pierce or the structure timeframe's ATR buffer, whichever is wider; a stop
         # so far that it does not pay is a wrong entry (low_rr), not a reason to move it closer
@@ -633,7 +662,9 @@ def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, 
         return None
     _, edge, z, buffer = min(cands, key=lambda c: c[0])
     base, src = stop_beyond(zones, edge, entry, direction, atr, f"beyond {z.label}", symbol)
-    return base - direction * buffer, src
+    # eng-147: past a further pool only the small pad; the measured buffer capped in the working ATR
+    pad, _ = capped_pad(buffer, tf_atr or atr, base != edge)
+    return base - direction * (pad if pad is not None else buffer), src
 
 
 HTF_SWINGS = ('swing_1h', 'swing_1d', 'swing_1w')
@@ -753,7 +784,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         buffer = overshoot(plan.get('symbol'), 'swing_15m', prot)
         base, src = stop_beyond(zones, prot, entry, direction, atr, 'beyond the protected swing (BOS)',
                                 plan.get('symbol'))
-        pad, how = zone_pad(plan, buffer)
+        pad, how = zone_pad(plan, buffer, base != prot)
         structural = (base - direction * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr),
                       f"{src} + {how}" if pad is not None else src)
     if structural is not None:
@@ -766,7 +797,9 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         base, src = stop_beyond(zones, ref, entry, direction, atr, exit.get('stop_src', 'beyond the extreme'),
                                 plan.get('symbol'))
         pad, how = zone_pad(plan, overshoot(plan.get('symbol'), kind_at(zones, base)
-                                            or kind_of_label(src, plan.get('tf', '15m')), base))
+                                            or kind_of_label(src, plan.get('tf', '15m')), base), base != ref)
+        if pad is None:
+            pad, how = CONFIG.levels.stop_buffer_atr * atr, f"{CONFIG.levels.stop_buffer_atr:g} ATR"
         stop, sl_src = base - direction * pad, f"{src} + {how} {pad / base:.2%}"
     else:
         stop, sl_src = exit_stop(exit, plan, entry, extreme, direction)
@@ -821,7 +854,9 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
                 labels.append('ATR step')
     # the R:R decision is finish_levels' alone (the blended R:R / expectancy against the method's min_rr); the exit
     # spec's own per-target minimum vetoed W-bottoms whose blended R:R passed (live QNT: TP1 0.71, blended 1.37)
-    return finish_levels(plan, entry, stop, prices[:3], labels[:3], direction, sl_src)
+    own = bool(exit.get('own_targets') or exit.get('no_atr_steps'))
+    return finish_levels({**plan, 'own_repeats': own} if own else plan, entry, stop, prices[:3], labels[:3],
+                         direction, sl_src)
 
 
 def _ext_label(target: float, label: str, ratios: Dict[float, float], plan: Dict, direction: int) -> str:
