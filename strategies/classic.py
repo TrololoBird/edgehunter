@@ -1,24 +1,23 @@
 """
-Classic published methods added as their authors define them (eng-29), detected in the maps worker at candle closes:
+Classic published methods added as their authors define them (eng-29), on the session instruments only
+(CONFIG.strategies.orb_bases: the majors, gold, silver, oil):
 
-- value_area  Dalton's 80% rule (The Profile Reports 1987-91; Dalton "Mind Over Markets"): the day opens outside the
-              previous day's value area (70% of its volume around the POC), comes back into it and stays there for two
-              consecutive 30-minute periods -> the market tends to traverse the whole value area. Entry at the second
-              period's close, target the opposite edge, stop beyond the edge it re-entered through (outside the value
-              area is where the idea is wrong). Crypto has no session open: the UTC day is the session. The value
-              area is the TPO one (time at price, eng-58), as Dalton's; the 60 price rows are ours.
-- orb         Toby Crabel's opening range breakout ("Day Trading with Short Term Price Patterns and Opening Range
-              Breakout", 1990) as the book defines it (eng-55; Oxfordstrat, Crabel's pattern definitions): stop
-              orders at the day's open +- the Stretch (10-day SMA of min(High - Open, Open - Low)); the first touched
-              is the trade, the other level its stop; out at the session's close. Crypto's day opens 00:00 UTC.
-              Checked loop-side on every final minute (strategies.loopside.LoopDetectors._orb_touch). NR4 / NR7 (Crabel's contraction days)
-              are journaled. (eng-29..54 used a 30-minute range after the US equity open and a 15m close: not his rule.)
-- connors     Larry Connors' RSI(2) ("Short Term Trading Strategies That Work", 2008): with the trend (close above the
-              200-day SMA) buy when RSI(2) < 5 (eng-58; the original 2-period RSI rule - < 10 is a later variant),
-              exit on a close above the 5-day SMA (shorts mirrored: below the
-              SMA200, RSI(2) > 90, out below the SMA5), on DAILY candles (fetcher._daily_candles_loop), checked
-              loop-side once per coin after each daily close (strategies.loopside.LoopDetectors._connors_daily). He uses no stop: a perpetual
-              needs one for the margin, so a catastrophic stop 3 daily ATR away (our deviation, journaled as such).
+- value_area  Dalton's 80% rule by SESSION (eng-95; Dalton "Mind Over Markets"): the session (Asia / London / New York,
+              weekdays) opens outside the previous same session's TPO value area (70% of time at price, eng-58),
+              closes two consecutive 30-minute periods back inside it -> entry at the second period's close, target
+              the far edge, out at the session's close (session_va_event, VA80). Beside it the failed auction
+              (eng-127, failed_auction_event, AUCTION LONG / SHORT). Both run in the maps worker at 15m closes.
+- orb         Toby Crabel's opening range breakout ("Playing the Opening Range Breakout", Stocks & Commodities): the
+              range of a session's first 5 minutes, stop orders the Stretch (10-day SMA of min(High - Open,
+              Open - Low)) beyond its high / low; the first level traded through is the entry (ON THE TOUCH, a stop
+              order), the other level the stop; exit on Wilder's Parabolic SAR of 15m bars (eng-145). Checked
+              loop-side on every final minute (session_orb via strategies.loopside.LoopDetectors).
+- connors     Larry Connors' RSI(2) on DAILY candles, with the trend (close above / below the 200-day SMA): RSI2X = his
+              original rule (a close with RSI(2) < 5, buy on the close; the mirrored short is shadow), RSI2 = the
+              cross-back (eng-84: RSI(2) comes back out of the extreme, the close still beyond the SMA5). Out on the
+              first daily close beyond the current SMA5. He uses no stop: the R unit is 1 daily ATR, position at 1x,
+              and the executor keeps a catastrophe stop 3 R units away (eng-144, our deviation). Checked loop-side
+              after each daily close (strategies.loopside.LoopDetectors._connors_daily).
 """
 import math
 from typing import Dict, List, Optional, Sequence
@@ -153,43 +152,10 @@ def narrow_range(d1: Sequence[Sequence[float]], days: int) -> Optional[bool]:
     return ranges[-1] <= min(ranges)
 
 
-def orb_event(d1: Sequence[Sequence[float]], day_open: float, price_hi: float, price_lo: float,
-              before_hi: Optional[float], before_lo: Optional[float], now_ms: int) -> Optional[Dict]:
-    """
-    Crabel's opening range breakout (eng-55, his book's rule): buy stop at Open + Stretch, sell stop at Open - Stretch
-    on the day's open; the first level the price touches is the trade (on the touch, like a stop order), the other
-    level is its stop. `d1`: closed daily candles; `before_hi` / `before_lo`: today's extremes before this minute (a
-    level crossed earlier today is no fresh entry). NR4 / NR7 (Crabel's contraction filter) are journaled.
-    """
-    s = stretch(d1, CONFIG.strategies.orb_stretch_days)
-    if not s or s <= 0 or not day_open:
-        return None
-    up, down = day_open + s, day_open - s
-    if before_hi is not None and before_hi >= up or before_lo is not None and before_lo <= down:
-        return None                                # one ORB a day: the first level already traded
-    if price_hi >= up:
-        side, level, other = 1, up, down
-    elif price_lo <= down:
-        side, level, other = -1, down, up
-    else:
-        return None
-    nr7, nr4 = narrow_range(d1, 7), narrow_range(d1, 4)
-    day_start = now_ms - now_ms % DAY_MS
-    return {'setup': 'ORB UP' if side > 0 else 'ORB DOWN', 'direction': side,
-            'setup_note': f"price touched the day's open {day_open:.6g} {'+' if side > 0 else '-'} Stretch {s:.6g} "
-                          f"(Crabel){'; NR7 day' if nr7 else '; NR4 day' if nr4 else ''}",
-            'anchor_level': level, 'anchor_extreme': other, 'anchor_label': 'open +- stretch',
-            'anchor_ts': day_start, 'anchor_close': level, 'orb_hi': up, 'orb_lo': down, 'orb_stretch': s,
-            'nr7': 1.0 if nr7 else 0.0 if nr7 is not None else None,
-            'nr4': 1.0 if nr4 else 0.0 if nr4 is not None else None,
-            'event_ts': int(now_ms // 60_000 * 60_000) + 60_000}
-
-
 # ------------------------------------------------------------------------------------------------ session ORB (eng-93)
 
-# eng-93 (the owner, 2026-10-14: ORB on the majors, gold, silver and oil, split by sessions): Crabel's level - the
-# session open +- the stretch (orb_stretch_days), a 5m close beyond it is the trade, out at that session's close. Local hours (DST
-# by zoneinfo), Monday-Friday. New York per asset class: the US equity open for crypto, COMEX's for metals (08:20 ET),
+# eng-93 (the owner, 2026-10-14: ORB on the majors, gold, silver and oil, split by sessions; the entry rule is
+# session_orb's docstring). Local hours (DST by zoneinfo), Monday-Friday. New York per asset class: the US equity open for crypto, COMEX's for metals (08:20 ET),
 # NYMEX's for energy (09:00 ET).
 ORB_SESSIONS = (('Asia', 'Asia/Tokyo', (9, 0), (15, 0)),
                 ('London', 'Europe/London', (8, 0), (16, 30)),
@@ -277,7 +243,7 @@ def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Opt
         return {'setup': 'VA80 LONG' if side > 0 else 'VA80 SHORT', 'direction': side,
                 'setup_note': f"{name} session opened {'below' if side > 0 else 'above'} the previous {name} session's "
                               f"value area {val:.6g}-{vah:.6g} (POC {poc:.6g}), back inside for two 30m periods: "
-                              f"Dalton's 80% rule -> the far edge, out at the session's close",
+                              f"Dalton's 80% rule -> the far edge, out on the 15m Parabolic SAR",
                 'anchor_level': edge, 'anchor_extreme': extreme,
                 'anchor_label': f"{name} value area {'low' if side > 0 else 'high'}",
                 'anchor_ts': open_ms, 'anchor_close': last[4], 'va_far': far, 'va_poc': poc,
@@ -372,7 +338,7 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
         return {'setup': 'ORB UP' if side > 0 else 'ORB DOWN', 'direction': side,
                 'setup_note': f"{name} session: traded through the {or_minutes}-minute opening range +- Crabel's Stretch "
                               f"{lo:.6g}-{hi:.6g} "
-                              f"{'up' if side > 0 else 'down'}, out at the session's close",
+                              f"{'up' if side > 0 else 'down'}, out on the 15m Parabolic SAR",
                 'anchor_level': level, 'anchor_extreme': other, 'anchor_label': f'{name} opening range',
                 'anchor_ts': open_ms, 'anchor_close': level, 'orb_hi': hi, 'orb_lo': lo, 'orb_session': name,
                 'session_end_ms': close_ms, 'event_ts': int(b[0]) + 60_000}

@@ -1,12 +1,10 @@
 """
-Breakout with initiative (BREAKOUT UP / BREAKOUT DOWN). Most crypto breakouts fail (60-70% by the usual estimates):
-a breakout counts only when a candle of the structure timeframe CLOSES beyond the range on volume, the aggressive flow
-is on its side, and the next candle closes beyond too (acceptance). This is the "initiative" reading of large
-aggressive flow; the same flow absorbed at a level is the absorption strategy, and a stop run that fails is a sweep.
+Breakout strategies. The live card is the Turtles' channel breakout (BreakoutStrategy below; the events come from
+strategies/turtle.py, eng-31): entry on the touch of the 20-day (System 1) / 55-day (System 2) channel, stop 2N, no
+target, out on the opposite 10-day / 20-day channel.
 
-Anchor: the range of the breakout_range_candles 15m candles before the breakout candle. Entry at the acceptance close
-(the confirmation) when R:R allows it, else a retest of the edge with a 5m structure shift; stop at the range middle
-(>= the stop floor); INVALID back inside past the middle; targets: map beyond the edge, measured moves of the range.
+breakout_at_close (the older 15m range breakout with volume, flow and acceptance) is kept only for pretrain.py's
+archive events; it does not open cards.
 """
 from typing import Dict, Optional, Sequence
 
@@ -55,37 +53,6 @@ def breakout_at_close(candles_15m: Sequence[Sequence[float]], atr: float,
                           f"the next close held",
             'range_lo': lo, 'range_hi': hi, 'anchor_ts': int(rng[0][0]), 'break_ts': int(b[0]),
             'anchor_close': a[4], 'event_ts': int(a[0]) + QUARTER_MS}
-
-
-HOUR_MS = 3_600_000
-DONCHIAN_HOURS = 480            # 20 days (the Turtles' System 1 channel)
-
-
-def breakout_donchian(h1: Sequence[Sequence[float]]) -> Optional[Dict]:
-    """
-    The canonical breakout (Donchian / the Turtles' 20-day channel, with Market Profile's acceptance): the previous 1h
-    candle CLOSED beyond the high / low of the 20 days before it, and the 1h candle that just closed held beyond it
-    too. Volume and taker flow are recorded, not required (the Turtles used neither).
-    """
-    if len(h1) < DONCHIAN_HOURS + 2:
-        return None
-    rng, b, a = h1[-DONCHIAN_HOURS - 2:-2], h1[-2], h1[-1]
-    hi, lo = max(c[2] for c in rng), min(c[3] for c in rng)
-    if b[4] > hi and a[4] > hi and h1[-3][4] <= hi:
-        d = 1
-    elif b[4] < lo and a[4] < lo and h1[-3][4] >= lo:
-        d = -1
-    else:
-        return None
-    avg_volume = sum(c[5] for c in rng) / len(rng)
-    flow = 2 * b[6] - b[5] if len(b) > 6 else 0.0
-    return {'setup': 'BREAKOUT UP' if d > 0 else 'BREAKOUT DOWN', 'direction': d,
-            'setup_note': f"1h closed {'above' if d > 0 else 'below'} the 20-day {'high' if d > 0 else 'low'} "
-                          f"{hi if d > 0 else lo:.6g} (Donchian 20) and the next close held; volume "
-                          f"{b[5] / avg_volume if avg_volume else 0:.1f}x the 20-day hour, taker flow "
-                          f"{'with' if flow * d > 0 else 'against'} it",
-            'range_lo': lo, 'range_hi': hi, 'anchor_ts': int(rng[0][0]), 'break_ts': int(b[0]),
-            'break_extreme': b[3] if d > 0 else b[2], 'anchor_close': a[4], 'event_ts': int(a[0]) + HOUR_MS}
 
 
 class BreakoutStrategy(Strategy):

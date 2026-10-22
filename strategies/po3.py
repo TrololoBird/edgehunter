@@ -13,7 +13,7 @@ the day's bias - the Judas swing, which takes the stops there) and distribution 
 - the trade: a resting limit at the gap's CE, the stop beyond the raid's extreme (+ the measured pierce), targets the
   Asian range's other side, then the day's draw (the previous day's high / low);
 - the day's bias is REQUIRED (weekly, else daily): without it there is no Judas swing to read ('no_bias').
-Detected loop-side on the final 1m candles built into 5m bars (Scanner._po3), once per coin, day and direction.
+Detected loop-side on the final 1m candles built into 5m bars (strategies.loopside.LoopDetectors._po3), once per coin, day and direction.
 """
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Sequence
@@ -133,8 +133,7 @@ class Po3Strategy(Strategy):
         zone = (lo, ce) if d > 0 else (ce, hi)
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         fillers = tuple(f for f in (sig.get('po3_draw'),) if f is not None and d * (f - sig['po3_target']) > 0)
-        # eng-84: the Asian range's other side as TP1 only within FIRST_MAX_R of the risk (live: TP1 4.6-22% away on a
-        # ~3% stop, MAGIC ran +16% and came back to the stop); farther, the nearest map liquidity is TP1
+        # TP1 = the Asian range's other side, ahead of the entry (FIRST_MAX_R is inf since eng-110: no cap)
         risk = abs(ce - sig['anchor_extreme'])
         first = (sig['po3_target'], "the Asian range's other side") \
             if risk and 0 < d * (sig['po3_target'] - ce) <= FIRST_MAX_R * risk else None
@@ -150,12 +149,10 @@ class Po3Strategy(Strategy):
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='PO3 FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
-                         # eng-94: the eng-84 cap did not reach the trade - with an exit spec system_levels takes TP1
-                         # from exit['tp'], so the Asian range's far side stayed TP1 however far; beyond FIRST_MAX_R
-                         # the map's TP1 (the nearest draw on liquidity, `targets` above) is the first target
+                         # system_levels takes TP1 from exit['tp'] (eng-94)
                          exit={'stop': ['ref', 0.0], 'atr': atr,
-                               'tp': ['level', sig['po3_target'], 1.0, None] if first is not None else ['map', 1.0],
+                               'tp': ['level', sig['po3_target'], 1.0, None],
                                'stop_src': "beyond the Judas swing's extreme",
-                               'tp_src': "the Asian range's other side" if first is not None else 'the nearest liquidity'},
+                               'tp_src': "the Asian range's other side"},
                          intent='draw_liquidity', targets=targets, target_src=sources, zones=zones,
                          key=(sig['anchor_ts'], d))

@@ -189,6 +189,7 @@ class Scanner:
         self.book.plan_key_of = self._plan_key
         self.book.map_ready_of = lambda symbol: symbol in self._level_raw
         self.book.btc_bias_of = self._btc_bias
+        self.book.market_state_of = lambda: self.market_state
         self._micro: Dict[str, tuple] = {}
         self.fetcher.log_liquidations = self.journal is not None
         # Setup detectors (sweeps, liquidation exhaustion, absorption, whale accumulation) and the quick level map of
@@ -1113,7 +1114,10 @@ class Scanner:
             (pl.col('close').last() / pl.col('close').filter(pl.col('timestamp') == ts_last - 3_600_000).first() - 1)
             .alias('r1h'),
             (pl.col('close').last() / pl.col('close').filter(pl.col('timestamp') == ts_last - 14_400_000).first() - 1)
-            .alias('r4h'))
+            .alias('r4h'),
+            (pl.col('close').last() / pl.col('close').filter(pl.col('timestamp') == ts_last - 86_400_000).first() - 1)
+            .alias('r1d'))
+        r1d = last['r1d'].drop_nulls()
         r1h = last['r1h'].drop_nulls()
         r4h = last['r4h'].drop_nulls()
         btc = last.filter(pl.col('symbol') == 'BTC/USDT:USDT')
@@ -1126,6 +1130,9 @@ class Scanner:
             'mkt_4h': float(r4h.median()) if len(r4h) else None,
             'btc_1h': float(btc['r1h'][0]) if btc.height and btc['r1h'][0] is not None else None,
             'btc_4h': float(btc['r4h'][0]) if btc.height and btc['r4h'][0] is not None else None,
+            # eng-145: the 24h moves for the falling-market long veto (SignalBook._market_down)
+            'mkt_1d': float(r1d.median()) if len(r1d) else None,
+            'btc_1d': float(btc['r1d'][0]) if btc.height and btc['r1d'][0] is not None else None,
             'breadth_w': sum(t > 0 for t in trends) / len(trends) if len(trends) >= 20 else None,
         }
 
@@ -2006,7 +2013,7 @@ class Scanner:
                 if (s.plan or {}).get('no_tp') or lv.get('rr_tp1') is None:
                     exit_ru = {'bollinger': 'выход у противоположной полосы Боллинджера',
                                'breakout': 'выход по противоположному каналу Дончиана (Turtles)',
-                               'orb': 'выход в конце торговой сессии (Crabel)',
+                               'orb': 'выход по Parabolic SAR 15m (eng-145)',
                                'connors': 'выход по закрытию дня за SMA5 (Connors)'}
                     lines.append("Целей нет: " + exit_ru.get(self.book.strategy(s).name if self.book.strategy(s)
                                                              else '', lv.get('tp1_src') or 'выход по правилу метода'))

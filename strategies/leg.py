@@ -2,12 +2,17 @@
 Leg strategies: a real leg (levels.find_impulse: its end on the last 12h of 15m candles, its start searched back over
 15m and 1h history; its timeframe by duration 15m / 1h / 4h, the entry 3-6x finer).
 
-continuation (IMPULSE UP / DOWN: Tier-0; BULL F / BEAR D removed in eng-127 - Bollinger's Method I is BB1) by ICT's optimal trade entry: a leg
-that BROKE STRUCTURE (its end beyond the last swing before its start, eng-58) with displacement (a fair value gap);
-the pullback zone = the strongest support inside 0.62-0.79 of the leg (else the EMA20 there, Raschke's Holy Grail);
-a resting limit at the zone's near edge (eng-58, ICT enters on a limit in the OTE, not on a later 5m shift); invalid
-beyond the leg's start; half out at TP1 and the rest trailed (eng-58); targets re-measured from the entry toward the
-leg's trend-based extensions.
+continuation (IMPULSE UP / DOWN from Tier-0; BULL F / BEAR D removed in eng-127 - Bollinger's Method I is BB1) by
+ICT's optimal trade entry:
+- the leg must BREAK STRUCTURE (its end beyond the last 3-candle swing in the 48 candles before its start; no swing =
+  no trade) with displacement (a fair value gap inside it), both on the leg's own timeframe;
+- Elder's tide ~5x the leg's timeframe (15m -> 1h trend, 1h -> 4h, 4h -> daily) not against the trade (plan());
+- the zone = the OTE band itself (CONFIG.levels.continuation_zone, 0.62-0.79 of the leg);
+- trigger 'touch': with executor.touch_confirm_close the entry is the CLOSE of the trigger candle that touched the
+  zone and closed back on the trade's side (no resting limit);
+- the stop beyond the leg's start (the 100% level); the card is invalid at continuation_invalid;
+- targets the leg's extensions measured from its START: start + k x leg (CONFIG.levels.continuation_targets), then
+  the map. No partial / trail after TP1 (off since eng-111): the position exits in thirds at the targets.
 """
 from typing import Dict, List, Optional
 
@@ -111,9 +116,8 @@ class LegContinuation(Strategy):
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
         """
-        Elder's triple screen: a pullback trade only with the tide - the coin's 1h trend (EMA20 slope; 1h is ~4-5x
-        the 15m structure) not against the trade, and BTC (alts follow it: BTC -> alt Granger causality) not
-        moving hard against it over the last hour. Breakouts take no trend filter (Turtle / Bollinger method I).
+        BTC not moving hard against the trade over the last hour (tide_btc_against) - a shadow veto ('btc_against').
+        The coin's own tide (Elder, ~5x the leg's timeframe) is checked in plan(), not here.
         """
         btc = sig.get('btc_1h')
         if btc is not None and direction * btc <= -CONFIG.strategies.tide_btc_against:

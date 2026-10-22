@@ -1,7 +1,8 @@
 """
 Cards of crypto_maniac's systems (detectors: strategies/maniac.py, classic.py). Each keeps its author's entry
-and exit: the entry at the signal's close (confirm_only: skipped, not re-timed, when his rule rejects it) or his own
-5m trigger (pinbar retest, inversion FVG), his stop and his target; the lifecycle, journal and stats are ours.
+and exit: the entry at the signal's close (confirm_only: skipped, not re-timed, when his rule rejects it) or a
+retest trigger (the trendline: 'shift', a structure shift with agreeing flow in the retest area), his stop and his
+target; the lifecycle, journal and stats are ours. Also the failed auction (AuctionStrategy, Dalton).
 """
 from typing import Dict, List, Optional
 
@@ -200,8 +201,9 @@ def _pivot_stop(bars, direction: int, entry: float, pad: float) -> Optional[floa
 
 
 class TrendlineStrategy(_System):
-    """Edwards & Magee trendline break on 1h lines: two closes beyond the line, a resting limit at the broken line
-    (the retest), the stop beyond the last confirmed 1h pivot, targets the next 1h+ levels of the map."""
+    """Edwards & Magee trendline break on 1h lines: two closes beyond the line, then the retest - a 15m structure
+    shift with agreeing taker flow between the broken line and its measured pierce (trigger 'shift', eng-84; no
+    resting limit), the stop beyond the last confirmed 1h pivot, targets the next 1h+ levels of the map."""
     name = 'trendline'
     setups = {'TL EM UP': 1, 'TL EM DOWN': -1}   # eng-127: the ATR-line bot (TRENDLINE UP / DOWN) is deleted
     ttl_key = 'trendline_ttl'
@@ -235,8 +237,6 @@ class TrendlineStrategy(_System):
                 'atr': x.atr, 'no_atr_steps': True}
         plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
         if plan and not plan.get('skip'):
-            # eng-58, practice (Edwards & Magee; break -> retest -> move): the entry is a resting limit at the broken
-            # line, retested from the other side, not the second close's price; first touch only
             # eng-84 (breakout-retest write-ups: retest + a confirming candle, not a resting limit; the owner's review):
             # the retest area is the line to half an hour-ATR beyond it on the broken side; the entry is a 15m
             # structure shift with agreeing taker flow there

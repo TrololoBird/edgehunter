@@ -854,3 +854,17 @@ leverage assumptions in the UI (P2 #8), the stage-0 parameter-provenance table.
 - Turtle / Connors cards count and are capped by `crowd_max` (crowded signals -0.22R vs clean +0.01R; Turtle -11.6R).
 - `leg.broke_structure`: no swing in reach is no break of structure (was True).
 - Stats: the new logic_version separates every journal / demo statistic from the eng-143 rows.
+
+## eng-145 (2026-10-22) - market-down gate, ORB on Parabolic SAR, demo off for losing families; docstring audit
+Owner's order, from the live journal only (no archive research):
+- `SignalBook._market_down`: no LONG entry while BTC and the universe median are both down over 4h AND 24h
+  (`market_state` gains `mkt_1d` / `btc_1d`); a blocking reason `market_down`, not a shadow veto. The Turtles and
+  Connors are exempt (their rules take no market filter).
+- ORB: the fixed session-close exit replaced by Wilder's Parabolic SAR of 15m bars (`plan['sar']`, AF 0.02 step,
+  start at the opening range's far side); `time_exit = 'fixed'` = no clock.
+- `executor.demo_off_setups`: Bollinger (W / M, BB3), Market Profile (VA80, AUCTION), the Turtles' BREAKOUT and BB1
+  keep their cards and journal but stop trading on the demo account.
+- Docstrings / comments checked against the code (they described removed logic: resting limits instead of touch ->
+  close, break-even / partials that are off since eng-111 / eng-123, 3R caps removed in eng-110); dead code deleted:
+  `level.absorption_at`, `classic.orb_event`, `breakout.breakout_donchian`, the unreachable `['map', 1.0]` TP1
+  branches of PO3 / Silver Bullet.

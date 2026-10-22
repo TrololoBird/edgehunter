@@ -1,6 +1,7 @@
 """
 How far price pierces a level before it turns back, measured (research_overshoot.py -> models/overshoot.json: per coin
-and level kind the p50 / p80 / p90 of the depth of rejections, 80 coins x 12 months, stable across halves). The stop
+and level kind the p50 / p80 / p90 of the depth of rejections, 80 coins x 12 months, stable across halves; the script was removed on
+2026-10-22, the saved model stays). The stop
 buffer beyond a level and the "just behind" distance of a stop pool come from here instead of ATR constants.
 """
 import json

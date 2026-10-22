@@ -138,7 +138,8 @@ class ExhaustionStrategy(Strategy):
         retraces = [fib_price(leg, r) for r in CONFIG.levels.reversal_targets]
         targets, sources = select_targets(zones, reached, d, atr, 'mean', retraces, 'retrace')
         hi_ratio = CONFIG.levels.reversal_zone_max
-        # eng-96: the zone is capped where TP1 ALONE still pays 1R (half out there, break-even after); the min_rr_tp1
+        # eng-96: the zone is capped where TP1 ALONE still pays 1R (the half out / break-even
+        # after it are off since eng-111 / eng-123); the min_rr_tp1
         # 2.0 default here demanded 2R of the first target while the trade itself is judged by the BLENDED R:R - a
         # mean-reversion TP1 is near, the zone shrank to the extreme and 68 of 85 FLUSH REVERSALs died 'no_room'
         capped = retracement_of(leg, cap_for_rr(targets[0], stop_est, d, atr, x.recent_atr, min_rr=1.0,

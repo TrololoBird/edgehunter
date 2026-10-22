@@ -10,7 +10,7 @@ from strategies.maniac_strategies import _System, _confirm_plan
 
 class ValueAreaStrategy(_System):
     """Dalton's 80% rule: target the value area's far edge, stop beyond the edge price re-entered through."""
-    name = 'market_profile'        # eng-35: Dalton's 80% rule, with the POC retest (maniac_strategies.AuctionStrategy)
+    name = 'market_profile'        # eng-35: Dalton's 80% rule, with the failed auction (maniac_strategies.AuctionStrategy, eng-127)
     min_rr = 1.0                     # Dalton: the far edge of the value area is the target, no ratio rule
     setups = {'VA80 LONG': 1, 'VA80 SHORT': -1}
     ttl_key = 'classic_ttl'
@@ -33,14 +33,16 @@ class ValueAreaStrategy(_System):
 
 
 class OrbStrategy(_System):
-    """eng-93: the session opening range breakout (strategies.classic.session_orb) on the majors, gold, silver and
-    oil: the first break of the Asia / London / New York session's first 30 minutes, the stop at the range's middle,
-    TP1 the range's width projected, out at that session's close (was Crabel's open +- Stretch on the UTC day)."""
+    """Crabel's opening range breakout per session (strategies.classic.session_orb) on the majors, gold, silver and
+    oil: entry on the TOUCH of the session's 5-minute opening range +- Stretch, the protective stop at the opposite
+    Crabel level, no target. eng-145 (the owner, live journal: median MFE 1.41R, 11 of 35 passed +2R, net +0.30R -
+    the session close cut the moves): out on Wilder's Parabolic SAR (0.02 / 0.20) of the 15m bars, not at the
+    session's close."""
     name = 'orb'
     setups = {'ORB UP': 1, 'ORB DOWN': -1}
-    min_rr = 0.0                     # Crabel: no target / ratio rule (exits by time or the opposite level)
+    min_rr = 0.0                     # Crabel: no target / ratio rule (exits by the opposite level)
     ttl_key = 'classic_ttl'
-    time_exit = 'session'
+    time_exit = 'fixed'              # eng-145: no session clock (structural lifetimes: the SAR / stop end it)
     uses_minutes = True              # eng-84: the day's VWAP side
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
@@ -52,8 +54,8 @@ class OrbStrategy(_System):
         return None
 
     def session_end(self, entered_at: float) -> Optional[float]:
-        # eng-93: the card's own session close is in its signal (session_end_ms, SignalBook._time_exit); this is
-        # only the fallback of a card restored without it
+        # eng-145: unused while time_exit is 'fixed' (out on the SAR); a waiting card still expires at the
+        # session's close through session_end_ms
         return (int(entered_at) // 86400 + 1) * 86400
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
@@ -74,14 +76,18 @@ class OrbStrategy(_System):
             if d * (sig['anchor_close'] - vwap) < 0:
                 from signal_book import shadow_veto
                 shadow_veto(sig, 'against_vwap')
-        # eng-109, Crabel: the other stop level is the protective stop; no target - out at the session's close (the
-        # eng-84 middle stop and 100% projection were ours)
+        # eng-109, Crabel: the other stop level is the protective stop; no target. eng-145: out on the Parabolic SAR
         exit = {'stop': ['price', sig['anchor_extreme']], 'tp': ['trail'], 'atr': x.atr,
                 'stop_src': "the opposite Crabel level (opening range -+ Stretch)",
-                'tp_src': "none: out at the session's close (Crabel)"}
+                'tp_src': "none: out on Wilder's Parabolic SAR of the 15m bars"}
         plan = _confirm_plan(x, self.name, '15m', exit, f"{sig.get('orb_session', 'session')} opening range +- Stretch (Crabel)")
         if plan and not plan.get('skip'):
             plan['no_tp'] = True
+            # the SAR starts at the protective stop (or the trade's final stop, if farther: start_at_sl) with the
+            # breakout level as its extreme point, stepped from the 15m bar holding the touch minute on
+            bar = (int(sig['event_ts']) - 60_000) // 900_000 * 900_000
+            plan['sar'] = {'tf_min': 15, 'sar': sig['anchor_extreme'], 'ep': sig['anchor_close'], 'af': 0.02,
+                           'last_ts': bar - 900_000, 'prev_hi': None, 'prev_lo': None, 'start_at_sl': True}
         return plan
 
 

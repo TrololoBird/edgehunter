@@ -640,6 +640,7 @@ class StrategiesConfig:
     # strategy produced no card, so no entry, no confirmations and no replay were ever measured live. Setups that lost
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
+    # oi_build stays listed but its setups are off through disabled_setups (eng-144)
     enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
                       'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'po3', 'oi_build')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
@@ -682,7 +683,8 @@ class StrategiesConfig:
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
     # a warning on the card, not a filter
-    # (SWEEP / BREAKOUT were rewritten to their sources in eng-16: the archive has not replayed the new logic)
+    # (SWEEP / BREAKOUT were rewritten to their sources in eng-16: the archive has not replayed the new logic; the
+    # phase setups except IMPULSE UP no longer exist since eng-35 / eng-127 - their names are kept for old cards)
     archive_negative: tuple = ('BULL A', 'BULL B', 'BEAR C', 'BULL E', 'BULL F', 'BEAR D', 'IMPULSE UP')
     # 1h candles of every coin (fetcher._hourly_candles_loop): ~8 days for the weekly / daily / session pools
     h1_candles: int = 200
@@ -1007,7 +1009,7 @@ class JournalConfig:
     # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
     outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-144"
+    logic_version: str = "eng-145"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
@@ -1074,9 +1076,9 @@ class ExecutorConfig:
     account_usd: float = 10_000.0
     max_notional_usd: float = 4_000.0
     limit_wait_min: int = 15      # a touch plan's BingX limit kept this long after Binance's touch (eng-46)
-    # eng-105: partial profit at +1R for every trade - partial_share of the position out at +partial_r R
-    # (an exchange take-profit order, it fills between scans too); the rest keeps its stop (break-even + costs after
-    # +1R) and the method's exit. Skipped where the plan's TP1 is already nearer than +1R (TP1 is the partial then).
+    # eng-105: partial profit at +1R - partial_share of the position out at +partial_r R (an exchange take-profit
+    # order); the rest keeps its stop and the method's exit (break-even after +1R is off since eng-111). Skipped where
+    # the plan's TP1 is nearer than +1R. Off since eng-123 (partial_share 0).
     # eng-105: no resting limits - a touch of the zone only arms the entry; the trade opens at the CLOSE of
     # the trigger-timeframe candle that touched the zone and closed back on the trade's side of its line
     touch_confirm_close: bool = True
@@ -1098,7 +1100,10 @@ class ExecutorConfig:
     cluster_entry_sec: int = 900
     # owner 2026-10-18: no demo trade of these setups (live demo 10-11..10-17: 23 of 30 lost, -17.8R of -33.8R, BTC up
     # or down alike); their cards are still journaled
-    demo_off_setups: tuple = ('BB W-BOTTOM', 'VA80 LONG', 'AUCTION LONG')
+    # eng-145, the owner (live journal eng-82..144): market_profile 12 of 13 stopped, bollinger 18 of 20 without TP1
+    # stopped, breakout (the Turtles' ~16% 2N stop, MFE 0.3R; BB1) -1.25R - journaled, no demo trades
+    demo_off_setups: tuple = ('BB W-BOTTOM', 'BB M-TOP', 'BB3 BUY', 'BB3 SELL', 'VA80 LONG', 'VA80 SHORT',
+                              'AUCTION LONG', 'AUCTION SHORT', 'BREAKOUT UP', 'BREAKOUT DOWN', 'BB1 UP', 'BB1 DOWN')
     daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 

@@ -323,6 +323,7 @@ class SignalBook:
         self.daily_of: Optional[Callable[[str], Optional[list]]] = None
         # symbol -> {'1h': ATR14, '4h': ..., '1d': ...} of its closed candles (scanner)
         self.tf_atr_of: Optional[Callable[[str], Dict[str, float]]] = None
+        self.market_state_of: Optional[Callable[[], Dict]] = None    # eng-145: the live market moves (scanner)
         self.btc_bias_of: Optional[Callable[[], Optional[int]]] = None      # eng-59: BTC's ICT bias (scanner)     # closed daily candles (Turtle exits)
         # the opposite Bollinger band BB(20, 2) of the closed 15m candles (Bollinger W / M exit, eng-55)
         self.band_of: Optional[Callable[[str, int], Optional[float]]] = None
@@ -685,9 +686,12 @@ class SignalBook:
 
     def _trail(self, s: TrackedSignal, candles_of, hi: Optional[float] = None, lo: Optional[float] = None) -> None:
         """
-        eng-58, momentum / trend trades (plan 'trail_after_tp1': continuation, pump): half out at TP1
-        (Qullamaggie, ICT's partials), then the rest's stop to the entry and up behind the EMA20 of the entry
-        timeframe (the closed bars), only ever toward the trade; a RESTOP event moves the demo's stop.
+        Stop management of an open trade, only ever toward the trade (a RESTOP event moves the demo's stop):
+        - plan 'sar': Wilder's Parabolic SAR of the plan's bars (BB1 4h, ORB 15m since eng-145);
+        - plan 'trail_pct': a % trail behind the best price;
+        - plan 'be_after_r' / the partial at +1R: off (be_after_1r False since eng-111, partial_share 0 since eng-123);
+        - plan 'trail_after_tp1' (half at TP1, then the EMA20 trail): off - _plan resets it while
+          strategies.ema_trail_after_tp1 is False (eng-111); only band_exit plans keep it.
         """
         plan, lv, d = s.plan or {}, s.levels, s.direction
         sar = plan.get('sar')
@@ -700,6 +704,10 @@ class SignalBook:
             # move the stop that minute is judged against
             asof = s.managed_ms or None
             minutes = [m for m in candles_of(s.symbol) if asof is None or m[0] + MINUTE_MS <= asof]
+            if sar.pop('start_at_sl', False):
+                # ORB: the SAR starts at the trade's final stop when that is farther than the plan's (a pool / the
+                # min-stop floor) - the first bar must not take the buffer away
+                sar['sar'] = min(sar['sar'], lv['sl']) if d > 0 else max(sar['sar'], lv['sl'])
             if minutes:
                 done = (int(minutes[-1][0]) + MINUTE_MS) // size * size
                 bars = [b for b in resample(minutes, int(sar['tf_min']), done) if sar['last_ts'] < b[0] and b[0] + size <= done]
@@ -1299,6 +1307,8 @@ class SignalBook:
             reason = 'sd_score'          # eng-127: Seiden / OTA - below 8 of 10 odds enhancer points no trade
         if reason is None and self.crowded(s.mode, s.direction, entered_at):
             reason = 'crowded'
+        if reason is None and self._market_down(s):
+            reason = 'market_down'
         hb = (confirms or {}).get('_bias') or {}
         if reason is None:
             # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py)
@@ -1778,6 +1788,18 @@ class SignalBook:
             return False
         self._finish(s, 'CLOSED', now, f"closed at market before {name} (in loss / flat): macro_guard")
         return True
+
+    # the owner's live journal (eng-141..144: 6 of 6 longs stopped; earlier 31 of 36): no long while BTC AND the alt
+    # market (the universe's median) both fell over the last 4h AND the last 24h. The Turtles' rules are not changed and
+    # Connors buys the dip by design: both exempt. Blocking (not shadow); journaled as vetoed 'market_down'
+    MARKET_DOWN_EXEMPT = ('BREAKOUT UP', 'RSI2 LONG', 'RSI2X LONG')    # the Turtles and Connors (not BB1)
+
+    def _market_down(self, s: TrackedSignal) -> bool:
+        if s.direction <= 0 or s.group_key in self.MARKET_DOWN_EXEMPT or self.market_state_of is None:
+            return False
+        m = self.market_state_of() or {}
+        vals = [m.get(k) for k in ('btc_4h', 'mkt_4h', 'btc_1d', 'mkt_1d')]
+        return all(v is not None for v in vals) and all(v < 0 for v in vals)
 
     def crowded(self, mode: str, direction: int, now: float) -> bool:
         """eng-51: crowd_max open trades in this direction across all strategies (Turtles' correlated-markets limit)."""

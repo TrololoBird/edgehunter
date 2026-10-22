@@ -31,22 +31,24 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
 `main.py -> scanner.Scanner -> fetcher.DataFetcher (+ venues.*Stream, flow, depth, symbols, ratelimit) -> indicators -> scorer / strategies (detect, structure) -> signal_book (+ strategies, levels, zones, positioning) -> webui / journal / notifier`; `watchdog.LoopWatchdog` watches the event loop, `storage.atomic_write` writes state files. All tunables are frozen dataclasses in `config.py` reached through the global `CONFIG`. Bandwidth, not CPU, is the binding constraint of the data layer; every Binance REST call goes through `DataFetcher._rest_call` (weight budget); 15m candles are built from closed 1m candles; heavy work runs in worker processes / threads, never on the loop.
 
 ### Strategies
-  - **Current registry (eng-43; the history of each change is in the eng-NN notes at the end)** - one methodology =
+  - **Current registry (eng-145; the history of each change is in the eng-NN notes at the end)** - one methodology =
     one strategy name, several playbooks may share it:
-    - `continuation` (BULL F / BEAR D: Bollinger method I out of a squeeze; IMPULSE UP / DOWN: Tier-0) - ICT OTE
-      pullback 0.62-0.79 of a leg with displacement, Elder's tide ~5x the leg, invalid beyond the leg's start, targets
-      the trend-based extension 1.0 / 1.2 / 1.272 / 1.618 from the pullback.
+    - `continuation` (IMPULSE UP / DOWN from Tier-0; BULL F / BEAR D removed in eng-127, Bollinger method I is BB1
+      under `breakout`) - ICT OTE 0.62-0.79 of a leg with displacement and a break of structure, Elder's tide ~5x the
+      leg, entry touch -> close, stop beyond the leg's start, targets start + k x leg (`continuation_targets`).
     - `sweep` (SWEEP LOW / HIGH; SILVER BULLET LONG / SHORT) - ICT: weekly / daily bias, the raid into a 1h+ PD array,
       discount / premium, entry at the FVG's CE on 5m, targets the draw on liquidity; SMT and the kill zone are
       confirmations.
     - `wyckoff` (SPRING / UTAD of a 1h range with the test; FLUSH / SQUEEZE REVERSAL = the climax's secondary test).
-    - `breakout` - the Turtles (daily System 1 / 2, 2N stop, units + pyramid, N-day channel exit).
+    - `breakout` - the Turtles (daily System 1 / 2, 2N stop, units + pyramid, N-day channel exit) + BB1 UP / DOWN.
     - `supply_demand` - Seiden: 4h zones, 1h touch, the curve, R:R 3.
-    - `market_profile` (AUCTION LONG / SHORT POC retest; VA80 LONG / SHORT Dalton's 80% rule).
-    - `trendline` (1h lines, Edwards & Magee), `bollinger` (W-bottom / M-top, the measured move), `orb` (Crabel),
+    - `market_profile` (AUCTION LONG / SHORT failed auction, eng-127; VA80 LONG / SHORT Dalton's 80% rule by session).
+    - `trendline` (1h lines, Edwards & Magee), `bollinger` (W-bottom / M-top, the measured move), `orb` (Crabel, touch entry, out on 15m Parabolic SAR),
       `connors` (daily RSI(2)), `cup_handle` (O'Neil, 1h / 4h), `pump` (PUMP START / PUMP TOP, the owner's, with 1:1
       averaging).
-    - The 15m phase scores (A-F) are still computed and journaled as structured rows; only D / F feed `continuation`.
+    - The 15m phase scores (A-F) are still computed and journaled as structured rows; none feeds a card since eng-127.
+    - eng-145: longs blocked while BTC and the market are down on 4h AND 24h (`market_down`; Turtles / Connors exempt);
+      `executor.demo_off_setups` keeps Bollinger, Market Profile, BREAKOUT and BB1 off the demo account.
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

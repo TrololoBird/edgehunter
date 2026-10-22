@@ -3,10 +3,11 @@ ICT's Silver Bullet: a one-hour window of the New York day (03:00-04:00, 10:00-1
 price raids nearby liquidity, shifts structure and displaces the other way, leaving a fair value gap; the trade is
 the retrace into that gap, entered at its consequent encroachment (CE, the gap's 50%), the stop beyond the raid's
 extreme, the target the DRAW ON LIQUIDITY of the day (eng-58: the previous day's high / low in the trade's
-direction; the hour's opposite side only without it). Detected loop-side on the final 1m candles built into 5m bars
-(Scanner._silver_bullet).
+direction; none ahead of the entry -> no trade). Detected loop-side on the final 1m candles built into 5m bars
+(strategies.loopside.LoopDetectors._silver_bullet).
 
-- liquidity: the high / low of the hour BEFORE the window;
+- liquidity (eng-106): the hour BEFORE the window plus the Asia (20:00-00:00 NY) and London (02:00-05:00 NY) session
+  highs / lows - the nearest one beyond the window's open is the pool;
 - the raid: a 5m bar inside the window trades beyond it;
 - the market structure shift (eng-58, ICT): the displacement closes beyond the last 3-candle swing the raid came from;
 - the displacement: a 5m bar with a body >= half its range in the other direction that leaves the FIRST FVG after
@@ -127,8 +128,9 @@ from zones import merge                                             # noqa: E402
 
 
 class SilverBulletStrategy(Strategy):
-    """The Silver Bullet playbook of the ICT liquidity strategy: a resting limit at the FVG's CE (first touch, 5m),
-    stop beyond the raid's extreme + the measured pierce, TP1 the opposite side of the hour before the window."""
+    """The Silver Bullet playbook of the ICT liquidity strategy: the FVG's CE (first touch, 5m; with
+    executor.touch_confirm_close the entry is the close of the touching candle), stop beyond the raid's extreme +
+    the measured pierce, TP1 the day's draw on liquidity (PDH / PDL) ahead of the entry, else no trade."""
     name = 'sweep'
     anchor_type = 'level'
     setups = {'SILVER BULLET LONG': 1, 'SILVER BULLET SHORT': -1}
@@ -163,7 +165,7 @@ class SilverBulletStrategy(Strategy):
         zone = (lo, ce) if d > 0 else (ce, hi)
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         risk = abs(ce - sig['anchor_extreme'])
-        # eng-84: the day's draw as TP1 only on the trade's side and within 3R (a short's 'TP1' printed above its entry)
+        # the day's draw as TP1 only on the trade's side (eng-84; its 3R cap removed in eng-110)
         first = (sig['sb_target'], "the day's draw on liquidity (PDH / PDL)") \
             if risk and 0 < d * (sig['sb_target'] - ce) else None      # eng-110: no 3R cap (ours)
         if first is None:
@@ -177,12 +179,10 @@ class SilverBulletStrategy(Strategy):
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
-                         # eng-96: the eng-84 3R cap did not reach the trade (system_levels takes TP1 from exit['tp'],
-                         # the same as po3's): beyond 3R / on the wrong side the map's TP1 is the first target
+                         # system_levels takes TP1 from exit['tp'] (eng-96)
                          exit={'stop': ['ref', 0.0], 'atr': atr, 'stop_src': "beyond the raid's extreme",
-                               'tp': ['level', sig['sb_target'], 1.0, None] if first is not None else ['map', 1.0],
-                               'tp_src': "the day's draw on liquidity (PDH / PDL)" if first is not None
-                               else 'the nearest opposite liquidity'},
+                               'tp': ['level', sig['sb_target'], 1.0, None],
+                               'tp_src': "the day's draw on liquidity (PDH / PDL)"},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
                          key=(sig['anchor_ts'], d))
         if plan and not plan.get('skip'):

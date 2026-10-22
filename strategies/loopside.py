@@ -230,7 +230,7 @@ class LoopDetectors:
             return None                           # measured on small caps (research_pumps: majors apart)
         rank = self.volume_rank(symbol)
         if rank is None or rank <= 30:
-            return None                           # review V11: the coin's class unknown = not the studied class                           # research_pumps: non-majors ranked <= 30 by volume were excluded
+            return None       # small caps outside the top 30 by volume only; an unknown rank = not the studied class
         found = dump_bounce(h1, now_ms)
         if found is None or (symbol, found['anchor_ts']) in self._dump_fired:
             return None

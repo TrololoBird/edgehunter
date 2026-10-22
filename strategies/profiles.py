@@ -1,5 +1,6 @@
 """
-Optimized strategy profiles (research_optimize.py -> models/profiles.json): per strategy the entry FILTERS and the
+Optimized strategy profiles (research_optimize.py -> models/profiles.json; the research scripts were removed on
+2026-10-22 and the profiles are off since eng-128 - CONFIG note): per strategy the entry FILTERS and the
 POSITION MANAGEMENT that made it positive on the archive replay's untouched validation months. The live bot applies a
 profile's filters to every entry of that strategy (`masks` computes them exactly as the research did) and the demo
 trades only strategies with a profile.
