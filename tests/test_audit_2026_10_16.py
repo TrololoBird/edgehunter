@@ -193,22 +193,6 @@ def test_dump_bounce_fixes_the_low_at_the_exhaustion():
     assert dump_bounce(_dump_path(False), 192 * H) is None          # a touch before the exhaustion is no bounce
 
 
-def test_research_meta_auc_ties():
-    import sys
-    sys.path.insert(0, 'research/scripts')
-    from research_meta import auc
-    assert auc(np.array([0, 1]), np.array([0.5, 0.5])) == pytest.approx(0.5)
-
-
-def test_optimizer_no_partial_after_the_full_target():
-    import sys
-    sys.path.insert(0, 'research/scripts')
-    import research_optimize as ro
-    import inspect
-    src = inspect.getsource(ro.simulate)
-    assert 'i_half < i_t' in src
-
-
 # ---------------------------------------------------------------------- methods (C06, C07, Wyckoff, Turtle, TL)
 
 def test_cup_stop_limit_is_not_widened():

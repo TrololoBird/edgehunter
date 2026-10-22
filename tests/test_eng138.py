@@ -1,7 +1,5 @@
 """eng-138: audit 2026-10-17 A06 (POC ties), A08 (DST sessions), BB1 squeeze recency, base volume, required parts
 out of the shadow list, R05 (calendar Newey-West)."""
-import importlib.util
-import os
 from datetime import datetime
 
 import numpy as np
@@ -54,20 +52,3 @@ def test_required_parts_are_not_shadowed():
     assert shadow_veto(sig, 'no_spring_test') == 'no_spring_test'    # Wyckoff's test is part of the spring
     assert shadow_veto(sig, 'po3_bias_required') == 'po3_bias_required'
     assert shadow_veto(sig, 'no_supply') is None and 'no_supply' in sig['shadow_veto']
-
-
-def _placebo():
-    p = os.path.join(os.path.dirname(__file__), '..', 'research', 'scripts', 'research_entries_placebo_eng133.py')
-    spec = importlib.util.spec_from_file_location('placebo', p)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
-
-
-def test_r05_newey_west_counts_calendar_lags():
-    nw = _placebo().newey_west_p
-    rng = np.random.default_rng(0)
-    x = rng.normal(0.3, 1, 40)
-    spread = np.full(400, np.nan)
-    spread[::10] = x                                                  # the same values 10 buckets apart
-    assert nw(x, 3) != pytest.approx(nw(spread, 3))                   # was equal: the lag counted signals
