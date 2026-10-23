@@ -196,7 +196,11 @@ class SweepStrategy(Strategy):
         if moved is not None:
             # eng-151 (external audit #2), shadow only: a resting limit at the next pool's liquidity (the second raid),
             # the plan's stop rule from that pool - 'variant_pool2' against the live entry of the same card
-            pool2 = {'entry': moved.lo if d > 0 else moved.hi, 'label': moved.label}
+            # live check eng-151: the merged zone's far edge (a VAL / OB / round number below the pool) was never
+            # touched - the entry is the pool's own untaken price, the first one a second raid meets
+            prices = [p[1] for p in moved.parts if p[0] in kinds and not p[4]]
+            p2 = (max(prices) if d > 0 else min(prices)) if prices else (moved.hi if d > 0 else moved.lo)
+            pool2 = {'entry': p2, 'label': moved.label}
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
         targets, sources = select_targets(zones, reached, d, atr, 'draw_liquidity')
         # ICT: the sweep is only the setup, a wick is not yet a reversal: the entry waits for the displacement's FVG
