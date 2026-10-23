@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import math
 
 from config import CONFIG
-from zones import POOL_KINDS, STRUCTURE_KINDS, Zone, stop_beyond
+from zones import POOL_KINDS, STRUCTURE_KINDS, Zone, liq_only, stop_beyond
 
 MEAN_KINDS = ('vwap', 'poc', 'va', 'hvn')
 
@@ -166,7 +166,7 @@ def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: flo
     space while levels stood right there, 2026-10-01: TP2 / TP3 were ATR steps on 18 / 21 of 35 entries).
     """
     last = prices[-1] if prices else ref
-    for z in sorted((z for z in zones if direction * (_near(z, direction) - last) >= gap),
+    for z in sorted((z for z in zones if direction * (_near(z, direction) - last) >= gap and not liq_only(z)),
                     key=lambda z: direction * (_near(z, direction) - last)):
         if len(prices) >= 3:
             return
@@ -288,10 +288,20 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         elif last_real is not None and (not real[k] or repeat):
             # eng-147 (the owner): fewer than 3 levels on the map -> this third is projected +1R past the previous
             # target (TP2 = TP1 + 1R, TP3 = TP2 + 1R) instead of repeating the last level
-            targets[k] = targets[k - 1] + direction * risk
-            rrs[k] = (direction * (targets[k] - entry) - fee) / (risk + fee)
-            sources[k] = '1R step'
-            last_real = rrs[k]
+            step = targets[k - 1] + direction * risk
+            # eng-150 (plan 4.7): the 1R step never runs through an opposing map zone - the previous target repeats
+            # the previous target's own zone (it sits in front of it by the pierce) and estimated liquidations
+            # (confluence only, plan 4.6) do not block
+            path = [z for z in zones if not liq_only(z) and z.label != sources[k - 1]]
+            _, block = obstacle_before(path, targets[k - 1], step, direction, risk)
+            if block is not None:
+                targets[k], rrs[k] = targets[k - 1], rrs[k - 1]
+                sources[k] = f"repeat (opposing {block})"
+            else:
+                targets[k] = step
+                rrs[k] = (direction * (targets[k] - entry) - fee) / (risk + fee)
+                sources[k] = '1R step'
+                last_real = rrs[k]
         elif real[k]:
             last_real = rrs[k]
         blend.append(last_real)
@@ -418,7 +428,8 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
     else:
         def px(z: Zone) -> float:
             return _near(z, direction)
-    beyond = [z for z in zones if direction * (px(z) - ref) >= gap]
+    # eng-150 (plan 4.6): estimated liquidations alone are confluence, never a target
+    beyond = [z for z in zones if direction * (px(z) - ref) >= gap and not liq_only(z)]
     beyond.sort(key=lambda z: direction * (px(z) - ref))
     strong = [z for z in beyond if z.strength >= cfg.min_strength]
     # eng-115: Wyckoff's range ('range': the far side, the P&F count) and the continuation's trend-based extensions
@@ -642,7 +653,7 @@ def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, 
     cfg = CONFIG.levels
     cands = []
     for z in zones:
-        if not any(k in STRUCTURE_KINDS for k in z.kinds):
+        if not any(k in STRUCTURE_KINDS for k in z.kinds) or liq_only(z):
             continue
         edge = z.lo if direction > 0 else z.hi
         if direction * (entry - edge) <= 0:

@@ -343,6 +343,7 @@ class SignalBook:
         self.levels_of: Optional[Callable[[str], Optional[list]]] = None
         self.htf_of: Optional[Callable[[str], Optional[list]]] = None
         self.daily_of: Optional[Callable[[str], Optional[list]]] = None
+        self.h4_of: Optional[Callable[[str], Optional[list]]] = None
         # symbol -> {'1h': ATR14, '4h': ..., '1d': ...} of its closed candles (scanner)
         self.tf_atr_of: Optional[Callable[[str], Dict[str, float]]] = None
         self.market_state_of: Optional[Callable[[], Dict]] = None    # eng-145: the live market moves (scanner)
@@ -557,7 +558,9 @@ class SignalBook:
                          raw_levels=(self.levels_of(symbol) if self.levels_of else None) or [],
                          h1=(self.htf_of(symbol) if self.htf_of else None) or [],
                          context=self.context_of(symbol) if self.context_of else None, reached=reached,
-                         tf_atr=(self.tf_atr_of(symbol) if self.tf_atr_of else None) or {})
+                         tf_atr=(self.tf_atr_of(symbol) if self.tf_atr_of else None) or {},
+                         h4=(self.h4_of(symbol) if self.h4_of else None) or [],
+                         d1=(self.daily_of(symbol) if self.daily_of else None) or [])
 
     def _card_gate(self, symbol: str, group_key: str, strategy: Strategy, direction: int, frames,
                    sig: Dict) -> Optional[str]:

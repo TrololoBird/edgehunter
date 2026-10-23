@@ -205,12 +205,23 @@ class TrendlineStrategy(_System):
     shift with agreeing taker flow between the broken line and its measured pierce (trigger 'shift', eng-84; no
     resting limit), the stop beyond the last confirmed 1h pivot, targets the next 1h+ levels of the map."""
     name = 'trendline'
-    setups = {'TL EM UP': 1, 'TL EM DOWN': -1}   # eng-127: the ATR-line bot (TRENDLINE UP / DOWN) is deleted
+    setups = {'TL EM UP': 1, 'TL EM DOWN': -1,   # eng-127: the ATR-line bot (TRENDLINE UP / DOWN) is deleted
+              'TL TOUCH UP': 1, 'TL TOUCH DOWN': -1}   # eng-150: the third touch (plan 4.10)
     ttl_key = 'trendline_ttl'
     uses_minutes = True
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d = x.sig, x.direction
+        if sig.get('tl_band') is not None:
+            # eng-150: the third touch - entry at the touch candle's close, the stop beyond the band's far edge by
+            # the measured 1h-swing pierce, targets the opposite liquidity of the map
+            from pierce import overshoot
+            pad = overshoot(x.symbol, 'swing_1h', sig['anchor_level']) or 0.0
+            edge = sig['line_value'] - d * sig['tl_band']
+            stop = min(edge, sig['anchor_extreme']) - pad if d > 0 else max(edge, sig['anchor_extreme']) + pad
+            exit = {'stop': ['price', stop], 'stop_src': 'beyond the trendline band + measured pierce',
+                    'tp': ['map', 1.0], 'atr': x.atr, 'no_atr_steps': True}
+            return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch')
         if sig.get('target_price') is None or not x.minutes:
             return None
         # eng-79: the stop beyond the last confirmed 1h pivot (the line's own timeframe), 0.1 x ATR(1h) beyond it

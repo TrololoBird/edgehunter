@@ -130,7 +130,9 @@ class SweepStrategy(Strategy):
         bias = sig.get('weekly_bias') or sig.get('daily_bias')
         if bias:
             return 'against_bias' if bias == -direction else None
-        return 'against_trend' if sig.get('coin_trend') == -direction else None
+        # eng-150 (plan 4.1): ICT's top-down order has no 1h substitute - no weekly / daily bias, no trade (blocking)
+        return 'sweep_no_htf_bias' if CONFIG.strategies.sweep_bias_required else \
+            ('against_trend' if sig.get('coin_trend') == -direction else None)
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr
@@ -148,15 +150,43 @@ class SweepStrategy(Strategy):
             shadow_veto(sig, 'no_htf_poi')
         # premium / discount of the dealing range (1h pivots, ict.dealing_range): longs only in its discount half, shorts only in its premium
         from strategies.ict import dealing_range, range_position
-        pos = range_position(dealing_range(x.h1 or []), extreme, d)
+        # eng-150 (plan 4.2): the dealing range of the swept pool's timeframe - a weekly pool in the daily range, a
+        # daily / day pool in the 4h one, the rest in the 1h one (closed candles only); still a shadow veto
+        rank = pool_rank(sig.get('anchor_label', '') or '')
+        range_tf = '1d' if rank >= 5 else '4h' if rank == 4 else '1h'
+        rows = {'1d': x.d1, '4h': x.h4}.get(range_tf)
+        if not rows:
+            range_tf, rows = '1h', x.h1 or []          # no 4h / daily history yet: journaled as the 1h range
+        rng = dealing_range(rows)
+        pos = range_position(rng, extreme, d)
         if pos is not None and pos > 0.5:
             shadow_veto(sig, 'premium' if d > 0 else 'discount')     # eng-148: shadow again
+        sig['range_tf'] = range_tf
+        sig['range_pos_tf'] = pos                       # paired with range_pos_1h: both at the raid's extreme
+        sig['range_pos_1h'] = range_position(dealing_range(x.h1 or []), extreme, d)
+        sl_old, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol, farthest=True)
+        # eng-150 (plan 4.3): an untaken pool within zone_move_pool_atr of the structure ATR beyond the extreme is
+        # journaled (zone_moved) only: the 'fvg' trigger enters at the 5m FVG's CE and never reads the zone, so moving
+        # the zone onto that pool would only have widened the stop past the next pool (review eng-150)
+        tf = sweep_tf(sig.get('anchor_label', ''))
+        tf_atr = (x.tf_atr or {}).get(tf) if tf != '15m' else atr
+        moved = None
+        if tf_atr:
+            from zones import POOL_KINDS, STOP_SWINGS, swept_zone
+            kinds = tuple(k for k in POOL_KINDS if k != 'liq_est') + STOP_SWINGS
+            cand = [z for z in zones if any(k in kinds for k in z.kinds) and not swept_zone(z, kinds)
+                    and 0 < d * (extreme - (z.hi if d > 0 else z.lo)) <= CONFIG.strategies.zone_move_pool_atr * tf_atr]
+            if cand:
+                moved = max(cand, key=lambda z: z.hi) if d > 0 else min(cand, key=lambda z: z.lo)
+        sig['zone_moved'] = moved.label if moved else None
+        sig['zone_move_atr'] = round(d * (extreme - (moved.hi if d > 0 else moved.lo)) / tf_atr, 3) if moved else None
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         from pierce import overshoot as _pierce
         from strategies.geometry import capped_pad
         # eng-147: past a further pool only the small pad, else the measured pierce capped in ATR (no double buffer)
         pad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', base), atr, base != extreme)
         invalid = base - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
+        sig['sl_old'] = sl_old - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
         targets, sources = select_targets(zones, reached, d, atr, 'draw_liquidity')
         # ICT: the sweep is only the setup, a wick is not yet a reversal: the entry waits for the displacement's FVG
@@ -170,10 +200,14 @@ class SweepStrategy(Strategy):
         # eng-84: the structure shift is read on the timeframe that matches the swept pool (the sweep write-ups: 1h
         # levels -> 5m, 4h / session / daily levels -> 15m, daily / weekly levels -> 1h; below 30m most sweeps are
         # false): the plan's timeframe sets the trigger's (levels.TRIGGER_MINUTES 15m -> 5, 1h -> 15, 4h -> 60)
-        tf = sweep_tf(sig.get('anchor_label', ''))
-        return base_plan(x, self.name, _level_anchor(sig, tf), tf, entry='pullback', trigger='fvg', zone_lo=zone[0],
-                         zone_hi=zone[1], zone_src=f"sweep of {sig.get('anchor_label', 'the level')} (5m FVG retrace)",
+        zone_src = f"sweep of {sig.get('anchor_label', 'the level')} (5m FVG retrace)"
+        plan = base_plan(x, self.name, _level_anchor(sig, tf), tf, entry='pullback', trigger='fvg', zone_lo=zone[0],
+                         zone_hi=zone[1], zone_src=zone_src,
                          invalid=invalid,
                          fix_invalid=True, missable=True, stop_ref=extreme, intent='draw_liquidity',
                          targets=targets, target_src=sources, zones=zones, reached=reached,
                          key=(sig['anchor_ts'], level))
+        if plan is not None:
+            plan['dealing_range'] = rng
+            plan['range_tf'] = range_tf
+        return plan

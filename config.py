@@ -553,7 +553,7 @@ class ZonesConfig:
     # than random too, the day's volume profile POC / VA / HVN / LVN exactly like random (0.98-1.02) -> all 1.0 (were
     # 0.5-1.5). ob_15m / breaker_15m set to 1.0 with them. Still unmeasured hand-set values: the 4h / daily / weekly
     # ICT zones, vwap, fib, range, book, wall, liquidations, opens, htf, swing_1d, bpr.
-    weights: tuple = (('swing_1h', 1.0), ('swing_15m', 1.0), ('equal', 1.0), ('pdhl', 1.0), ('poc', 1.0),
+    weights: tuple = (('swing_1h', 1.0), ('flip_1h', 1.0), ('swing_15m', 1.0), ('equal', 1.0), ('pdhl', 1.0), ('poc', 1.0),
                       ('va', 1.0), ('hvn', 1.0), ('liq_est', 0.5), ('liq_hit', 1.0), ('wall', 1.0),
                       ('vwap', 1.0), ('fib', 0.5), ('range', 1.5), ('liq_hl', 2.0), ('book', 1.0), ('round', 1.0),
                       ('swing_1d', 2.5), ('htf', 2.5), ('lvn', 1.0),
@@ -862,6 +862,13 @@ class StrategiesConfig:
     tl_min_touches: int = 3
     tl_touch_atr: float = 0.25
     tl_touch_gap: int = 5
+    # eng-150 (plan 4.10, heuristic): the band around a two-swing 1h line whose third touch is the TL TOUCH entry
+    tl_band_atr: float = 0.3
+    # eng-150 (plan 4.1): a sweep / Silver Bullet with no weekly / daily bias is not traded (no 1h-trend substitute)
+    sweep_bias_required: bool = True
+    # eng-150 (plan 4.3, heuristic): an untaken pool this close (x the structure timeframe's ATR) beyond the raid's
+    # extreme takes the waiting zone and the stop
+    zone_move_pool_atr: float = 1.0
     tl_violation_atr: float = 0.10
     tl_max_dist_atr: float = 3.0
     # eng-57: 0 (was 7.5, his 15m bot's cut): on 1h a line spanning 40+ candles is gentler than 0.13 ATR a candle, so
@@ -1022,12 +1029,12 @@ class JournalConfig:
     # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
     outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-148"
+    logic_version: str = "eng-150"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
-    keep_waiting_from: str = "eng-148"
+    keep_waiting_from: str = "eng-150"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

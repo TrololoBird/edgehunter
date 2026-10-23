@@ -44,7 +44,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - `supply_demand` - Seiden: 4h zones, 1h touch, the curve, R:R 3.
     - `market_profile` (AUCTION LONG / SHORT failed auction, eng-127; VA80 LONG / SHORT Dalton's 80% rule by session).
     - `trendline` (1h lines, Edwards & Magee), `bollinger` (W-bottom / M-top, the measured move), `orb` (Crabel, touch entry, out at the session close),
-      `connors` (daily RSI(2)), `cup_handle` (O'Neil, 1h / 4h), `pump` (PUMP START / PUMP TOP, the owner's, with 1:1
+      `connors` (daily RSI(2)), `cup_handle` (O'Neil, 1d), `pump` (PUMP START / PUMP TOP, the owner's, with 1:1
       averaging).
     - The 15m phase scores (A-F) are still computed and journaled as structured rows; none feeds a card since eng-127.
     - eng-145: longs blocked while BTC and the market are down over 24h (`market_down`; Turtles / Connors exempt).
@@ -56,6 +56,9 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - eng-149 (journal only, logic stays eng-148): the rest of stage 3 as `variant_*` entry rows / columns (FVG edge /
       CE limits, two-contour stop, sweep retest, NR4/7, Wyckoff ST stop, vol_regime, SMT BTC/ETH,
       market_down alt), `stats.py` variants + funnel tables.
+    - eng-150 (live, the owner's order): plan stage 4 - sweeps need a weekly / daily bias, P/D on the pool's
+      timeframe (shadow), stops behind the nearest pool, pierce pools + 1h S/R flips, liq_est confluence only,
+      the 1R step stops at opposing zones, TL TOUCH (third touch); shadow ORB 13:30 UTC without a card.
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

@@ -14,7 +14,7 @@ registry as it stands (eng-145; one methodology = one strategy name, several pla
     supply_demand   SD DEMAND / SUPPLY                       maniac_strategies    Seiden 4h zones, 1h touch, R:R 3
     market_profile  VA80 LONG / SHORT                        classic_strategies   Dalton's 80% rule by session
                     AUCTION LONG / SHORT                     maniac_strategies    the failed auction (eng-127)
-    trendline       TL EM UP / DOWN                          maniac_strategies    Edwards & Magee, retest 'shift'
+    trendline       TL EM UP / DOWN, TL TOUCH UP / DOWN      maniac_strategies    Edwards & Magee, retest 'shift' / 3rd touch
     bollinger       BB W-BOTTOM / M-TOP, BB3 BUY / SELL      maniac_strategies    W / M, method III (BB3 shadow)
     orb             ORB UP / DOWN                            classic_strategies   Crabel 5-min range +- Stretch, touch;
                                                                                   out on 15m Parabolic SAR (eng-145)

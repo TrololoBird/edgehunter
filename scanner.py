@@ -57,6 +57,19 @@ def play_alert_sound(level: str = "normal"):
         errors.report('scanner.play_alert_sound', e, "Could not play sound")
 
 
+def _orb_shadow_row(found: Dict):
+    """eng-150: what journal.record_entry reads of a card, for the 13:30 UTC ORB variant (vetoed 'variant_orb_open',
+    the stop the opposite Stretch level, no targets: the replay's hold8_r measures it)."""
+    from types import SimpleNamespace
+    sig = dict(found)
+    return SimpleNamespace(symbol=found['symbol'], direction=found['direction'], group_key=found['setup'], mode='orb',
+                           sig=sig, levels={'entry': found['anchor_level'], 'sl': found['anchor_extreme'],
+                                            'tp1': None, 'tp2': None, 'tp3': None},
+                           plan={'no_tp': True, 'tf': '15m'}, entered_at=found['event_ts'] / 1000,
+                           created=found['anchor_ts'] / 1000, vetoed='variant_orb_open', confirms={},
+                           of_confirm=None, limit_variant=False)
+
+
 class _FrameLookup:
     """
     dict-like .get(symbol) for the tracked cards: the symbol's closed 15m futures candles with indicators plus
@@ -179,6 +192,7 @@ class Scanner:
         # 1h candles of the coin: the 8 days every coin has (hourly), else a card coin's level-map history
         self.book.daily_of = lambda symbol: (lambda md: md.d1 if md else None)(self.market_data.get(symbol))
         self.book.tf_atr_of = self._tf_atrs
+        self.book.h4_of = lambda symbol: (lambda md: md.h4 if md else None)(self.market_data.get(symbol))
         self.book.htf_of = lambda symbol: (lambda md: (md.h1 or md.htf_klines) if md else None)(self.market_data.get(symbol))
         self.book.context_of = lambda symbol: self.detector.context.get(symbol)
         self.book.band_of = self._opposite_band
@@ -787,6 +801,10 @@ class Scanner:
                 await self.journal.arecord(persistent, {symbol: self._price_of(symbol) for symbol, _ in persistent})
                 for tracked in entries:
                     await self.journal.arecord_entry(tracked)
+                # eng-150: the shadow ORB from a fixed 13:30 UTC open - a journal row only, never a card
+                shadow, self.loopside.orb_shadow = self.loopside.orb_shadow, []
+                for found in shadow:
+                    await self.journal.arecord_entry(_orb_shadow_row(found))
             for tracked in self.book.finished_now:
                 logger.info(f"Card {tracked.symbol} {tracked.group_key}: {tracked.status} - {tracked.finish_reason}")
                 await self.journal.arecord_card(tracked)

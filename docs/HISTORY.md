@@ -946,3 +946,21 @@ vetoed entry row `variant_*` of the same card (never traded; journal dedup per c
 - 0.3 stats.py funnel by strategy; variants table on the same cards; the new labels in the eng-148 splits.
 - All shadow exits on the first 8h of every entry (no survivor bias from the life relabel). rs_btc (0.7) existed.
 Left by design: stage 4 (each item its own yes after 100+ cluster-independent trades), stage 5 (cloud).
+
+## eng-150 (2026-10-23) - plan eng-148 stage 4 live (the owner's order, before the 100-trade threshold)
+- 4.1: a sweep / Silver Bullet with no weekly / daily bias is blocked (`sweep_no_htf_bias`; no 1h-trend substitute);
+  `against_bias` stays shadow.
+- 4.2: premium / discount on the swept pool's timeframe range (PW -> 1d, PD / day -> 4h, else 1h), still shadow;
+  journal `range_tf`, `range_pos_tf`, `range_pos_1h`.
+- 4.3: `zones.stop_beyond` takes the NEAREST pool behind the invalidation (was the farthest); sweeps journal `sl_old`
+  (the old rule) and `zone_moved` / `zone_move_atr` (a pool < 1 structure ATR beyond the extreme; journal-only: the
+  fvg trigger never reads the zone, moving it would only have widened the stop - review).
+- 4.5: a false pierce of an intact swing / PDH-PDL-PWH-PWL adds a '(pierce)' pool at its extreme; a 1h swing closed
+  through with price still beyond is a `flip_1h` S/R level.
+- 4.6: zones made only of `liq_est` are never targets, map fills, supports or structure stops.
+- 4.7: the +1R TP2 / TP3 step repeats the previous target when a map zone stands in its path. Wyckoff / Seiden keep
+  their own objectives (owner).
+- 4.10: TL TOUCH UP / DOWN - the third touch of a two-swing 1h line within +-0.3 ATR, entry at the touch close, stop
+  beyond the band + the measured pierce; the E&M break stays; cup_handle stays 1d only.
+- Shadow: Crabel ORB from a fixed 13:30 UTC open journaled as `variant_orb_open` without a card (same as the live NY
+  ORB until the US switches to EST on 2026-11-01).

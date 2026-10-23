@@ -24,6 +24,8 @@ class LoopDetectors:
         self._turtle_fired: set = set()              # (symbol, direction, day) breakouts already fired
         self._orb_checked: Dict[str, int] = {}       # symbol -> the last final minute Crabel's ORB was checked on
         self._orb_fired: set = set()                 # (symbol, day) ORBs already fired (one a day)
+        self._orb_open_fired: set = set()            # eng-150: the shadow ORB at a fixed 13:30 UTC open
+        self.orb_shadow: List[Dict] = []             # eng-150: its events, journaled by the scanner WITHOUT a card
         self._orb_day: Dict[str, Dict] = {}          # symbol -> the UTC day's open and extremes so far (ORB)
         self._oi_build_checked: Dict[str, int] = {}  # eng-88: symbol -> the last final minute the OI build was checked on
         self._oi_build_fired: set = set()            # (symbol, hour) OI builds already fired
@@ -195,7 +197,18 @@ class LoopDetectors:
         if samples and now_ms - samples[-1][0] <= 5_000:
             hi, lo = max(hi, samples[-1][1]), min(lo, samples[-1][1])
         from strategies.classic import session_orb
-        return session_orb(base, minutes, now_ms, hi, lo, self._orb_fired, symbol, list(getattr(md, 'd1', None) or []))
+        d1 = list(getattr(md, 'd1', None) or [])
+        # eng-150 (plan, shadow): the New York ORB from a FIXED 13:30 UTC open (the US cash open in EDT) to 20:00 UTC,
+        # weekdays - never a card, only a journal row (vetoed 'variant_orb_open') beside the live session ORB
+        day = now_ms // 86_400_000 * 86_400_000
+        o, c = day + 48_600_000, day + 72_000_000
+        if (now_ms // 86_400_000 + 3) % 7 < 5 and o <= now_ms < c:
+            found = session_orb(base, minutes, now_ms, hi, lo, self._orb_open_fired, symbol, d1,
+                                sessions=[('NY 13:30 UTC', o, c)])
+            if found is not None:
+                found['symbol'] = symbol
+                self.orb_shadow.append(found)
+        return session_orb(base, minutes, now_ms, hi, lo, self._orb_fired, symbol, d1)
 
     def _oi_build(self, symbol: str, md, now_ms: int) -> Optional[Dict]:
         """eng-127, Pring's OI rule in shadow (strategies.oi_build): at 5m closes, once per coin per hour."""

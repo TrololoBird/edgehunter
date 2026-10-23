@@ -70,6 +70,9 @@ class PlanInput:
     # ATR14 of the coin's CLOSED 1h / 4h / daily candles: a stop is sized by the volatility of the timeframe its
     # structure lives on (a 4h zone's stop floored by the 15m ATR sat inside the 4h noise - 2026-10-05)
     tf_atr: Dict[str, float] = field(default_factory=dict)
+    # eng-150 (plan 4.2): the coin's 4h / daily candles (premium / discount on the swept pool's timeframe)
+    h4: Sequence[Sequence[float]] = field(default_factory=list)
+    d1: Sequence[Sequence[float]] = field(default_factory=list)
 
     @property
     def atr(self) -> Optional[float]:

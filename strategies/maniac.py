@@ -324,7 +324,7 @@ def _em_line(h, l, c, kind: str) -> Optional[Dict]:
         p1, slope = l[i1], (l[i2] - l[i1]) / (i2 - i1)
         if any(c[j] < p1 + slope * (j - i1) for j in range(i1 + 1, n)):
             return None
-    return {'p1': float(p1), 'slope': float(slope), 'i1': i1}
+    return {'p1': float(p1), 'slope': float(slope), 'i1': i1, 'i2': i2}
 
 
 def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_000, tf: str = '1h',
@@ -375,6 +375,48 @@ def trendline_em_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_00
                 'anchor_label': 'trendline (E&M)', 'anchor_ts': int(window[line['i1']][0]),
                 'anchor_close': float(c[i]), 'target_price': line['p1'],
                 'event_ts': int(window[-1][0]) + period_ms}
+    return None
+
+
+def trendline_touch_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600_000,
+                          tf: str = '1h') -> Optional[Dict]:
+    """
+    eng-150 (plan 4.10), Edwards & Magee: a line through the two last reaction points is confirmed by its THIRD touch.
+    The touch = the latest closed candle reached the band line +/- tl_band_atr x ATR14 and closed on the line's side
+    (no close beyond the line since its first point, _em_line); only the first touch after the second point.
+    The entry is that candle's close, with the line (support -> long, resistance -> short).
+    """
+    cfg = CONFIG.strategies
+    window = c1h[-(cfg.tl_lookback + 2):]
+    n = len(window)
+    if n < cfg.tl_min_span + 10:
+        return None
+    h, l, c = _arr(window, 2), _arr(window, 3), _arr(window, 4)
+    atr = float(wilder(true_range(h, l, c), 14)[-1])
+    if not atr > 0:
+        return None
+    band = cfg.tl_band_atr * atr
+    for kind in ('support', 'resistance'):
+        line = _em_line(h, l, c, kind)
+        if line is None:
+            continue
+        value = lambda j: line['p1'] + line['slope'] * (j - line['i1'])
+        d = 1 if kind == 'support' else -1
+        touched = (lambda j: l[j] <= value(j) + band) if d > 0 else (lambda j: h[j] >= value(j) - band)
+        i = n - 1
+        # the second point's own reaction bars sit in the band: the third touch needs price to have LEFT the band
+        # after the second point and come back now for the first time
+        left = next((j for j in range(line['i2'] + 1, i) if not touched(j)), None)
+        if not touched(i) or left is None or any(touched(j) for j in range(left, i)):
+            continue
+        return {'setup': 'TL TOUCH UP' if d > 0 else 'TL TOUCH DOWN', 'direction': d,
+                'setup_note': f"{tf} third touch of {'a rising support' if d > 0 else 'a falling resistance'} through"
+                              f" the last two reaction points (Edwards & Magee), band {cfg.tl_band_atr:g} ATR",
+                'line_p1': line['p1'], 'line_slope': line['slope'], 'line_ts1': int(window[line['i1']][0]),
+                'line_period_ms': period_ms, 'line_value': value(i), 'atr_line': atr, 'tl_band': band,
+                'anchor_level': value(i), 'anchor_extreme': l[i] if d > 0 else h[i],
+                'anchor_label': 'trendline touch (E&M)', 'anchor_ts': int(window[line['i1']][0]),
+                'anchor_close': float(c[i]), 'event_ts': int(window[-1][0]) + period_ms}
     return None
 
 

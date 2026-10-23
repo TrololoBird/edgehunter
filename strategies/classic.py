@@ -304,7 +304,8 @@ def failed_auction_event(base: str, m15: Sequence[Sequence[float]], cut: int) ->
 
 
 def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, price_hi: float, price_lo: float,
-                fired: set, symbol: str, d1: Sequence[Sequence[float]] = ()) -> Optional[Dict]:
+                fired: set, symbol: str, d1: Sequence[Sequence[float]] = (),
+                sessions: Optional[List[tuple]] = None) -> Optional[Dict]:
     """Crabel's ORB on a running session. audit: Crabel, "Playing the Opening Range Breakout" Part 8 (Stocks &
     Commodities, p. 36) - the opening range of the first minutes (30 seconds to 5 minutes; 5 here), a buy stop the
     Stretch (the 10-day SMA of min(High - Open, Open - Low)) above its high and a sell stop the Stretch below its low;
@@ -314,7 +315,7 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
     audit E08: the contract is the CLOSED minute - price_hi / price_lo (the live tick) are accepted for the caller's
     signature and deliberately not read: a stop-entry detected on a candle that closed is a minute late, not instant."""
     or_minutes = 5
-    for name, open_ms, close_ms in orb_sessions(base, now_ms):
+    for name, open_ms, close_ms in (orb_sessions(base, now_ms) if sessions is None else sessions):
         if (symbol, open_ms) in fired:
             continue
         s = stretch(list(d1), CONFIG.strategies.orb_stretch_days) if d1 else None

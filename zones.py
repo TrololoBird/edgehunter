@@ -95,7 +95,7 @@ POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
 # 'book' (order-book liquidity bands) left the stop structures 2026-10-05: resting orders can be pulled (31% of large
 # crypto orders could spoof, arXiv 2504.15908) and no study shows depth holding price over hours - a stop is not
 # placed on them; they stay map levels (targets / context)
-STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'swing_1d', 'swing_1w', 'pmhl', 'year', 'equal', 'pdhl', 'range', 'round',
+STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'flip_1h', 'swing_1d', 'swing_1w', 'pmhl', 'year', 'equal', 'pdhl', 'range', 'round',
                    'ob_15m', 'ob_1h', 'ob_4h', 'ob_1d', 'ob_1w',
                    'breaker_15m', 'breaker_1h', 'breaker_4h', 'breaker_1d', 'breaker_1w')
 
@@ -151,6 +151,9 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
     """
     out: List[RawLevel] = []
     n = len(candles)
+    flip = kind == 'swing_1h'
+    pierced: set = set()                # one pierce pool per extreme (one wick through several swings)
+    last = candles[-1][4] if n else 0.0
     # Highest / lowest close after each index, to test "broken since" in one pass
     max_after = [float('-inf')] * (n + 1)
     min_after = [float('inf')] * (n + 1)
@@ -164,12 +167,28 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
     for i in range(width, n - width):
         h, l = candles[i][2], candles[i][3]
         around = candles[i - width:i] + candles[i + 1:i + 1 + width]
-        if all(c[2] < h for c in around) and max_after[i + 1] <= h:
-            out.append(RawLevel(h, kind, f"{tf} high", +1, ts=int(candles[i][0]),
-                                body=max(candles[i][1], candles[i][4]), swept=hi_after[i + 1] > h))
-        if all(c[3] > l for c in around) and min_after[i + 1] >= l:
-            out.append(RawLevel(l, kind, f"{tf} low", -1, ts=int(candles[i][0]),
-                                body=min(candles[i][1], candles[i][4]), swept=lo_after[i + 1] < l))
+        if all(c[2] < h for c in around):
+            if max_after[i + 1] <= h:
+                out.append(RawLevel(h, kind, f"{tf} high", +1, ts=int(candles[i][0]),
+                                    body=max(candles[i][1], candles[i][4]), swept=hi_after[i + 1] > h))
+                if hi_after[i + 1] > h and (hi_after[i + 1], +1) not in pierced:
+                    pierced.add((hi_after[i + 1], +1))
+                    # eng-150 (plan 4.5): a false pierce's extreme holds the new stops
+                    out.append(RawLevel(hi_after[i + 1], kind, f"{tf} high (pierce)", +1, ts=int(candles[i][0])))
+            elif flip and last > h:
+                # eng-150 (plan 4.5): closed through and still above = the old resistance is support (S/R flip)
+                out.append(RawLevel(h, f"flip_{tf}", f"{tf} S/R flip", -1, ts=int(candles[i][0]),
+                                    body=max(candles[i][1], candles[i][4])))
+        if all(c[3] > l for c in around):
+            if min_after[i + 1] >= l:
+                out.append(RawLevel(l, kind, f"{tf} low", -1, ts=int(candles[i][0]),
+                                    body=min(candles[i][1], candles[i][4]), swept=lo_after[i + 1] < l))
+                if lo_after[i + 1] < l and (lo_after[i + 1], -1) not in pierced:
+                    pierced.add((lo_after[i + 1], -1))
+                    out.append(RawLevel(lo_after[i + 1], kind, f"{tf} low (pierce)", -1, ts=int(candles[i][0])))
+            elif flip and last < l:
+                out.append(RawLevel(l, f"flip_{tf}", f"{tf} S/R flip", +1, ts=int(candles[i][0]),
+                                    body=min(candles[i][1], candles[i][4])))
     return out
 
 
@@ -328,10 +347,23 @@ def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bo
         span([c for c in candles_1h if start <= c[0] < end], f"{name} high", f"{name} low", end)
     # eng-147: a previous day / week extreme the price has already traded through since (a wick is enough: its
     # stops are gone) is still drawn, but it is no pool to hide a stop behind and no liquidity to target
-    for level, _ in out:
+    pierces: List[Tuple[RawLevel, int]] = []
+    for level, formed in out:
         since = {'PDH': today, 'PDL': today, 'PWH': week, 'PWL': week}.get(level.label)
         if since is not None:
-            mark_swept(level, [c for c in candles_1h if c[0] >= since])
+            after = [c for c in candles_1h if c[0] >= since]
+            mark_swept(level, after)
+            # eng-150 (plan 4.5): a pierce without a 1h close beyond = a false break; its extreme is the new pool
+            if level.swept and after:
+                closes = [c[4] for c in after]
+                # formed when the pierce candle closed (the pool age check of the sweep detector)
+                if level.side > 0 and max(closes) <= level.price:
+                    top = max(after, key=lambda c: c[2])
+                    pierces.append((RawLevel(top[2], 'pdhl', f"{level.label} (pierce)", +1), int(top[0]) + HOUR_MS))
+                elif level.side < 0 and min(closes) >= level.price:
+                    bot = min(after, key=lambda c: c[3])
+                    pierces.append((RawLevel(bot[3], 'pdhl', f"{level.label} (pierce)", -1), int(bot[0]) + HOUR_MS))
+    out += pierces
     return out if with_ts else [level for level, _ in out]
 
 
@@ -899,12 +931,26 @@ def targets(zones: List[Zone], entry: float, direction: int, atr: float) -> List
 STOP_SWINGS = ('swing_1h', 'swing_1d', 'swing_1w')
 
 
+def _pick_pool(zones: List[Zone], direction: int, farthest: bool) -> Zone:
+    if farthest:
+        return min(zones, key=lambda z: z.lo) if direction > 0 else max(zones, key=lambda z: z.hi)
+    return max(zones, key=lambda z: z.lo) if direction > 0 else min(zones, key=lambda z: z.hi)
+
+
+def liq_only(z: Zone) -> bool:
+    """eng-150 (plan 4.6): a zone made of estimated liquidations only - confluence, never a target / anchor."""
+    return bool(z.kinds) and all(k == 'liq_est' for k in z.kinds)
+
+
 def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction: int, atr: float,
-                label: str = 'beyond the swing', symbol: Optional[str] = None) -> Tuple[float, str]:
+                label: str = 'beyond the swing', symbol: Optional[str] = None,
+                farthest: bool = False) -> Tuple[float, str]:
     """
     Stop base: the invalidation price, pushed beyond a stop pool / liquidation cluster that sits just behind it
     (within stop_pool_atr ATR), so a routine sweep of that pool does not take the stop, as long as the risk stays
     within max_stop_atr ATR. Returns (base price before the ATR buffer, label).
+    eng-150 (plan 4.3): the NEAREST such pool, never one beyond the next pool (farthest=True = the old rule, kept
+    for the journal's paired sl_old).
     """
     cfg = CONFIG.zones
     from pierce import measured_kind, model, overshoot
@@ -923,7 +969,7 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
             if reach is not None and 0 <= direction * (invalidation - edge) <= reach:
                 near.append(z)
         if near:
-            far = min(near, key=lambda z: z.lo) if direction > 0 else max(near, key=lambda z: z.hi)
+            far = _pick_pool(near, direction, farthest)
             return (far.lo if direction > 0 else far.hi), f"beyond {far.label}"
         return invalidation, label
     # Real resting stops only: an ESTIMATED liquidation cluster is a model, not orders (live eng-6: stops pushed beyond
@@ -932,7 +978,7 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
               and not swept_zone(z, tuple(k for k in POOL_KINDS if k != 'liq_est') + STOP_SWINGS)
               and 0 <= direction * (invalidation - (z.lo if direction > 0 else z.hi)) <= cfg.stop_pool_atr * atr]
     if behind:
-        far = min(behind, key=lambda z: z.lo) if direction > 0 else max(behind, key=lambda z: z.hi)
+        far = _pick_pool(behind, direction, farthest)
         base = far.lo if direction > 0 else far.hi
         if abs(entry - base) <= cfg.max_stop_atr * atr:
             return base, f"beyond {far.label}"
@@ -941,5 +987,6 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
 
 def support_in(zones: List[Zone], lo: float, hi: float, direction: int) -> Optional[Zone]:
     """Strongest zone inside [lo, hi] (a pullback's support for longs / resistance for shorts)."""
-    inside = [z for z in zones if lo <= z.price <= hi and z.strength >= CONFIG.zones.min_strength]
+    inside = [z for z in zones if lo <= z.price <= hi and z.strength >= CONFIG.zones.min_strength
+              and not liq_only(z)]
     return max(inside, key=lambda z: z.strength) if inside else None

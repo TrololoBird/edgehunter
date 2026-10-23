@@ -15,6 +15,7 @@ direction; none ahead of the entry -> no trade). Detected loop-side on the final
 - one setup per coin, window and direction.
 """
 from datetime import datetime, timedelta, timezone
+from config import CONFIG
 from typing import Dict, Optional, Sequence
 from zoneinfo import ZoneInfo
 
@@ -149,7 +150,9 @@ class SilverBulletStrategy(Strategy):
         bias = sig.get('weekly_bias') or sig.get('daily_bias')
         if bias:
             return 'against_bias' if bias == -direction else None
-        return 'against_trend' if sig.get('coin_trend') == -direction else None
+        # eng-150 (plan 4.1): ICT's top-down order has no 1h substitute - no weekly / daily bias, no trade (blocking)
+        return 'sweep_no_htf_bias' if CONFIG.strategies.sweep_bias_required else \
+            ('against_trend' if sig.get('coin_trend') == -direction else None)
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr
