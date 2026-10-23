@@ -452,7 +452,7 @@ class LevelsConfig:
     # eng-147: the trigger's close farther than this many ATRs of the working timeframe beyond the zone's edge (the
     # anchor level) = an entry at the end of the impulse candle: vetoed 'trigger_overshoot' (journal eng-135..144:
     # 11 such entries -7.00R; the threshold was read off that sample). 0 = off
-    max_trigger_overshoot_atr: float = 0.6
+    max_trigger_overshoot_atr: float = 0.6   # eng-148: journal reference only (trigger_over_atr), no longer blocks
     # Entries with R:R to TP1 below this are LOW RR: with veto_low_rr they are journaled as vetoed entries
     # (vetoed='low_rr') and the card keeps waiting, so the screen only shows entries worth taking by hand
     # 2:1, the practitioners' minimum for intraday trades (breakeven win rate 33% before costs); was 1.0
@@ -499,7 +499,7 @@ class LevelsConfig:
     # eng-86: off again. eng-85's 1.0 was reasoned, not measured: the laptop journal (30.09-11.10, 961 closed entries) had
     # rr_tp1 < 0.5 near zero (+0.07R) and >= 1.5 at -0.6..-0.74R - the floor kept the worse buckets
     # eng-147 (the owner): on again - the VPS journal eng-135..144 had 8 entries with TP1 < 1R at -4.74R
-    min_rr_tp1_floor: float = 1.0
+    min_rr_tp1_floor: float = 0.0    # eng-148: eng-147's global 1R floor off (vetoed TP1 >= 1R lost more); rr_tp1 + strat_class journaled
     # Finished signals stay on screen this long
     finished_display_sec: int = 1800
 
@@ -804,7 +804,7 @@ class StrategiesConfig:
     # Turtles' own 12-unit limit; eng-144: Turtle / Connors cards count here too (one card = one slot).
     # eng-146: 3 (was 6): alts correlate 0.8-0.9 in falls, so 6 positions at 1R were one ~5.6R bet; 3 caps the
     # cluster at ~3R per direction (policy, not fitted)
-    crowd_max: int = 3
+    crowd_max: int = 0               # eng-148, the owner: 0 = no limit on the demo (the rank is journaled, crowd_pos)
     # eng-128: the data-mined layers (models/profiles.json, profiles_regime.json: research_optimize's filters, stops,
     # break-even, time stops, the 'regime_off' veto; models/exit_overlays.json: research_overlays' early exits and the
     # alts_with filter) have no source - fitted on the archive, several negative on their own validation: off
@@ -1022,12 +1022,12 @@ class JournalConfig:
     # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
     outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-147"
+    logic_version: str = "eng-148"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
-    keep_waiting_from: str = "eng-147"
+    keep_waiting_from: str = "eng-148"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"
@@ -1114,13 +1114,12 @@ class ExecutorConfig:
     day_alert_r: float = 0.0          # a Telegram alert (not a block) once the UTC day's closed trades lost this many R
     # owner 2026-10-18 (live demo 10-11..10-17: 3 longs in one 15 min all stopped, LDO/ATOM/VIRTUAL, ONDO/FIL/NIGHT,
     # MAGIC/ALGO/APE): at most one demo entry per direction within cluster_entry_sec (0 = off)
-    cluster_entry_sec: int = 900
+    cluster_entry_sec: int = 0       # eng-148, the owner: off - the demo shows every trade
     # owner 2026-10-18: no demo trade of these setups (live demo 10-11..10-17: 23 of 30 lost, -17.8R of -33.8R, BTC up
     # or down alike); their cards are still journaled
     # eng-145, the owner (live journal eng-82..144): market_profile 12 of 13 stopped, bollinger 18 of 20 without TP1
     # stopped, breakout (the Turtles' ~16% 2N stop, MFE 0.3R; BB1) -1.25R - journaled, no demo trades
-    demo_off_setups: tuple = ('BB W-BOTTOM', 'BB M-TOP', 'BB3 BUY', 'BB3 SELL', 'VA80 LONG', 'VA80 SHORT',
-                              'AUCTION LONG', 'AUCTION SHORT', 'BREAKOUT UP', 'BREAKOUT DOWN', 'BB1 UP', 'BB1 DOWN')
+    demo_off_setups: tuple = ()      # eng-148, the owner: every strategy back on the demo
     daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 

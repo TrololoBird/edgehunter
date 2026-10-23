@@ -900,3 +900,25 @@ The owner's decisions:
   min(rr_tp1, 2.5) (2.0 without a TP1).
 - VA80 / ORB notes: "out at the session's close" (the SAR text was stale).
 Dropped on data: Bollinger W window / bridge, the VA80 stop, break-even after TP1.
+
+## eng-148 (2026-10-23) - eng-147's unproven blocks back to shadow, no demo limits, stage-0 diagnostics
+The plan: docs/PLAN_eng148.md (owner's yes to stages 0-3 on the VPS, one restart). Evidence: 9174 vetoed entries of
+eng-135..144 lost -0.26R vs -0.22R entered; vetoed TP1 >= 1R lost MORE (-0.46R) than TP1 < 1R (-0.21R); the sweep
+filters cut 1170 entries at -0.24R (cut and kept lose alike); the 0.6 ATR overshoot threshold was set in sample.
+- Demo policy (the owner): `crowd_max = 0` (no direction limit; the pass's ranking is journaled as `crowd_pos`),
+  `executor.cluster_entry_sec = 0`, `executor.demo_off_setups = ()`. Kept: one trade per coin (BingX netting) and the
+  Turtles' own unit limits (their rules are not changed). Pump averaging into a loser is already gone (eng-91).
+- Sweep: against_bias / against_trend / no_htf_poi / premium / discount are shadow vetoes again (as eng-107).
+- `levels.min_rr_tp1_floor = 0` (the method's own minimums stay: Seiden 3:1, min_rr_on_tp1); `strat_class` journaled
+  (trend / structure / mean_reversion) for a later floor by class.
+- trigger_overshoot: journal-only (`trigger_over_atr`, `rr_trigger` net of costs, `cost_r`); the residual R:R at the
+  trigger price is low_rr's own check (entry_levels at the trigger close), no separate veto.
+- market_down: a shadow veto for reversal longs (SWEEP LOW, SILVER BULLET LONG, SPRING, FLUSH REVERSAL, SD DEMAND,
+  VA80 / AUCTION LONG, BB W-BOTTOM), still blocking for impulse / breakout / trend longs.
+- Journal (entry rows): `mfe_life_r` / `mae_life_r` (to the stop or the window's end), `mfe_n10_r` / `mae_n10_r`
+  (10 15m bars), `post_stop_mfe_r` (15 15m bars after a stop), shadow time stop `time_stop` / `time_stop_r`
+  (8 15m bars with MFE < 0.4R), `optimistic_fill` (a limit the first hour only touched); on the 8h window of every entry, relabelled over the life.
+- stats.py: "eng-148 splits" - net R @TP1 weighted 1 / c_t over 15m x direction clusters, cluster-bootstrap p and BH q,
+  by class / UTC hour / weekend / volume / crowd top 3 / time stop / limit fill / TP1 R:R.
+Not in this batch (need new detectors or the archive): the ICT limit / 50-50 split, the two-contour stop, sweep
+re-entry, ORB NR4/NR7, Wyckoff ST/BUEC, regime routing, BTC/ETH SMT, the BTC-EMA50 market_down variant, stage 4.

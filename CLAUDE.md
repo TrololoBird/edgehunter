@@ -31,7 +31,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
 `main.py -> scanner.Scanner -> fetcher.DataFetcher (+ venues.*Stream, flow, depth, symbols, ratelimit) -> indicators -> scorer / strategies (detect, structure) -> signal_book (+ strategies, levels, zones, positioning) -> webui / journal / notifier`; `watchdog.LoopWatchdog` watches the event loop, `storage.atomic_write` writes state files. All tunables are frozen dataclasses in `config.py` reached through the global `CONFIG`. Bandwidth, not CPU, is the binding constraint of the data layer; every Binance REST call goes through `DataFetcher._rest_call` (weight budget); 15m candles are built from closed 1m candles; heavy work runs in worker processes / threads, never on the loop.
 
 ### Strategies
-  - **Current registry (eng-147; the history of each change is in the eng-NN notes at the end)** - one methodology =
+  - **Current registry (eng-148; the history of each change is in the eng-NN notes at the end)** - one methodology =
     one strategy name, several playbooks may share it:
     - `continuation` (IMPULSE UP / DOWN from Tier-0; BULL F / BEAR D removed in eng-127, Bollinger method I is BB1
       under `breakout`) - ICT OTE 0.62-0.79 of a leg with displacement and a break of structure, Elder's tide ~5x the
@@ -47,10 +47,12 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
       `connors` (daily RSI(2)), `cup_handle` (O'Neil, 1h / 4h), `pump` (PUMP START / PUMP TOP, the owner's, with 1:1
       averaging).
     - The 15m phase scores (A-F) are still computed and journaled as structured rows; none feeds a card since eng-127.
-    - eng-145: longs blocked while BTC and the market are down over 24h (`market_down`; Turtles / Connors exempt);
-      `executor.demo_off_setups` keeps Bollinger, Market Profile, BREAKOUT and BB1 off the demo account.
+    - eng-145: longs blocked while BTC and the market are down over 24h (`market_down`; Turtles / Connors exempt).
     - eng-147: TP1 >= 1R, TP2 / TP3 +1R steps, capped stop pads, `trigger_overshoot`, blocking SWEEP filters, swept
       levels skipped, `mfe_r` / `mae_r`, executor `chase_limit`, crowd ranking (docs/HISTORY.md).
+    - eng-148: no demo limits (crowd_max / cluster / demo_off_setups off), sweep filters + TP1 floor back to shadow,
+      overshoot journal-only, market_down shadow for reversal longs, stage-0 journal
+      columns + `stats.py` cluster-weighted splits (docs/PLAN_eng148.md).
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

@@ -84,6 +84,60 @@ HORIZONS = {'15m': 15, '1h': 60, '4h': 240, '8h': 480}
 CLOSE_MARGIN_MS = 5_000
 
 
+STRATEGY_CLASS = {'breakout': 'trend', 'continuation': 'trend', 'orb': 'trend', 'cup_handle': 'trend',
+                  'trendline': 'structure', 'sweep': 'structure', 'wyckoff': 'structure', 'supply_demand': 'structure',
+                  'connors': 'mean_reversion', 'bollinger': 'mean_reversion', 'market_profile': 'mean_reversion',
+                  'pump': 'mean_reversion', 'po3': 'structure', 'oi_build': 'trend'}
+
+
+def strategy_class(mode: Optional[str]) -> Optional[str]:
+    """eng-148 (audit 3 / 31): the exit class a strategy belongs to, journaled for a later TP1 floor by class."""
+    return STRATEGY_CLASS.get(mode or '')
+
+
+def excursions(row: Dict, window: List) -> Dict:
+    """eng-148 (stage 0): the trade's MFE / MAE in R up to its stop (or the window's end), over the first 10 15m bars
+    (when the window covers them), and the best move in the 15 15m bars after the stop
+    (post_stop_mfe_r: how often the stop was a raid that then went the trade's way). The 1m window starts at the entry."""
+    e, sl, d = row.get('entry'), row.get('sl'), row.get('direction')
+    if not e or not sl or d not in (-1, 1) or d * (e - sl) <= 0 or not window:
+        return {}
+    risk = d * (e - sl)
+    # 15m bars for every timeframe (review of eng-148: 4h-tf bars need days of minutes, only survivors had them)
+    bar = 15
+
+    def fav(k):
+        return d * ((float(k[2]) if d > 0 else float(k[3])) - e) / risk
+
+    def adv(k):
+        return d * ((float(k[3]) if d > 0 else float(k[2])) - e) / risk
+
+    stop_i = next((i for i, k in enumerate(window) if adv(k) <= -1), None)
+    through = CONFIG.levels.target_through_bps / 1e4
+    if row.get('limit_entry'):
+        # a resting limit the first hour only touched (never traded through it) - the demo / replay fill is optimistic
+        hit = any((float(k[3]) < e * (1 - through)) if d > 0 else (float(k[2]) > e * (1 + through)) for k in window[:60])
+        opt = {'optimistic_fill': int(not hit)}
+    else:
+        opt = {}
+    life = window[:stop_i + 1] if stop_i is not None else window
+    out = {'mfe_life_r': max(fav(k) for k in life), 'mae_life_r': max(-1.0, min(adv(k) for k in life)), **opt}
+    if len(window) >= 10 * bar:
+        n10 = window[:10 * bar]
+        out['mfe_n10_r'], out['mae_n10_r'] = max(fav(k) for k in n10), min(adv(k) for k in n10)
+    if stop_i is not None and len(window) >= stop_i + 1 + 15 * bar:
+        out['post_stop_mfe_r'] = max(fav(k) for k in window[stop_i + 1:stop_i + 1 + 15 * bar])
+    # stage 3 shadow (audit 14): a time stop - out at the close of the 8th working bar when the trade has not made
+    # 0.4R by then and was not stopped before; 1 = it would have fired, time_stop_r = the R of that exit (before costs)
+    n8 = 8 * bar
+    if len(window) >= n8 and (stop_i is None or stop_i >= n8):
+        fired = max(fav(k) for k in window[:n8]) < 0.4
+        out['time_stop'] = int(fired)
+        if fired:
+            out['time_stop_r'] = d * (float(window[n8 - 1][4]) - e) / risk
+    return out
+
+
 def horizon_due_ms(ts_ms: int, minutes: int) -> int:
     """Epoch ms from which the `minutes` horizon of a row logged at ts_ms can be evaluated."""
     first_minute = -(-ts_ms // 60_000) * 60_000
@@ -201,6 +255,13 @@ EXTRA_COLUMNS = {
     # the excursions over 4h from the ENTRY in R, signed by the direction (mfe_4h / mae_4h are raw highs / lows vs
     # the signal price, whatever the direction)
     'zone_edge': 'REAL', 'trigger_over_atr': 'REAL', 'mfe_r': 'REAL', 'mae_r': 'REAL',
+    # eng-148 (stage 0): excursions in R over the trade's life (to the stop / the window's end), over 10 15m bars,
+    # the best move in 15 15m bars AFTER a stop; the cost in R; the strategy class; the place
+    # in the pass's crowd ranking (0 = best); the residual R:R from the trigger price; a limit fill the price only
+    # touched (no trade through by a tick: optimistic on the demo)
+    'mfe_life_r': 'REAL', 'mae_life_r': 'REAL', 'mfe_n10_r': 'REAL', 'mae_n10_r': 'REAL', 'post_stop_mfe_r': 'REAL',
+    'cost_r': 'REAL', 'strat_class': 'TEXT', 'crowd_pos': 'INTEGER', 'rr_trigger': 'REAL', 'optimistic_fill': 'INTEGER',
+    'time_stop': 'INTEGER', 'time_stop_r': 'REAL',
     # extdata.py: Deribit BTC DVOL and its 1h change, BTC options put / call OI; the next-funding spread across
     # Binance / Bybit / Hyperliquid (8h-equivalent); OKX / Bybit book imbalance within 0.5%
     'dvol_btc': 'REAL', 'dvol_chg_1h': 'REAL', 'pc_oi_btc': 'REAL', 'funding_spread': 'REAL',
@@ -635,6 +696,8 @@ class SignalJournal:
                     'tp1_src': lv.get('tp1_src'), 'tp2_src': lv.get('tp2_src'), 'tp3_src': lv.get('tp3_src'),
                     'range_pos': lv.get('range_pos'),
                     'zone_edge': lv.get('zone_edge'), 'trigger_over_atr': lv.get('trigger_over_atr'),
+                    'cost_r': lv.get('cost_r'), 'rr_trigger': lv.get('rr_trigger'),
+                    'strat_class': strategy_class(tracked.mode), 'crowd_pos': tracked.sig.get('crowd_pos'),
                     # eng-58: a resting limit (Seiden's line, ICT's CE / OTE): the replay fills it at the entry price
                     'limit_entry': int((tracked.plan or {}).get('trigger') == 'touch'
                                        and not CONFIG.executor.touch_confirm_close),
@@ -1054,7 +1117,7 @@ class SignalJournal:
                 # eng-102: simulate reads limit_entry / volume_24h - without them every resting-limit entry was
                 # replayed as a market fill (next minute's open + slippage) at the default liquidity's slippage
                 f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h, "
-                f"funding_hours, limit_entry, volume_24h FROM signals "
+                f"funding_hours, limit_entry, volume_24h, anchor FROM signals "
                 f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
                 (*[due[label] for label in HORIZONS], limit),
             )
@@ -1146,6 +1209,7 @@ class SignalJournal:
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
             # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
             updates.update(self._replay(row, window))
+            updates.update(excursions(row, window))      # eng-148: every entry, stopped or not, on its 8h window
             updates['outcome_h'] = minutes // 60
         sets = ', '.join(f"{col} = ?" for col in updates)
         with self._lock:
@@ -1175,7 +1239,7 @@ class SignalJournal:
         with self._lock:
             cursor = self.conn.execute(
                 "SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, kind, funding_8h, funding_hours, "
-                "limit_entry, volume_24h FROM signals WHERE kind = 'entry' AND eval_failed = 0 AND entry IS NOT NULL "
+                "limit_entry, volume_24h, anchor FROM signals WHERE kind = 'entry' AND eval_failed = 0 AND entry IS NOT NULL "
                 "AND direction IS NOT NULL AND outcome IN ('OPEN', 'TP1', 'TP2') AND COALESCE(outcome_h, 8) < ? "
                 "AND ts_ms <= ? AND ts_ms >= ? ORDER BY ts_ms LIMIT ?", (hours, due, since, limit))
             columns = [c[0] for c in cursor.description]
@@ -1213,6 +1277,7 @@ class SignalJournal:
             updates = {'outcome_h': CONFIG.journal.outcome_life_h}
         else:
             updates = self._replay(row, window)
+            updates.update(excursions(row, window))
             updates['outcome_h'] = len(window) // 60
             if len(window) < minutes:
                 updates['outcome_h'] = CONFIG.journal.outcome_life_h     # the exchange has no more: as long as it gets

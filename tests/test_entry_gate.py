@@ -9,6 +9,15 @@ import pytest
 from executor import DemoExecutor
 
 
+@pytest.fixture(autouse=True)
+def _gate_on(monkeypatch):
+    # eng-148: the owner turned both rules off on the demo (defaults 0 / ()); the mechanism is checked switched on
+    import executor
+    monkeypatch.setattr(executor.CONFIG, 'executor', SimpleNamespace(**{
+        **vars(executor.CONFIG.executor), 'cluster_entry_sec': 900,
+        'demo_off_setups': ('BB W-BOTTOM', 'VA80 LONG', 'AUCTION LONG')}))
+
+
 def _executor(tmp_path, trades=(), pending=None):
     ex = DemoExecutor.__new__(DemoExecutor)
     ex.db_path = str(tmp_path / 'demo.db')

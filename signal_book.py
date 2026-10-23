@@ -504,7 +504,8 @@ class SignalBook:
                     entries.append(result)
         finally:
             self._deferring = False
-        for s, lv, t_ms, cf in sorted(self._deferred, key=lambda c: crowd_rank(c[0], c[1], candles_of)):
+        for pos, (s, lv, t_ms, cf) in enumerate(sorted(self._deferred, key=lambda c: crowd_rank(c[0], c[1], candles_of))):
+            s.sig['crowd_pos'] = pos     # eng-148: journaled (Top vs Rest), no slot limit on the demo
             result = self._enter(s, lv, t_ms, None, cf)
             if result is not None:
                 entries.append(result)
@@ -1332,25 +1333,30 @@ class SignalBook:
     @staticmethod
     def _overshoot(s: TrackedSignal, entry: float, levels: Dict, block: bool = True) -> Optional[str]:
         """
-        eng-147 (journal eng-135..144: 11 entries > 0.6 ATR past their level, -7.00R): a trigger close far beyond
-        the setup's level is a chase, not the level's entry. The edge is the anchor's level (the swept high / low, the
-        band, the value-area edge) where the plan has one, else the zone's trade-side edge (an armed sweep's zone is
-        its FVG's CE, not the swept level). Edge and overshoot are journaled for every plan; blocking 'trigger_overshoot'.
+        eng-147 measured how far a trigger close ran past the setup's level (the anchor's level for sweeps, else the
+        zone's trade-side edge) in working-tf ATRs. eng-148 (audit: the 0.6 ATR threshold was chosen in sample): the
+        ATR overshoot is journaled only; the residual R:R from the trigger price is low_rr's own check (entry_levels
+        at the trigger close vs the method's min_rr), so nothing more blocks here.
+        Journaled too: cost_r (the round-trip cost in R) and rr_trigger.
         """
         plan, d = s.plan or {}, s.direction
         anchor = plan.get('anchor') or {}
-        # the swept level for sweeps (the retrospective's measure; an armed sweep's zone is its CE); every other plan
-        # from its zone's edge (a trendline's zone is the line extended to now, its anchor the line at the break)
+        sl, tp1 = levels.get('sl'), levels.get('tp1')
+        if entry is not None and sl is not None and d * (entry - sl) > 0:
+            from strategies.geometry import cost_of
+            fee = cost_of(entry, (s.sig or {}).get('volume_24h'), s.symbol)
+            risk = d * (entry - sl)
+            levels['cost_r'] = fee / risk
+            if tp1 is not None and not plan.get('no_tp'):
+                levels['rr_trigger'] = (d * (tp1 - entry) - fee) / (risk + fee)
         edge = anchor.get('level') if s.mode == 'sweep' and anchor.get('type') == 'level' else None
         if edge is None and plan.get('zone_lo') is not None and plan.get('zone_hi') is not None:
             edge = plan['zone_hi'] if d > 0 else plan['zone_lo']
         work = plan.get('tf_atr') or plan.get('leg_atr') or plan.get('atr')
-        if edge is None or not work or entry is None:
-            return None
-        over = d * (entry - edge) / work
-        levels['zone_edge'], levels['trigger_over_atr'] = edge, over
-        if block and s.mode not in SignalBook.OVERSHOOT_EXEMPT and over > CONFIG.levels.max_trigger_overshoot_atr:
-            return 'trigger_overshoot'
+        if edge is not None and work and entry is not None:
+            levels['zone_edge'], levels['trigger_over_atr'] = edge, d * (entry - edge) / work
+        # review of eng-148: the residual R:R check IS low_rr (geometry's rrs[0] vs the method's min_rr at the trigger
+        # price) - no separate veto; journal only
         return None
 
     def _enter(self, s: TrackedSignal, levels: Dict, now_ms: int, reason: Optional[str],
@@ -1370,7 +1376,11 @@ class SignalBook:
         if reason is None and self.crowded(s.mode, s.direction, entered_at):
             reason = 'crowded'
         if reason is None and self._market_down(s):
-            reason = 'market_down'
+            if s.group_key in self.MARKET_DOWN_SHADOW:
+                have = set(filter(None, (s.sig.get('shadow_veto') or '').split(',')))
+                s.sig['shadow_veto'] = ','.join(sorted(have | {'market_down'}))
+            else:
+                reason = 'market_down'
         hb = (confirms or {}).get('_bias') or {}
         if reason is None:
             # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py)
@@ -1859,6 +1869,10 @@ class SignalBook:
     # market (the universe's median) both fell over the last 24h (eng-146: 24h only). The Turtles' rules are not changed and
     # Connors buys the dip by design: both exempt. Blocking (not shadow); journaled as vetoed 'market_down'
     MARKET_DOWN_EXEMPT = ('BREAKOUT UP', 'RSI2 LONG', 'RSI2X LONG')    # the Turtles and Connors (not BB1)
+    # eng-148 (audit): a reversal long is bought INTO weakness by design - market_down is a shadow veto for these
+    # (journaled in shadow_veto), blocking only impulse / breakout / trend longs
+    MARKET_DOWN_SHADOW = ('SWEEP LOW', 'SILVER BULLET LONG', 'SPRING', 'FLUSH REVERSAL', 'SD DEMAND', 'VA80 LONG',
+                          'AUCTION LONG', 'BB W-BOTTOM')
 
     def _market_down(self, s: TrackedSignal) -> bool:
         if s.direction <= 0 or s.group_key in self.MARKET_DOWN_EXEMPT or self.market_state_of is None:
@@ -1872,6 +1886,8 @@ class SignalBook:
         """eng-51: crowd_max open trades in this direction across all strategies (Turtles' correlated-markets limit)."""
         # eng-144: Turtle / Connors cards count and are capped too (Faith: a limit on closely correlated markets;
         # live 11-21.10 Turtle 10 trades -11.6R, 0 winners, entered together; crowded signals -0.22R vs clean +0.01R)
+        if CONFIG.strategies.crowd_max <= 0:
+            return False                 # eng-148, the owner: no position-count limit on the demo account
         n = sum(1 for o in self.signals.values() if o.entered_at and not o.finished and o.direction == direction)
         return n >= CONFIG.strategies.crowd_max
 

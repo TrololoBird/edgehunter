@@ -746,7 +746,7 @@ class DemoExecutor:
             return
         same = sum(1 for p in self.pending.values() if not p.get('skip') and p.get('direction') == d) + \
             sum(1 for t in self.open.values() if t.get('direction') == d and t.get('strategy') != 'breakout')
-        if same >= CONFIG.strategies.crowd_max:
+        if 0 < CONFIG.strategies.crowd_max <= same:
             # eng-51: open trades + resting limits in one direction are one correlated bet - at most crowd_max (not
             # marked: the card gets its limit once a slot frees)
             return

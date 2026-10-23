@@ -682,6 +682,68 @@ def vetoes_table(console: Console, rows: List):
     console.print(table)
 
 
+def slices_table(console: Console, rows: List):
+    """
+    eng-148 (stage 0): the replayed entries (net R @TP1, passed and vetoed alike) split by the journal's new fields and
+    the audit's splits. Each row is weighted 1 / c_t (c_t = entries of the same 15m window and direction: one BTC
+    move is one observation, not twenty), the p-value is the cluster bootstrap, q the Benjamini-Hochberg FDR over
+    every split shown. Read-only diagnostics: a split decides nothing without the pre-registered pass rule
+    (>= 100 clusters, p < 0.05, E[R] > 0 after costs, both halves).
+    """
+    entries = [r for r in rows if r['kind'] == 'entry' and _col(r, 'outcome') not in (None, 'SKIPPED', 'OPEN')
+               and net_r(r, 'r_tp1') is not None]
+    if len(entries) < MIN_SAMPLE:
+        return
+    key = {id(r): (r['ts_ms'] // 900_000, r['direction']) for r in entries}
+    count: Dict = {}
+    for r in entries:
+        count[key[id(r)]] = count.get(key[id(r)], 0) + 1
+
+    def hour_bin(r):
+        h = _col(r, 'hour_utc')
+        return None if h is None else f"{h // 4 * 4:02d}-{h // 4 * 4 + 4:02d} UTC"
+
+    def vol_bin(r):
+        v = _col(r, 'volume_24h')
+        return None if v is None else ('< $30M' if v < 30e6 else '>= $30M')
+
+    def crowd_bin(r):
+        p = _col(r, 'crowd_pos')
+        return None if p is None else ('top 3' if p < 3 else 'rest')
+
+    def flag(col, yes, no):
+        return lambda r: None if _col(r, col) is None else (yes if _col(r, col) else no)
+
+    splits = [('class', lambda r: _col(r, 'strat_class')), ('hour', hour_bin),
+              ('weekend', flag('weekend', 'weekend', 'weekday')), ('volume', vol_bin), ('crowd', crowd_bin),
+              ('time stop 8 bars', flag('time_stop', 'would fire', 'no')),
+              ('limit fill', flag('optimistic_fill', 'touch only', 'traded through')),
+              ('TP1 R:R', lambda r: None if _col(r, 'rr_tp1') is None else ('< 1R' if r['rr_tp1'] < 1 else '>= 1R'))]
+    out = []
+    for name, fn in splits:
+        groups: Dict = {}
+        for r in entries:
+            g = fn(r)
+            if g is not None:
+                groups.setdefault(g, []).append(r)
+        for g, members in sorted(groups.items()):
+            vals = [net_r(r, 'r_tp1') for r in members]
+            w = [1 / count[key[id(r)]] for r in members]
+            mean = sum(v * x for v, x in zip(vals, w)) / sum(w)
+            cl = [key[id(r)] for r in members]
+            out.append((name, str(g), len(members), len(set(cl)), mean, bootstrap_p(vals, cl)))
+    qs = bh_q([o[5] for o in out])
+    table = Table(title="eng-148 splits: replayed entries, net R @TP1 weighted 1/c_t (15m x direction clusters)",
+                  header_style="bold magenta", border_style="blue")
+    for col in ("Split", "Group", "Entries", "Clusters", "E[R] w", "p", "q (BH)"):
+        table.add_column(col, justify="left" if col in ("Split", "Group") else "right", no_wrap=True)
+    for (name, g, n, k, mean, p), q in zip(out, qs):
+        table.add_row(name, g, str(n), Text(str(k), style="dim" if k < 100 else "white"),
+                      Text(f"{mean:+.2f}R", style="green" if mean > 0 else "red"),
+                      "—" if p is None else f"{p:.3f}", "—" if q is None else f"{q:.3f}")
+    console.print(table)
+
+
 def card_results_table(console: Console, rows: List):
     """Entered cards by their OWN exit (card_r: the lifecycle's trailing channel / pyramided units / TTL close): the only
     result of the Turtles or Connors, whose trades outlive the 8h replay."""
@@ -1257,6 +1319,7 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     levels_table(console, {k: v for k, v in groups.items() if k.startswith('ENTRY')})
     sources_table(console, rows)
     vetoes_table(console, rows)
+    slices_table(console, rows)
     reversal_test_table(console, rows)
     card_results_table(console, rows)
     # eng-58: the verdict over the version family since CONFIG.journal.verdict_since (net card R)

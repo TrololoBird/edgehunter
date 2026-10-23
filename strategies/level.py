@@ -3,9 +3,10 @@ Level strategies: the anchor is a price level and the extreme made at it, not a 
 
 - sweep (SWEEP LOW / SWEEP HIGH): a closed 15m candle pierces a higher-timeframe resting-stop pool (structure.py) -
   at most the pool kind's measured pierce p90 (no minimum with the pierce model) - and closes back beyond it on
-  volume. Bias: the weekly bias, else the daily, else the coin's trend (context_veto: 'sweep_against_bias' /
-  'sweep_against_trend'). A raid outside a 1h+ POI ('sweep_no_htf_poi') and an entry in premium / discount of the
-  dealing range ('sweep_premium' / 'sweep_discount') block too (eng-147; they were shadow since eng-107).
+  volume. Bias: the weekly bias, else the daily, else the coin's trend (context_veto: 'against_bias' /
+  'against_trend'). A raid outside a 1h+ POI ('no_htf_poi') and an entry in premium / discount of the dealing range
+  ('premium' / 'discount') are SHADOW vetoes again (eng-148: eng-147 had made them blocking; audit 33: the cut and the
+  kept entries lost alike, journaled until a pre-registered test decides).
 - the entry (trigger 'fvg', ICT's 2022 model, eng-58): a displacement that breaks the swing the raid came from and
   leaves a gap arms the gap's CE (ict.fvg_setup); with executor.touch_confirm_close the trade opens at the CLOSE of
   the trigger candle that touched the CE and closed back on the trade's side (no resting limit).
@@ -125,12 +126,11 @@ class SweepStrategy(Strategy):
         # ICT: a sweep is traded in the direction of the higher-timeframe bias (the daily one); with no daily bias the
         # coin's 1h trend decides, as before
         # ICT's top-down order: the weekly bias first, the daily one when the week has none
-        # eng-147 (the owner; journal eng-135..144: 9 sweeps -6.77R, the 6 against the context -4.64R): BLOCKING for
-        # SWEEP LOW / HIGH - own names, so strategies.shadow_vetoes (against_bias / against_trend) does not shadow them
+        # eng-148: shadow again (strategies.shadow_vetoes: against_bias / against_trend)
         bias = sig.get('weekly_bias') or sig.get('daily_bias')
         if bias:
-            return 'sweep_against_bias' if bias == -direction else None
-        return 'sweep_against_trend' if sig.get('coin_trend') == -direction else None
+            return 'against_bias' if bias == -direction else None
+        return 'against_trend' if sig.get('coin_trend') == -direction else None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig, d, atr = x.sig, x.direction, x.atr
@@ -142,14 +142,15 @@ class SweepStrategy(Strategy):
         # (order block, FVG, BPR, breaker), and the entry (5m FVG). A raid in empty space is no ICT setup.
         poi = [z for z in zones if any(re.match(r'(ob|fvg|bpr|breaker)_(1h|4h|1d|1w)$', k) for k in z.kinds)
                and z.lo <= max(extreme, level) and z.hi >= min(extreme, level)]
+        from signal_book import shadow_veto
         if not poi:
-            # eng-147: blocking again (eng-107 had put it in shadow): a raid outside a 1h+ PD array is no ICT setup
-            return {'skip': 'sweep_no_htf_poi'}
+            # eng-148: shadow again (eng-107; eng-147 had made it blocking without an out-of-sample test)
+            shadow_veto(sig, 'no_htf_poi')
         # premium / discount of the dealing range (1h pivots, ict.dealing_range): longs only in its discount half, shorts only in its premium
         from strategies.ict import dealing_range, range_position
         pos = range_position(dealing_range(x.h1 or []), extreme, d)
         if pos is not None and pos > 0.5:
-            return {'skip': 'sweep_premium' if d > 0 else 'sweep_discount'}     # eng-147: blocking
+            shadow_veto(sig, 'premium' if d > 0 else 'discount')     # eng-148: shadow again
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         from pierce import overshoot as _pierce
         from strategies.geometry import capped_pad
