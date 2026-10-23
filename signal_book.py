@@ -1057,6 +1057,7 @@ class SignalBook:
             # back by the scan; a return never revives it
             hit = self._invalid_since(s, candles_of, invalid, plan.get('invalid_close_min'))
             if hit is not None:
+                self._pool2_on_invalid(s, candles_of, now_ms)
                 self._finish(s, 'INVALID', now, self._invalid_reason(s, hit, invalid))
                 return None
         check = price
@@ -1064,6 +1065,7 @@ class SignalBook:
             # the system invalidates on a CLOSE beyond (a wick through is allowed): the last final candle of that tf
             check = self._last_close(s.symbol, candles_of, plan['invalid_close_min'])
         if invalid is not None and check is not None and d * (check - invalid) <= 0:
+            self._pool2_on_invalid(s, candles_of, now_ms)
             self._finish(s, 'INVALID', now, self._invalid_reason(s, price, invalid))
             return None
         tp1 = plan['targets'][0]
@@ -1162,6 +1164,7 @@ class SignalBook:
         kind = s.plan.get('trigger', 'shift')
         shadow = self._shadow_entry(s, ltf, kind, interval_ms, now_ms, price)
         self._limit_variants(s, ltf, interval_ms, now_ms, price)
+        self._pool2_variant(s, ltf, interval_ms, now_ms)
         if kind == 'fvg':
             # ICT 2022 (eng-58): the sweep is only the setup; once the displacement broke the swing the raid came from
             # and left a gap, a limit rests at the gap's CE (the plan becomes a touch plan: the demo places it)
@@ -1545,6 +1548,39 @@ class SignalBook:
             if levels and d * (levels['entry'] - levels['sl']) > 0:
                 levels['zone_src'] = s.plan.get('zone_src')
                 self._variant(s, name, levels, trig['time'] - interval_ms, limit=True)
+
+    def _pool2_on_invalid(self, s: TrackedSignal, candles_of, now_ms: int):
+        """review eng-151: the second raid usually runs through the card's invalidation - the variant is read before
+        the card ends INVALID, or only the touches that turned within the pad would be journaled (survivorship)."""
+        if s.mode != 'sweep' or not s.plan.get('pool2') or 'variant_pool2' in s.variants_done:
+            return
+        minutes = list(candles_of(s.symbol))
+        if not minutes:
+            return
+        # re-review: the touch on the final 1m candles themselves (a closed trigger candle misses a fast raid inside
+        # the forming one), any time since the zone, including the invalidation's minute
+        self._pool2_variant(s, minutes, MINUTE_MS, now_ms, stale=False)
+
+    def _pool2_variant(self, s: TrackedSignal, ltf, interval_ms: int, now_ms: int, stale: bool = True):
+        """
+        eng-151 (external audit #2): when an untaken pool sits within zone_move_pool_atr beyond the sweep's extreme
+        (plan['pool2']), a resting limit at that pool's liquidity, filled on the touch - the second raid - with the
+        plan's stop rule from the pool and its targets, 'variant_pool2' (never traded), against the live entry.
+        """
+        p2 = s.plan.get('pool2')
+        if s.mode != 'sweep' or not p2 or not s.zone_since_ms or 'variant_pool2' in s.variants_done:
+            return
+        level = p2['entry']
+        trig = touch_trigger(ltf, s.direction, s.zone_since_ms, interval_ms, level, level)
+        if not trig:
+            return
+        if stale and now_ms - trig['time'] > interval_ms + 2 * MINUTE_MS:
+            s.variants_done.append('variant_pool2')     # a stale touch (restart / gap)
+            return
+        levels = entry_levels(dict(s.plan, stop_ref=level), level, None, s.direction)
+        if levels and s.direction * (levels['entry'] - levels['sl']) > 0:
+            levels['zone_src'] = f"second raid: {p2['label']} (variant)"
+            self._variant(s, 'variant_pool2', levels, trig['time'] - interval_ms, limit=True)
 
     def _st_stop_variant(self, s: TrackedSignal, levels: Dict, trigger: Dict, now_ms: int, price: float):
         """

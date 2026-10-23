@@ -53,6 +53,7 @@ those was re-run for this table, so none is promoted to **empirical**.
 | Turtles: 2N stop, +1 unit / 0.5N, 4 units, channel exits | - | breakout | Faith, "Way of the Turtle" / Original Turtle Rules | Rules match the published text (CLAUDE.md: not changed); their edge in crypto perps is not established | heuristic (author's rule) |
 | Connors RSI(2), Crabel ORB, O'Neil cup-handle, Seiden 3:1, Dalton 80% | - | strategy rules | the authors' books | Implementations follow the summaries in the code; each author's result was on other markets / periods | heuristic (author's rule) |
 | `strategies.tl_band_atr` (eng-150) | 0.3 x ATR14(1h) | the band of a TL TOUCH (third touch) | audit 16 | Edwards & Magee: the third touch confirms a line, no number | heuristic |
+| `levels.opposing_min_gap_r` (eng-151) | 0.3R | a 1R step stops before an opposing zone at least this far past the previous target | external audit #3 | none | heuristic |
 | `strategies.zone_move_pool_atr` (eng-150) | 1.0 x structure-tf ATR | a pool this close beyond a sweep's extreme (journal-only `zone_moved`) | plan 4.3 | ours | heuristic |
 | `zones.weights` flip_1h (eng-150) | 1.0 | weight of a 1h S/R flip | plan 4.5 | ours, as the other sources | heuristic |
 

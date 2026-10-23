@@ -358,6 +358,8 @@ class Positioning:
                 merged = sorted(list(md.liq_events) + events, key=lambda e: e[0])
                 md.liq_events.clear()
                 md.liq_events.extend(merged)
+                for e in events:
+                    f.liq_bucket(e[0], e[2], e[3])
                 added += len(events)
             await asyncio.sleep(0.12)   # OKX public limit: 20 requests / 2s
         logger.info(f"OKX liquidations restored: {added} events")

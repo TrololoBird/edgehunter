@@ -1176,16 +1176,16 @@ class Scanner:
                     ema += k * (x - ema)
                 out['btc_below_ema50_4h'] = int(closed[-1] < ema)
         recent = before = 0.0
-        for md in self.market_data.values():
-            for e in md.liq_events:
-                if e[3] != 1:
-                    continue
-                age = now_ms - e[0]
-                if age <= 7_200_000:
-                    recent += e[2]
-                elif age <= 86_400_000:
-                    before += e[2]
-        if before > 0:
+        # eng-151: from the fetcher's 5m buckets (the per-coin event deques overflow on BTC / ETH within a day)
+        for b, usd in list(self.fetcher.liq_long_5m.items()):
+            age = now_ms - (b + 300_000)
+            if -300_000 < age <= 7_200_000 - 300_000:
+                recent += usd
+            elif 7_200_000 - 300_000 < age <= 86_400_000 - 300_000:
+                before += usd
+        # the 22h baseline must be covered (after a restart the buckets refill over a day: None until then)
+        first = self.fetcher.liq_live_since      # review eng-151: the OKX backfill's old buckets do not cover the day
+        if before > 0 and first is not None and now_ms - first >= 86_400_000:
             out['liq_cascade_2h'] = recent / (before / 11)
         flags = [v for v in (out['btc_below_ema50_4h'],
                              None if out['liq_cascade_2h'] is None else int(out['liq_cascade_2h'] >= 3)) if v is not None]

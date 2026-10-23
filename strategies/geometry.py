@@ -293,8 +293,21 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
             # the previous target's own zone (it sits in front of it by the pierce) and estimated liquidations
             # (confluence only, plan 4.6) do not block
             path = [z for z in zones if not liq_only(z) and z.label != sources[k - 1]]
-            _, block = obstacle_before(path, targets[k - 1], step, direction, risk)
-            if block is not None:
+            gap_r, block = obstacle_before(path, targets[k - 1], step, direction, risk)
+            if sources[k - 1].startswith('before '):
+                # review eng-151: the previous target already stands at an opposing zone - the next one repeats it
+                # (never a 1R step through that zone)
+                targets[k], rrs[k] = targets[k - 1], rrs[k - 1]
+                sources[k] = sources[k - 1]
+            elif block is not None and gap_r >= CONFIG.levels.opposing_min_gap_r:
+                # eng-151 (external audit #3): a target in front of the opposing zone's near edge, not back at the
+                # previous target (+1.7R zone after TP1 1R -> TP2 1.7R, not 1R)
+                # 0.01R in front of the edge: gap_r is rounded to 3 decimals and must not land inside the zone
+                targets[k] = targets[k - 1] + direction * (gap_r - 0.01) * risk
+                rrs[k] = (direction * (targets[k] - entry) - fee) / (risk + fee)
+                sources[k] = f"before {block}"
+                last_real = rrs[k]
+            elif block is not None:
                 targets[k], rrs[k] = targets[k - 1], rrs[k - 1]
                 sources[k] = f"repeat (opposing {block})"
             else:

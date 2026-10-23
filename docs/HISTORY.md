@@ -964,3 +964,22 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   beyond the band + the measured pierce; the E&M break stays; cup_handle stays 1d only.
 - Shadow: Crabel ORB from a fixed 13:30 UTC open journaled as `variant_orb_open` without a card (same as the live NY
   ORB until the US switches to EST on 2026-11-01).
+
+## eng-151 (2026-10-23) - fixes of eng-150 after the external audit (the owner's order; eng-150 was never live)
+- 4.1: `sweep_no_htf_bias` in `strategies.shadow_vetoes` (sweep + Silver Bullet): a context veto blocks before the
+  entry and its row has no outcome (eng-148: no_prior_trend 506 / po3_* 217 rows, r_tp1 on none), and blocking the
+  neutral bias while against_bias trades was not monotonic.
+- 4.7: a 1R step that meets an opposing zone >= `levels.opposing_min_gap_r` (0.3R, heuristic) past the previous
+  target stops at the zone's near edge (source 'before <zone>'); closer than that the previous target repeats.
+- 4.3 shadow: `variant_pool2` - when `zone_moved` (an untaken pool < 1 ATR beyond the sweep's extreme), a resting
+  limit at that pool's liquidity on the touch with the plan's stop rule from it; stats.py pairs it with the card's own
+  entry. The external audit's hard block (no trigger before the second pool) was not adopted untested.
+- `liq_cascade_2h` from 5m buckets of the universe's long liquidations (`DataFetcher.liq_long_5m`, ~25h): the per-coin
+  deque (maxlen 2000) overflowed on ETH (2145 / 24h) and BTC (1998); None until 24h of buckets after a restart.
+- replay: `book.h4_of` (4.2's 4h range). Version eng-151 (not 'eng-150.1': version_no parses an integer).
+- Review fixes: the 1R step's target sits 0.01R before the zone and the next target repeats it; variant_pool2 is
+  read before a card ends INVALID (the second raid runs through the invalidation; after a live entry it is not
+  journaled - a limit); the liq coverage guard counts from the first live event (OKX backfill is older); replay h4
+  closed candles only; against_trend still journaled when the bias veto is in shadow.
+  On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
+  entry or after the card ended - variant_pool2 compares only touches before the card's end.

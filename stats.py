@@ -787,7 +787,7 @@ def variants_table(console: Console, rows: List):
                   if _col(r, 'two_stop_r') is not None and _col(r, 'base_stop_r') is not None]))
     lines.append(('sweep second test vs its first entry', [(r['retest_r'], r['base_stop_r'], clus(r)) for r in live
                   if _col(r, 'retest_r') is not None and _col(r, 'base_stop_r') is not None]))
-    for name in ('variant_st_stop', 'variant_ce_limit', 'variant_fvg_edge'):
+    for name in ('variant_st_stop', 'variant_ce_limit', 'variant_fvg_edge', 'variant_pool2'):
         pairs = []
         for members in by_card.values():
             var = next((r for r in members if _col(r, 'vetoed') == name), None)

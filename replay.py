@@ -286,6 +286,7 @@ class Replay:
         b.levels_of = lambda s: self.raw.get(s) or None
         b.htf_of = lambda s: self.coins[s].h1
         b.daily_of = lambda s: self.coins[s].d1
+        b.h4_of = lambda s: [c for c in self.coins[s].h4 if c[0] + 4 * HOUR_MS <= self.now_ms]    # closed only; eng-151: plan 4.2's 4h dealing range in the replay too
         b.context_of = lambda s: self.detector.context.get(s)
         b.band_of = self._band
         b.plan_key_of = lambda s: (self.ctx_sig.get(s), self.coins[s].live_15m(self.now_ms))

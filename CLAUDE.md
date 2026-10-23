@@ -59,6 +59,8 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - eng-150 (live, the owner's order): plan stage 4 - sweeps need a weekly / daily bias, P/D on the pool's
       timeframe (shadow), stops behind the nearest pool, pierce pools + 1h S/R flips, liq_est confluence only,
       the 1R step stops at opposing zones, TL TOUCH (third touch); shadow ORB 13:30 UTC without a card.
+    - eng-151 (external audit): the bias veto in shadow, the 1R step stops before an opposing zone (>= 0.3R),
+      `variant_pool2`, liq_cascade_2h from 5m buckets.
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

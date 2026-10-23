@@ -499,6 +499,7 @@ class LevelsConfig:
     # eng-86: off again. eng-85's 1.0 was reasoned, not measured: the laptop journal (30.09-11.10, 961 closed entries) had
     # rr_tp1 < 0.5 near zero (+0.07R) and >= 1.5 at -0.6..-0.74R - the floor kept the worse buckets
     # eng-147 (the owner): on again - the VPS journal eng-135..144 had 8 entries with TP1 < 1R at -4.74R
+    opposing_min_gap_r: float = 0.3   # eng-151: a 1R step meeting an opposing zone >= this past the previous target stops before it (heuristic)
     min_rr_tp1_floor: float = 0.0    # eng-148: eng-147's global 1R floor off (vetoed TP1 >= 1R lost more); rr_tp1 + strat_class journaled
     # Finished signals stay on screen this long
     finished_display_sec: int = 1800
@@ -679,7 +680,8 @@ class StrategiesConfig:
                             'no_bias', 'no_supply', 'no_demand', 'no_orderflow', 'no_oi', 'no_level', 'no_htf_poi',
                             '<confirmations>',     # every missing entry confirmation (confirm.required_names)
                             'htf_bias', 'htf_conflict', 'rg_breakout_in_range', 'rg_countertrend',
-                            'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day')
+                            'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day',
+                            'sweep_no_htf_bias')   # eng-151 (external audit #1): shadow, outcome journaled
     disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'PUMP START',
                              # eng-144: OI BUILD - 5387 cards in 2.5 days (eng-143), none entered (R:R at the signal close
                              # < 1), and its opposite cards cancelled 105 SWEEP cards; demo -3.3R
@@ -1029,12 +1031,12 @@ class JournalConfig:
     # The 8h label stays as a provisional one; OPEN / TP1 / TP2 entries are relabelled over this many hours
     outcome_life_h: int = 72
     # Stored with every row; stats.py compares only rows produced by the same signal logic
-    logic_version: str = "eng-150"
+    logic_version: str = "eng-151"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
-    keep_waiting_from: str = "eng-150"
+    keep_waiting_from: str = "eng-151"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

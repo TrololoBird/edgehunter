@@ -441,6 +441,19 @@ class DataFetcher:
 
     FUNDING_INFO_REFRESH_SEC = 3600
 
+    def liq_bucket(self, ts_ms: int, usd: float, side: int, live: bool = False):
+        """eng-151: one long liquidation into its 5m bucket (stale buckets pruned at each new bucket)."""
+        if live and self.liq_live_since is None:
+            self.liq_live_since = int(ts_ms)
+        if side != 1 or not usd:
+            return
+        b = int(ts_ms) // 300_000 * 300_000
+        if b not in self.liq_long_5m:
+            cut = b - 90_000_000
+            for k in [k for k in self.liq_long_5m if k < cut]:
+                del self.liq_long_5m[k]
+        self.liq_long_5m[b] = self.liq_long_5m.get(b, 0.0) + usd
+
     def __init__(self):
         self.options: Dict[str, Dict] = {}        # eng-72: Deribit DVOL / strikes of BTC, ETH
         self.spot_exchange: Optional[ccxt.Exchange] = None
@@ -510,6 +523,10 @@ class DataFetcher:
         self.icebergs = IcebergDetector()
         # Live liquidations of every venue since the scanner last journaled them: (symbol, ts_ms, price, usd, side, venue)
         self.liq_log: List[tuple] = []
+        # eng-151 (external audit #4): the universe's long liquidations in 5m buckets {bucket_ms: usd} over ~25h for
+        # liq_cascade_2h - the per-coin liq_events deque (maxlen 2000) drops the window's early hours on BTC / ETH
+        self.liq_long_5m: Dict[int, float] = {}
+        self.liq_live_since: Optional[int] = None   # the first live liquidation (the OKX backfill is older)
         self.log_liquidations = False     # set by the scanner when a journal takes them
         self.venue_derivs: Dict[str, Dict[str, VenueDeriv]] = {}
         self._zone_atr: Dict[str, float] = {}
@@ -2126,6 +2143,7 @@ class DataFetcher:
                 md = self.markets.get(key)
                 if md is not None and price:
                     md.liq_events.append((int(o['T']), price, usd, side_liq, 'binance'))
+                    self.liq_bucket(int(o['T']), usd, side_liq, live=True)
                     if self.log_liquidations:
                         self.liq_log.append((key, int(o['T']), price, usd, side_liq, 'binance'))
         elif event == 'depthUpdate':
@@ -2171,6 +2189,7 @@ class DataFetcher:
         if md is not None and price:
             binance_price = price / market.multiplier * self.symbol_map.key_multiplier.get(market.key, 1.0)
             md.liq_events.append((ts_ms, binance_price, usd, side_liq, market.venue))
+            self.liq_bucket(ts_ms, usd, side_liq, live=True)
             if self.log_liquidations:
                 self.liq_log.append((market.key, ts_ms, binance_price, usd, side_liq, market.venue))
 

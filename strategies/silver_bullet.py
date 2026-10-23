@@ -150,7 +150,12 @@ class SilverBulletStrategy(Strategy):
         bias = sig.get('weekly_bias') or sig.get('daily_bias')
         if bias:
             return 'against_bias' if bias == -direction else None
-        # eng-150 (plan 4.1): ICT's top-down order has no 1h substitute - no weekly / daily bias, no trade (blocking)
+        # eng-150 (plan 4.1): ICT's top-down order has no 1h substitute - no weekly / daily bias, no trade; eng-151
+        # (external audit #1): shadow (strategies.shadow_vetoes) - blocking it lost the outcome and against_bias trades
+        if CONFIG.strategies.sweep_bias_required and sig.get('coin_trend') == -direction:
+            from signal_book import shadow_veto
+            # review eng-151: with the bias veto in shadow the 1h trend is still journaled
+            shadow_veto(sig, 'against_trend')
         return 'sweep_no_htf_bias' if CONFIG.strategies.sweep_bias_required else \
             ('against_trend' if sig.get('coin_trend') == -direction else None)
 

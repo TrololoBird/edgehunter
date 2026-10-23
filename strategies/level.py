@@ -130,7 +130,12 @@ class SweepStrategy(Strategy):
         bias = sig.get('weekly_bias') or sig.get('daily_bias')
         if bias:
             return 'against_bias' if bias == -direction else None
-        # eng-150 (plan 4.1): ICT's top-down order has no 1h substitute - no weekly / daily bias, no trade (blocking)
+        # eng-150 (plan 4.1): ICT's top-down order has no 1h substitute - no weekly / daily bias, no trade; eng-151
+        # (external audit #1): shadow (strategies.shadow_vetoes) - blocking it lost the outcome and against_bias trades
+        if CONFIG.strategies.sweep_bias_required and sig.get('coin_trend') == -direction:
+            from signal_book import shadow_veto
+            # review eng-151: with the bias veto in shadow the 1h trend is still journaled
+            shadow_veto(sig, 'against_trend')
         return 'sweep_no_htf_bias' if CONFIG.strategies.sweep_bias_required else \
             ('against_trend' if sig.get('coin_trend') == -direction else None)
 
@@ -187,6 +192,11 @@ class SweepStrategy(Strategy):
         pad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', base), atr, base != extreme)
         invalid = base - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
         sig['sl_old'] = sl_old - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
+        pool2 = None
+        if moved is not None:
+            # eng-151 (external audit #2), shadow only: a resting limit at the next pool's liquidity (the second raid),
+            # the plan's stop rule from that pool - 'variant_pool2' against the live entry of the same card
+            pool2 = {'entry': moved.lo if d > 0 else moved.hi, 'label': moved.label}
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
         targets, sources = select_targets(zones, reached, d, atr, 'draw_liquidity')
         # ICT: the sweep is only the setup, a wick is not yet a reversal: the entry waits for the displacement's FVG
@@ -210,4 +220,5 @@ class SweepStrategy(Strategy):
         if plan is not None:
             plan['dealing_range'] = rng
             plan['range_tf'] = range_tf
+            plan['pool2'] = pool2
         return plan
