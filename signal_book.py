@@ -246,6 +246,8 @@ class TrackedSignal:
     of_confirm: Optional[str] = None
     confirms: dict = field(default_factory=dict)
     vetoed_triggers: int = 0
+    variants_done: list = field(default_factory=list)    # eng-149: shadow variants journaled for this card
+    limit_variant: bool = False                          # eng-149: a variant that rests a limit (replay fills at it)
     # Veto reasons of the triggers skipped so far, and why / where the card finished
     veto_log: list = field(default_factory=list)
     # Why a far stop did not pay (low_rr): stop / TP1 / the entry's distance from the zone's edge, the last few
@@ -393,7 +395,7 @@ class SignalBook:
         self._candles_of = candles_of
         self.watchlist = []
         self.vetoed = []
-        self._deferred, self._deferring = [], False
+        self._deferred, self._deferring, self._extra = [], False, []
         self.events = []
         self.finished_now = []
         # cards of an older signal logic (restored from the state): an entered one closes at market, a waiting one
@@ -491,7 +493,7 @@ class SignalBook:
         entries: List[TrackedSignal] = []
         # eng-147 (the owner): the entries that passed every check in this pass are held and entered best first, so
         # crowd_max keeps the best candidates of one candle, not the first ones iterated
-        self._deferred, self._deferring = [], True
+        self._deferred, self._deferring, self._extra = [], True, []
         try:
             for tracked in self.signals.values():
                 if tracked.finished:
@@ -510,6 +512,8 @@ class SignalBook:
             if result is not None:
                 entries.append(result)
         self._deferred = []
+        entries.extend(self._extra)          # eng-149: shadow variants (vetoed entries, journal only)
+        self._extra = []
 
         # Forget finished signals / stale anomalies once they have been on screen long enough
         keep_for = max(CONFIG.levels.finished_display_sec, CONFIG.journal.cooldown_sec)
@@ -1154,6 +1158,7 @@ class SignalBook:
         ltf = resample(minutes, trigger_minutes, minutes[-1][0] + MINUTE_MS)
         kind = s.plan.get('trigger', 'shift')
         shadow = self._shadow_entry(s, ltf, kind, interval_ms, now_ms, price)
+        self._limit_variants(s, ltf, interval_ms, now_ms, price)
         if kind == 'fvg':
             # ICT 2022 (eng-58): the sweep is only the setup; once the displacement broke the swing the raid came from
             # and left a gap, a limit rests at the gap's CE (the plan becomes a touch plan: the demo places it)
@@ -1185,6 +1190,7 @@ class SignalBook:
         levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], d)
         reason = None
         reason = self._overshoot(s, trigger['entry'], levels)
+        self._st_stop_variant(s, levels, trigger, now_ms, price)
         # the spring candle's average FUTURES minute (the pullback minutes are futures candles); a card restored from
         # an older state has only the spot figure: no test rather than a test in the wrong units
         spring_minute = s.sig.get('fut_candle_minute_usd')
@@ -1499,6 +1505,66 @@ class SignalBook:
         self.day_dir.setdefault((s.symbol, int(now_ms // 86_400_000)), s.direction)
         self.events.append((s, 'ENTRY'))
         return s
+
+    def _variant(self, s: TrackedSignal, name: str, levels: Dict, now_ms: int, limit: bool = False):
+        """eng-149: a shadow variant of the card journaled as a vetoed entry `name` (never traded), once per card."""
+        s.variants_done.append(name)
+        shadow = copy.copy(s)
+        shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, name
+        shadow.of_confirm, shadow.confirms, shadow.limit_variant = None, {}, limit
+        self._extra.append(shadow)
+
+    def _limit_variants(self, s: TrackedSignal, ltf, interval_ms: int, now_ms: int, price: float):
+        """
+        eng-149 (plan eng-148 stage 3.1, audit 13 / 34): once a sweep is armed (MSS + FVG), resting limits at the CE
+        ('variant_ce_limit') and at the gap's near edge ('variant_fvg_edge'), filled on the touch at the limit price,
+        the plan's own stop / targets - on the same armed cards as the live touch -> close entry, low_rr or not.
+        stats.py reads the 50/50 split (edge + CE, one stop) from the pair.
+        """
+        fvg = s.plan.get('fvg')
+        if s.mode != 'sweep' or not fvg or s.plan.get('trigger') != 'touch' or not s.zone_since_ms:
+            return
+        d = s.direction
+        edge = max(fvg) if d > 0 else min(fvg)
+        for name, level in (('variant_ce_limit', s.plan['zone_lo']), ('variant_fvg_edge', edge)):
+            if name in s.variants_done:
+                continue
+            trig = touch_trigger(ltf, d, s.zone_since_ms, interval_ms, level, level)
+            if not trig:
+                continue
+            if now_ms - trig['time'] > interval_ms + 2 * MINUTE_MS:
+                s.variants_done.append(name)        # a stale touch (restart / gap): not this card's variant
+                continue
+            # review: the resting limit's stop is known BEFORE the touch (no wick of the touch bar), and the journal
+            # window starts at the touch bar's open, so a stop inside that bar counts (conservative: the bar's
+            # minutes before the touch count too)
+            levels = entry_levels(s.plan, level, None, d)
+            if levels and d * (levels['entry'] - levels['sl']) > 0:
+                levels['zone_src'] = s.plan.get('zone_src')
+                self._variant(s, name, levels, trig['time'] - interval_ms, limit=True)
+
+    def _st_stop_variant(self, s: TrackedSignal, levels: Dict, trigger: Dict, now_ms: int, price: float):
+        """
+        eng-149 (plan eng-148 stage 3.6, audit 12): Wyckoff's entry on the secondary test with the stop beyond the
+        TEST's extreme (+ 0.25 working ATR, a heuristic pad) instead of beyond the spring / climax - the same entry and
+        targets, 'variant_st_stop', only where that stop is tighter than the live one.
+        """
+        if s.group_key not in ('SPRING', 'UTAD', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL') or \
+                'variant_st_stop' in s.variants_done:
+            return
+        d, atr = s.direction, s.plan.get('tf_atr') or s.plan.get('atr') or 0.0
+        sl = trigger['extreme'] - d * 0.25 * atr
+        e = levels['entry']
+        if d * (e - sl) <= 0 or d * (sl - levels['sl']) <= 0 or d * (price - sl) <= 0:
+            return
+        lv = dict(levels, sl=sl, sl_src='Wyckoff test extreme + 0.25 ATR (variant)')
+        scale = (d * (e - levels['sl'])) / (d * (e - sl))
+        if levels.get('cost_r') is not None:
+            lv['cost_r'] = levels['cost_r'] * scale            # the same fees over the tighter risk
+        if levels.get('tp1') is not None:
+            lv['rr_tp1'] = d * (levels['tp1'] - e) / (d * (e - sl))
+        lv.pop('rr_trigger', None)
+        self._variant(s, 'variant_st_stop', lv, now_ms)
 
     def _shadow_entry(self, s: TrackedSignal, ltf, kind: str, interval_ms: int, now_ms: int,
                       price: float) -> Optional[TrackedSignal]:

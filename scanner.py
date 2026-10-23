@@ -1135,6 +1135,84 @@ class Scanner:
             'btc_1d': float(btc['r1d'][0]) if btc.height and btc['r1d'][0] is not None else None,
             'breadth_w': sum(t > 0 for t in trends) / len(trends) if len(trends) >= 20 else None,
         }
+        self.market_state.update(self._shadow_market())
+
+    def _shadow_market(self) -> Dict:
+        """
+        eng-149 (plan eng-148, stages 2.4 / 3.8; journal only, no rule reads them):
+        - btc_below_ema50_4h: BTC's last closed 4h close under the EMA50 of its 4h closes;
+        - liq_cascade_2h: the universe's long liquidations of the last 2h over the 2h average of the 22h before
+          (a falling-market cascade at >= 3, the heuristic of the plan's market_down variant);
+        - mkt_down_alt: 1 when either holds - the shadow variant of market_down (BTC 4h EMA50 or a cascade);
+        - smt_majors: ICT SMT between BTC and ETH on the last 24 closed 1h candles: +1 = one made a new low of the
+          window and the other did not (bullish), -1 = the same at the highs, 0 = none.
+        """
+        out = {'btc_below_ema50_4h': None, 'liq_cascade_2h': None, 'mkt_down_alt': None, 'smt_majors': None}
+        now_ms = time.time() * 1000
+        btc = self.market_data.get('BTC/USDT:USDT')
+        if btc is not None:
+            closed = [c[4] for c in btc.h4 if c[0] + 14_400_000 <= now_ms]
+            if len(closed) >= 100:
+                k, ema = 2 / 51, sum(closed[:50]) / 50
+                for x in closed[50:]:
+                    ema += k * (x - ema)
+                out['btc_below_ema50_4h'] = int(closed[-1] < ema)
+        recent = before = 0.0
+        for md in self.market_data.values():
+            for e in md.liq_events:
+                if e[3] != 1:
+                    continue
+                age = now_ms - e[0]
+                if age <= 7_200_000:
+                    recent += e[2]
+                elif age <= 86_400_000:
+                    before += e[2]
+        if before > 0:
+            out['liq_cascade_2h'] = recent / (before / 11)
+        flags = [v for v in (out['btc_below_ema50_4h'],
+                             None if out['liq_cascade_2h'] is None else int(out['liq_cascade_2h'] >= 3)) if v is not None]
+        out['mkt_down_alt'] = int(any(flags)) if flags else None
+        eth = self.market_data.get('ETH/USDT:USDT')
+        if btc is not None and eth is not None:
+            a = [c for c in btc.h1 if c[0] + 3_600_000 <= now_ms][-25:]
+            b = [c for c in eth.h1 if c[0] + 3_600_000 <= now_ms][-25:]
+            if len(a) == 25 and len(b) == 25 and a[-1][0] == b[-1][0]:
+                lo_a, lo_b = a[-1][3] < min(c[3] for c in a[:-1]), b[-1][3] < min(c[3] for c in b[:-1])
+                hi_a, hi_b = a[-1][2] > max(c[2] for c in a[:-1]), b[-1][2] > max(c[2] for c in b[:-1])
+                out['smt_majors'] = 1 if lo_a != lo_b else -1 if hi_a != hi_b else 0
+        return out
+
+    @staticmethod
+    def _shadow_coin(md: MarketData) -> Dict:
+        """
+        eng-149 (plan eng-148, stages 3.5 / 3.7 / 0.4; journal only): Crabel's narrow-range days on the last closed
+        daily candle (nr4 / nr7: its range is the smallest of the last 4 / 7; inside_day: inside the day before), and
+        the coin's volatility regime on closed 1h candles - atr_ratio = ATR(14) / the mean ATR(14) of the last 100
+        hours, vol_regime = 'climax' (>= 1.8), 'compression' (<= 0.7), 'trend' (efficiency ratio of 14h >= 0.4)
+        or 'range' (heuristic cuts, a label to split by, not a rule).
+        """
+        out = {'nr4': None, 'nr7': None, 'inside_day': None, 'atr_ratio': None, 'vol_regime': None}
+        now_ms = time.time() * 1000
+        days = [c for c in md.d1 if c[0] + 86_400_000 <= now_ms]
+        if len(days) >= 7:
+            rng = [c[2] - c[3] for c in days[-7:]]
+            out['nr4'] = int(rng[-1] <= min(rng[-4:]))
+            out['nr7'] = int(rng[-1] <= min(rng))
+            out['inside_day'] = int(days[-1][2] <= days[-2][2] and days[-1][3] >= days[-2][3])
+        h1 = [c for c in md.h1 if c[0] + 3_600_000 <= now_ms][-128:]
+        if len(h1) >= 128:
+            tr = [max(c[2] - c[3], abs(c[2] - p[4]), abs(c[3] - p[4])) for p, c in zip(h1, h1[1:])]
+            atr = [sum(tr[i - 14:i]) / 14 for i in range(14, len(tr) + 1)]
+            base = sum(atr[-100:]) / 100
+            if base > 0:
+                ratio = atr[-1] / base
+                closes = [c[4] for c in h1[-15:]]
+                path = sum(abs(y - x) for x, y in zip(closes, closes[1:]))
+                er = abs(closes[-1] - closes[0]) / path if path else 0.0
+                out['atr_ratio'] = ratio
+                out['vol_regime'] = 'climax' if ratio >= 1.8 else 'compression' if ratio <= 0.7 \
+                    else 'trend' if er >= 0.4 else 'range'
+        return out
 
     def _positioning_features(self, symbol: str, md: MarketData) -> Dict:
         """
@@ -1225,6 +1303,7 @@ class Scanner:
         sig['small_cap'] = symbol in self.fetcher.small_caps      # eng-99: the demo risks less on them
         sig['btc_mom_7d'] = self._btc_momentum()                  # eng-100: the market regime (executor risk)
         sig.update(self.market_state)
+        sig.update(self._shadow_coin(md))                         # eng-149: NR4 / NR7 / volatility regime (journal)
         sig.update(self.ext.market)
         sig['us_session'] = us_session(time.time())               # eng-133: computed at the card, not cached
         sig.update(self.ext.of(symbol))

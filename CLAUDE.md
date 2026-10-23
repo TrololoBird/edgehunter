@@ -53,6 +53,9 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - eng-148: no demo limits (crowd_max / cluster / demo_off_setups off), sweep filters + TP1 floor back to shadow,
       overshoot journal-only, market_down shadow for reversal longs, stage-0 journal
       columns + `stats.py` cluster-weighted splits (docs/PLAN_eng148.md).
+    - eng-149 (journal only, logic stays eng-148): the rest of stage 3 as `variant_*` entry rows / columns (FVG edge /
+      CE limits, two-contour stop, sweep retest, NR4/7, Wyckoff ST stop, vol_regime, SMT BTC/ETH,
+      market_down alt), `stats.py` variants + funnel tables.
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

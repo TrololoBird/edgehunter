@@ -718,7 +718,14 @@ def slices_table(console: Console, rows: List):
               ('weekend', flag('weekend', 'weekend', 'weekday')), ('volume', vol_bin), ('crowd', crowd_bin),
               ('time stop 8 bars', flag('time_stop', 'would fire', 'no')),
               ('limit fill', flag('optimistic_fill', 'touch only', 'traded through')),
-              ('TP1 R:R', lambda r: None if _col(r, 'rr_tp1') is None else ('< 1R' if r['rr_tp1'] < 1 else '>= 1R'))]
+              ('TP1 R:R', lambda r: None if _col(r, 'rr_tp1') is None else ('< 1R' if r['rr_tp1'] < 1 else '>= 1R')),
+              # eng-149 labels (journal only)
+              ('NR7 day', flag('nr7', 'NR7', 'no')), ('NR4 day', flag('nr4', 'NR4', 'no')),
+              ('inside day', flag('inside_day', 'inside', 'no')), ('vol regime', lambda r: _col(r, 'vol_regime')),
+              ('BTC 4h < EMA50', flag('btc_below_ema50_4h', 'below', 'above')),
+              ('market_down alt', flag('mkt_down_alt', 'down', 'no')),
+              ('SMT BTC/ETH', lambda r: None if _col(r, 'smt_majors') is None else
+               ('with' if _col(r, 'smt_majors') == r['direction'] else 'none' if not _col(r, 'smt_majors') else 'against'))]
     out = []
     for name, fn in splits:
         groups: Dict = {}
@@ -741,6 +748,121 @@ def slices_table(console: Console, rows: List):
         table.add_row(name, g, str(n), Text(str(k), style="dim" if k < 100 else "white"),
                       Text(f"{mean:+.2f}R", style="green" if mean > 0 else "red"),
                       "—" if p is None else f"{p:.3f}", "—" if q is None else f"{q:.3f}")
+    console.print(table)
+
+
+def _wmean(pairs: List[Tuple[float, tuple]]) -> Tuple[Optional[float], int, Optional[float]]:
+    """The 1/c_t-weighted mean of (value, cluster) pairs, the number of clusters and the cluster-bootstrap p."""
+    if not pairs:
+        return None, 0, None
+    count: Dict = {}
+    for _, c in pairs:
+        count[c] = count.get(c, 0) + 1
+    w = [1 / count[c] for _, c in pairs]
+    mean = sum(v * x for (v, _), x in zip(pairs, w)) / sum(w)
+    return mean, len(count), bootstrap_p([v for v, _ in pairs], [c for _, c in pairs])
+
+
+def variants_table(console: Console, rows: List):
+    """
+    eng-149 (plan eng-148 stage 3): each shadow variant against the card's OWN entry on the same cards (pairs), R
+    before costs to TP1 / the 8h window, weighted 1/c_t (15m x direction); p = cluster bootstrap of the paired
+    difference variant - own. The card's own entry = its live row or its own veto (not another shadow entry:
+    flow_entry / reclaim_entry / weak_mss / variant_shift). FVG split 50/50 = half at the edge + half at the CE
+    (0 when the CE was not reached) vs the CE limit alone, both on the cards whose edge was touched. Diagnostics only:
+    the pre-registered pass rule decides (>= 100 clusters, p < 0.05, E[R] > 0 after costs, both halves).
+    """
+    entries = [r for r in rows if r['kind'] == 'entry']
+    if not entries:
+        return
+    other_shadows = ('flow_entry', 'reclaim_entry', 'weak_mss', 'variant_shift')
+    clus = lambda r: (r['ts_ms'] // 900_000, r['direction'])   # noqa: E731
+    by_card: Dict = {}
+    for r in entries:
+        by_card.setdefault((r['symbol'], r['group_key'], _col(r, 'setup_ts_ms')), []).append(r)
+    lines = []      # (name, [(variant, own, cluster)])
+    live = [r for r in entries if not (_col(r, 'vetoed') or '').startswith('variant_')
+            and _col(r, 'vetoed') not in other_shadows]
+    lines.append(('two-contour stop vs plain stop', [(r['two_stop_r'], r['base_stop_r'], clus(r)) for r in live
+                  if _col(r, 'two_stop_r') is not None and _col(r, 'base_stop_r') is not None]))
+    lines.append(('sweep second test vs its first entry', [(r['retest_r'], r['base_stop_r'], clus(r)) for r in live
+                  if _col(r, 'retest_r') is not None and _col(r, 'base_stop_r') is not None]))
+    for name in ('variant_st_stop', 'variant_ce_limit', 'variant_fvg_edge'):
+        pairs = []
+        for members in by_card.values():
+            var = next((r for r in members if _col(r, 'vetoed') == name), None)
+            own = next((r for r in members if not (_col(r, 'vetoed') or '').startswith('variant_')
+                        and _col(r, 'vetoed') not in other_shadows), None)
+            if var is not None and own is not None and _col(var, 'base_stop_r') is not None \
+                    and _col(own, 'base_stop_r') is not None:
+                pairs.append((var['base_stop_r'], own['base_stop_r'], clus(var)))
+        lines.append((f"{name} vs the card's own entry", pairs))
+        if name != 'variant_st_stop':
+            # the cards whose limit filled but whose own entry never came (own = 0R: no trade)
+            none = [(r['base_stop_r'], 0.0, clus(r)) for members in by_card.values()
+                    for r in members if _col(r, 'vetoed') == name and _col(r, 'base_stop_r') is not None
+                    and not any(not (_col(x, 'vetoed') or '').startswith('variant_')
+                                and _col(x, 'vetoed') not in other_shadows for x in members)]
+            lines.append((f"{name}, no own entry (own = 0R)", none))
+    split = []
+    for members in by_card.values():
+        edge = next((r for r in members if _col(r, 'vetoed') == 'variant_fvg_edge'), None)
+        ce = next((r for r in members if _col(r, 'vetoed') == 'variant_ce_limit'), None)
+        if edge is None or _col(edge, 'base_stop_r') is None:
+            continue
+        if ce is not None and _col(ce, 'base_stop_r') is None:
+            continue                                # the CE filled but is not evaluated yet
+        ce_r = ce['base_stop_r'] if ce is not None else 0.0
+        split.append((0.5 * edge['base_stop_r'] + 0.5 * ce_r, ce_r, clus(edge)))
+    lines.append(('FVG split 50/50 vs CE limit (edge touched)', split))
+    table = Table(title="eng-149 shadow variants vs the card's own entry (paired, R before costs, weighted 1/c_t)",
+                  header_style="bold magenta", border_style="blue")
+    for col in ("Variant", "Pairs", "Clusters", "E[R] variant", "E[R] own", "Diff", "p (diff)"):
+        table.add_column(col, justify="left" if col == "Variant" else "right", no_wrap=True)
+    fmt = lambda m: Text("—", style="dim") if m is None else Text(f"{m:+.2f}R", style="green" if m > 0 else "red")   # noqa: E731
+    for name, pairs in lines:
+        mv, k, _ = _wmean([(v, c) for v, _, c in pairs])
+        mo, _, _ = _wmean([(o, c) for _, o, c in pairs])
+        md, _, pd = _wmean([(v - o, c) for v, o, c in pairs])
+        table.add_row(name, str(len(pairs)), Text(str(k), style="dim" if k < 100 else "white"), fmt(mv), fmt(mo),
+                      fmt(md), "—" if pd is None else f"{pd:.3f}")
+    console.print(table)
+
+
+def funnel_table(console: Console, rows: List):
+    """
+    eng-149 (plan eng-148 stage 0.3): where each strategy's cards fall out - cards by their finish (EXPIRED / MISSED /
+    INVALID ... and the entered ones), entries passed vs vetoed and the top veto reasons (shadow variants left out).
+    """
+    by: Dict[str, Dict[str, int]] = {}
+    reasons: Dict[str, Dict[str, int]] = {}
+    for r in rows:
+        strat = _col(r, 'strategy') or '?'
+        if r['kind'] == 'card':
+            st = (r['group_key'] or '').split(' ', 1)[0]
+            by.setdefault(strat, {}).setdefault(f"card {st}", 0)
+            by[strat][f"card {st}"] += 1
+        elif r['kind'] == 'entry':
+            v = _col(r, 'vetoed')
+            if v and v.startswith('variant_'):
+                continue
+            key = 'entry vetoed' if v else 'entry passed'
+            by.setdefault(strat, {}).setdefault(key, 0)
+            by[strat][key] += 1
+            if v:
+                reasons.setdefault(strat, {}).setdefault(v, 0)
+                reasons[strat][v] += 1
+    if not by:
+        return
+    table = Table(title="Funnel by strategy (cards by finish, entries passed / vetoed, top vetoes)",
+                  header_style="bold magenta", border_style="blue")
+    for col in ("Strategy", "Cards by finish", "Entries passed", "Vetoed", "Top vetoes"):
+        table.add_column(col, justify="left", no_wrap=False)
+    for strat in sorted(by):
+        c = by[strat]
+        cards = ', '.join(f"{k[5:]} {n}" for k, n in sorted(c.items()) if k.startswith('card '))
+        top = ', '.join(f"{k} {n}" for k, n in sorted((reasons.get(strat) or {}).items(), key=lambda kv: -kv[1])[:4])
+        table.add_row(strat, cards or '—', str(c.get('entry passed', 0)), str(c.get('entry vetoed', 0)), top or '—')
     console.print(table)
 
 
@@ -1320,6 +1442,8 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     sources_table(console, rows)
     vetoes_table(console, rows)
     slices_table(console, rows)
+    variants_table(console, rows)
+    funnel_table(console, rows)
     reversal_test_table(console, rows)
     card_results_table(console, rows)
     # eng-58: the verdict over the version family since CONFIG.journal.verdict_since (net card R)

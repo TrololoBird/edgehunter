@@ -922,3 +922,27 @@ filters cut 1170 entries at -0.24R (cut and kept lose alike); the 0.6 ATR oversh
   by class / UTC hour / weekend / volume / crowd top 3 / time stop / limit fill / TP1 R:R.
 Not in this batch (need new detectors or the archive): the ICT limit / 50-50 split, the two-contour stop, sweep
 re-entry, ORB NR4/NR7, Wyckoff ST/BUEC, regime routing, BTC/ETH SMT, the BTC-EMA50 market_down variant, stage 4.
+
+## eng-149 (2026-10-23) - the rest of plan eng-148 stages 0-3 as journal-only shadow (logic_version stays eng-148)
+Trading is unchanged (no new veto, no demo change), so the evaluation window of eng-148 is kept. Every variant is a
+vetoed entry row `variant_*` of the same card (never traded; journal dedup per card + reason) or a journal column.
+- 3.1 ICT: on an armed sweep (MSS + FVG) resting limits at the CE (`variant_ce_limit`) and the gap's near edge
+  (`variant_fvg_edge`), filled on the touch (`limit_entry` = 1), the stop set before the touch (no touch-bar wick),
+  the row from the touch bar's open; stats reads the 50/50 split (edge + CE, one stop). stats pairs every variant with
+  the card's own entry; p of the paired difference.
+- 3.2 two contours: `two_stop_r` = out at the first UTC 15m close beyond the stop or the touch of stop + 0.7 ATR
+  (`atr_entry`), vs `base_stop_r` = the plain stop, both to TP1 / 8h.
+- 3.4 sweep second test: `retest_r` - back to the entry after >= 0.5R away with no 15m close beyond the zone's far edge
+  (`zone_far`: the FVG's far side), the same stop / TP1.
+- 3.5 ORB: `nr4` / `nr7` / `inside_day` on every row. The shadow 13:30 UTC open was dropped after review: as a card it
+  took the (symbol, ORB UP/DOWN) key and its 30-min cooldown blocked live ORBs; 00:00 UTC is the Asia session already
+  (Tokyo 09:00). It needs a journal path outside cards. `hold8_r` = no-target systems held 8h, stop on the touch.
+- 3.6 Wyckoff: `variant_st_stop` - the same entry with the stop beyond the TEST's extreme + 0.25 ATR (heuristic pad),
+  only where tighter than the live stop.
+- 3.7 / 0.4 regime: `atr_ratio` (1h ATR14 / its 100h mean), `vol_regime` climax >= 1.8 / compression <= 0.7 / trend
+  (ER14 >= 0.4) / range - heuristic cuts, a split, not a rule.
+- 3.8 `smt_majors` (BTC vs ETH new 24h low / high on closed 1h: +1 / -1 / 0). 2.4 `btc_below_ema50_4h`,
+  `liq_cascade_2h` (2h long liquidations / their 2h mean over the 22h before), `mkt_down_alt` (either; cascade >= 3).
+- 0.3 stats.py funnel by strategy; variants table on the same cards; the new labels in the eng-148 splits.
+- All shadow exits on the first 8h of every entry (no survivor bias from the life relabel). rs_btc (0.7) existed.
+Left by design: stage 4 (each item its own yes after 100+ cluster-independent trades), stage 5 (cloud).

@@ -135,7 +135,82 @@ def excursions(row: Dict, window: List) -> Dict:
         out['time_stop'] = int(fired)
         if fired:
             out['time_stop_r'] = d * (float(window[n8 - 1][4]) - e) / risk
+    # on the first 8h for every entry (the life relabel would give only the survivors a longer window)
+    out.update(_shadow_exits(row, window[:480], e, row.get('sl'), d, risk))
     return out
+
+
+def _to_tp1(window: List, start: int, e: float, sl: float, tp1: float, d: int, risk: float) -> float:
+    """The R of a trade from minute `start`: the stop's touch first (-1, the conservative order inside a minute), else
+    TP1's touch (+R:R), else out at the window's last close."""
+    for k in window[start:]:
+        lo, hi = float(k[3]), float(k[2])
+        if (lo <= sl) if d > 0 else (hi >= sl):
+            return -1.0
+        if (hi >= tp1) if d > 0 else (lo <= tp1):
+            return d * (tp1 - e) / risk
+    return d * (float(window[-1][4]) - e) / risk
+
+
+def _shadow_exits(row: Dict, window: List, e: float, sl: float, d: int, risk: float) -> Dict:
+    """
+    eng-149 (plan eng-148 stage 3; journal only, before costs, to TP1 or the 8h window's end):
+    - two_stop_r (audit 14): two contours - out at the close of the first 15m bar (UTC-aligned) that CLOSED beyond the
+      stop, or at the touch of a far stop 0.7 ATR (the plan's working ATR, atr_entry) beyond it; base_stop_r = the
+      same trade with the plain stop on the touch, on the same window (the pair to compare);
+    - retest_r (audit 15; sweeps with a zone_far): the second test of the entry after the price left it by >= 0.5R
+      with no 15m close beyond the zone's far edge before it - the same stop / TP1 from that re-entry.
+    """
+    tp1, out = row.get('tp1'), {}
+    if not tp1:
+        # a system without a target (ORB, Turtles, Connors): held 8h with the stop on the touch (ORB opens compared)
+        stop_i = next((i for i, k in enumerate(window) if ((float(k[3]) <= sl) if d > 0 else (float(k[2]) >= sl))), None)
+        if stop_i is not None or len(window) >= 480:
+            out['hold8_r'] = -1.0 if stop_i is not None else d * (float(window[-1][4]) - e) / risk
+        return out
+    if d * (tp1 - e) <= 0:
+        return out
+    out['base_stop_r'] = _to_tp1(window, 0, e, sl, tp1, d, risk)
+    atr = row.get('atr_entry')
+    if atr and atr > 0:
+        far = sl - d * 0.7 * atr
+        r = None
+        for k in window:
+            lo, hi, close = float(k[3]), float(k[2]), float(k[4])
+            if (lo <= far) if d > 0 else (hi >= far):
+                r = d * (far - e) / risk
+                break
+            if (hi >= tp1) if d > 0 else (lo <= tp1):
+                r = d * (tp1 - e) / risk
+                break
+            if int(k[0]) % 900_000 == 840_000 and d * (close - sl) < 0:
+                r = d * (close - e) / risk          # the 15m bar's close beyond the stop
+                break
+        out['two_stop_r'] = r if r is not None else d * (float(window[-1][4]) - e) / risk
+    far_edge = row.get('zone_far')
+    if far_edge:
+        left = False
+        for i, k in enumerate(window):
+            lo, hi, close = float(k[3]), float(k[2]), float(k[4])
+            if int(k[0]) % 900_000 == 840_000 and d * (close - far_edge) < 0:
+                break                               # the zone's far edge broken by a 15m body: no second test
+            if not left:
+                left = d * ((hi if d > 0 else lo) - e) / risk >= 0.5
+            elif (lo <= e) if d > 0 else (hi >= e):
+                out['retest_r'] = _to_tp1(window, i, e, sl, tp1, d, risk)
+                break
+    return out
+
+
+def _zone_far(tracked) -> Optional[float]:
+    """eng-149: the far edge of a sweep's entry zone (the FVG's far side once armed, else the zone's), None elsewhere."""
+    plan = tracked.plan or {}
+    if tracked.mode != 'sweep':
+        return None
+    lo, hi = (plan.get('fvg') or [plan.get('zone_lo'), plan.get('zone_hi')])[:2]
+    if lo is None or hi is None:
+        return None
+    return float(min(lo, hi) if tracked.direction > 0 else max(lo, hi))
 
 
 def horizon_due_ms(ts_ms: int, minutes: int) -> int:
@@ -262,6 +337,12 @@ EXTRA_COLUMNS = {
     'mfe_life_r': 'REAL', 'mae_life_r': 'REAL', 'mfe_n10_r': 'REAL', 'mae_n10_r': 'REAL', 'post_stop_mfe_r': 'REAL',
     'cost_r': 'REAL', 'strat_class': 'TEXT', 'crowd_pos': 'INTEGER', 'rr_trigger': 'REAL', 'optimistic_fill': 'INTEGER',
     'time_stop': 'INTEGER', 'time_stop_r': 'REAL',
+    # eng-149 (plan eng-148 stages 0.4 / 2.4 / 3.2 / 3.4 / 3.5 / 3.7 / 3.8; journal only): see scanner._shadow_market /
+    # _shadow_coin and journal.excursions
+    'btc_below_ema50_4h': 'INTEGER', 'liq_cascade_2h': 'REAL', 'mkt_down_alt': 'INTEGER', 'smt_majors': 'INTEGER',
+    'nr4': 'INTEGER', 'nr7': 'INTEGER', 'inside_day': 'INTEGER', 'atr_ratio': 'REAL', 'vol_regime': 'TEXT',
+    'atr_entry': 'REAL', 'zone_far': 'REAL', 'two_stop_r': 'REAL', 'base_stop_r': 'REAL', 'retest_r': 'REAL',
+    'hold8_r': 'REAL',
     # extdata.py: Deribit BTC DVOL and its 1h change, BTC options put / call OI; the next-funding spread across
     # Binance / Bybit / Hyperliquid (8h-equivalent); OKX / Bybit book imbalance within 0.5%
     'dvol_btc': 'REAL', 'dvol_chg_1h': 'REAL', 'pc_oi_btc': 'REAL', 'funding_spread': 'REAL',
@@ -300,7 +381,10 @@ FEATURE_KEYS = {
     'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb', 'kimchi_prem': 'kimchi_prem', 'news': 'news', 'news_age_h': 'news_age_h',
     'iceberg_net_5m': 'iceberg_net_5m', 'iceberg_n_5m': 'iceberg_n_5m', 'daily_bias': 'daily_bias', 'weekly_bias': 'weekly_bias', 'btc_bias': 'btc_bias', 'vpin': 'vpin', 'vol_entropy': 'vol_entropy', 'lead_venue': 'lead_venue', 'lead_corr': 'lead_corr',
     'prem_1h': 'prem_1h', 'prem_z': 'prem_z', 'funding_1h': 'funding_1h', 'oi_vol': 'oi_vol', 'er_1h': 'er_1h',
-    'chop_1h': 'chop_1h', 'rs_btc_z': 'rs_btc_z', 'event_risk': 'event_risk', 'near52': 'near52',
+    'chop_1h': 'chop_1h', 'rs_btc_z': 'rs_btc_z',
+    'btc_below_ema50_4h': 'btc_below_ema50_4h', 'liq_cascade_2h': 'liq_cascade_2h', 'mkt_down_alt': 'mkt_down_alt',
+    'smt_majors': 'smt_majors', 'nr4': 'nr4', 'nr7': 'nr7', 'inside_day': 'inside_day', 'atr_ratio': 'atr_ratio',
+    'vol_regime': 'vol_regime', 'event_risk': 'event_risk', 'near52': 'near52',
     'vol_rank': 'vol_rank', 'liq_proxy': 'liq_proxy',
     'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d', 'weis_ratio': 'weis_ratio',
     'xau_chg_1h': 'xau_chg_1h', 'xau_chg_24h': 'xau_chg_24h', 'oil_chg_1h': 'oil_chg_1h', 'oil_chg_24h': 'oil_chg_24h', 'spy_chg_1h': 'spy_chg_1h', 'spy_chg_24h': 'spy_chg_24h', 'qqq_chg_1h': 'qqq_chg_1h', 'qqq_chg_24h': 'qqq_chg_24h', 'us_session': 'us_session', 'vix_prev': 'vix_prev', 'fng': 'fng', 'etf_flow_1d': 'etf_flow_1d', 'etf_flow_3d': 'etf_flow_3d',
@@ -697,10 +781,14 @@ class SignalJournal:
                     'range_pos': lv.get('range_pos'),
                     'zone_edge': lv.get('zone_edge'), 'trigger_over_atr': lv.get('trigger_over_atr'),
                     'cost_r': lv.get('cost_r'), 'rr_trigger': lv.get('rr_trigger'),
+                    # eng-149: the plan's working ATR (two-contour stop) and a sweep zone's far edge (second test)
+                    'atr_entry': (tracked.plan or {}).get('tf_atr') or (tracked.plan or {}).get('atr'),
+                    'zone_far': _zone_far(tracked),
                     'strat_class': strategy_class(tracked.mode), 'crowd_pos': tracked.sig.get('crowd_pos'),
                     # eng-58: a resting limit (Seiden's line, ICT's CE / OTE): the replay fills it at the entry price
-                    'limit_entry': int((tracked.plan or {}).get('trigger') == 'touch'
-                                       and not CONFIG.executor.touch_confirm_close),
+                    'limit_entry': int(getattr(tracked, 'limit_variant', False) or
+                                       ((tracked.plan or {}).get('trigger') == 'touch'
+                                        and not CONFIG.executor.touch_confirm_close)),
                     'sl_src': lv.get('sl_src'), 'stop_pierce': lv.get('stop_pierce'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
                     'anchor': _anchor_json(tracked.plan),
@@ -711,7 +799,10 @@ class SignalJournal:
         with self._lock:
             if row['vetoed'] and self.conn.execute(
                     "SELECT 1 FROM signals WHERE kind = 'entry' AND symbol = ? AND group_key = ? AND setup_ts_ms = ? "
-                    "LIMIT 1", (row['symbol'], row['group_key'], row['setup_ts_ms'])).fetchone():
+                    "AND (vetoed IS ? OR (COALESCE(vetoed, '') NOT LIKE 'variant_%' AND ? NOT LIKE 'variant_%')) "
+                    "LIMIT 1",
+                    (row['symbol'], row['group_key'], row['setup_ts_ms'], row['vetoed'], row['vetoed'])).fetchone():
+                # eng-149: a shadow variant ('variant_*') is its own row beside the card's veto
                 # eng-84: a vetoed trigger leaves the card waiting, and each later trigger of the same card was a new
                 # row (live PO3 LONG: 27 'entries' = 3 setups, each a full replayed trade): one row per card
                 return
@@ -1117,7 +1208,7 @@ class SignalJournal:
                 # eng-102: simulate reads limit_entry / volume_24h - without them every resting-limit entry was
                 # replayed as a market fill (next minute's open + slippage) at the default liquidity's slippage
                 f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h, "
-                f"funding_hours, limit_entry, volume_24h, anchor FROM signals "
+                f"funding_hours, limit_entry, volume_24h, anchor, atr_entry, zone_far FROM signals "
                 f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
                 (*[due[label] for label in HORIZONS], limit),
             )
@@ -1239,7 +1330,7 @@ class SignalJournal:
         with self._lock:
             cursor = self.conn.execute(
                 "SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, kind, funding_8h, funding_hours, "
-                "limit_entry, volume_24h, anchor FROM signals WHERE kind = 'entry' AND eval_failed = 0 AND entry IS NOT NULL "
+                "limit_entry, volume_24h, anchor, atr_entry, zone_far FROM signals WHERE kind = 'entry' AND eval_failed = 0 AND entry IS NOT NULL "
                 "AND direction IS NOT NULL AND outcome IN ('OPEN', 'TP1', 'TP2') AND COALESCE(outcome_h, 8) < ? "
                 "AND ts_ms <= ? AND ts_ms >= ? ORDER BY ts_ms LIMIT ?", (hours, due, since, limit))
             columns = [c[0] for c in cursor.description]
