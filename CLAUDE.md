@@ -61,6 +61,8 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
       the 1R step stops at opposing zones, TL TOUCH (third touch); shadow ORB 13:30 UTC without a card.
     - eng-151 (external audit): the bias veto in shadow, the 1R step stops before an opposing zone (>= 0.3R),
       `variant_pool2`, liq_cascade_2h from 5m buckets.
+    - eng-152: plan 4.3 back to shadow for SWEEP LOW / HIGH (stop / invalid beyond the farthest pool, the nearest
+      journaled as `sl_near`; live eng-151: 41 of 44 INVALID had the nearest stop, life 16 vs 135 min).
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

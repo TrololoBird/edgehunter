@@ -341,7 +341,7 @@ EXTRA_COLUMNS = {
     # _shadow_coin and journal.excursions
     'btc_below_ema50_4h': 'INTEGER', 'liq_cascade_2h': 'REAL', 'mkt_down_alt': 'INTEGER', 'smt_majors': 'INTEGER',
     'nr4': 'INTEGER', 'nr7': 'INTEGER', 'inside_day': 'INTEGER', 'atr_ratio': 'REAL', 'vol_regime': 'TEXT',
-    'range_tf': 'TEXT', 'range_pos_tf': 'REAL', 'range_pos_1h': 'REAL', 'zone_moved': 'TEXT', 'zone_move_atr': 'REAL', 'sl_old': 'REAL',
+    'range_tf': 'TEXT', 'range_pos_tf': 'REAL', 'range_pos_1h': 'REAL', 'zone_moved': 'TEXT', 'zone_move_atr': 'REAL', 'sl_old': 'REAL', 'sl_near': 'REAL',
     'atr_entry': 'REAL', 'zone_far': 'REAL', 'two_stop_r': 'REAL', 'base_stop_r': 'REAL', 'retest_r': 'REAL',
     'hold8_r': 'REAL',
     # extdata.py: Deribit BTC DVOL and its 1h change, BTC options put / call OI; the next-funding spread across
@@ -386,7 +386,7 @@ FEATURE_KEYS = {
     'btc_below_ema50_4h': 'btc_below_ema50_4h', 'liq_cascade_2h': 'liq_cascade_2h', 'mkt_down_alt': 'mkt_down_alt',
     'smt_majors': 'smt_majors', 'nr4': 'nr4', 'nr7': 'nr7', 'inside_day': 'inside_day', 'atr_ratio': 'atr_ratio',
     'vol_regime': 'vol_regime', 'range_tf': 'range_tf', 'range_pos_tf': 'range_pos_tf', 'range_pos_1h': 'range_pos_1h', 'zone_moved': 'zone_moved',
-    'zone_move_atr': 'zone_move_atr', 'sl_old': 'sl_old', 'event_risk': 'event_risk', 'near52': 'near52',
+    'zone_move_atr': 'zone_move_atr', 'sl_old': 'sl_old', 'sl_near': 'sl_near', 'event_risk': 'event_risk', 'near52': 'near52',
     'vol_rank': 'vol_rank', 'liq_proxy': 'liq_proxy',
     'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d', 'weis_ratio': 'weis_ratio',
     'xau_chg_1h': 'xau_chg_1h', 'xau_chg_24h': 'xau_chg_24h', 'oil_chg_1h': 'oil_chg_1h', 'oil_chg_24h': 'oil_chg_24h', 'spy_chg_1h': 'spy_chg_1h', 'spy_chg_24h': 'spy_chg_24h', 'qqq_chg_1h': 'qqq_chg_1h', 'qqq_chg_24h': 'qqq_chg_24h', 'us_session': 'us_session', 'vix_prev': 'vix_prev', 'fng': 'fng', 'etf_flow_1d': 'etf_flow_1d', 'etf_flow_3d': 'etf_flow_3d',

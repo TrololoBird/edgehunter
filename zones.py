@@ -949,8 +949,8 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
     Stop base: the invalidation price, pushed beyond a stop pool / liquidation cluster that sits just behind it
     (within stop_pool_atr ATR), so a routine sweep of that pool does not take the stop, as long as the risk stays
     within max_stop_atr ATR. Returns (base price before the ATR buffer, label).
-    eng-150 (plan 4.3): the NEAREST such pool, never one beyond the next pool (farthest=True = the old rule, kept
-    for the journal's paired sl_old).
+    eng-150 (plan 4.3): the NEAREST such pool, never one beyond the next pool (farthest=True = the old rule; eng-152: live
+    again for the sweep strategy, plan['stop_farthest']).
     """
     cfg = CONFIG.zones
     from pierce import measured_kind, model, overshoot

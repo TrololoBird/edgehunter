@@ -983,3 +983,12 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   closed candles only; against_trend still journaled when the bias veto is in shadow.
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
+
+## eng-152 (2026-10-24, the owner's order after the external audit)
+- Plan 4.3 back to shadow for SWEEP LOW / HIGH: invalidation and entry stop beyond the farthest pool
+  (`plan['stop_farthest']`, the eng-148 rule); the nearest-pool invalidation journaled as `sl_near`.
+- Why (live eng-151, 3.6h): 41 of 44 INVALID sweep cards had the nearest-pool stop, median life 16 min vs 135;
+  26 of the 41 were invalidated by a price that never reached the old stop; 0 own sweep entries.
+- Not a full return to eng-148: pierce pools (4.5) stay live. Silver Bullet unchanged (entry stop still nearest -
+  owner's call). `variant_pool2` rows not comparable with eng-151. `sl_old` == invalid now.
+- Includes d69bb88 (variant_pool2 enters at the pool's own untaken price).

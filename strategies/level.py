@@ -185,13 +185,19 @@ class SweepStrategy(Strategy):
                 moved = max(cand, key=lambda z: z.hi) if d > 0 else min(cand, key=lambda z: z.lo)
         sig['zone_moved'] = moved.label if moved else None
         sig['zone_move_atr'] = round(d * (extreme - (moved.hi if d > 0 else moved.lo)) / tf_atr, 3) if moved else None
-        base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
+        # eng-152 (live eng-151: 41 of 44 INVALID sweep cards had the nearest-pool stop, median life 16 min against
+        # 135; 26 of them never reached the old one): 4.3 back to shadow - the live stop beyond the farthest pool,
+        # the nearest-pool invalidation journaled as sl_near
+        base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol, farthest=True)
+        near, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         from pierce import overshoot as _pierce
         from strategies.geometry import capped_pad
         # eng-147: past a further pool only the small pad, else the measured pierce capped in ATR (no double buffer)
         pad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', base), atr, base != extreme)
         invalid = base - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
         sig['sl_old'] = sl_old - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
+        npad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', near), atr, near != extreme)
+        sig['sl_near'] = near - d * (npad if npad is not None else CONFIG.levels.stop_buffer_atr * atr)
         pool2 = None
         if moved is not None:
             # eng-151 (external audit #2), shadow only: a resting limit at the next pool's liquidity (the second raid),
@@ -225,4 +231,5 @@ class SweepStrategy(Strategy):
             plan['dealing_range'] = rng
             plan['range_tf'] = range_tf
             plan['pool2'] = pool2
+            plan['stop_farthest'] = True                # eng-152: the entry's stop by the same rule as invalid
         return plan

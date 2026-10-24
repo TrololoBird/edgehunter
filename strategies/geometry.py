@@ -577,7 +577,8 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
         if prot is not None and direction * (entry - prot) > 0 and (ref is None or direction * (ref - prot) > 0):
             # ICT: the stop beyond the swing that broke structure, not right behind an unswept pool
             ref, label = prot, 'beyond the protected swing (BOS)'
-        base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label, plan.get('symbol'))
+        base, src = stop_beyond(zones, ref, entry, direction, plan.get('leg_atr') or atr, label, plan.get('symbol'),
+                                farthest=bool(plan.get('stop_farthest')))
         moved = ref is not None and base != ref
     kind = kind_at(zones, base) or kind_of_label(src, plan.get('tf', '15m'))
     measured = overshoot(plan.get('symbol'), kind, base)
@@ -820,7 +821,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
         refs = [r for r in (plan.get('stop_ref'), None if plan.get('stop_ref_only') else extreme) if r is not None]
         ref = (min(refs) if direction > 0 else max(refs)) if refs else entry
         base, src = stop_beyond(zones, ref, entry, direction, atr, exit.get('stop_src', 'beyond the extreme'),
-                                plan.get('symbol'))
+                                plan.get('symbol'), farthest=bool(plan.get('stop_farthest')))
         pad, how = zone_pad(plan, overshoot(plan.get('symbol'), kind_at(zones, base)
                                             or kind_of_label(src, plan.get('tf', '15m')), base), base != ref)
         if pad is None:
