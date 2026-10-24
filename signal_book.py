@@ -421,6 +421,7 @@ class SignalBook:
         self.watchlist = []
         self.vetoed = []
         self._deferred, self._deferring, self._extra = [], False, []
+        self._retest_watch: Dict[int, 'TrackedSignal'] = {}     # eng-160: PUMP / DUMP START cards awaiting a retest
         self.events = []
         self.finished_now = []
         # cards of an older signal logic (restored from the state): an entered one closes at market, a waiting one
@@ -537,6 +538,7 @@ class SignalBook:
             if result is not None:
                 entries.append(result)
         self._deferred = []
+        self._retest_variants(candles_of, int(now * 1000))
         entries.extend(self._extra)          # eng-149: shadow variants (vetoed entries, journal only)
         self._extra = []
 
@@ -1551,6 +1553,66 @@ class SignalBook:
         shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, name
         shadow.of_confirm, shadow.confirms, shadow.limit_variant = None, {}, limit
         self._extra.append(shadow)
+
+    RETEST_SETUPS = ('PUMP START', 'DUMP START')
+    RETEST_BARS = 24            # 2h of 5m bars after the signal (the source's local window)
+
+    def _retest_variants(self, candles_of, now_ms: int) -> None:
+        """
+        eng-160 (the owner, trade geometry scenario B): the retest entry of a PUMP / DUMP START journaled beside the live
+        confirmation entry as 'variant_retest' (never traded). Every such card with a plan is watched - entered, vetoed
+        low_rr or expired alike (a variant read only on entered cards would be survivorship) - for 2h of 5m bars after
+        the signal: price comes back into H_n +- 0.25 ATR(5m) (H_n = the edge of the 2h range the move broke, pd_hn),
+        and a 5m bar closes back beyond H_n -> entry at that close with the plan's own stop / targets. A close beyond
+        H_n -+ 0.25 ATR on the wrong side breaks the structure: no retest entry.
+        """
+        for s in self.signals.values():
+            if s.group_key in self.RETEST_SETUPS and s.plan and (s.sig or {}).get('pd_hn') \
+                    and 'variant_retest' not in s.variants_done and id(s) not in self._retest_watch:
+                self._retest_watch[id(s)] = s
+        for key, s in list(self._retest_watch.items()):
+            try:
+                if self._retest_variant(s, candles_of, now_ms):
+                    self._retest_watch.pop(key, None)
+            except Exception as e:
+                logger.warning(f"Retest variant {s.symbol} {s.group_key}: {e!r}")
+                self._retest_watch.pop(key, None)
+
+    def _retest_variant(self, s: 'TrackedSignal', candles_of, now_ms: int) -> bool:
+        """True when this card's retest is settled (journaled, broken, stale or out of time)."""
+        from strategies.pd_features import FIVE_MS, bars_5m
+        sig, d = s.sig or {}, s.direction
+        hn, atr = sig.get('pd_hn'), sig.get('pd_atr5')
+        start = int(sig.get('event_ts') or 0)
+        if not hn or not atr or not start or not candles_of:
+            s.variants_done.append('variant_retest')
+            return True
+        bars = [b for b in bars_5m(list(candles_of(s.symbol))) if b[0] >= start // FIVE_MS * FIVE_MS + FIVE_MS]
+        band = 0.25 * atr
+        touched = False
+        for i, b in enumerate(bars[:self.RETEST_BARS]):
+            close_ms = int(b[0]) + FIVE_MS
+            if d * (b[4] - (hn - d * band)) < 0:
+                s.variants_done.append('variant_retest')          # closed through the zone: the breakout failed
+                return True
+            near = b[3] if d > 0 else b[2]
+            if d * (near - (hn + d * band)) <= 0:
+                touched = True
+            if touched and d * (b[4] - hn) > 0:
+                if now_ms - close_ms > FIVE_MS + 2 * MINUTE_MS:
+                    s.variants_done.append('variant_retest')      # a stale bar (restart / gap): not journaled
+                    return True
+                levels = entry_levels(s.plan, float(b[4]), None, d)
+                if levels and d * (levels['entry'] - levels['sl']) > 0:
+                    levels['zone_src'] = f"retest of the 2h range edge {hn:.6g} +- 0.25 ATR(5m) (variant)"
+                    self._variant(s, 'variant_retest', levels, close_ms)
+                else:
+                    s.variants_done.append('variant_retest')
+                return True
+        if len(bars) >= self.RETEST_BARS or now_ms - start > (self.RETEST_BARS + 2) * FIVE_MS:
+            s.variants_done.append('variant_retest')              # no retest within 2h
+            return True
+        return False
 
     def _limit_variants(self, s: TrackedSignal, ltf, interval_ms: int, now_ms: int, price: float):
         """

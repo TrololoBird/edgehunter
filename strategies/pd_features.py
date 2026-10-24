@@ -104,6 +104,14 @@ def features(minutes: Sequence[Sequence[float]], m15: Sequence[Sequence[float]],
     if len(loc) >= 12:
         edge = max(b[2] for b in loc) if direction > 0 else min(b[3] for b in loc)
         out['pd_breakout'] = direction * (last[4] / edge - 1) if edge else None             # source: > 0.003
+    # eng-160: H_n for the retest variant - the edge of the 2h range BEFORE the move (the 24 bars before the last 3:
+    # the 15-minute move that fired the signal), so the level is the range the pump broke, not a bar of the pump
+    pre = bars[-27:-3]
+    if len(pre) >= 12:
+        out['pd_hn'] = max(b[2] for b in pre) if direction > 0 else min(b[3] for b in pre)
+    trs = [max(b[2] - b[3], abs(b[2] - a[4]), abs(b[3] - a[4])) for a, b in zip(bars[-15:-1], bars[-14:])]
+    if len(trs) >= 10:
+        out['pd_atr5'] = sum(trs) / len(trs)                                                # ATR(14) of 5m
     closes = [b[4] for b in bars]
     if len(closes) >= 26:
         e20 = _ema(closes, 20)

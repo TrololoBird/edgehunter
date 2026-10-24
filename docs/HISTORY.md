@@ -984,6 +984,15 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-160 (2026-10-24, the owner: trade geometry scenario B as a shadow variant)
+- `variant_retest` for PUMP START / DUMP START (SignalBook._retest_variants): every such card with a plan is watched -
+  entered, vetoed (low_rr) or expired alike, so the variant has no survivorship - for 24 x 5m after the signal.
+  Price back into H_n +- 0.25 ATR(5m), then a 5m close back beyond H_n -> entry at that close, the plan's own stop and
+  targets, journaled as a vetoed entry 'variant_retest' (never traded). A close beyond H_n -+ 0.25 ATR on the wrong
+  side = the breakout failed, no variant; a stale bar (restart) is skipped.
+- H_n (`pd_hn`) = the edge of the 24 x 5m range before the signal's 15-minute move (not a bar of the move itself);
+  `pd_atr5` = ATR(14) of 5m. Both journaled.
+
 ## eng-159c (2026-10-24, the remaining sources of the owner's research read)
 - New journaled features at a PUMP / DUMP START (`pd_features.extras`, Scanner._pd_enrich): `pd_trades_ratio_5m`
   (La Morgia 2020 / Doge of Wall Street 2023: trade counts jump at the start), `pd_price_vs_ma12h` (Kamps &
