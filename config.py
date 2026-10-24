@@ -674,7 +674,12 @@ class StrategiesConfig:
     # Kept blocking: crowded, same_leg, low_rr, macro_event, event_risk, perp_led, killzone / session, disabled.
     # eng-156: 'against_bias' blocks again (SWEEP / SILVER BULLET against the weekly / daily bias, live eng-148..155:
     # 6 sweep entries, 1 win, -5.5R; Silver Bullet 3, -1.8R; ICT's top-down rule); 'against_trend' (1h) stays shadow
-    shadow_vetoes: tuple = ('against_trend', 'pd_late', 'pd_spike_fail', 'no_prior_trend',   # eng-164     # eng-159: detector phases, shadow 'not_in_pool', 'h4_against', 'regime_flat',
+    # eng-165: 'not_in_pool' BLOCKS (owner, live: entries tagged with it -0.20R a trade vs +0.01R without, 50 / 64
+    # entries, 8h replay). Bug fixed here: an inline comment added in eng-159 commented out the rest of this line, so
+    # 'not_in_pool' / 'h4_against' / 'regime_flat' had silently been blocking since 2026-10-24 19:10.
+    shadow_vetoes: tuple = ('against_trend', 'pd_late', 'pd_spike_fail',   # eng-159: detector phases
+                            'no_prior_trend',                             # eng-164
+                            'h4_against', 'regime_flat',
                             'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation',
                             # eng-138: the filters by name (was the pattern 'no_*', which also put a setup's own
                             # required parts - Wyckoff's spring test 'no_spring_test' - in shadow: springs without
@@ -1036,7 +1041,7 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-164"   # PUMP / DUMP START targets + dump OI gate changed
+    logic_version: str = "eng-165"   # not_in_pool blocking   # PUMP / DUMP START targets + dump OI gate changed
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

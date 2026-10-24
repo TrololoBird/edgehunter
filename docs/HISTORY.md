@@ -984,6 +984,13 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-165 (2026-10-24, the owner's order on live data)
+- `not_in_pool` blocks (was a shadow veto): live entries tagged with it -0.20R a trade vs +0.01R without (50 / 64
+  entries, 8h replay, 13 days).
+- Bug (mine, eng-159): an inline comment inserted into the shadow_vetoes line commented out its rest, so not_in_pool,
+  h4_against and regime_flat silently BLOCKED from 2026-10-24 19:10 (71 entries vetoed not_in_pool; 0 by the other two).
+  h4_against / regime_flat back in shadow; the tuple now has one item group per line.
+
 ## eng-164 (2026-10-24, plan items 31 / 32 / 34 + an eng-163 bug)
 - Bug (eng-163): smallcap._check reused the name `last` for the cooldown dict, so the next line read last[0] from a dict
   (KeyError(0) on every small-cap check after a cooldown) - renamed.
