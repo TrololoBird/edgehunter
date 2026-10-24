@@ -672,7 +672,9 @@ class StrategiesConfig:
     # 11-14.10, laptop 30.09-11.10) no longer block - the entry is taken and journaled with shadow_veto = the
     # reasons that WOULD have vetoed it, so card_r of shadowed vs clean entries measures each rule on live trades.
     # Kept blocking: crowded, same_leg, low_rr, macro_event, event_risk, perp_led, killzone / session, disabled.
-    shadow_vetoes: tuple = ('against_bias', 'against_trend', 'not_in_pool', 'h4_against', 'regime_flat',
+    # eng-156: 'against_bias' blocks again (SWEEP / SILVER BULLET against the weekly / daily bias, live eng-148..155:
+    # 6 sweep entries, 1 win, -5.5R; Silver Bullet 3, -1.8R; ICT's top-down rule); 'against_trend' (1h) stays shadow
+    shadow_vetoes: tuple = ('against_trend', 'not_in_pool', 'h4_against', 'regime_flat',
                             'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation',
                             # eng-138: the filters by name (was the pattern 'no_*', which also put a setup's own
                             # required parts - Wyckoff's spring test 'no_spring_test' - in shadow: springs without
@@ -808,7 +810,9 @@ class StrategiesConfig:
     # Turtles' own 12-unit limit; eng-144: Turtle / Connors cards count here too (one card = one slot).
     # eng-146: 3 (was 6): alts correlate 0.8-0.9 in falls, so 6 positions at 1R were one ~5.6R bet; 3 caps the
     # cluster at ~3R per direction (policy, not fitted)
-    crowd_max: int = 0               # eng-148, the owner: 0 = no limit on the demo (the rank is journaled, crowd_pos)
+    # eng-156: 6 again - the Turtles' closely correlated markets limit (Faith, Original Turtle Rules: 4 / 6 / 10 / 12);
+    # 28 trendline shorts were open at once on 2026-10-24, one ~28R bet on the market falling
+    crowd_max: int = 6
     # eng-128: the data-mined layers (models/profiles.json, profiles_regime.json: research_optimize's filters, stops,
     # break-even, time stops, the 'regime_off' veto; models/exit_overlays.json: research_overlays' early exits and the
     # alts_with filter) have no source - fitted on the archive, several negative on their own validation: off

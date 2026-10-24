@@ -46,6 +46,30 @@ if TYPE_CHECKING:
 from config import CONFIG
 from journal import classify, veto_reason
 from levels import MINUTE_MS, funding_r, ltf_trigger, pullback_spread_ok, pullback_volume_ok, resample, slippage_bps
+
+# eng-156: the cards' resample of the minute ring ran uncached for every card in its zone on every scan and every
+# managed minute (watchdog: levels.resample under _try_entry / _trail stalled the loop 1-2 s a minute). Cached per
+# (coin, tf) like fetcher._RESAMPLE_CACHE: the key is the minutes' count, first / last minute, the close bucket and the
+# recent minutes' content (a REST-revised or patched minute changes it); callers get copies (no shared bars)
+_SB_RESAMPLE: Dict[Tuple[str, int], Tuple[tuple, List]] = {}
+
+
+def _resample(symbol: str, minutes, tf: int, until_ms) -> List[List[float]]:
+    if not minutes:
+        return []
+    from strategies.ind_panel import content_digest
+    tf = int(tf)
+    key = (len(minutes), minutes[0][0], minutes[-1][0], int(until_ms // (tf * MINUTE_MS)) if until_ms else None,
+           content_digest(minutes[-180:]))
+    hit = _SB_RESAMPLE.get((symbol, tf))
+    if hit is not None and hit[0] == key:
+        bars = hit[1]
+    else:
+        bars = resample(minutes, tf, until_ms)
+        if len(_SB_RESAMPLE) > 1500:
+            _SB_RESAMPLE.clear()
+        _SB_RESAMPLE[(symbol, tf)] = (key, bars)
+    return [list(b) for b in bars]
 HOUR_MS, DAY_MS = 3_600_000, 86_400_000
 from strategies.maniac import in_session
 from strategies.maniac_strategies import MANIAC_STRATEGIES
@@ -751,7 +775,7 @@ class SignalBook:
                 sar['sar'] = min(sar['sar'], lv['sl']) if d > 0 else max(sar['sar'], lv['sl'])
             if minutes:
                 done = (int(minutes[-1][0]) + MINUTE_MS) // size * size
-                bars = [b for b in resample(minutes, int(sar['tf_min']), done) if sar['last_ts'] < b[0] and b[0] + size <= done]
+                bars = [b for b in _resample(s.symbol, minutes, int(sar['tf_min']), done) if sar['last_ts'] < b[0] and b[0] + size <= done]
                 for b in bars:
                     nxt, ep, af, stopped = parabolic_sar_step(sar['sar'], sar['ep'], sar['af'], d, b[2], b[3],
                                                               prev_hi=sar.get('prev_hi'), prev_lo=sar.get('prev_lo'))
@@ -807,7 +831,7 @@ class SignalBook:
         # as of the minute being managed (review of 6b771ba: the whole buffer let later bars move an earlier stop)
         asof = s.managed_ms or None
         minutes = [m for m in candles_of(s.symbol) if asof is None or m[0] + MINUTE_MS <= asof]
-        bars = resample(minutes, tf, minutes[-1][0] + MINUTE_MS) if minutes else []
+        bars = _resample(s.symbol, minutes, tf, minutes[-1][0] + MINUTE_MS) if minutes else []
         if len(bars) >= 20:
             alpha, ema = 2 / 21, bars[0][4]
             for b in bars[1:]:
@@ -972,6 +996,9 @@ class SignalBook:
             return f"price {price:.6g} beyond the reversed leg's end {anchor['end']:.6g} and its stop pool ({invalid:.6g})"
         if anchor.get('type') == 'level':
             return f"price {price:.6g} beyond the extreme {anchor['extreme']:.6g} at {anchor.get('label') or 'the level'} ({invalid:.6g})"
+        if anchor.get('type') == 'range':
+            # eng-156: a Wyckoff card is invalid past the spring / upthrust extreme, not the range's middle (the text lied)
+            return f"price {price:.6g} beyond the {'spring low' if s.direction > 0 else 'upthrust high'} ({invalid:.6g})"
         return f"price {price:.6g} back inside the range past its middle ({invalid:.6g})"
 
     def _advance(self, s: TrackedSignal, price: float, now: float, frames, candles_of,
@@ -1164,7 +1191,7 @@ class SignalBook:
         interval_ms = trigger_minutes * 60_000
         # A trigger candle is complete once its last minute is final (not by the wall clock: that minute's final
         # kline arrives a moment after the minute ends, and the entry would be a mid-minute price)
-        ltf = resample(minutes, trigger_minutes, minutes[-1][0] + MINUTE_MS)
+        ltf = _resample(s.symbol, minutes, trigger_minutes, minutes[-1][0] + MINUTE_MS)
         kind = s.plan.get('trigger', 'shift')
         shadow = self._shadow_entry(s, ltf, kind, interval_ms, now_ms, price)
         self._limit_variants(s, ltf, interval_ms, now_ms, price)
@@ -1273,7 +1300,7 @@ class SignalBook:
             k -= 1
         minutes = list(allm[k:])
         if close_min:
-            for b in resample(minutes, int(close_min), done):
+            for b in _resample(s.symbol, minutes, int(close_min), done):
                 if b[0] + size > start and d * (b[4] - invalid) <= 0:
                     return float(b[4])
             return None
@@ -1316,7 +1343,7 @@ class SignalBook:
         minutes = list(candles_of(symbol)) if candles_of else []
         if not minutes:
             return None
-        bars = resample(minutes, minutes_tf, minutes[-1][0] + MINUTE_MS)
+        bars = _resample(symbol, minutes, minutes_tf, minutes[-1][0] + MINUTE_MS)
         return bars[-1][4] if bars else None
 
     def _confirmation_entry(self, s: TrackedSignal, price: float, now_ms: int,

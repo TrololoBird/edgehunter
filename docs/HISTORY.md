@@ -984,6 +984,14 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-156 (2026-10-24, decided by me on the owner's order; plan + sources: docs/PLAN_eng156.md)
+- `against_bias` blocks again (SWEEP / SILVER BULLET against the weekly / daily bias; live 6 sweep entries, 1 win,
+  -5.5R); `against_trend` stays shadow.
+- `crowd_max` 6 (Turtles' closely correlated limit; 28 trendline shorts were open at once).
+- signal_book `_resample`: cached per (coin, tf), copies out (loop stalls under _try_entry / _trail).
+- Wyckoff INVALID text names the spring low / upthrust high (was the generic range text).
+- eng-155b: on_partial keeps half of the ORIGINAL size (APE past its TP1 third was closed down to 1/6).
+
 ## eng-155 logic_version bump (2026-10-24, follow-up)
 - `logic_version` eng-152 -> eng-155: eng-153 / 154 / 155 went live 15:12-16:41 UTC without it, so their rows until
   this bump are labelled eng-152 (stats per version mix them). `keep_waiting_from` stays eng-152 (HIT_RATE floor,
