@@ -44,3 +44,29 @@ Status legend: CHECKED = verified against code / live data today; TODO = to do; 
 15. Exact rush-order count from raw @trade (paper's same-ms grouping) for the universe - extra stream per coin, memory
     cost; only if the proxy shows value.
 16. Continuation OTE (0 entries): kept by decision (no source for another zone); revisit with live MISSED data.
+
+## External audits batch 2026-10-24 21:00 (4 reports) - verified
+
+Rejected (checked against the tree):
+- "deep-research-report" (generic): Polymarket - 0 matches in the repo; "no tests / no CI" - tests/ has 23 files,
+  .github/workflows/ci.yml exists; file names (main/strategy/data_pipeline/execution.py roles) invented.
+- "2-deep-research-report": the same report already rejected (sweep.py / trendline.py / open_range.py do not exist).
+- "deep-research-report (1)" (literature Q&A): no code action; agrees with the shadow-first policy (no evidence for
+  funding as a contrarian signal, round numbers, OB / FVG fill rates, ICT OTE).
+
+Confirmed (EDGEHUNTER_AUDIT_PRELIMINARY) -> to implement:
+17. TODO logic_version: eng-155 still, though eng-156..161 changed vetoes (against_bias blocking, crowd_max), enabled
+    setups (eng-157), detection (DUMP START, small caps, median RVOL), journaling (variant_retest). Bump to eng-161;
+    keep_waiting_from eng-155 (waiting cards keep their veto-at-creation).
+18. TODO EH-TRADE-002: `_trail` returns inside the SAR (BB1) and trail_pct branches BEFORE the +1R partial / BE block ->
+    no PARTIAL for those cards; worse, new BB1 trades get the exchange tp0 (executor.exit_parts) while the card never
+    books p1r_done -> journal R and demo R disagree. Move the partial block before the trail branches (BE stays off
+    where a plan has its own trail).
+19. TODO EH-DOC-003: stale text - signal_book._trail docstring ("BE globally off since eng-111", "partial off since
+    eng-123"), config.py partial comment "Off since eng-123".
+20. TODO EH-DEPLOY-001: deploy/install.sh USER_NAME=pump while the units run User=edgehunter -> a clean install cannot
+    start the service. Set edgehunter.
+21. TODO EH-DEPLOY-004: deploy/README.md says polars 1.44.2, setup_server.sh says "pinned", requirements.txt has
+    polars>=2.0,<3 -> write the version actually installed on the VPS into a constraints file used by the installer.
+
+Owner decisions (not bugs): public dashboard without auth (deploy/web_access.sh, documented); root README / LICENSE.
