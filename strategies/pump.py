@@ -43,7 +43,8 @@ def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     move = last[4] / base[4] - 1
     if move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
         return None
-    if (m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
+    # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
+    if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
         return None
     if (m.get('oi_change_5m') or 0) <= 0 or (m.get('spot_cvd_5m') or 0) <= 0:
         return None
@@ -80,7 +81,8 @@ def dump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     move = last[4] / base[4] - 1
     if -move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
         return None
-    if (m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
+    # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
+    if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
         return None
     if (m.get('oi_change_5m') or 0) <= 0 or (m.get('spot_cvd_5m') or 0) >= 0:
         return None
@@ -251,6 +253,13 @@ class PumpStartStrategy(Strategy):
     uses_minutes = True
     default_tf = '15m'
 
+    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        # eng-159: the detector's phases (strategies.pd_features) - shadow vetoes, journaled, judged live
+        from signal_book import shadow_veto
+        if sig.get('pd_spike_fail'):
+            shadow_veto(sig, 'pd_spike_fail')
+        return 'pd_late' if sig.get('pd_late') else None
+
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), 'start') if x.sig.get('pump_low') is not None else None
 
@@ -291,6 +300,13 @@ class DumpStartStrategy(Strategy):
     ttl_key = 'pump_ttl'
     uses_minutes = True
     default_tf = '15m'
+
+    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        # eng-159: the detector's phases (strategies.pd_features) - shadow vetoes, journaled, judged live
+        from signal_book import shadow_veto
+        if sig.get('pd_spike_fail'):
+            shadow_veto(sig, 'pd_spike_fail')
+        return 'pd_late' if sig.get('pd_late') else None
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), 'dstart') if x.sig.get('dump_high') is not None else None

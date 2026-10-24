@@ -51,6 +51,8 @@ class SmallCapWatch:
         self.h1: Dict[str, List] = {}               # the wide watch's closed 1h candles
         self.pending: List[Tuple[str, Dict]] = []   # signals for the next scan
         self._fired: set = set()
+        from strategies.pd_features import ActivationLog
+        self._activation = ActivationLog()          # eng-159: lead time (base: the 24h mean minute - no 15m history here)
         self._stream = None
         self._seeding: set = set()
         self.detections = 0
@@ -99,6 +101,8 @@ class SmallCapWatch:
             return
         ring.append(row)
         self.forming.pop(sym, None)
+        qv = self.qv24.get(sym)
+        self._activation.update(sym, ring, qv / 1440 if qv else None)
         if len(ring) >= 120:
             asyncio.get_event_loop().create_task(self._check(sym))
 
@@ -172,6 +176,9 @@ class SmallCapWatch:
             k15 = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
                                                 {'symbol': bid, 'interval': '15m', 'limit': 98}, priority=1, weight=1)
             closes = [float(x[4]) for x in k15 or []][:-1]
+            m15 = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7])] for x in (k15 or [])[:-1]]
+            from strategies import pd_features as pdf
+            base1 = pdf.volume_base_1m(m15)
             rets = [b / a - 1 for a, b in zip(closes, closes[1:]) if a]
             vol = (sum(r * r for r in rets) / len(rets)) ** 0.5 if len(rets) > 20 else None
             oi = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiDataGetOpenInterestHist',
@@ -184,8 +191,11 @@ class SmallCapWatch:
             avg_minute = (self.qv24.get(sym) or 0) / 1440
             rvol = last[5] / avg_minute if avg_minute else 0.0
             m = {'rvol_1m': rvol, 'oi_change_5m': oi_change, 'spot_cvd_5m': flow}
+            if base1:
+                m['rvol_1m_med'] = last[5] / base1       # eng-159: the 24h median minute
             h1 = self.h1.get(sym) or []
             found = (pump_start if move > 0 else dump_start)(minutes, m, vol, now_ms, h1)
+            rvol = m.get('rvol_1m_med') or rvol
             logger.info(f"Small caps: {sym} {move:+.1%} in 15m - RVOL {rvol:.1f}, OI 5m {oi_change:+.2%}, futures flow "
                         f"{flow:+,.0f}, vol15 {vol or 0:.3%} -> {found['setup'] if found else 'no setup'}")
             if not found:
@@ -196,6 +206,8 @@ class SmallCapWatch:
                 logger.info(f"Small caps: {sym} {found['setup']} skipped - no 1h history for the ATR")
                 return
             self.detections += 1
+            found.update(pdf.features(minutes, m15, found['direction']))
+            found['pd_activation_lead_s'] = self._activation.lead_s(sym, found['direction'], int(found['event_ts']))
             sig = dict(found, is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
                        long_score=0, short_score=0, alert_type='LONG' if found['direction'] > 0 else 'SHORT',
                        atr_15m=atr, volume_24h=self.qv24.get(sym), smallcap=True, flow_src='futures',

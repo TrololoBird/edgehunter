@@ -674,7 +674,7 @@ class StrategiesConfig:
     # Kept blocking: crowded, same_leg, low_rr, macro_event, event_risk, perp_led, killzone / session, disabled.
     # eng-156: 'against_bias' blocks again (SWEEP / SILVER BULLET against the weekly / daily bias, live eng-148..155:
     # 6 sweep entries, 1 win, -5.5R; Silver Bullet 3, -1.8R; ICT's top-down rule); 'against_trend' (1h) stays shadow
-    shadow_vetoes: tuple = ('against_trend', 'not_in_pool', 'h4_against', 'regime_flat',
+    shadow_vetoes: tuple = ('against_trend', 'pd_late', 'pd_spike_fail',     # eng-159: detector phases, shadow 'not_in_pool', 'h4_against', 'regime_flat',
                             'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation',
                             # eng-138: the filters by name (was the pattern 'no_*', which also put a setup's own
                             # required parts - Wyckoff's spring test 'no_spring_test' - in shadow: springs without
@@ -841,7 +841,7 @@ class StrategiesConfig:
     wide_min_volume: float = 3_000_000
     # eng-158: live 1m watch of those perpetuals for PUMP START / DUMP START (smallcap.py): cards + demo like the universe
     smallcap_watch: bool = True
-    smallcap_minutes: int = 180               # 1m ring per coin (PUMP START needs 120; ~7 MB for 150 coins)
+    smallcap_minutes: int = 240               # 1m ring per coin (PUMP START 120, the 5m layer 48 bars; ~9 MB / 150)
     # eng-127: OI build = Pring's rule (strategies/oi_build.py, shadow); the OI robots' thresholds are deleted
     oi_build_ttl: tuple = (900, 900, 4 * 3600)
     # ICT optimal trade entry for the continuations (trend / momentum): the pullback into 0.62-0.79 of a leg that left

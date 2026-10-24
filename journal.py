@@ -342,6 +342,11 @@ EXTRA_COLUMNS = {
     'btc_below_ema50_4h': 'INTEGER', 'liq_cascade_2h': 'REAL', 'mkt_down_alt': 'INTEGER', 'smt_majors': 'INTEGER',
     'nr4': 'INTEGER', 'nr7': 'INTEGER', 'inside_day': 'INTEGER', 'atr_ratio': 'REAL', 'vol_regime': 'TEXT',
     'range_tf': 'TEXT', 'range_pos_tf': 'REAL', 'range_pos_1h': 'REAL', 'zone_moved': 'TEXT', 'zone_move_atr': 'REAL', 'sl_old': 'REAL', 'sl_near': 'REAL',
+    # eng-159: the pump / dump detector's features (strategies.pd_features)
+    'rvol_1m_med': 'REAL', 'pd_vol_ratio_5m': 'REAL', 'pd_vol_cluster': 'INTEGER', 'pd_range_ratio': 'REAL',
+    'pd_move3': 'REAL', 'pd_move6': 'REAL', 'pd_move12': 'REAL', 'pd_breakout': 'REAL', 'pd_quiet': 'REAL',
+    'pd_late': 'INTEGER', 'pd_spike_fail': 'INTEGER', 'pd_phase': 'TEXT', 'pd_activation_lead_s': 'REAL',
+    'smallcap': 'INTEGER', 'flow_src': 'TEXT',
     'atr_entry': 'REAL', 'zone_far': 'REAL', 'two_stop_r': 'REAL', 'base_stop_r': 'REAL', 'retest_r': 'REAL',
     'hold8_r': 'REAL',
     # extdata.py: Deribit BTC DVOL and its 1h change, BTC options put / call OI; the next-funding spread across
@@ -388,6 +393,10 @@ FEATURE_KEYS = {
     'vol_regime': 'vol_regime', 'range_tf': 'range_tf', 'range_pos_tf': 'range_pos_tf', 'range_pos_1h': 'range_pos_1h', 'zone_moved': 'zone_moved',
     'zone_move_atr': 'zone_move_atr', 'sl_old': 'sl_old', 'sl_near': 'sl_near', 'event_risk': 'event_risk', 'near52': 'near52',
     'vol_rank': 'vol_rank', 'liq_proxy': 'liq_proxy',
+    'rvol_1m_med': 'rvol_1m_med', 'pd_vol_ratio_5m': 'pd_vol_ratio_5m', 'pd_vol_cluster': 'pd_vol_cluster',
+    'pd_range_ratio': 'pd_range_ratio', 'pd_move3': 'pd_move3', 'pd_move6': 'pd_move6', 'pd_move12': 'pd_move12',
+    'pd_breakout': 'pd_breakout', 'pd_quiet': 'pd_quiet', 'pd_late': 'pd_late', 'pd_spike_fail': 'pd_spike_fail',
+    'pd_phase': 'pd_phase', 'pd_activation_lead_s': 'pd_activation_lead_s', 'smallcap': 'smallcap', 'flow_src': 'flow_src',
     'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d', 'weis_ratio': 'weis_ratio',
     'xau_chg_1h': 'xau_chg_1h', 'xau_chg_24h': 'xau_chg_24h', 'oil_chg_1h': 'oil_chg_1h', 'oil_chg_24h': 'oil_chg_24h', 'spy_chg_1h': 'spy_chg_1h', 'spy_chg_24h': 'spy_chg_24h', 'qqq_chg_1h': 'qqq_chg_1h', 'qqq_chg_24h': 'qqq_chg_24h', 'us_session': 'us_session', 'vix_prev': 'vix_prev', 'fng': 'fng', 'etf_flow_1d': 'etf_flow_1d', 'etf_flow_3d': 'etf_flow_3d',
 }

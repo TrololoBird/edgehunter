@@ -984,6 +984,16 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-159 (2026-10-24, the owner: implement docs/PUMP_DUMP_DETECTOR.md)
+- `strategies/pd_features.py`: 24h MEDIAN volume baselines (96 closed 15m candles), the 5m layer from the final 1m
+  candles (volume ratio + cluster >= 3x of the last 4, range_ratio vs the ring's median 5m range, move3 / move6 /
+  move12, 2h breakout, 2-6h quiet), phases LATE / SPIKE_FAIL, ACTIVATION log (lead time).
+- PUMP START / DUMP START gate on the median-based RVOL (`rvol_1m_med`) when available, the Tier-0 mean otherwise.
+- LATE and SPIKE_FAIL are shadow vetoes (`pd_late`, `pd_spike_fail`): journaled, not blocking - data first.
+- Journal columns: rvol_1m_med, pd_vol_ratio_5m, pd_vol_cluster, pd_range_ratio, pd_move3 / 6 / 12, pd_breakout,
+  pd_quiet, pd_late, pd_spike_fail, pd_phase, pd_activation_lead_s, smallcap, flow_src.
+- Small caps: ring 240 minutes; their ACTIVATION base is the 24h mean minute (no 15m history before a check).
+
 ## eng-158 (2026-10-24, the owner: catch pump / dump starts in the small caps too - KAT -44%, WET -46% were missed)
 - `smallcap.py` SmallCapWatch: the wide watch's perpetuals (outside the universe, >= wide_min_volume) on ONE dynamic
   Binance futures connection of 1m klines (no universe stream restart); a 180-minute ring per coin (~7 MB / 150).

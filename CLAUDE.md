@@ -70,6 +70,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - eng-156: against_bias blocks again (sweep / Silver Bullet), crowd_max 6, signal_book resample cached (docs/PLAN_eng156.md).
     - eng-157: every setup on (disabled_setups empty); DUMP START added (PUMP START mirrored).
     - eng-158: smallcap.py - live 1m PUMP / DUMP START on the small caps outside the universe (cards + demo).
+    - eng-159: pd_features - median baselines, 5m layer, LATE / SPIKE_FAIL (shadow), pd_* journal columns.
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

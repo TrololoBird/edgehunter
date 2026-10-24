@@ -37,6 +37,8 @@ class LoopDetectors:
         self._po3_fired: set = set()
         self._pump_checked: Dict[str, int] = {}      # symbol -> the last final minute the pump checks ran on
         self._pump_fired: set = set()                # pump starts / tops already fired
+        from strategies.pd_features import ActivationLog
+        self._pd_activation = ActivationLog()        # eng-159: first ACTIVATION per coin / direction
         self.skip_log: List[tuple] = []              # eng-132: (symbol, strategy, held, needed): a history gate said no
         self._skip_seen: set = set()                 # (symbol, strategy) already in skip_log since the last drain
 
@@ -73,23 +75,34 @@ class LoopDetectors:
         out = []
         cfg = CONFIG.strategies
         from strategies.oi_build import _close_at
+        from strategies import pd_features as pdf
+        m15 = list(self.m15_of(symbol))
+        base1 = pdf.volume_base_1m(m15)
+        self._pd_activation.update(symbol, minutes, base1)        # eng-159: lead time of the detector
+        tier0 = dict(md.tier0 or {})
+        if base1:
+            tier0['rvol_1m_med'] = float(minutes[-1][5]) / base1
         base15 = _close_at(minutes, int(minutes[-1][0]) - 15 * 60_000)     # by time (eng-74), None across a gap
         if base15 and minutes[-1][4] / base15 - 1 >= cfg.pump_start_min_pct:
             closes = [c[4] for c in self.m15_of(symbol)[-97:]]
             rets = [b / a - 1 for a, b in zip(closes, closes[1:]) if a]
             vol = (sum(r * r for r in rets) / len(rets)) ** 0.5 if len(rets) > 20 else None
-            found = pump_start(minutes, md.tier0 or {}, vol, now_ms, list(md.h1 or ()))
+            found = pump_start(minutes, tier0, vol, now_ms, list(md.h1 or ()))
             if found and (symbol, found['anchor_ts'] // 3_600_000) not in self._pump_fired:
                 self._pump_fired.add((symbol, found['anchor_ts'] // 3_600_000))
+                found.update(pdf.features(minutes, m15, 1))
+                found['pd_activation_lead_s'] = self._pd_activation.lead_s(symbol, 1, int(found['event_ts']))
                 out.append(found)
         if base15 and 1 - minutes[-1][4] / base15 >= cfg.pump_start_min_pct:
             # eng-157: the start of a dump (strategies.pump.dump_start)
             closes = [c[4] for c in self.m15_of(symbol)[-97:]]
             rets = [b / a - 1 for a, b in zip(closes, closes[1:]) if a]
             vol = (sum(r * r for r in rets) / len(rets)) ** 0.5 if len(rets) > 20 else None
-            found = dump_start(minutes, md.tier0 or {}, vol, now_ms, list(md.h1 or ()))
+            found = dump_start(minutes, tier0, vol, now_ms, list(md.h1 or ()))
             if found and (symbol, 'dstart', found['anchor_ts'] // 3_600_000) not in self._pump_fired:
                 self._pump_fired.add((symbol, 'dstart', found['anchor_ts'] // 3_600_000))
+                found.update(pdf.features(minutes, m15, -1))
+                found['pd_activation_lead_s'] = self._pd_activation.lead_s(symbol, -1, int(found['event_ts']))
                 out.append(found)
         if (minute + 60_000) % 900_000 == 0:
             window = [c for c in minutes if c[0] >= minute - 4 * 3_600_000]
