@@ -101,8 +101,9 @@ class SmallCapWatch:
             return
         ring.append(row)
         self.forming.pop(sym, None)
-        qv = self.qv24.get(sym)
-        self._activation.update(sym, ring, qv / 1440 if qv else None)
+        # eng-163 (audit F-09): the median minute of the ring, as the universe's median base (was the 24h mean)
+        vols = sorted(c[5] for c in ring)
+        self._activation.update(sym, ring, vols[len(vols) // 2] if vols else None)
         if len(ring) >= 120:
             asyncio.get_event_loop().create_task(self._check(sym))
 
@@ -200,6 +201,11 @@ class SmallCapWatch:
         key = (sym, int(base[0]) // 3_600_000, 1 if move > 0 else -1)
         if key in self._fired:
             return
+        # eng-163: a coin above the 3% gate stays there for ~15 minutes - one REST check per coin per 5 minutes
+        last = self.__dict__.setdefault('_last_check', {})
+        if int(last_ms := int(ring[-1][0])) - last.get(sym, -10**13) < 300_000:
+            return
+        last[sym] = last_ms
         self.checks += 1
         try:
             from strategies.pump import dump_start, pump_start
@@ -269,7 +275,7 @@ class SmallCapWatch:
         rv = m.get('rvol_1m_med') or m.get('rvol_1m') or 0
         if rv < cfg.pump_start_rvol:
             return f"RVOL {rv:.1f} < {cfg.pump_start_rvol:g}"
-        if (m.get('oi_change_5m') or 0) <= 0:
+        if d > 0 and (m.get('oi_change_5m') or 0) <= 0:
             return 'OI 5m not rising'
         if d * (m.get('spot_cvd_5m') or 0) <= 0:
             return 'taker flow against the move'

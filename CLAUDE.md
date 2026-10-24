@@ -74,6 +74,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - eng-160: variant_retest (shadow) for PUMP / DUMP START - retest of the pre-move 2h range edge +- 0.25 ATR(5m).
     - eng-161: 1m hole refill + log, small caps attached at start-up, small-cap failing-gate log.
     - eng-162: logic_version eng-162; +1R partial before the SAR / % trail branches; installer user edgehunter; constraints.txt.
+    - eng-163: PUMP / DUMP START TP1 >= risk span, rolling 5m bar, dump OI gate off, rush fills, small-cap REST cooldown.
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

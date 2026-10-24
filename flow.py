@@ -749,21 +749,36 @@ class RushBook:
         self.counts: Dict[str, np.ndarray] = {}    # symbol -> [RING, 2 sides] rush orders per second
         self.usd: Dict[str, np.ndarray] = {}
         self.secs: Dict[str, np.ndarray] = {}      # the second each ring slot holds (stale slots are zeroed lazily)
-        self._open: Dict[str, list] = {}           # symbol -> [T, side, levels, usd, last price]
+        self._open: Dict[str, list] = {}           # symbol -> [T, side, levels, usd, last price, raw fills]
+        self.fill_counts: Dict[str, np.ndarray] = {}   # eng-163: same-ms taker groups with >= 2 raw fills (l - f + 1)
+        self.fill_secs: Dict[str, np.ndarray] = {}
         self.started = time.time()                 # the z-score needs a full hour of history (0 before: no RUSH rows)
 
-    def on_trade(self, symbol: str, ts_ms: int, side: int, usd: float, price: float):
+    def on_trade(self, symbol: str, ts_ms: int, side: int, usd: float, price: float, fills: int = 1):
         g = self._open.get(symbol)
         if g is not None and g[0] == ts_ms and g[1] == side:
             g[3] += usd
+            g[5] += fills
             if price != g[4]:
                 g[2], g[4] = g[2] + 1, price
             return
         if g is not None:
             self._close(symbol, g)
-        self._open[symbol] = [ts_ms, side, 1, usd, price]
+        self._open[symbol] = [ts_ms, side, 1, usd, price, fills]
 
     def _close(self, symbol: str, g: list):
+        if len(g) > 5 and (g[2] >= 2 or g[5] >= 2):
+            # eng-163 (audit F-13): the paper's grouping - one taker order (same ms, side) with >= 2 raw fills, a
+            # single-level multi-maker sweep included (aggTrade merges those into one message: l - f + 1 fills)
+            if symbol not in self.fill_counts:
+                self.fill_counts[symbol] = np.zeros(self.RING)
+                self.fill_secs[symbol] = np.full(self.RING, -1, dtype=np.int64)
+            sec = int(g[0] // 1000)
+            k = sec % self.RING
+            if self.fill_secs[symbol][k] != sec:
+                self.fill_counts[symbol][k] = 0.0
+                self.fill_secs[symbol][k] = sec
+            self.fill_counts[symbol][k] += 1
         if g[2] < 2:
             return                                  # one level: an ordinary fill, not a sweep
         if symbol not in self.counts:
@@ -788,9 +803,13 @@ class RushBook:
             self._close(symbol, g)
             self._open.pop(symbol, None)
         counts = self.counts.get(symbol)
-        if counts is None:
-            return {'rush_n_10s': 0.0, 'rush_n_30s': 0.0, 'rush_net_30s': 0.0, 'rush_usd_30s': 0.0, 'rush_z_30s': 0.0}
         now = int(now_ms // 1000)
+        fc = self.fill_counts.get(symbol)
+        fills30 = float(fc[((now - self.fill_secs[symbol]) >= 0) & ((now - self.fill_secs[symbol]) < 30)].sum()) \
+            if fc is not None else 0.0
+        if counts is None:
+            return {'rush_n_10s': 0.0, 'rush_n_30s': 0.0, 'rush_net_30s': 0.0, 'rush_usd_30s': 0.0, 'rush_z_30s': 0.0,
+                    'rush_fill_n_30s': fills30}
         age = now - self.secs[symbol]
         valid = (age >= 0) & (age < self.RING)
         c = np.where(valid[:, None], counts, 0.0)
@@ -805,4 +824,6 @@ class RushBook:
         np.add.at(base, (age[hist] // 30).clip(0, self.RING // 30 - 1), c[hist].sum(axis=1))
         base = base[1:]
         z = (n30 - base.mean()) / max(base.std(), 0.5) if now_ms / 1000 - self.started >= self.RING else 0.0
-        return {'rush_n_10s': n10, 'rush_n_30s': n30, 'rush_net_30s': net30, 'rush_usd_30s': usd30, 'rush_z_30s': float(z)}
+        out = {'rush_n_10s': n10, 'rush_n_30s': n30, 'rush_net_30s': net30, 'rush_usd_30s': usd30, 'rush_z_30s': float(z)}
+        out['rush_fill_n_30s'] = fills30
+        return out

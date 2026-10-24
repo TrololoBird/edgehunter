@@ -348,7 +348,7 @@ EXTRA_COLUMNS = {
     'pd_late': 'INTEGER', 'pd_spike_fail': 'INTEGER', 'pd_phase': 'TEXT', 'pd_activation_lead_s': 'REAL',
     'smallcap': 'INTEGER', 'flow_src': 'TEXT', 'pd_base_n': 'INTEGER', 'pd_range_cluster': 'INTEGER',
     'pd_green4': 'INTEGER', 'pd_green6': 'INTEGER', 'pd_above_ema20': 'INTEGER', 'pd_ema20_slope': 'REAL',
-    'pd_pullback': 'REAL', 'pd_trades_ratio_5m': 'REAL', 'pd_price_vs_ma12h': 'REAL', 'pd_vs_btc': 'REAL', 'pd_hn': 'REAL', 'pd_atr5': 'REAL', 'pd_btc_beta': 'REAL', 'pd_vs_btc_resid': 'REAL',
+    'pd_pullback': 'REAL', 'pd_trades_ratio_5m': 'REAL', 'pd_price_vs_ma12h': 'REAL', 'pd_vs_btc': 'REAL', 'pd_hn': 'REAL', 'pd_atr5': 'REAL', 'pd_dump_oi_regime': 'TEXT', 'pd_rolling_bar': 'INTEGER', 'rush_fill_n_30s': 'REAL', 'pd_btc_beta': 'REAL', 'pd_vs_btc_resid': 'REAL',
     'atr_entry': 'REAL', 'zone_far': 'REAL', 'two_stop_r': 'REAL', 'base_stop_r': 'REAL', 'retest_r': 'REAL',
     'hold8_r': 'REAL',
     # extdata.py: Deribit BTC DVOL and its 1h change, BTC options put / call OI; the next-funding spread across
@@ -401,7 +401,7 @@ FEATURE_KEYS = {
     'pd_phase': 'pd_phase', 'pd_activation_lead_s': 'pd_activation_lead_s', 'smallcap': 'smallcap', 'flow_src': 'flow_src',
     'pd_base_n': 'pd_base_n', 'pd_range_cluster': 'pd_range_cluster', 'pd_green4': 'pd_green4', 'pd_green6': 'pd_green6',
     'pd_above_ema20': 'pd_above_ema20', 'pd_ema20_slope': 'pd_ema20_slope', 'pd_pullback': 'pd_pullback',
-    'pd_trades_ratio_5m': 'pd_trades_ratio_5m', 'pd_price_vs_ma12h': 'pd_price_vs_ma12h', 'pd_vs_btc': 'pd_vs_btc', 'pd_hn': 'pd_hn', 'pd_atr5': 'pd_atr5', 'pd_btc_beta': 'pd_btc_beta', 'pd_vs_btc_resid': 'pd_vs_btc_resid',
+    'pd_trades_ratio_5m': 'pd_trades_ratio_5m', 'pd_price_vs_ma12h': 'pd_price_vs_ma12h', 'pd_vs_btc': 'pd_vs_btc', 'pd_hn': 'pd_hn', 'pd_atr5': 'pd_atr5', 'pd_dump_oi_regime': 'pd_dump_oi_regime', 'pd_rolling_bar': 'pd_rolling_bar', 'rush_fill_n_30s': 'rush_fill_n_30s', 'pd_btc_beta': 'pd_btc_beta', 'pd_vs_btc_resid': 'pd_vs_btc_resid',
     'trend_4h': 'trend_4h', 'trend_1d': 'trend_1d', 'weis_ratio': 'weis_ratio',
     'xau_chg_1h': 'xau_chg_1h', 'xau_chg_24h': 'xau_chg_24h', 'oil_chg_1h': 'oil_chg_1h', 'oil_chg_24h': 'oil_chg_24h', 'spy_chg_1h': 'spy_chg_1h', 'spy_chg_24h': 'spy_chg_24h', 'qqq_chg_1h': 'qqq_chg_1h', 'qqq_chg_24h': 'qqq_chg_24h', 'us_session': 'us_session', 'vix_prev': 'vix_prev', 'fng': 'fng', 'etf_flow_1d': 'etf_flow_1d', 'etf_flow_3d': 'etf_flow_3d',
 }

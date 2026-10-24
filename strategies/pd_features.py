@@ -70,6 +70,15 @@ def features(minutes: Sequence[Sequence[float]], m15: Sequence[Sequence[float]],
         bars = [b for b in hist if b[0] < cut] + ring
     else:
         bars = ring
+    # eng-163 (audit F-02): a signal fires on any final minute, the last COMPLETE 5m bar can be the pre-ignition one
+    # (1-4 minutes stale) - the evaluated bar is then the rolling 5 minutes up to the signal minute
+    if minutes and bars and len(minutes) >= 5:
+        last5 = list(minutes[-5:])
+        if int(last5[-1][0]) - int(last5[0][0]) == 4 * MINUTE_MS and int(last5[-1][0]) > int(bars[-1][0]) + 4 * MINUTE_MS:
+            bars = bars + [[int(last5[0][0]), last5[0][1], max(c[2] for c in last5), min(c[3] for c in last5),
+                            last5[-1][4], sum(c[5] for c in last5),
+                            sum((c[6] if len(c) > 6 else 0.0) for c in last5)]]
+            out['pd_rolling_bar'] = 1
     if len(bars) < 13:
         return out
     last = bars[-1]

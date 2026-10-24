@@ -1484,8 +1484,8 @@ class Scanner:
         """eng-160b: BTC's last 290 closed 5m candles for the beta residual (pd_vs_btc_resid), cached per 5 minutes."""
         now = time.time() * 1000
         cached = getattr(self, '_btc_m5_cache', None)
-        if cached and now - cached[0] < 300_000:
-            return cached[1]
+        if cached and int(now // 300_000) == int(cached[0] // 300_000):
+            return cached[1]                 # eng-163 (audit F-06): refreshed at each 5m boundary, not 300 s after a fetch
         try:
             k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
                                               {'symbol': 'BTCUSDT', 'interval': '5m', 'limit': 290}, priority=1, weight=2)

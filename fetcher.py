@@ -2138,7 +2138,8 @@ class DataFetcher:
                 self._last_agg[key] = int(agg)
             self.flow.trade('binance', key, ts, usd, side, recv_ms)
             self.sweeps.add('binance', key, ts, price, usd, side)
-            self.rush.on_trade(key, ts, side, usd, price)
+            fills = int(data['l']) - int(data['f']) + 1 if 'l' in data and 'f' in data else 1
+            self.rush.on_trade(key, ts, side, usd, price, max(1, fills))
             md = self.markets.get(key)
             if md is not None:
                 md.record_price(price, ts)

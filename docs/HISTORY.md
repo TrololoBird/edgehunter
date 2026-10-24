@@ -984,6 +984,18 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-163 (2026-10-24, microstructure audit items 22-30, verified)
+- F-01 PUMP / DUMP START TP1 at least the risk span (`pump._span_targets`, `_risk_span`: |close - extreme| + 0.25 ATR,
+  >= min_stop_atr x ATR): the bare measured move gave R:R < 1 by construction (a synthetic START now enters, was low_rr).
+- F-02 pd_features evaluate a rolling bar of the last 5 closed minutes when the last complete 5m bar is stale
+  (`pd_rolling_bar` = 1).
+- F-03 DUMP START has no OI gate (long-liquidation cascades cut OI); `pd_dump_oi_regime` long_flush / short_build.
+- F-06 BTC 5m cache refreshed per 5m bucket. F-08 variant_retest cancelled when TP1 trades before the zone touch.
+- F-09 small-cap ACTIVATION base = median minute of the ring. F-12 event_risk on PUMP START = shadow tag.
+- F-13 RushBook counts same-ms taker groups with >= 2 raw fills (aggTrade l - f + 1), `rush_fill_n_30s`; the multi-level
+  `rush_*` columns unchanged.
+- smallcap: one REST check per coin per 5 minutes; failing-gate log no longer cites OI for dumps.
+
 ## eng-162 (2026-10-24, external audit EDGEHUNTER_AUDIT_PRELIMINARY, confirmed findings)
 - EH-LOGIC-001: logic_version eng-155 -> eng-162 (eng-156..161 changed vetoes, enabled setups, detection and journaling
   under the old label); keep_waiting_from eng-162 (by its own rule: detection / vetoes changed).

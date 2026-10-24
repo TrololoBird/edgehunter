@@ -84,7 +84,9 @@ def dump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
     if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
         return None
-    if (m.get('oi_change_5m') or 0) <= 0 or (m.get('spot_cvd_5m') or 0) >= 0:
+    # eng-163 (audit F-03): no OI gate for dumps - a long-liquidation cascade CUTS open interest (forced closes), so
+    # 'OI rising' rejected the main dump mechanism and passed only late short builds; the regime is journaled instead
+    if (m.get('spot_cvd_5m') or 0) >= 0:
         return None
     cut = minutes[-15][0]
     first_min = minutes[0][0]
@@ -96,10 +98,11 @@ def dump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     high = max(c[2] for c in minutes[-16:])
     return {'setup': 'DUMP START', 'direction': -1,
             'setup_note': f"{move:.1%} in 15m ({-move / vol_15m:.1f}x the 15m volatility), RVOL {m.get('rvol_1m', 0):.1f}, "
-                          f"OI rising, spot selling, a fresh 24h low",
+                          f"OI {'rising (short build)' if (m.get('oi_change_5m') or 0) > 0 else 'falling (long flush)'}, spot selling, a fresh 24h low",
             'anchor_level': min(c[3] for c in quiet) if quiet else base[4], 'anchor_extreme': high,
             'anchor_label': 'dump ignition', 'anchor_ts': int(base[0]), 'anchor_close': last[4],
-            'dump_high': high, 'pump_move': move, 'event_ts': int(last[0]) + MINUTE_MS}
+            'dump_high': high, 'pump_move': move, 'event_ts': int(last[0]) + MINUTE_MS,
+            'pd_dump_oi_regime': 'short_build' if (m.get('oi_change_5m') or 0) > 0 else 'long_flush'}
 
 
 def pump_top(minutes: Sequence[Sequence[float]], m: Dict, now_ms: int) -> Optional[Dict]:
@@ -213,6 +216,24 @@ def dump_bounce(h1: Sequence[Sequence[float]], now_ms: int) -> Optional[Dict]:
     return found
 
 
+def _span_targets(targets, sources, close: float, d: int, span: float):
+    """eng-163 (audit F-01): TP1 at least the risk span - the stop sits beyond the 16-minute ignition extreme plus a pad
+    floored at min_stop_atr x ATR, so a TP1 at the bare measured move gave R:R < 1 by construction (every card low_rr).
+    Targets nearer than the span are replaced by close +- span / 1.618 span (kept in order, duplicates allowed)."""
+    far = [(t, s) for t, s in zip(targets, sources) if d * (t - close) >= span]
+    fill = [(close + d * span, 'risk span'), (close + d * 1.618 * span, 'risk span x1.618')]
+    out = (far + [f for f in fill if all(d * (f[0] - t) > 0 for t, _ in far)] if far else fill)
+    out = sorted(out, key=lambda ts: d * (ts[0] - close))
+    while len(out) < 3:
+        out.append(out[-1])
+    return [t for t, _ in out[:3]], [s for _, s in out[:3]]
+
+
+def _risk_span(close: float, extreme: float, move: float, atr: float) -> float:
+    """The stop distance the plan will get (extreme + 0.25 ATR pad, at least min_stop_atr x ATR), or the move."""
+    return max(move, abs(close - extreme) + 0.25 * atr, CONFIG.levels.min_stop_atr * atr)
+
+
 class DumpBounceStrategy(Strategy):
     """The short of the first bounce after a dump (eng-55): at market on the trigger close, stop above the bounce,
     TP1 the dump's low (research_pumps.py); the 1.618 extension (sig dump_ext) is not a target of the plan."""
@@ -276,6 +297,7 @@ class PumpStartStrategy(Strategy):
         # TP1 at 0.56 of the risk, every entry low_rr) - the measured move and 1h+ zones only
         targets, sources = select_targets(htf_zones(zones, '1h'), close, 1, max(atr, x.tf_atr.get('1h') or 0.0),
                                           'extension', fillers, 'measured move')
+        targets, sources = _span_targets(targets, sources, close, 1, _risk_span(close, sig['pump_low'], move, atr))
         anchor = {'type': 'level', 'tf': '15m', 'level': sig['anchor_level'], 'label': 'pump ignition',
                   'extreme': sig['pump_low'], 'ts': sig['anchor_ts']}
         plan = base_plan(x, self.name, anchor, '15m', entry='confirm', confirm_only=True,
@@ -322,6 +344,7 @@ class DumpStartStrategy(Strategy):
         fillers = (close - move, close - 1.618 * move)
         targets, sources = select_targets(htf_zones(zones, '1h'), close, -1, max(atr, x.tf_atr.get('1h') or 0.0),
                                           'extension', fillers, 'measured move')
+        targets, sources = _span_targets(targets, sources, close, -1, _risk_span(close, sig['dump_high'], move, atr))
         anchor = {'type': 'level', 'tf': '15m', 'level': sig['anchor_level'], 'label': 'dump ignition',
                   'extreme': sig['dump_high'], 'ts': sig['anchor_ts']}
         plan = base_plan(x, self.name, anchor, '15m', entry='confirm', confirm_only=True,

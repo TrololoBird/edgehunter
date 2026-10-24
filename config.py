@@ -1036,7 +1036,7 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-162"
+    logic_version: str = "eng-163"   # PUMP / DUMP START targets + dump OI gate changed
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

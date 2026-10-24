@@ -453,7 +453,12 @@ class SignalBook:
                 reason = shadow_veto(sig, veto_reason(group_key, sig)) or shadow_veto(sig, strategy.context_veto(sig, direction))
                 if reason is None and direction > 0 and sig.get('event_risk'):
                     # eng-53: no longs on a coin Binance tagged for monitoring / is delisting (documented -4..-34%)
-                    reason = 'event_risk'
+                    if group_key == 'PUMP START':
+                        # eng-163 (audit F-12): those coins are the ones that pump - journaled in shadow, not blocked
+                        have = set(filter(None, (sig.get('shadow_veto') or '').split(',')))
+                        sig['shadow_veto'] = ','.join(sorted(have | {'event_risk'}))
+                    else:
+                        reason = 'event_risk'
                 if reason is None and not strategy.has_data(sig):
                     reason = 'no_data'
                 if reason is None and (not strategy.enabled or group_key in CONFIG.strategies.disabled_setups):
@@ -1603,8 +1608,12 @@ class SignalBook:
         bars = [b for b in bars_5m(list(candles_of(s.symbol))) if b[0] >= start // FIVE_MS * FIVE_MS + FIVE_MS]
         band = 0.25 * atr
         touched = False
+        tp1 = ((s.plan or {}).get('targets') or [None])[0]
         for i, b in enumerate(bars[:self.RETEST_BARS]):
             close_ms = int(b[0]) + FIVE_MS
+            if not touched and tp1 is not None and d * ((b[2] if d > 0 else b[3]) - tp1) >= 0:
+                s.variants_done.append('variant_retest')          # eng-163 (audit F-08): TP1 traded before any retest
+                return True
             if d * (b[4] - (hn - d * band)) < 0:
                 s.variants_done.append('variant_retest')          # closed through the zone: the breakout failed
                 return True
