@@ -984,6 +984,16 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-166 (2026-10-24, why sweep cards miss TP1 without an entry)
+- Live 15:12-22:00 (after eng-153): MISSED share of closed sweep cards ROSE (37% -> 52%); of 54 MISSED, 52 never armed
+  (no structure shift + FVG on the trigger timeframe), 2 armed without a CE fill. On real Binance 15m data 29 of 39
+  MISSED cards had TP1 AT OR BEFORE the swing the raid came from - the level ict.fvg_setup's shift must close beyond:
+  price reached TP1 before an entry could exist, by construction.
+- Fix: the sweep plan draws its targets from beyond that swing (`ict.raid_swing`, shared with fvg_setup, on the plan's
+  trigger timeframe); `mss_level` journaled. eng-153's 60m -> 15m change did not address this (the reason only changed
+  from 'no 60m trigger' to 'no 15m trigger').
+- keep_waiting_from eng-165 (missed in eng-165: the not_in_pool veto changed).
+
 ## eng-165 (2026-10-24, the owner's order on live data)
 - `not_in_pool` blocks (was a shadow veto): live entries tagged with it -0.20R a trade vs +0.01R without (50 / 64
   entries, 8h replay, 13 days).

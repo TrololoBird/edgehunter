@@ -209,7 +209,20 @@ class SweepStrategy(Strategy):
             p2 = (max(prices) if d > 0 else min(prices)) if prices else (moved.hi if d > 0 else moved.lo)
             pool2 = {'entry': p2, 'label': moved.label}
         reached = x.reached if x.reached is not None else reached_since(x.minutes, sig['event_ts'], sig['anchor_close'], d)
-        targets, sources = select_targets(zones, reached, d, atr, 'draw_liquidity')
+        # eng-166: the entry needs a structure shift beyond the swing the raid came from (ict.fvg_setup on the trigger
+        # timeframe); a TP1 at or before that swing is reached before any entry can exist (live 15:12-22:00: 29 of 39
+        # MISSED cards had TP1 inside the MSS level). The targets are drawn from beyond it - ICT's draw after the shift
+        # is the liquidity past the broken structure.
+        from levels import TRIGGER_MINUTES, resample
+        from strategies.ict import raid_swing
+        trig_min = TRIGGER_MINUTES.get(tf, 5)
+        mss = None
+        if x.minutes:
+            ltf = resample(x.minutes, trig_min, x.minutes[-1][0] + 60_000)
+            mss = raid_swing(ltf, d, int(sig['anchor_ts']), trig_min * 60_000)
+        sig['mss_level'] = mss
+        start = reached if mss is None else (max(reached, mss) if d > 0 else min(reached, mss))
+        targets, sources = select_targets(zones, start, d, atr, 'draw_liquidity')
         # ICT: the sweep is only the setup, a wick is not yet a reversal: the entry waits for the displacement's FVG
         # (trigger 'fvg') inside the sweep's area
         close = sig.get('anchor_close', level)

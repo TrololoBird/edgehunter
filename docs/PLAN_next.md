@@ -129,3 +129,5 @@ Rejected (checked in code):
     failing-gate log.
 37. INVESTIGATE small-cap flow window: APR +17.9% in 15m on RVOL 83 and OI +2% was rejected 'taker flow against the move' -
     the flow is the last 5 minutes only (selling after the spike). Compare with the flow over the 15-minute move.
+
+38. DONE eng-166: sweep MISSED root cause - TP1 inside the MSS swing (29 / 39 cards); targets from beyond it. Measure MISSED share after 24h.

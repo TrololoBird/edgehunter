@@ -127,6 +127,29 @@ def fvg_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, i
     return None
 
 
+def _contiguous(ltf: Sequence[Sequence[float]], interval_ms: int):
+    """The run of time-contiguous bars ending at the last one (a gap / MSS across a hole is no structure)."""
+    k0 = len(ltf) - 1
+    while k0 > 0 and int(ltf[k0][0]) - int(ltf[k0 - 1][0]) == interval_ms:
+        k0 -= 1
+    return ltf[k0:]
+
+
+def raid_swing(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int) -> Optional[float]:
+    """The swing the raid came from: the last 3-candle pivot high (long; low for a short) of the bars before the sweep
+    at `since_ms` (up to 48 bars back) - the level fvg_setup's structure shift must close beyond. None without one."""
+    ltf = _contiguous(ltf, interval_ms)
+    start = next((k for k, x in enumerate(ltf) if x[0] + interval_ms > since_ms), None)
+    if start is None or start < 3:
+        return None
+    for k in range(start - 2, max(0, start - 48), -1):
+        if direction > 0 and ltf[k][2] > ltf[k - 1][2] and ltf[k][2] > ltf[k + 1][2]:
+            return ltf[k][2]
+        if direction < 0 and ltf[k][3] < ltf[k - 1][3] and ltf[k][3] < ltf[k + 1][3]:
+            return ltf[k][3]
+    return None
+
+
 def fvg_setup(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int) -> Optional[dict]:
     """
     ICT's 2022 model after a liquidity sweep at `since_ms` (eng-58): a displacement candle (body >= half its range, in
@@ -148,15 +171,9 @@ def fvg_setup(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, int
     h = [x[2] for x in ltf]
     l = [x[3] for x in ltf]
     c = [x[4] for x in ltf]
-    # the swing the raid came from: the last 3-candle pivot before the sweep (up to 48 bars back)
-    swing = None
-    for k in range(start - 2, max(0, start - 48), -1):
-        if direction > 0 and h[k] > h[k - 1] and h[k] > h[k + 1]:
-            swing = h[k]
-            break
-        if direction < 0 and l[k] < l[k - 1] and l[k] < l[k + 1]:
-            swing = l[k]
-            break
+    # the swing the raid came from: the last 3-candle pivot before the sweep (up to 48 bars back) - raid_swing, shared
+    # with the sweep plan's target choice (eng-166)
+    swing = raid_swing(ltf, direction, since_ms, interval_ms)
     if swing is None:
         return None
     for i in range(start + 2, len(ltf)):

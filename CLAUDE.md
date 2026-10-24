@@ -77,6 +77,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - eng-163: PUMP / DUMP START TP1 >= risk span, rolling 5m bar, dump OI gate off, rush fills, small-cap REST cooldown.
     - eng-164: ORB break-even after 60 min (Crabel), SD target = departure extreme without an opposing zone, cascade no_prior_trend shadow.
     - eng-165: not_in_pool blocks; shadow_vetoes line bug from eng-159 fixed (h4_against / regime_flat back in shadow).
+    - eng-166: sweep targets drawn from beyond the raid swing (TP1 inside the MSS level made 74% of MISSED cards).
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 
