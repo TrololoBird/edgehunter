@@ -64,6 +64,42 @@ def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
             'pump_low': low, 'pump_move': move, 'event_ts': int(last[0]) + MINUTE_MS}
 
 
+def dump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[float], now_ms: int,
+               h1: Sequence[Sequence[float]] = ()) -> Optional[Dict]:
+    """eng-157 (the owner: we look for the start of dumps as well as pumps): PUMP START mirrored - the last 15 minutes
+    fell >= pump_start_z x the coin's 15m volatility and >= pump_start_min_pct on >= pump_start_rvol x the usual volume,
+    open interest rising (new shorts, not long liquidation only) and spot taker selling, at a fresh 24h low."""
+    cfg = CONFIG.strategies
+    if len(minutes) < 120 or not vol_15m:
+        return None
+    last = minutes[-1]
+    from strategies.oi_build import _close_at
+    base = next((c for c in minutes if c[0] == int(last[0]) - 15 * MINUTE_MS), None)
+    if base is None or _close_at(minutes, int(last[0]) - 15 * MINUTE_MS) is None:
+        return None
+    move = last[4] / base[4] - 1
+    if -move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
+        return None
+    if (m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
+        return None
+    if (m.get('oi_change_5m') or 0) <= 0 or (m.get('spot_cvd_5m') or 0) >= 0:
+        return None
+    cut = minutes[-15][0]
+    first_min = minutes[0][0]
+    day = [c[3] for c in h1 if now_ms - 86_400_000 - MINUTE_MS <= c[0] and c[0] < first_min]
+    day += [c[3] for c in minutes if c[0] >= now_ms - 86_400_000 - MINUTE_MS and c[0] < cut]
+    if day and last[3] >= min(day):
+        return None                                   # not a fresh 24h low: a drop inside the range
+    quiet = minutes[-60:-15]
+    high = max(c[2] for c in minutes[-16:])
+    return {'setup': 'DUMP START', 'direction': -1,
+            'setup_note': f"{move:.1%} in 15m ({-move / vol_15m:.1f}x the 15m volatility), RVOL {m.get('rvol_1m', 0):.1f}, "
+                          f"OI rising, spot selling, a fresh 24h low",
+            'anchor_level': min(c[3] for c in quiet) if quiet else base[4], 'anchor_extreme': high,
+            'anchor_label': 'dump ignition', 'anchor_ts': int(base[0]), 'anchor_close': last[4],
+            'dump_high': high, 'pump_move': move, 'event_ts': int(last[0]) + MINUTE_MS}
+
+
 def pump_top(minutes: Sequence[Sequence[float]], m: Dict, now_ms: int) -> Optional[Dict]:
     """The climax 15m candle that just closed after a pump of >= pump_top_min_pct within 4h."""
     cfg = CONFIG.strategies
@@ -241,6 +277,43 @@ class PumpStartStrategy(Strategy):
                          target_src=sources, zones=zones, key=(sig['anchor_ts'], 'start'))
         plan['target_tf'] = '1h'                     # eng-69: targets from 1h+ zones (see above)
         # eng-91: no averaging into a loser (was add_half: one more unit at half the way to the stop)
+        return plan
+
+
+class DumpStartStrategy(Strategy):
+    """eng-157: PumpStartStrategy mirrored for the start of a dump (short at the confirmation, stop above the ignition,
+    the measured move down and 1h+ zones as targets)."""
+    name = 'pump'
+    anchor_type = 'level'
+    setups = {'DUMP START': -1}
+    min_rr = 1.0
+    ttl_key = 'pump_ttl'
+    uses_minutes = True
+    default_tf = '15m'
+
+    def gate_key(self, x: PlanInput) -> Optional[tuple]:
+        return (x.sig.get('anchor_ts'), 'dstart') if x.sig.get('dump_high') is not None else None
+
+    def plan(self, x: PlanInput) -> Optional[Dict]:
+        sig, atr = x.sig, x.atr
+        if sig.get('dump_high') is None or not atr:
+            return None
+        close = sig['anchor_close']
+        zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
+        move = sig['dump_high'] - close
+        fillers = (close - move, close - 1.618 * move)
+        targets, sources = select_targets(htf_zones(zones, '1h'), close, -1, max(atr, x.tf_atr.get('1h') or 0.0),
+                                          'extension', fillers, 'measured move')
+        anchor = {'type': 'level', 'tf': '15m', 'level': sig['anchor_level'], 'label': 'dump ignition',
+                  'extreme': sig['dump_high'], 'ts': sig['anchor_ts']}
+        plan = base_plan(x, self.name, anchor, '15m', entry='confirm', confirm_only=True,
+                         zone_lo=close - 0.25 * atr, zone_hi=close + 0.25 * atr, zone_src='momentum ignition (dump)',
+                         missable=False, stop_ref=sig['dump_high'],
+                         exit={'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': atr,
+                               'stop_src': 'above the ignition'},
+                         intent='extension', fillers=fillers, fill_label='measured move', targets=targets,
+                         target_src=sources, zones=zones, key=(sig['anchor_ts'], 'dstart'))
+        plan['target_tf'] = '1h'
         return plan
 
 

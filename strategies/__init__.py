@@ -19,7 +19,7 @@ registry as it stands (eng-145; one methodology = one strategy name, several pla
     orb             ORB UP / DOWN                            classic_strategies   Crabel 5-min range +- Stretch, touch;
                                                                                   out on 15m Parabolic SAR (eng-145)
     connors         RSI2 / RSI2X LONG / SHORT                classic_strategies   daily RSI(2), out at the SMA5
-    pump            PUMP START / TOP, DUMP BOUNCE SHORT      pump.py              the owner's pump playbook
+    pump            PUMP / DUMP START, PUMP TOP, DUMP BOUNCE pump.py              the owner's pump playbook
     cup_handle      CUP HANDLE                               cup_handle.py        O'Neil, 1h / 4h
     po3             PO3 LONG / SHORT                         po3.py               ICT power of three, Asian range
     oi_build        OI BUILD LONG / SHORT                    oi_build.py          off (CONFIG.strategies.disabled_setups)
@@ -39,7 +39,7 @@ from strategies.maniac_strategies import MANIAC_STRATEGIES
 from strategies.wyckoff_range import WyckoffRangeStrategy
 from strategies.classic_strategies import CLASSIC_STRATEGIES
 from strategies.silver_bullet import SilverBulletStrategy
-from strategies.pump import DumpBounceStrategy, PumpStartStrategy, PumpTopStrategy
+from strategies.pump import DumpBounceStrategy, DumpStartStrategy, PumpStartStrategy, PumpTopStrategy
 from strategies.cup_handle import CupHandleStrategy
 from strategies.oi_build import OiBuildStrategy
 from strategies.po3 import Po3Strategy
@@ -50,7 +50,7 @@ from strategies.po3 import Po3Strategy
 _ALL: Tuple[Strategy, ...] = (
     MomentumStrategy(), SweepStrategy(), SilverBulletStrategy(), ExhaustionStrategy(),
     WyckoffRangeStrategy(),
-    BreakoutStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES, PumpStartStrategy(), PumpTopStrategy(),
+    BreakoutStrategy(), *MANIAC_STRATEGIES, *CLASSIC_STRATEGIES, PumpStartStrategy(), DumpStartStrategy(), PumpTopStrategy(),
     DumpBounceStrategy(), CupHandleStrategy(), Po3Strategy(), OiBuildStrategy())
 STRATEGIES: Dict[str, Strategy] = {}
 for _s in _ALL:

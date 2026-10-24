@@ -984,6 +984,15 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-157 (2026-10-24, the owner's order: every strategy on, collect the data; pumps AND dumps)
+- `strategies.disabled_setups` emptied: BULL E, BULL A, PUMP TOP, PUMP START, OI BUILD LONG / SHORT produce cards and
+  journal again (demo_off_setups was already empty).
+- DUMP START (new, strategies/pump.py): PUMP START mirrored - 15m fall >= max(pump_start_min_pct, pump_start_z x 15m
+  vol) on RVOL >= pump_start_rvol, OI rising (new shorts) and spot selling, at a fresh 24h low; short at the
+  confirmation, stop above the ignition, measured-move / 1h+ zone targets. Wired in loopside._pumps.
+- Known side effect (eng-144): OI BUILD made 5387 cards in 2.5 days and its opposite cards cancelled 105 SWEEP cards.
+- cup_handle stays behind its history gate (not enough 1h / 4h history yet) - not a switch.
+
 ## eng-156 (2026-10-24, decided by me on the owner's order; plan + sources: docs/PLAN_eng156.md)
 - `against_bias` blocks again (SWEEP / SILVER BULLET against the weekly / daily bias; live 6 sweep entries, 1 win,
   -5.5R); `against_trend` stays shadow.

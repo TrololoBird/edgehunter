@@ -61,7 +61,7 @@ class LoopDetectors:
 
     def _pumps(self, symbol: str, md, now_ms: int) -> List[Dict]:
         """The pump's start (every final minute) and top (every 15m close), cheap gates first (strategies.pump)."""
-        from strategies.pump import pump_start, pump_top
+        from strategies.pump import dump_start, pump_start, pump_top
         minute = md.minute_closed_until
         if not minute or self._pump_checked.get(symbol) == minute:
             return []
@@ -81,6 +81,15 @@ class LoopDetectors:
             found = pump_start(minutes, md.tier0 or {}, vol, now_ms, list(md.h1 or ()))
             if found and (symbol, found['anchor_ts'] // 3_600_000) not in self._pump_fired:
                 self._pump_fired.add((symbol, found['anchor_ts'] // 3_600_000))
+                out.append(found)
+        if base15 and 1 - minutes[-1][4] / base15 >= cfg.pump_start_min_pct:
+            # eng-157: the start of a dump (strategies.pump.dump_start)
+            closes = [c[4] for c in self.m15_of(symbol)[-97:]]
+            rets = [b / a - 1 for a, b in zip(closes, closes[1:]) if a]
+            vol = (sum(r * r for r in rets) / len(rets)) ** 0.5 if len(rets) > 20 else None
+            found = dump_start(minutes, md.tier0 or {}, vol, now_ms, list(md.h1 or ()))
+            if found and (symbol, 'dstart', found['anchor_ts'] // 3_600_000) not in self._pump_fired:
+                self._pump_fired.add((symbol, 'dstart', found['anchor_ts'] // 3_600_000))
                 out.append(found)
         if (minute + 60_000) % 900_000 == 0:
             window = [c for c in minutes if c[0] >= minute - 4 * 3_600_000]

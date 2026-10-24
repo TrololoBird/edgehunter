@@ -684,16 +684,9 @@ class StrategiesConfig:
                             'htf_bias', 'htf_conflict', 'rg_breakout_in_range', 'rg_countertrend',
                             'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day',
                             'sweep_no_htf_bias')   # eng-151 (external audit #1): shadow, outcome journaled
-    disabled_setups: tuple = ('BULL E', 'BULL A', 'PUMP TOP', 'PUMP START',
-                             # eng-144: OI BUILD - 5387 cards in 2.5 days (eng-143), none entered (R:R at the signal close
-                             # < 1), and its opposite cards cancelled 105 SWEEP cards; demo -3.3R
-                             'OI BUILD LONG', 'OI BUILD SHORT',
-                             # eng-127: the setups switched off in eng-109 for invented thresholds are rewritten from
-                             # their sources or deleted - Seiden's odds enhancers (SD), the failed auction (AUCTION),
-                             # Bollinger's Method I (BB1, replaces BULL F / BEAR D), Connors without a stop at 1x,
-                             # the Turtles as written; Pring's OI rule and the cascades in shadow; the ATR-line bot
-                             # and the OI robots deleted
-                             )
+    # eng-157, the owner's order: EVERY setup on - cards and journal for all, data first, the verdict later
+    # (was: BULL E, BULL A, PUMP TOP, PUMP START, OI BUILD LONG / SHORT)
+    disabled_setups: tuple = ()
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
