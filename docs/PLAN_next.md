@@ -70,3 +70,26 @@ Confirmed (EDGEHUNTER_AUDIT_PRELIMINARY) -> to implement:
     polars>=2.0,<3 -> write the version actually installed on the VPS into a constraints file used by the installer.
 
 Owner decisions (not bugs): public dashboard without auth (deploy/web_access.sh, documented); root README / LICENSE.
+
+## External audit "Independent Quantitative Microstructure..." (F-01..F-14) - verified 2026-10-24 21:20
+
+Confirmed -> to implement:
+22. F-01 PUMP / DUMP START R:R < 1 by construction (TP1 = measured move, stop = 16-min extreme + pad >= 1 ATR): our own
+    offline check gave rr_tp1 0.94 -> low_rr expiry. Fix: TP1 at least the risk span (close +- max(move, |close - stop|)).
+23. F-02 5m features lag 1-4 min on signals that fire mid-5m-bucket (the last COMPLETE 5m bar is the pre-ignition one):
+    add a rolling bar of the last 5 closed 1m candles as the evaluated bar.
+24. F-03 DUMP START requires OI 5m > 0 - a long-liquidation cascade cuts OI, so the main dump mechanism is rejected and
+    only late short builds pass. Fix: drop the hard OI gate for dumps, journal pd_dump_oi_regime (long_flush / short_build).
+25. F-06 (part) BTC 5m cache lives 300 s from fetch, not per 5m bucket -> the latest bar is missing and pd_vs_btc_resid is
+    None; invalidate on the 5m boundary. (Alignment itself is by openTime already - that part of F-06 is wrong.)
+26. F-08 (part) variant_retest journals a retest after TP1 was already hit -> cancel when TP1 trades before the zone touch.
+    (A retest below the plan stop is already skipped, not corrupted - that part is wrong.)
+27. F-09 small-cap ACTIVATION base = 24h mean (detection uses median) - known; use the median of the 1m ring.
+28. F-12 event_risk on PUMP START -> shadow (same as item 8).
+29. F-13 RushBook: use aggTrade ids (l - f + 1) so single-level multi-maker sweeps count; new journal column.
+30. smallcap._check repeats REST every minute while |move15| >= 3% when no setup fires -> per-coin cooldown 5 min.
+Rejected: F-04 memory (steady state was 1.8-2.0 GB before small caps; seeding goes through the REST limiter),
+F-05 restop leaves position naked (on_restop places the new stop BEFORE cancelling the old, executor.py ~1135),
+F-07 sign errors (features use direction: pd_late, spike_fail, green, breakout, EMA, ma12h are signed; only the raw
+pd_move3/6 columns are unsigned by design), F-10 (24h extreme uses h1 + minutes before the last 15 min, not 15m REST),
+F-11 (fixed in eng-161). Optional later: VPIN / impact ratio / BOCD features, PUMP TOP OI shadow veto (F-14).
