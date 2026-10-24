@@ -202,10 +202,10 @@ class SmallCapWatch:
         if key in self._fired:
             return
         # eng-163: a coin above the 3% gate stays there for ~15 minutes - one REST check per coin per 5 minutes
-        last = self.__dict__.setdefault('_last_check', {})
-        if int(last_ms := int(ring[-1][0])) - last.get(sym, -10**13) < 300_000:
+        checked = self.__dict__.setdefault('_last_check', {})
+        if int(ring[-1][0]) - checked.get(sym, -10**13) < 300_000:
             return
-        last[sym] = last_ms
+        checked[sym] = int(ring[-1][0])
         self.checks += 1
         try:
             from strategies.pump import dump_start, pump_start

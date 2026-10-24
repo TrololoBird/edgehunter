@@ -100,13 +100,13 @@ Note: my brief to this auditor mislabelled the 16 market_down entry vetoes as TL
 TL TOUCH UP (longs). _market_down returns False for every short (signal_book.py: `if s.direction <= 0`).
 
 Confirmed / source-backed -> to implement:
-31. ORB: Crabel's own exit rule - "stops should be moved to break even within one hour after entry" (Day Trading with
+31. DONE eng-164: ORB: Crabel's own exit rule - "stops should be moved to break even within one hour after entry" (Day Trading with
     Short Term Price Patterns, 1990): after 60 min in profit -> stop to break-even + costs (in addition to eng-154's +1R).
-32. SD: when no opposing zone exists, use Seiden's "initial profit margin" (the departure leg's extreme before price
+32. DONE eng-164: SD: when no opposing zone exists, use Seiden's "initial profit margin" (the departure leg's extreme before price
     returned to the zone) as the target instead of vetoing (the opposing zone stays the target when it exists).
-33. Silver Bullet tp1_passed (47 short, 6 long in 48h): when PDL / PDH is already behind price at the setup, the draw on
+33. NOT DONE (see HISTORY eng-164): Silver Bullet tp1_passed (47 short, 6 long in 48h): when PDL / PDH is already behind price at the setup, the draw on
     liquidity advances to the next untaken pool (PWL / PWH, multi-day swing) - extends item 5.
-34. Cascade (FLUSH / SQUEEZE): no_prior_trend is a hard plan skip (188 / 48h) - make it a shadow tag per the shadow-first
+34. DONE eng-164: Cascade (FLUSH / SQUEEZE): no_prior_trend is a hard plan skip (188 / 48h) - make it a shadow tag per the shadow-first
     rule (no_room stays: it means no zone wide enough for the R:R, i.e. no plan).
 35. BB M-TOP / W-BOTTOM targets vs Bollinger's opposite band - check with item 6.
 

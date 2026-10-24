@@ -108,6 +108,11 @@ class SupplyDemandStrategy(_System):
         # Seiden's target: the opposing fresh 4h zone's proximal line (maniac.sd_opposing), not the map's liquidity;
         # none -> no profit zone to measure -> no trade
         opposing = [t for t in (sig.get('sd_targets') or []) if d * (t[0] - near) > 0]
+        dep = sig.get('sd_departure_extreme')
+        if not opposing and dep is not None and d * (dep - near) > 0:
+            # eng-164 (Seiden, OTA: "focus on that initial decline in price from the level ... shows us what the
+            # initial profit margin is"): no fresh opposing zone -> the departure's extreme is the profit target
+            opposing = [[dep, 'initial profit margin (departure extreme)']]
         if not opposing:
             return {'skip': 'no opposing supply / demand zone'}
         targets, sources = [t[0] for t in opposing], [t[1] for t in opposing]

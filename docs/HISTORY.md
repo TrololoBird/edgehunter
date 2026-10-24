@@ -984,6 +984,18 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-164 (2026-10-24, plan items 31 / 32 / 34 + an eng-163 bug)
+- Bug (eng-163): smallcap._check reused the name `last` for the cooldown dict, so the next line read last[0] from a dict
+  (KeyError(0) on every small-cap check after a cooldown) - renamed.
+- ORB: Crabel's own rule (Day Trading with Short Term Price Patterns, 1990: "In general stops should be moved to break
+  even within one hour after entry") - after 60 min, a trade whose last minute is fully beyond break-even gets
+  break-even + costs (`plan['be_after_min']`), beside the +1R rule.
+- SD: no fresh opposing zone -> Seiden's "initial profit margin" (the departure's extreme, `sd_departure_extreme`) is
+  the target instead of 'no opposing supply / demand zone' (166 SD SUPPLY + 29 DEMAND skipped in 48h).
+- Cascade no_prior_trend: a shadow tag instead of a hard plan skip (188 / 48h).
+- Not done: Silver Bullet DOL advance (item 33) - tp1_passed means price already went beyond the target before the card
+  existed (the idea played out); only a third-party glossary names the PWH / PWL advance.
+
 ## eng-163 (2026-10-24, microstructure audit items 22-30, verified)
 - F-01 PUMP / DUMP START TP1 at least the risk span (`pump._span_targets`, `_risk_span`: |close - extreme| + 0.25 ATR,
   >= min_stop_atr x ATR): the bare measured move gave R:R < 1 by construction (a synthetic START now enters, was low_rr).

@@ -128,7 +128,9 @@ class ExhaustionStrategy(Strategy):
             return None
         h1 = list(x.h1 or [])
         if len(h1) >= 25 and d * (h1[-25][4] - leg['start']) <= 0:
-            return {'skip': 'no_prior_trend'}     # no decline (rally) for the climax to end
+            # eng-164 (shadow-first rule): journaled, not a hard skip - a cascade out of a range is measured too
+            from signal_book import shadow_veto
+            shadow_veto(x.sig, 'no_prior_trend')
         levels = list(x.raw_levels or []) + vwap(x.minutes, leg['start_ts'], 'VWAP pre-cascade')
         zones = merge(levels, atr, symbol=x.symbol)
         end = leg['end']

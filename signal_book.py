@@ -827,6 +827,15 @@ class SignalBook:
                 lv['sl_src'] = f'trailing {pct:.0%} behind the best price'
                 self.events.append((s, 'RESTOP'))
             return
+        be_min = plan.get('be_after_min')
+        if be_min and hi is not None and lo is not None and lv.get('entry') and lv.get('sl') and s.entered_at \
+                and s.managed_ms and s.managed_ms / 1000 - s.entered_at >= be_min * 60:
+            be = lv['entry'] * (1 + d * BE_COST)
+            worst = lo if d > 0 else hi
+            if d * (worst - be) > 0 and d * (be - lv['sl']) > 0:
+                lv['sl'] = be
+                lv['sl_src'] = f'break-even + costs after {be_min} min (Crabel)'
+                self.events.append((s, 'RESTOP'))
         be_r = plan.get('be_after_r')
         if be_r is None and CONFIG.strategies.be_after_1r:
             be_r = 1.0          # eng-155: cards opened before the flag (restored from the state) get it too

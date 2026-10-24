@@ -208,6 +208,7 @@ def _sd_bases(bars: Sequence[Sequence[float]]) -> List[Dict]:
             if not (a > 0) or hi <= lo or move <= 0:
                 continue
             out.append({'side': side, 'lo': lo, 'hi': hi, 'base_from': i, 'base_to': j, 'confirm': k,
+                        'dep_extreme': hi + move if side > 0 else lo - move,
                         'speed': move / (k - j - 1) / a, 'n_base': j - i + 1, 'atr': float(a)})
         i = j + 1
     return out
@@ -252,6 +253,8 @@ def sd_zone_events(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_MS,
                     'anchor_label': f"{'demand' if side > 0 else 'supply'} zone (base)",
                     'anchor_ts': int(bars[z['base_to']][0]), 'anchor_close': bars[-1][4],
                     'sd_targets': sd_opposing(zones, [list(b) for b in bars], side, hi if side > 0 else lo),
+                    # eng-164: Seiden's "initial profit margin" - the departure's extreme before price came back
+                    'sd_departure_extreme': z['dep_extreme'],
                     'event_ts': int(bars[-1][0]) + period_ms})
     return out
 

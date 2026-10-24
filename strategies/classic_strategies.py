@@ -85,6 +85,9 @@ class OrbStrategy(_System):
             # eng-154 (the owner, live eng-148: 8 of 10 ORB cards lost, 4 in a row; XAG / XAU traded +0.8..+1.1R and
             # closed -0.2..-0.7R at the session's close): the stop to break-even + costs after +1R, still out at the close
             plan['be_after_r'] = 1.0
+            # eng-164, Crabel (Day Trading with Short Term Price Patterns, 1990): "In general stops should be moved to
+            # break even within one hour after entry" - after 60 minutes a trade beyond break-even gets it
+            plan['be_after_min'] = 60
         return plan
 
 
