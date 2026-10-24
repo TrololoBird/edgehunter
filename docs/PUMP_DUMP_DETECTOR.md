@@ -2,7 +2,7 @@
 
 Built from the owner's web research (Kamps & Kleinberg 2018, Fantazzini & Xiao 2023, Scaillet et al. 2018,
 Li-Shin-Wang 2025, aleks-ent/pump-dump-crypto-screener rules) and mapped onto what edgehunter already has
-(eng-157 DUMP START, eng-158 small-cap 1m watch). Numbers marked *screener* are that project's heuristics, not
+(eng-157 DUMP START, eng-158 small-cap 1m watch). Numbers marked *screener* are that project's heuristics (PUMP_DETECTION_RULES.md read at the source - eng-159b), not
 measured results - they enter as journaled features first, the live journal decides.
 
 ## 1. Data flow

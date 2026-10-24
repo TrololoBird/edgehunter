@@ -794,6 +794,9 @@ class Scanner:
                         continue                 # joined the universe meanwhile: its own detector decides
                     logger.info(f"Setup detected: {symbol} {sig['setup']} - {sig['setup_note']} (small cap, live 1m)")
                     signals.append((symbol, sig))
+            for symbol, sig in signals:
+                if sig.get('setup') in ('PUMP START', 'DUMP START'):
+                    await self._pd_enrich(symbol, sig)
         current_keys = {(symbol, sig['alert_type']) for symbol, sig in signals if not sig.get('is_setup')}
         persistent = [(symbol, sig) for symbol, sig in signals
                       if sig['is_structured'] or sig.get('is_setup') or (symbol, sig['alert_type']) in self._previous_keys]
@@ -1444,6 +1447,29 @@ class Scanner:
         # Binance spot is quoted in the unprefixed coin (PEPE), the key's unit may be 1000PEPE
         binance = spot[4] * self.fetcher.symbol_map.key_multiplier.get(md.symbol, 1.0)
         return coinbase / binance - 1 if binance else None
+
+    async def _pd_enrich(self, symbol: str, sig: Dict) -> None:
+        """eng-159: the detector's features on the source's 24h baselines - the last 289 closed 5m candles (REST, once
+        per PUMP / DUMP START) + the 1m ring; the activation lead time found by the detector is kept."""
+        try:
+            from strategies import pd_features as pdf
+            bid = self.fetcher.futures_exchange.market(symbol)['id']
+            k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
+                                              {'symbol': bid, 'interval': '5m', 'limit': 290}, priority=1, weight=2)
+            now = time.time() * 1000
+            m5 = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7]), float(x[10])]
+                  for x in k or [] if int(x[6]) < now]
+            lead = sig.get('pd_activation_lead_s')
+            feats = pdf.features(self._minute_candles(symbol), [], int(sig['direction']), m5)
+            if feats:
+                sig.update(feats)
+                sig['pd_activation_lead_s'] = lead
+            logger.info(f"PD features {symbol} {sig['setup']}: phase {sig.get('pd_phase')}, vol x{sig.get('pd_vol_ratio_5m', 0):.1f} "
+                        f"(cluster {sig.get('pd_vol_cluster')}), range x{sig.get('pd_range_ratio', 0):.1f} "
+                        f"(cluster {sig.get('pd_range_cluster')}), move3 {sig.get('pd_move3', 0):+.1%}, "
+                        f"breakout {sig.get('pd_breakout', 0):+.2%}, base {sig.get('pd_base_n')} x 5m")
+        except Exception as e:
+            logger.warning(f"PD features {symbol}: {e!r}")
 
     def _minute_candles(self, symbol: str):
         """FINAL futures 1m candles only: entry triggers are closes, and a running minute's close is just the live price."""

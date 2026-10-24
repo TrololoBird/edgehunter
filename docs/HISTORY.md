@@ -984,6 +984,17 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-159b (2026-10-24, checked against the source: aleks-ent PUMP_DETECTION_RULES.md, read in full)
+- Baselines now as the source: medians of the PREVIOUS 288 closed 5m candles (REST, one call per PUMP / DUMP START,
+  `Scanner._pd_enrich`), not the 4h ring / 15m approximation (`pd_base_n` journaled).
+- Added the source's features: range cluster (>= 2x among the last 4), green / red count of 4 / 6, close vs EMA20 and
+  its 6-bar slope, the pullback from the impulse (start = first of the last 12 bars with volume >= 3x, range >= 2x),
+  the quiet window 24-72 candles before the impulse start.
+- Phases as the source: ACTIVATION (5m: vol >= 3x, range >= 1.5x, move3 > 0, close beyond EMA20 or a breakout),
+  ACTIVE (both clusters, move3 >= 2% or move6 >= 4%, 3 of 4 in the direction, pullback <= 0.30, EMA20 side + slope),
+  LATE, SPIKE_FAIL (> 70%), else NONE. The ACTIVATION lead-time log runs on closed 5m bars.
+- The source has no standalone dump start (dumps = distribution after a pump): DUMP START is our mirror, kept.
+
 ## eng-159 (2026-10-24, the owner: implement docs/PUMP_DUMP_DETECTOR.md)
 - `strategies/pd_features.py`: 24h MEDIAN volume baselines (96 closed 15m candles), the 5m layer from the final 1m
   candles (volume ratio + cluster >= 3x of the last 4, range_ratio vs the ring's median 5m range, move3 / move6 /

@@ -9,7 +9,8 @@ Every feature is the coin against its OWN history:
   breakout (close beyond the previous 24 x 5m extreme), the quiet period before (2-6h range vs its median);
 - phases: LATE (move over 12 x 5m >= 12% with volume >= 10x and range >= 4x - the screener's late pump: seen, too late)
   and SPIKE_FAIL (a 5m bar >= 5% retraced >= 70% within the next 2 bars - a false start in the last 30 minutes).
-Thresholds marked *screener* come from aleks-ent/pump-dump-crypto-screener (heuristics, not measured): the features are
+Thresholds come from aleks-ent/pump-dump-crypto-screener PUMP_DETECTION_RULES.md (read at the source 2026-10-24;
+heuristics, not measured); the 288-candle 5m baselines are fetched by REST when a PUMP / DUMP START fires: the features are
 journaled (pd_* columns) and LATE / SPIKE_FAIL are SHADOW vetoes (strategies.shadow_vetoes) until the live journal
 shows what they are worth.
 """
@@ -48,45 +49,90 @@ def volume_base_1m(m15: Sequence[Sequence[float]]) -> Optional[float]:
     return med / 15 if med > 0 else None
 
 
-def features(minutes: Sequence[Sequence[float]], m15: Sequence[Sequence[float]], direction: int) -> Dict:
-    """pd_* features at the last final minute, for a move in `direction` (+1 pump, -1 dump)."""
+def _ema(values: Sequence[float], n: int) -> List[float]:
+    k, out = 2 / (n + 1), []
+    for v in values:
+        out.append(v if not out else out[-1] + k * (v - out[-1]))
+    return out
+
+
+def features(minutes: Sequence[Sequence[float]], m15: Sequence[Sequence[float]], direction: int,
+             m5: Optional[Sequence[Sequence[float]]] = None) -> Dict:
+    """pd_* features at the last final minute, for a move in `direction` (+1 pump, -1 dump).
+
+    m5: closed 5m candles of the last 24h+ (REST, the source's 288-candle baselines); without it the 5m bars of the 1m
+    ring are the base (pd_base_n says how many)."""
     out: Dict = {}
-    base1 = volume_base_1m(m15)
-    if base1 and minutes:
-        out['rvol_1m_med'] = float(minutes[-1][5]) / base1
-    bars = bars_5m(minutes)
+    ring = bars_5m(minutes)
+    if m5:
+        hist = [list(b[:7]) if len(b) >= 7 else list(b[:6]) + [0.0] for b in m5]
+        cut = ring[0][0] if ring else float('inf')
+        bars = [b for b in hist if b[0] < cut] + ring
+    else:
+        bars = ring
     if len(bars) < 13:
         return out
-    base5 = base1 * 5 if base1 else None
     last = bars[-1]
+    prev = bars[-289:-1]
+    out['pd_base_n'] = len(prev)
+    # baselines: medians of the PREVIOUS candles only (the source: 288 x 5m, the current one excluded)
+    vols = [b[5] for b in prev if b[5] is not None]
+    base5 = median(vols) if len(vols) >= 12 else None
+    if not base5:
+        b1 = volume_base_1m(m15)
+        base5 = b1 * 5 if b1 else None
+    if base5 and minutes:
+        out['rvol_1m_med'] = float(minutes[-1][5]) / (base5 / 5)
+    rngs = [(b[2] - b[3]) / b[4] for b in prev if b[4]]
+    med_rng = median(rngs) if len(rngs) >= 12 else None
+    def vr(b):
+        return b[5] / base5 if base5 else None
+    def rr(b):
+        return (b[2] - b[3]) / b[4] / med_rng if med_rng and b[4] else None
     if base5:
-        ratios = [b[5] / base5 for b in bars[-4:]]
-        out['pd_vol_ratio_5m'] = ratios[-1]
-        out['pd_vol_cluster'] = sum(1 for r in ratios if r >= 3.0)                 # *screener*: >= 3x
-    rng = [(b[2] - b[3]) / b[4] for b in bars[:-1] if b[4]]
-    med_rng = median(rng) if len(rng) >= 12 else None
-    if med_rng and last[4]:
-        out['pd_range_ratio'] = (last[2] - last[3]) / last[4] / med_rng
-    if len(bars) >= 7:
-        out['pd_move3'] = last[4] / bars[-4][4] - 1 if bars[-4][4] else None
-        out['pd_move6'] = last[4] / bars[-7][4] - 1 if bars[-7][4] else None
-    prev = bars[-25:-1]
-    if len(prev) >= 12:
-        edge = max(b[2] for b in prev) if direction > 0 else min(b[3] for b in prev)
-        out['pd_breakout'] = direction * (last[4] / edge - 1) if edge else None        # > 0.003 = *screener* breakout
-    before = bars[-72:-24]
-    if len(before) >= 24 and med_rng:
-        hi, lo = max(b[2] for b in before), min(b[3] for b in before)
-        mid = (hi + lo) / 2
-        # the 2-6h window's whole range in 5m-median units: low = a quiet base before the move
-        out['pd_quiet'] = (hi - lo) / mid / med_rng if mid else None
-    # LATE: the screener's late pump (12 x 5m >= 12% with volume >= 10x and range >= 4x), mirrored for a dump
-    if len(bars) >= 13 and bars[-13][4]:
+        out['pd_vol_ratio_5m'] = vr(last)
+        out['pd_vol_cluster'] = sum(1 for b in bars[-4:] if (vr(b) or 0) >= 3.0)          # source: >= 2 of 4
+    if med_rng:
+        out['pd_range_ratio'] = rr(last)
+        out['pd_range_cluster'] = sum(1 for b in bars[-4:] if (rr(b) or 0) >= 2.0)        # source: >= 2 of 4
+    out['pd_move3'] = last[4] / bars[-4][4] - 1 if bars[-4][4] else None
+    out['pd_move6'] = last[4] / bars[-7][4] - 1 if bars[-7][4] else None
+    # green (red for a dump) candles of the last 4 / 6 (source: >= 3 of 4, strong >= 5 of 6)
+    out['pd_green4'] = sum(1 for b in bars[-4:] if direction * (b[4] - b[1]) > 0)
+    out['pd_green6'] = sum(1 for b in bars[-6:] if direction * (b[4] - b[1]) > 0)
+    loc = bars[-25:-1]
+    if len(loc) >= 12:
+        edge = max(b[2] for b in loc) if direction > 0 else min(b[3] for b in loc)
+        out['pd_breakout'] = direction * (last[4] / edge - 1) if edge else None             # source: > 0.003
+    closes = [b[4] for b in bars]
+    if len(closes) >= 26:
+        e20 = _ema(closes, 20)
+        out['pd_above_ema20'] = int(direction * (closes[-1] - e20[-1]) > 0)
+        out['pd_ema20_slope'] = direction * (e20[-1] / e20[-7] - 1) if e20[-7] else None   # source: > 0
+    # impulse start: the first of the last 12 candles with volume >= 3x, range >= 2x, closing in the direction;
+    # pullback = (impulse extreme - close) / (extreme - start price) (source: <= 0.30 shallow, > 0.50 no longer active)
+    if base5 and med_rng:
+        win = bars[-12:]
+        start = next((i for i, b in enumerate(win) if (vr(b) or 0) >= 3 and (rr(b) or 0) >= 2
+                      and direction * (b[4] - b[1]) > 0), None)
+        if start is not None:
+            s0 = win[start][1]
+            ext = max(b[2] for b in win[start:]) if direction > 0 else min(b[3] for b in win[start:])
+            leg = direction * (ext - s0)
+            out['pd_pullback'] = direction * (ext - last[4]) / leg if leg > 0 else None
+            before = bars[:len(bars) - 12 + start]
+            pre = before[-72:-24] if len(before) >= 48 else []
+            if pre and med_rng:
+                hi, lo = max(b[2] for b in pre), min(b[3] for b in pre)
+                mid = (hi + lo) / 2
+                out['pd_quiet'] = (hi - lo) / mid / med_rng if mid else None              # 24-72 candles before
+    # LATE (source: 12 candles >= 12%, volume >= 10x, range >= 4x), mirrored for a dump
+    if bars[-13][4]:
         move12 = direction * (last[4] / bars[-13][4] - 1)
         out['pd_move12'] = move12
-        out['pd_late'] = int(move12 >= 0.12 and out.get('pd_vol_ratio_5m', 0) >= 10
-                             and out.get('pd_range_ratio', 0) >= 4)
-    # SPIKE_FAIL: a 5m bar >= 5% in the direction, >= 70% of it retraced within the next 2 bars (last 30 min)
+        out['pd_late'] = int(move12 >= 0.12 and (out.get('pd_vol_ratio_5m') or 0) >= 10
+                             and (out.get('pd_range_ratio') or 0) >= 4)
+    # SPIKE (source: one candle >= 5%, more than 70% retraced within the next 2 candles), last 30 minutes
     fail = 0
     tail = bars[-8:]
     for i in range(len(tail) - 2):
@@ -94,24 +140,43 @@ def features(minutes: Sequence[Sequence[float]], m15: Sequence[Sequence[float]],
         jump = direction * (a[4] - a[1])
         if a[1] and jump / a[1] >= 0.05:
             back = max(direction * (a[4] - b[4]) for b in tail[i + 1:i + 3])
-            if back >= 0.7 * jump:
+            if back > 0.7 * jump:
                 fail = 1
     out['pd_spike_fail'] = fail
-    out['pd_phase'] = 'LATE' if out.get('pd_late') else 'SPIKE_FAIL' if fail else 'ACTIVE'
+    # the source's ACTIVATION / ACTIVE on this candle (journaled; the card's own trigger is PUMP / DUMP START)
+    act = ((out.get('pd_vol_ratio_5m') or 0) >= 3 and (out.get('pd_range_ratio') or 0) >= 1.5
+           and direction * (out.get('pd_move3') or 0) > 0
+           and (out.get('pd_above_ema20') or (out.get('pd_breakout') or 0) > 0.003))
+    active = ((out.get('pd_vol_cluster') or 0) >= 2 and (out.get('pd_range_cluster') or 0) >= 2
+              and (direction * (out.get('pd_move3') or 0) >= 0.02 or direction * (out.get('pd_move6') or 0) >= 0.04)
+              and (out.get('pd_green4') or 0) >= 3 and (out.get('pd_pullback') if out.get('pd_pullback') is not None else 1) <= 0.30
+              and out.get('pd_above_ema20') and (out.get('pd_ema20_slope') or 0) > 0)
+    out['pd_phase'] = ('LATE' if out.get('pd_late') else 'SPIKE_FAIL' if fail else 'ACTIVE' if active
+                       else 'ACTIVATION' if act else 'NONE')
     return {k: (round(v, 6) if isinstance(v, float) else v) for k, v in out.items() if v is not None}
 
 
 def activation(minutes: Sequence[Sequence[float]], base1: Optional[float], direction: int) -> bool:
-    """ACTIVATION on the last final minute (*screener*): volume >= 3x the 24h median minute, its range >= 1.5x the
-    median 1m range of the ring, and the candle moved in `direction`."""
-    if not base1 or len(minutes) < 30:
+    """The source's ACTIVATION on the last CLOSED 5m bar of the ring: volume >= 3x the median 5m volume, range >= 1.5x
+    the median 5m range, close above the bar 3 back, and close beyond EMA20 or a breakout of the previous 24 bars."""
+    if not base1 or len(minutes) < 60:
         return False
-    c = minutes[-1]
-    if not c[4] or c[5] < 3 * base1 or direction * (c[4] - c[1]) <= 0:
+    if (int(minutes[-1][0]) + MINUTE_MS) % FIVE_MS:
+        return False                                  # only when a 5m bar just closed
+    bars = bars_5m(minutes)
+    if len(bars) < 26:
         return False
-    rngs = [(x[2] - x[3]) / x[4] for x in list(minutes)[-240:-1] if x[4]]
+    b = bars[-1]
+    rngs = [(x[2] - x[3]) / x[4] for x in bars[:-1] if x[4]]
     med = median(rngs) if rngs else 0
-    return bool(med) and (c[2] - c[3]) / c[4] >= 1.5 * med
+    if not med or not b[4] or b[5] < 3 * base1 * 5 or (b[2] - b[3]) / b[4] < 1.5 * med:
+        return False
+    if direction * (b[4] - bars[-4][4]) <= 0:
+        return False
+    e20 = _ema([x[4] for x in bars], 20)[-1]
+    loc = bars[-25:-1]
+    edge = max(x[2] for x in loc) if direction > 0 else min(x[3] for x in loc)
+    return direction * (b[4] - e20) > 0 or direction * (b[4] / edge - 1) > 0.003
 
 
 class ActivationLog:
