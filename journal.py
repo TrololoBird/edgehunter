@@ -798,12 +798,17 @@ class SignalJournal:
                     'reason': ' | '.join(str(x) for x in (tracked.sig.get('setup_note'),
                                                           (tracked.plan or {}).get('trigger'),
                                                           (tracked.plan or {}).get('entry_note')) if x) or None})
+        # eng-153 (external audit #3): the shadow benchmarks (flow_entry / reclaim_entry / weak_mss, never traded) are
+        # rows of their own like variant_*: they took the card's one veto slot and the method's own later veto was lost
+        shadow = "(COALESCE(vetoed, '') LIKE 'variant_%' OR COALESCE(vetoed, '') IN ('flow_entry', 'reclaim_entry', 'weak_mss'))"
+        is_shadow = row['vetoed'] is not None and (row['vetoed'].startswith('variant_')
+                                                   or row['vetoed'] in ('flow_entry', 'reclaim_entry', 'weak_mss'))
         with self._lock:
             if row['vetoed'] and self.conn.execute(
                     "SELECT 1 FROM signals WHERE kind = 'entry' AND symbol = ? AND group_key = ? AND setup_ts_ms = ? "
-                    "AND (vetoed IS ? OR (COALESCE(vetoed, '') NOT LIKE 'variant_%' AND ? NOT LIKE 'variant_%')) "
+                    f"AND (vetoed IS ? OR (NOT {shadow} AND ? = 0)) "
                     "LIMIT 1",
-                    (row['symbol'], row['group_key'], row['setup_ts_ms'], row['vetoed'], row['vetoed'])).fetchone():
+                    (row['symbol'], row['group_key'], row['setup_ts_ms'], row['vetoed'], int(is_shadow))).fetchone():
                 # eng-149: a shadow variant ('variant_*') is its own row beside the card's veto
                 # eng-84: a vetoed trigger leaves the card waiting, and each later trigger of the same card was a new
                 # row (live PO3 LONG: 27 'entries' = 3 setups, each a full replayed trade): one row per card

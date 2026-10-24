@@ -52,9 +52,11 @@ def pool_rank(label: str) -> int:
 
 def sweep_tf(label: str) -> str:
     """eng-84: the plan timeframe of a sweep by the swept pool: a 1h swing -> 15m (5m trigger), sessions / equal
-    levels / rounds / the day -> 1h (15m trigger), the previous day / week -> 4h (1h trigger)."""
+    levels / rounds / the day / previous day / week -> 1h (15m trigger)."""
+    # eng-153 (external audit #3): the raid is a 15m candle, so its confirmation is at most 15m - a 60m trigger
+    # (the day / previous day / week -> 4h plan) left 109 of 113 MISSED cards "no 60m trigger" (TP1 in 15-90 min)
     rank = pool_rank(label or '')
-    return '4h' if rank >= 4 else '1h' if rank == 3 else '15m'
+    return '1h' if rank >= 3 else '15m'
 
 
 def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], atr: float, trend: int,

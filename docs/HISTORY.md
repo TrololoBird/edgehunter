@@ -984,6 +984,15 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-153 (2026-10-24, external audit #3, confirmed findings only)
+- SWEEP plan timeframe capped at 1h (`sweep_tf`): the raid is a 15m candle, its trigger is now at most 15m. The day /
+  previous day / week pools had a 4h plan with a 60m trigger: live eng-152, 109 of 113 MISSED cards were
+  "no 60m trigger" while TP1 came in 15-90 min. `pool_rank` unchanged (dealing range tf, best pool choice).
+- Journal: flow_entry / reclaim_entry / weak_mss (shadow, never traded) are rows of their own like `variant_*`;
+  they took the card's one veto slot and the method's own later veto was silently dropped.
+- Rejected from the audit: dropping the protected-swing stop for sweep (it only applies beyond the extreme, never
+  inside), uvloop upgrade (0.22.1 still warns, ccxt pins it), flow_entry "85% win" (replayed, TP1 at 0.03-0.4R).
+
 ## eng-152 (2026-10-24, the owner's order after the external audit)
 - Plan 4.3 back to shadow for SWEEP LOW / HIGH: invalidation and entry stop beyond the farthest pool
   (`plan['stop_farthest']`, the eng-148 rule); the nearest-pool invalidation journaled as `sl_near`.

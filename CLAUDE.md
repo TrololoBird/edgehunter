@@ -63,6 +63,8 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
       `variant_pool2`, liq_cascade_2h from 5m buckets.
     - eng-152: plan 4.3 back to shadow for SWEEP LOW / HIGH (stop / invalid beyond the farthest pool, the nearest
       journaled as `sl_near`; live eng-151: 41 of 44 INVALID had the nearest stop, life 16 vs 135 min).
+    - eng-153: SWEEP plan tf capped at 1h (trigger <= 15m; 109 of 113 MISSED were "no 60m trigger"); shadow entries
+      (flow_entry / reclaim_entry / weak_mss) no longer take the card's one journal veto slot.
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 
