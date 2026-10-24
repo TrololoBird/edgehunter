@@ -171,7 +171,6 @@ class SweepStrategy(Strategy):
         sig['range_tf'] = range_tf
         sig['range_pos_tf'] = pos                       # paired with range_pos_1h: both at the raid's extreme
         sig['range_pos_1h'] = range_position(dealing_range(x.h1 or []), extreme, d)
-        sl_old, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol, farthest=True)
         # eng-150 (plan 4.3): an untaken pool within zone_move_pool_atr of the structure ATR beyond the extreme is
         # journaled (zone_moved) only: the 'fvg' trigger enters at the 5m FVG's CE and never reads the zone, so moving
         # the zone onto that pool would only have widened the stop past the next pool (review eng-150)
@@ -197,7 +196,7 @@ class SweepStrategy(Strategy):
         # eng-147: past a further pool only the small pad, else the measured pierce capped in ATR (no double buffer)
         pad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', base), atr, base != extreme)
         invalid = base - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
-        sig['sl_old'] = sl_old - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
+        sig['sl_old'] = invalid                         # the farthest-pool stop is the live one since eng-152
         npad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', near), atr, near != extreme)
         sig['sl_near'] = near - d * (npad if npad is not None else CONFIG.levels.stop_buffer_atr * atr)
         pool2 = None

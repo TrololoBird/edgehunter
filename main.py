@@ -159,6 +159,30 @@ def loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict):
     loop.default_exception_handler(context)
 
 
+_BYTESIO_GC = {'n': 0, 'logged_at': 0.0}
+
+
+def unraisable_hook(unraisable) -> None:
+    """
+    'Exception ignored while finalizing file <_io.BytesIO>: BufferError: Existing exports of data' (~10-40 a day, a
+    5-line traceback at a random line - wherever the gc happened to run): a BytesIO collected in one reference cycle
+    with a memoryview of its buffer (multiprocessing pickles to BytesIO.getbuffer()); the gc finalizes the BytesIO
+    first and its close() refuses while the view exists. Both were garbage already - nothing is lost. Python 3.13+
+    reports it (IOBase's finalizer stopped swallowing close() errors; RhysU/jobserver#444). One INFO line an hour
+    with the count; everything else goes to Python's own hook.
+    """
+    # the finalizer reports with object None and the BytesIO's repr in err_msg
+    if isinstance(unraisable.exc_value, BufferError) and \
+            (unraisable.err_msg or '').startswith('Exception ignored while finalizing file <_io.BytesIO'):
+        _BYTESIO_GC['n'] += 1
+        now = time.time()
+        if now - _BYTESIO_GC['logged_at'] >= 3600:
+            logger.info(f"gc: {_BYTESIO_GC['n']} BytesIO finalized beside a live memoryview (harmless BufferError)")
+            _BYTESIO_GC.update(n=0, logged_at=now)
+        return
+    sys.__unraisablehook__(unraisable)
+
+
 def keep_awake(on: bool) -> None:
     """
     Keep Windows from sleeping while the bot runs (the display may still turn off): on 2026-10-05 the laptop slept
@@ -264,6 +288,12 @@ if __name__ == "__main__":
     EARLY_QUICK_EDIT = ConsoleQuickEdit()
     EARLY_QUICK_EDIT.disable()
     LOG_LISTENER = setup_logging()
+    sys.unraisablehook = unraisable_hook
+    # uvloop 0.22.1 binds asyncio.iscoroutinefunction (deprecated in 3.14) and calls it in add_signal_handler and
+    # run_in_executor, so the warning names OUR call site (main.py:224). Fixed in uvloop 0.23.0, but ccxt (4.5.90)
+    # pins uvloop==0.22.1: silenced by its exact text until ccxt lets uvloop move
+    import warnings
+    warnings.filterwarnings('ignore', message=r"'asyncio\.iscoroutinefunction' is deprecated", category=DeprecationWarning)
     loop_name, loop_factory = fast_loop_factory()
     logger.info(f"Python {sys.version.split()[0]}, event loop: {loop_name or 'asyncio default'}")
     try:

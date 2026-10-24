@@ -984,6 +984,15 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-155 logic_version bump (2026-10-24, follow-up)
+- `logic_version` eng-152 -> eng-155: eng-153 / 154 / 155 went live 15:12-16:41 UTC without it, so their rows until
+  this bump are labelled eng-152 (stats per version mix them). `keep_waiting_from` stays eng-152 (HIT_RATE floor,
+  waiting cards of 15:12+ carry the old label). Online P(edge) / confirm stats restart from the new version's rows.
+- `strategies/level.py`: `sl_old` = `invalid` (the second identical farthest-pool `stop_beyond` call removed).
+- `main.py`: the BytesIO `BufferError` at gc finalization (harmless, 3.13+ reports it; RhysU/jobserver#444) is one
+  INFO line an hour; uvloop 0.22.1's `asyncio.iscoroutinefunction` DeprecationWarning filtered by its text
+  (fixed in uvloop 0.23.0, but ccxt 4.5.90 still pins 0.22.1).
+
 ## eng-155 (2026-10-24, the owner: protect the profit - 18 trendline shorts at +1..+3R had their stops untouched)
 - `strategies.be_after_1r` True: the stop to break-even + costs after +1R for every plan (off since eng-111); cards
   restored without the flag get it too (`_trail`). SAR / % trail plans keep their own trail.
