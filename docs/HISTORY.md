@@ -984,6 +984,17 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-159c (2026-10-24, the remaining sources of the owner's research read)
+- New journaled features at a PUMP / DUMP START (`pd_features.extras`, Scanner._pd_enrich): `pd_trades_ratio_5m`
+  (La Morgia 2020 / Doge of Wall Street 2023: trade counts jump at the start), `pd_price_vs_ma12h` (Kamps &
+  Kleinberg 2018, the 2025 thresholding detector), `pd_vs_btc` (RaibekTussupbekov's BOCD vs BTC). Rush orders
+  (same-ms multi-level sweeps) were already in the bot (flow.RushOrders, rush_* columns) and reach these signals.
+- Not implementable with our data: Telegram / NLP target prediction (Xu & Livshits, Hu et al., Bolz et al.,
+  Nghiem et al.), 30-s random forests on historical P&D labels (Fantazzini & Xiao, La Morgia - needs labeled events),
+  market-cap / developer-activity factors (Charfeddine & Mahrous, Victor & Hagemann), sub-second cross-venue impact
+  (Albers et al.), L2 add / cancel for small caps (no books there).
+- Not found under the cited title / author: Tsuchiya 2021, Schmalz 2026, Kitvanitphasu 2026.
+
 ## eng-159b (2026-10-24, checked against the source: aleks-ent PUMP_DETECTION_RULES.md, read in full)
 - Baselines now as the source: medians of the PREVIOUS 288 closed 5m candles (REST, one call per PUMP / DUMP START,
   `Scanner._pd_enrich`), not the 4h ring / 15m approximation (`pd_base_n` journaled).

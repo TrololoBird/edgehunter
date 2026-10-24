@@ -1457,17 +1457,21 @@ class Scanner:
             k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
                                               {'symbol': bid, 'interval': '5m', 'limit': 290}, priority=1, weight=2)
             now = time.time() * 1000
-            m5 = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7]), float(x[10])]
+            m5 = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7]), float(x[10]), float(x[8])]
                   for x in k or [] if int(x[6]) < now]
             lead = sig.get('pd_activation_lead_s')
-            feats = pdf.features(self._minute_candles(symbol), [], int(sig['direction']), m5)
+            minutes = self._minute_candles(symbol)
+            feats = pdf.features(minutes, [], int(sig['direction']), [r[:7] for r in m5])
+            feats.update(pdf.extras(m5, minutes, self._minute_candles('BTC/USDT:USDT'), int(sig['direction'])))
             if feats:
                 sig.update(feats)
                 sig['pd_activation_lead_s'] = lead
             logger.info(f"PD features {symbol} {sig['setup']}: phase {sig.get('pd_phase')}, vol x{sig.get('pd_vol_ratio_5m', 0):.1f} "
                         f"(cluster {sig.get('pd_vol_cluster')}), range x{sig.get('pd_range_ratio', 0):.1f} "
                         f"(cluster {sig.get('pd_range_cluster')}), move3 {sig.get('pd_move3', 0):+.1%}, "
-                        f"breakout {sig.get('pd_breakout', 0):+.2%}, base {sig.get('pd_base_n')} x 5m")
+                        f"breakout {sig.get('pd_breakout', 0):+.2%}, trades x{sig.get('pd_trades_ratio_5m', 0):.1f}, "
+                        f"vs 12h MA {sig.get('pd_price_vs_ma12h', 0):+.1%}, vs BTC {sig.get('pd_vs_btc', 0):+.1%}, "
+                        f"rush z {sig.get('rush_z_30s', 0):.1f}, base {sig.get('pd_base_n')} x 5m")
         except Exception as e:
             logger.warning(f"PD features {symbol}: {e!r}")
 

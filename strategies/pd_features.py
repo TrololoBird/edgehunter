@@ -179,6 +179,33 @@ def activation(minutes: Sequence[Sequence[float]], base1: Optional[float], direc
     return direction * (b[4] - e20) > 0 or direction * (b[4] / edge - 1) > 0.003
 
 
+def extras(m5_rest: Sequence[Sequence[float]], minutes: Sequence[Sequence[float]],
+           btc_minutes: Sequence[Sequence[float]], direction: int) -> Dict:
+    """eng-159c, from the other sources of the owner's research (read 2026-10-24):
+    - pd_trades_ratio_5m: trades of the last closed 5m candle / the median of the previous 288 (La Morgia et al. 2020,
+      'The Doge of Wall Street' 2023: StdTrades / rush orders jump at the pump's start); REST kline field n;
+    - pd_price_vs_ma12h: close vs the 12h moving average of the open (Kamps & Kleinberg 2018 / the 2025 thresholding
+      detector: price against a 12h moving average), signed by the direction;
+    - pd_vs_btc: the coin's 30-minute move minus BTC's (the BOCD detector of RaibekTussupbekov judges an alt against
+      BTC/USDT), signed by the direction."""
+    out: Dict = {}
+    rows = [r for r in m5_rest if len(r) > 7]
+    if len(rows) >= 50:
+        trades = [r[7] for r in rows]
+        base = median(trades[-289:-1])
+        if base:
+            out['pd_trades_ratio_5m'] = trades[-1] / base
+        opens = [r[1] for r in rows[-145:-1]]
+        ma = sum(opens) / len(opens) if opens else None
+        last = minutes[-1][4] if minutes else rows[-1][4]
+        if ma:
+            out['pd_price_vs_ma12h'] = direction * (last / ma - 1)
+    coin, btc = bars_5m(minutes), bars_5m(btc_minutes)
+    if len(coin) >= 7 and len(btc) >= 7 and coin[-7][4] and btc[-7][4]:
+        out['pd_vs_btc'] = direction * ((coin[-1][4] / coin[-7][4] - 1) - (btc[-1][4] / btc[-7][4] - 1))
+    return {k: round(v, 6) for k, v in out.items()}
+
+
 class ActivationLog:
     """First ACTIVATION per (coin, direction) - the detector's lead time (journal pd_activation_lead_s)."""
 
