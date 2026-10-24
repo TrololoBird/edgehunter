@@ -12,12 +12,12 @@ Status legend: CHECKED = verified against code / live data today; TODO = to do; 
 - mfe_r / mae_r empty on fresh entries = filled at the 4h horizon (journal.py ~1319), not a bug.
 
 ## Priority 1 - correctness / data
-1. INVESTIGATE `1m gaps dropped` grows ~45 / hour (RESAMPLE_QUALITY): 1m buckets with missing minutes are dropped ->
+1. DONE eng-161 (diag + REST refill): `1m gaps dropped` grows ~45 / hour (RESAMPLE_QUALITY): 1m buckets with missing minutes are dropped ->
    holes in 5m / 15m bars used by triggers, pd_features, variant_retest. Find which coins / streams lose minutes
    (log the symbol on a drop), patch from REST if needed.
-2. TODO small caps re-attach in ~10 min after every restart (wide watch sleeps 600 s and rescans 120 coins): attach
+2. DONE eng-161: small caps re-attach in ~10 min after every restart (wide watch sleeps 600 s and rescans 120 coins): attach
    the last known list at start-up (persist it), seed rings at once.
-3. TODO small caps: the "no setup" log does not say WHICH condition failed (e.g. TA -4.5%, RVOL 38 -> no setup) - log
+3. DONE eng-161: small caps: the "no setup" log does not say WHICH condition failed (e.g. TA -4.5%, RVOL 38 -> no setup) - log
    the failing gate (move / rvol / oi / flow / 24h extreme).
 
 ## Priority 2 - strategy logic to check in code

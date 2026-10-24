@@ -984,6 +984,16 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-161 (2026-10-24, PLAN_next priority 1)
+- 1m holes: `DataFetcher.minute_holes` / `patch_minute_holes` + `Scanner._minute_hole_pass` (each Health minute): the
+  closed futures minutes missing in a universe coin's buffer (a stream reconnect left them for good - seed_minutes ran
+  only at start-up / join; levels.resample then dropped the 5m / 15m bars: '1m gaps dropped' ~45 / h) are listed per
+  coin (log "Minute holes: N coins, M minutes ... worst: ...") and refilled from REST, <= 15 coins a pass, one refill
+  per coin per 10 minutes.
+- Small caps attach at start-up (`SmallCapWatch.restore` from smallcap_coins.json, saved on every hourly list) instead
+  of ~10 min later; a coin without 1h history loads it on its first check.
+- Small-cap "no setup" log names the failing gate (move vs 4 x vol15, RVOL, OI 5m, taker flow, fresh 24h extreme).
+
 ## eng-160b (2026-10-24, external review of eng-159c)
 - `pd_vs_btc_resid` + `pd_btc_beta`: the coin's 30-minute return minus beta x BTC's, beta from the previous 5m returns
   only (up to 288, aligned by candle time; BTC 5m cached per 5 min) - closer to the BOCD detector's alt-vs-BTC model

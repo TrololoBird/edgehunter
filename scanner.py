@@ -302,6 +302,9 @@ class Scanner:
             self._background_thread(self.journal.refresh_hit_rates)
             self._background_thread(self.journal.refresh_anomaly_effects)
         self._tasks = [asyncio.create_task(c) for c in loops]
+        if self.smallcap is not None:
+            # eng-161: the small caps on their 1m stream from the start (the wide watch refreshes the list hourly)
+            self._tasks.append(asyncio.create_task(self.smallcap.restore(set(self.market_data))))
         self.notifier.resume()                  # audit B05: trading messages a previous run left undelivered
 
     async def _seed_okx_later(self):
@@ -1448,6 +1451,35 @@ class Scanner:
         binance = spot[4] * self.fetcher.symbol_map.key_multiplier.get(md.symbol, 1.0)
         return coinbase / binance - 1 if binance else None
 
+    async def _minute_hole_pass(self) -> None:
+        """eng-161: which coins miss closed 1m candles (the source of '1m gaps dropped'), refilled from REST - at most
+        15 coins a pass, the worst first; one log line with the worst offenders."""
+        try:
+            now_ms = int(time.time() * 1000)
+            holes = {s: len(self.fetcher.minute_holes(md.minute_klines, md.minute_closed_until))
+                     for s, md in list(self.market_data.items())}
+            bad = sorted(((n, s) for s, n in holes.items() if n), reverse=True)
+            if not bad:
+                return
+            left, done = 0, 0
+            last = self.__dict__.setdefault('_hole_patched', {})
+            for n, s in bad:
+                if done >= 15:
+                    break
+                md = self.market_data.get(s)
+                if md is None or now_ms - last.get(s, 0) < 600_000:
+                    continue                    # one refill per coin per 10 minutes
+                last[s] = now_ms
+                done += 1
+                left += await self.fetcher.patch_minute_holes(s, md, now_ms)
+            if not done:
+                return
+            top = ", ".join(f"{s.split('/')[0]} {n}" for n, s in bad[:8])
+            logger.info(f"Minute holes: {len(bad)} coins, {sum(n for n, _ in bad)} minutes missing in the last 4h "
+                        f"(worst: {top}); refilled {done} coins, {left} minutes still missing there")
+        except Exception as e:
+            logger.warning(f"Minute holes pass: {e!r}")
+
     async def _btc_m5(self) -> List:
         """eng-160b: BTC's last 290 closed 5m candles for the beta residual (pd_vs_btc_resid), cached per 5 minutes."""
         now = time.time() * 1000
@@ -1897,6 +1929,7 @@ class Scanner:
                            'down': [r.split()[0] for r in rates if ' DOWN' in r],
                            'cpu_pct': cpu, 'rss_mb': rss,
                            'gc': gc_line, 'errors': failed}
+            await self._minute_hole_pass()
             logger.info(f"Health: tier0 {self.last_tier0_sec:.2f}s, scan {self.last_scan_sec:.2f}s "
                         f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
                         f"smt pairs {pairs}/{len(ctxs)}, 1m gaps patched {RESAMPLE_QUALITY['patched']} / dropped "

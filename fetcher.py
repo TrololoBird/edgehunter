@@ -1187,6 +1187,31 @@ class DataFetcher:
             errors.report('fetcher.fetch_minute_klines', e, f"Minute klines failed for {futures_symbol}")
             return None
 
+    @staticmethod
+    def minute_holes(minutes, closed_until: int, window: int = 240) -> List[int]:
+        """eng-161: the missing closed minutes inside a 1m buffer (after its first minute, within the last `window`
+        minutes up to closed_until) - the holes levels.resample drops 5m / 15m bars for ('1m gaps dropped')."""
+        if not minutes or not closed_until:
+            return []
+        have = {int(c[0]) for c in minutes if c[0] <= closed_until}
+        if not have:
+            return []
+        start = max(min(have), int(closed_until) - (window - 1) * 60_000)
+        return [t for t in range(start, int(closed_until) + 1, 60_000) if t not in have]
+
+    async def patch_minute_holes(self, symbol: str, md, now_ms: int) -> int:
+        """eng-161: refill the futures 1m holes of a universe coin from REST (a stream reconnect leaves them for good:
+        seed_minutes ran only at start-up / join). Returns the minutes still missing afterwards."""
+        holes = self.minute_holes(md.minute_klines, md.minute_closed_until)
+        if not holes:
+            return 0
+        count = min(1000, (int(md.minute_closed_until) - holes[0]) // 60_000 + 1)
+        rows = await self.fetch_minute_klines(symbol, holes[0] - 1, count)
+        if rows:
+            md.seed_minutes('futures', [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
+                                         float(k[10]), float(k[5])] for k in rows], now_ms)
+        return len(self.minute_holes(md.minute_klines, md.minute_closed_until))
+
     async def _fetch_oi_history(self, futures_symbol: str) -> List:
         # /futures/data/openInterestHist: weight 0, own limit of 1000 requests / 5 min
         try:

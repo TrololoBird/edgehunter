@@ -108,10 +108,41 @@ class SmallCapWatch:
 
     # ------------------------------------------------------------------ the coin list (from the wide watch)
 
+    COINS_PATH = 'smallcap_coins.json'
+
+    async def restore(self, universe) -> None:
+        """eng-161: attach the last known small-cap list at start-up (was: ~10 min later, after the wide watch's first
+        hourly scan) - the rings are seeded by REST at once, the 1h candles load on a coin's first check."""
+        import json
+        try:
+            with open(self.COINS_PATH) as fh:
+                saved = json.load(fh)
+        except (OSError, ValueError):
+            return
+        wanted = [(s, b, float(q)) for s, b, q in saved if s not in universe]
+        if wanted:
+            await self.set_coins(wanted, self.h1)
+            logger.info(f"Small caps: {len(wanted)} coins restored at start-up")
+
     async def set_coins(self, wanted: List[Tuple[str, str, float]], h1: Dict[str, List]) -> None:
         """wanted: (unified symbol, Binance id, 24h quote volume) of the perpetuals outside the universe."""
         from venues import BinanceStream
-        self.h1 = h1
+        import json
+        for sym, rows in (h1 or {}).items():
+            self.h1[sym] = rows
+        try:
+            from storage import atomic_write
+        except ImportError:
+            atomic_write = None
+        try:
+            payload = json.dumps([[sym, bid, qv] for sym, bid, qv in wanted])
+            if atomic_write:
+                atomic_write(self.COINS_PATH, payload.encode() if isinstance(payload, str) else payload)
+            else:
+                with open(self.COINS_PATH, 'w') as fh:
+                    fh.write(payload)
+        except Exception as e:
+            logger.debug(f"small caps: list not saved: {e!r}")
         new = {bid: sym for sym, bid, _ in wanted}
         self.qv24 = {sym: qv for sym, _, qv in wanted}
         for sym in set(self.rings) - set(new.values()):
@@ -194,10 +225,19 @@ class SmallCapWatch:
             if base1:
                 m['rvol_1m_med'] = last[5] / base1       # eng-159: the 24h median minute
             h1 = self.h1.get(sym) or []
+            if len(h1) < 25:
+                # eng-161: restored at start-up before the wide watch fetched it - the 1h history on the first check
+                k1 = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
+                                                   {'symbol': bid, 'interval': '1h', 'limit': 200}, priority=1, weight=2)
+                now = time.time() * 1000
+                h1 = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7]), float(x[10])]
+                      for x in k1 or [] if int(x[6]) < now]
+                self.h1[sym] = h1
             found = (pump_start if move > 0 else dump_start)(minutes, m, vol, now_ms, h1)
             rvol = m.get('rvol_1m_med') or rvol
+            why = found['setup'] if found else 'no setup: ' + self._why_not(minutes, m, vol, now_ms, h1, move)
             logger.info(f"Small caps: {sym} {move:+.1%} in 15m - RVOL {rvol:.1f}, OI 5m {oi_change:+.2%}, futures flow "
-                        f"{flow:+,.0f}, vol15 {vol or 0:.3%} -> {found['setup'] if found else 'no setup'}")
+                        f"{flow:+,.0f}, vol15 {vol or 0:.3%} -> {why}")
             if not found:
                 return
             self._fired.add(key)
@@ -215,6 +255,31 @@ class SmallCapWatch:
             self.pending.append((sym, sig))
         except Exception as e:
             logger.warning(f"Small caps: check {sym} failed: {e!r}")
+
+    @staticmethod
+    def _why_not(minutes, m: Dict, vol, now_ms: int, h1, move: float) -> str:
+        """eng-161: the first PUMP / DUMP START gate that failed (same order as strategies.pump.pump_start)."""
+        cfg = CONFIG.strategies
+        d = 1 if move > 0 else -1
+        if not vol:
+            return 'no 15m volatility (history)'
+        need = max(cfg.pump_start_min_pct, cfg.pump_start_z * vol)
+        if abs(move) < need:
+            return f"move {abs(move):.1%} < {need:.1%} ({cfg.pump_start_z:g} x vol15)"
+        rv = m.get('rvol_1m_med') or m.get('rvol_1m') or 0
+        if rv < cfg.pump_start_rvol:
+            return f"RVOL {rv:.1f} < {cfg.pump_start_rvol:g}"
+        if (m.get('oi_change_5m') or 0) <= 0:
+            return 'OI 5m not rising'
+        if d * (m.get('spot_cvd_5m') or 0) <= 0:
+            return 'taker flow against the move'
+        cut = minutes[-15][0]
+        ext = [c[2 if d > 0 else 3] for c in h1 if now_ms - 86_400_000 - MINUTE_MS <= c[0] < minutes[0][0]]
+        ext += [c[2 if d > 0 else 3] for c in minutes if c[0] >= now_ms - 86_400_000 - MINUTE_MS and c[0] < cut]
+        last = minutes[-1][2 if d > 0 else 3]
+        if ext and d * (last - (max(ext) if d > 0 else min(ext))) <= 0:
+            return f"not a fresh 24h {'high' if d > 0 else 'low'} ({max(ext) if d > 0 else min(ext):.6g})"
+        return 'other (ATR / dedup)'
 
     def drain(self) -> List[Tuple[str, Dict]]:
         out, self.pending = self.pending, []
