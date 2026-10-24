@@ -93,3 +93,31 @@ F-05 restop leaves position naked (on_restop places the new stop BEFORE cancelli
 F-07 sign errors (features use direction: pd_late, spike_fail, green, breakout, EMA, ma12h are signed; only the raw
 pd_move3/6 columns are unsigned by design), F-10 (24h extreme uses h1 + minutes before the last 15 min, not 15m REST),
 F-11 (fixed in eng-161). Optional later: VPIN / impact ratio / BOCD features, PUMP TOP OI shadow veto (F-14).
+
+## External audit "Independent Quantitative Audit ... (48h strategies)" - verified 2026-10-24 21:40
+
+Note: my brief to this auditor mislabelled the 16 market_down entry vetoes as TL TOUCH DOWN - the journal shows they are
+TL TOUCH UP (longs). _market_down returns False for every short (signal_book.py: `if s.direction <= 0`).
+
+Confirmed / source-backed -> to implement:
+31. ORB: Crabel's own exit rule - "stops should be moved to break even within one hour after entry" (Day Trading with
+    Short Term Price Patterns, 1990): after 60 min in profit -> stop to break-even + costs (in addition to eng-154's +1R).
+32. SD: when no opposing zone exists, use Seiden's "initial profit margin" (the departure leg's extreme before price
+    returned to the zone) as the target instead of vetoing (the opposing zone stays the target when it exists).
+33. Silver Bullet tp1_passed (47 short, 6 long in 48h): when PDL / PDH is already behind price at the setup, the draw on
+    liquidity advances to the next untaken pool (PWL / PWH, multi-day swing) - extends item 5.
+34. Cascade (FLUSH / SQUEEZE): no_prior_trend is a hard plan skip (188 / 48h) - make it a shadow tag per the shadow-first
+    rule (no_room stays: it means no zone wide enough for the R:R, i.e. no plan).
+35. BB M-TOP / W-BOTTOM targets vs Bollinger's opposite band - check with item 6.
+
+Rejected (checked in code):
+- market_down vetoing shorts: impossible (see note); unit_limit "counts other strategies": it sums `units` of open cards,
+  which only unit systems (the Turtles) carry; 6 = Faith's closely-correlated cap, chosen on purpose for alts (eng-51/156).
+- CCXT 499-bar fetchOHLCV starving history: the bot uses raw /fapi/v1/klines with explicit limits (daily 1400); coins
+  failing connors (202 daily) / breakout (60 daily) gates are young listings.
+- reclaim_entry "blocking gate": it is an alternative shadow ENTRY journaled beside the card, not a confirmation gate.
+- Continuation re-anchor: the plan already follows a continuing impulse until the entry (signal_book _advance).
+- Wyckoff "60-minute TTL": invented - SPRING / UTAD cards end structurally (structural_lifetimes); "60m" is the trigger tf.
+- XAU / XAG / BZ in ORB: the intended ORB universe (eng-93: majors, gold, silver, oil).
+- Connors shorts live / OI BUILD cancelling live cards: shorts stay shadow (book trades longs); 0 OI BUILD cancellations
+  since the restart (81 OI BUILD cards) - recheck after 24h.
