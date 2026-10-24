@@ -1176,8 +1176,12 @@ class DemoExecutor:
                     if left <= qty * (rest_share + 0.05):
                         done = 'out by its tp0 meanwhile'
                     else:
-                        half = float(ex.amount_to_precision(symbol, min(left, qty * cfg.partial_share)))
-                        await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', half, None, {'reduceOnly': True})
+                        # down to rest_share of the ORIGINAL size: a trade whose TP1 third already went out keeps
+                        # its half, not 1/6 (live APE 2026-10-24: half of the original closed from 2/3 left)
+                        half = float(ex.amount_to_precision(symbol, left - qty * rest_share))
+                        if half > 0:
+                            await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', half, None,
+                                                  {'reduceOnly': True})
                         done = f"{half} closed at market"
                     rest = await self._position_qty(symbol)
                     if rest > 0:
