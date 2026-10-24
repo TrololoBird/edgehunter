@@ -777,6 +777,8 @@ class SignalBook:
                 self.events.append((s, 'RESTOP'))
             return
         be_r = plan.get('be_after_r')
+        if be_r is None and CONFIG.strategies.be_after_1r:
+            be_r = 1.0          # eng-155: cards opened before the flag (restored from the state) get it too
         if hi is not None and lo is not None and lv.get('entry') and lv.get('sl'):
             risk = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
             fav = (hi - lv['entry']) if d > 0 else (lv['entry'] - lo)
@@ -786,6 +788,7 @@ class SignalBook:
                                                                       d * (lv['tp1'] - lv['entry']) > risk * CONFIG.executor.partial_r):
                 plan['p1r_done'] = True
                 s.part_ms.setdefault('p1r', int(s.managed_ms or 0))
+                self.events.append((s, 'PARTIAL'))     # eng-155: the demo takes the half if its tp0 has not
             if be_r and risk and fav >= be_r * risk:
                 # eng-84: the stop to break-even + costs once price traded +be_r R its way (off by default, eng-111)
                 be = lv['entry'] * (1 + d * BE_COST)

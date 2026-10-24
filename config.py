@@ -797,7 +797,9 @@ class StrategiesConfig:
     # trail and the method's exit. The watch / zone / trade clocks and the time stop below are then unused
     structural_lifetimes: bool = True
     # eng-111: no source -> off (break-even after +1R; the EMA20 trail after TP1)
-    be_after_1r: bool = False
+    # eng-155 (the owner, live: 18 trendline shorts at +1..+3R with their stops untouched): break-even + costs after +1R
+    # for every plan again, open cards included (SignalBook._trail)
+    be_after_1r: bool = True
     ema_trail_after_tp1: bool = False
     time_stop_bars: int = 24
     # eng-51: at most crowd_max OPEN trades in one direction across all strategies (the rest journaled vetoed
@@ -1109,7 +1111,7 @@ class ExecutorConfig:
     # the trigger-timeframe candle that touched the zone and closed back on the trade's side of its line
     touch_confirm_close: bool = True
     partial_r: float = 1.0
-    partial_share: float = 0.0       # eng-123: no study for half at +1R (practitioners' advice only) - off
+    partial_share: float = 0.5       # eng-155 (the owner): half out at +1R again (off since eng-123); open trades too
     max_leverage: int = 5            # eng-84: 2-5x (the 3-5-7 rule); the risk is set by the stop, cross margin
     # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak). eng-125: the
     # numbers were picked inside those ranges, no source -> off (0); the risk per trade (1%, the Turtles' unit) stays

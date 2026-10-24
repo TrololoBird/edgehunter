@@ -43,6 +43,10 @@ def test_merge_level_inside_the_zone_joins_it():
 
 def test_expectancy_counts_each_third(monkeypatch):
     # TP1 often, TP2 / TP3 rarely, the stop stays after TP1: p1 x R1 alone looked positive, the thirds are not
+    # (the thirds model only: with the +1R partial on (eng-155) the plan exits otherwise and is not vetoed by it)
+    from config import CONFIG
+    import dataclasses
+    monkeypatch.setattr(CONFIG, 'executor', dataclasses.replace(CONFIG.executor, partial_share=0.0))
     monkeypatch.setitem(geometry.HIT_RATE, 'TEST SETUP', (0.5, 40, 0.5, 0.1, 0.05))
     plan = {'setup': 'ENTRY TEST SETUP', 'symbol': None, 'tf': '15m', 'zones': [], 'min_rr': 0.0}
     out = geometry.finish_levels(plan, 100.0, 99.0, [101.5, 103.0, 104.0], ['1h swing'] * 3, 1, 'x')

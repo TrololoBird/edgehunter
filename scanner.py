@@ -834,6 +834,8 @@ class Scanner:
                     self._background_task(self.demo.on_add(tracked))
                 elif event == 'RESTOP':
                     self._background_task(self.demo.on_restop(tracked))
+                elif event == 'PARTIAL':
+                    self._background_task(self.demo.on_partial(tracked))
             for tracked in self.book.finished_now:
                 self._background_task(self.demo.on_finish(tracked))
 
@@ -2055,7 +2057,7 @@ class Scanner:
     CONFIRM_RU = {'flow': 'поток', 'spot': 'спот', 'oi': 'OI', 'orderflow': 'ордерфлоу', 'vsa': 'VSA',
                   'htf_zone': 'зона ст.ТФ', 'smt': 'SMT', 'killzone': 'килзона'}
     EVENT_RU = {'ENTRY': 'вход', 'ZONE': 'в зоне', 'TP1': 'TP1', 'TP2': 'TP2', 'TP3': 'TP3', 'SL': 'стоп',
-                'CLOSED': 'закрыта', 'INVALID': 'отменена', 'RESTOP': 'стоп перенесён', 'ADD': 'добавлен юнит'}
+                'CLOSED': 'закрыта', 'INVALID': 'отменена', 'RESTOP': 'стоп перенесён', 'PARTIAL': 'половина зафиксирована', 'ADD': 'добавлен юнит'}
 
     @staticmethod
     def _why_ru(reason: Optional[str]) -> str:
@@ -2150,6 +2152,8 @@ class Scanner:
                     text = f"Сделка закрыта: {self._why_ru(s.finish_reason)}\n{head}"
                 elif event == 'RESTOP':
                     text = f"Стоп перенесён на {px(lv['sl'])} ({lv.get('sl_src') or 'трейлинг'})\n{head}"
+                elif event == 'PARTIAL':
+                    text = f"Половина позиции зафиксирована на +1R\n{head}"
                 elif event == 'ADD':
                     text = (f"Добавлен юнит {len(s.units or [])} по {px(s.units[-1][0]) if s.units else px(s.last_price)}, "
                             f"стоп всех юнитов {px(lv['sl'])}\n{head}")

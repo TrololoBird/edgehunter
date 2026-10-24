@@ -139,7 +139,7 @@ class DemoExecutor:
                               ('entry_order', 'TEXT'), ('fill_confirmed', 'INTEGER'), ('funding_usd', 'REAL'),
                               ('close_pending_reason', 'TEXT'), ('close_pending_r', 'REAL'),
                               ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER'),
-                              ('logic_version', 'TEXT')):
+                              ('logic_version', 'TEXT'), ('partial_done', 'INTEGER')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
@@ -1142,6 +1142,55 @@ class DemoExecutor:
                 logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
             except Exception as e:
                 logger.warning(f"Demo restop {s.symbol}: {e!r}")
+
+    async def on_partial(self, s) -> None:
+        """eng-155: the card went +partial_r R - partial_share of the position out. A trade opened with its tp0 order
+        (exit_parts) has usually given it already (the position is down to the rest: only marked); a trade opened
+        before partials were on has none - its take-profits are cancelled, the half closed at market (it may be well
+        past +1R by then) and the take-profits re-placed for the rest. The stop is never touched here."""
+        cfg = CONFIG.executor
+        if not self.enabled or not s.entered_at or not cfg.partial_share:
+            return
+        card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
+        trade = self.open.get(card_id) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
+        if trade is None or trade.get('partial_done') or trade.get('units') or not trade.get('qty'):
+            return
+        async with self._lock:
+            if all(t is not trade for t in self.open.values()):
+                return
+            try:
+                ex = await self._exchange()
+                symbol, d, qty = trade['symbol'], trade['direction'], float(trade['qty'])
+                rest_share = 1 - cfg.partial_share
+                left = await self._position_qty(symbol)
+                if 0 < left <= qty * (rest_share + 0.05):
+                    done = 'already out by its tp0'
+                elif left > 0:
+                    for o in await ex.fetch_open_orders(symbol):
+                        if not self._is_stop(o):
+                            try:
+                                await ex.cancel_order(o['id'], symbol)
+                            except Exception as e:
+                                errors.report('executor.on_partial', e, f"Demo partial {symbol}: cancel {o.get('id')}")
+                    left = await self._position_qty(symbol)
+                    if left <= qty * (rest_share + 0.05):
+                        done = 'out by its tp0 meanwhile'
+                    else:
+                        half = float(ex.amount_to_precision(symbol, min(left, qty * cfg.partial_share)))
+                        await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', half, None, {'reduceOnly': True})
+                        done = f"{half} closed at market"
+                    rest = await self._position_qty(symbol)
+                    if rest > 0:
+                        await self._place_tps(trade, self.tp_parts(ex, symbol, rest, bool(trade.get('trail')),
+                                                                   bool(trade.get('no_tp'))))
+                else:
+                    return
+                trade['partial_done'] = 1
+                with sqlite3.connect(self.db_path) as c:
+                    c.execute("UPDATE demo_trades SET partial_done = 1 WHERE id = ?", (trade['id'],))
+                logger.info(f"Demo PARTIAL {symbol}: {done}")
+            except Exception as e:
+                logger.warning(f"Demo partial {s.symbol}: {e!r}")
 
     async def on_add(self, s) -> None:
         """A Turtle unit added on the card: the same quantity again at market, the stop of the whole position moved."""

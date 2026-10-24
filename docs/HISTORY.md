@@ -984,6 +984,14 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-155 (2026-10-24, the owner: protect the profit - 18 trendline shorts at +1..+3R had their stops untouched)
+- `strategies.be_after_1r` True: the stop to break-even + costs after +1R for every plan (off since eng-111); cards
+  restored without the flag get it too (`_trail`). SAR / % trail plans keep their own trail.
+- `executor.partial_share` 0.5: half out at +1R (off since eng-123). New trades: the tp0 order (exit_parts). Open
+  trades: the card's +1R raises PARTIAL -> `executor.on_partial` (take-profits cancelled, the half at market, the
+  take-profits re-placed for the rest, `partial_done` on the row; skipped when tp0 already took it).
+- The thirds expectancy veto no longer applies (the exit is not three thirds any more) - by its own rule.
+
 ## eng-154 (2026-10-24, the owner: a losing streak is a bug to fix, not a sample to wait for)
 - ORB: the stop to break-even + costs after +1R (`plan['be_after_r'] = 1.0`); still out at the session's close.
   Live eng-148: 8 of 10 ORB cards lost, 4 in a row; XAG / XAU / BNB / XRP traded +0.6..+1.1R and closed
