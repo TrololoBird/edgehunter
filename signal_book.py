@@ -755,6 +755,12 @@ class SignalBook:
         if status in ('SL', 'TP3') or (status == 'CLOSED' and s.entered_at):
             self.events.append((s, status))
 
+    def _direction_units(self, s: TrackedSignal) -> int:
+        """The Turtles' units already held in s's direction: open (not finished) cards of OTHER coins / setups that carry
+        units (only unit systems do), so a waiting or finished card never counts (eng-164 test)."""
+        return sum(len(o.units) for o in self.signals.values()
+                   if o is not s and not o.finished and o.units and o.direction == s.direction)
+
     def _partial_1r(self, s: TrackedSignal, hi: Optional[float], lo: Optional[float]) -> None:
         """eng-105 / eng-155: partial_share of the position out once price traded +partial_r R (the demo's tp0, or a
         PARTIAL event -> executor.on_partial for trades opened without it); once per card, not for unit systems, not
@@ -1556,8 +1562,7 @@ class SignalBook:
             s.units = [[levels['entry'], entered_at]]
         if (s.plan or {}).get('trail_days'):
             # the Turtles' portfolio limit: at most turtle_max_direction_units units in one direction across all coins
-            held = sum(len(o.units) for o in self.signals.values()
-                       if o is not s and not o.finished and o.units and o.direction == s.direction)
+            held = self._direction_units(s)
             if held + 1 > CONFIG.strategies.turtle_max_direction_units:
                 return self._enter(s, levels, now_ms, 'unit_limit', confirms)
             s.units = [[levels['entry'], entered_at]]

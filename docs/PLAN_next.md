@@ -121,3 +121,11 @@ Rejected (checked in code):
 - XAU / XAG / BZ in ORB: the intended ORB universe (eng-93: majors, gold, silver, oil).
 - Connors shorts live / OI BUILD cancelling live cards: shorts stay shadow (book trades longs); 0 OI BUILD cancellations
   since the restart (81 OI BUILD cards) - recheck after 24h.
+
+## Review notes 2026-10-24 22:00
+36. CHECKED Turtle rules vs Faith (strategies/turtle.py: N = 20-day EMA of TR, S1 20-day skipped after a winner, S2 55-day,
+    2N stop, 10 / 20-day exits, +1 unit per 0.5N, 4 units / coin) - match; unit counting extracted
+    (SignalBook._direction_units) and tested (tests/test_eng164.py) with the ORB one-hour break-even and the small-cap
+    failing-gate log.
+37. INVESTIGATE small-cap flow window: APR +17.9% in 15m on RVOL 83 and OI +2% was rejected 'taker flow against the move' -
+    the flow is the last 5 minutes only (selling after the spike). Compare with the flow over the 15-minute move.
