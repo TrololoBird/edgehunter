@@ -984,6 +984,12 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-154 (2026-10-24, the owner: a losing streak is a bug to fix, not a sample to wait for)
+- ORB: the stop to break-even + costs after +1R (`plan['be_after_r'] = 1.0`); still out at the session's close.
+  Live eng-148: 8 of 10 ORB cards lost, 4 in a row; XAG / XAU / BNB / XRP traded +0.6..+1.1R and closed
+  -0.1..-0.7R at the close (no stop management since eng-146 reverted the SAR, be_after_1r off since eng-111).
+- signal_book._trail docstring: ORB no longer listed under the SAR (removed in eng-146).
+
 ## eng-153 (2026-10-24, external audit #3, confirmed findings only)
 - SWEEP plan timeframe capped at 1h (`sweep_tf`): the raid is a 15m candle, its trigger is now at most 15m. The day /
   previous day / week pools had a 4h plan with a 60m trigger: live eng-152, 109 of 113 MISSED cards were

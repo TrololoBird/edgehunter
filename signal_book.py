@@ -727,9 +727,10 @@ class SignalBook:
     def _trail(self, s: TrackedSignal, candles_of, hi: Optional[float] = None, lo: Optional[float] = None) -> None:
         """
         Stop management of an open trade, only ever toward the trade (a RESTOP event moves the demo's stop):
-        - plan 'sar': Wilder's Parabolic SAR of the plan's bars (BB1 4h, ORB 15m since eng-145);
+        - plan 'sar': Wilder's Parabolic SAR of the plan's bars (BB1 4h);
         - plan 'trail_pct': a % trail behind the best price;
-        - plan 'be_after_r' / the partial at +1R: off (be_after_1r False since eng-111, partial_share 0 since eng-123);
+        - plan 'be_after_r': break-even + costs after +R (globally off since eng-111; ORB sets it, eng-154);
+        - the partial at +1R: off (partial_share 0 since eng-123);
         - plan 'trail_after_tp1' (half at TP1, then the EMA20 trail): off - _plan resets it while
           strategies.ema_trail_after_tp1 is False (eng-111); only band_exit plans keep it.
         """

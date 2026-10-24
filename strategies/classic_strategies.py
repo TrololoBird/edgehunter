@@ -82,6 +82,9 @@ class OrbStrategy(_System):
         plan = _confirm_plan(x, self.name, '15m', exit, f"{sig.get('orb_session', 'session')} opening range +- Stretch (Crabel)")
         if plan and not plan.get('skip'):
             plan['no_tp'] = True
+            # eng-154 (the owner, live eng-148: 8 of 10 ORB cards lost, 4 in a row; XAG / XAU traded +0.8..+1.1R and
+            # closed -0.2..-0.7R at the session's close): the stop to break-even + costs after +1R, still out at the close
+            plan['be_after_r'] = 1.0
         return plan
 
 
