@@ -260,7 +260,7 @@ class SmallCapWatch:
                        strategy='pump')
             self.pending.append((sym, sig))
         except Exception as e:
-            logger.warning(f"Small caps: check {sym} failed: {e!r}")
+            logger.warning(f"Small caps: check {sym} failed: {e!r}", exc_info=True)
 
     @staticmethod
     def _why_not(minutes, m: Dict, vol, now_ms: int, h1, move: float) -> str:
