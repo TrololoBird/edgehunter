@@ -188,7 +188,8 @@ def activation(minutes: Sequence[Sequence[float]], base1: Optional[float], direc
 
 
 def extras(m5_rest: Sequence[Sequence[float]], minutes: Sequence[Sequence[float]],
-           btc_minutes: Sequence[Sequence[float]], direction: int) -> Dict:
+           btc_minutes: Sequence[Sequence[float]], direction: int,
+           btc_m5: Optional[Sequence[Sequence[float]]] = None) -> Dict:
     """eng-159c, from the other sources of the owner's research (read 2026-10-24):
     - pd_trades_ratio_5m: trades of the last closed 5m candle / the median of the previous 288 (La Morgia et al. 2020,
       'The Doge of Wall Street' 2023: StdTrades / rush orders jump at the pump's start); REST kline field n;
@@ -201,13 +202,29 @@ def extras(m5_rest: Sequence[Sequence[float]], minutes: Sequence[Sequence[float]
     if len(rows) >= 50:
         trades = [r[7] for r in rows]
         base = median(trades[-289:-1])
-        if base:
+        if base >= 20:                   # a near-dead coin's ratio is noise, not a signal (review eng-159c)
             out['pd_trades_ratio_5m'] = trades[-1] / base
         opens = [r[1] for r in rows[-145:-1]]
         ma = sum(opens) / len(opens) if opens else None
         last = minutes[-1][4] if minutes else rows[-1][4]
         if ma:
             out['pd_price_vs_ma12h'] = direction * (last / ma - 1)
+    if btc_m5 and len(rows) >= 60:
+        # the BOCD detector's idea closer: the coin's 30-minute return minus beta x BTC's, beta from the PREVIOUS 5m
+        # returns only (aligned by candle time, up to 288), so a high-beta alt moving with BTC is no anomaly
+        bmap = {int(r[0]): r[4] for r in btc_m5}
+        pairs = [(a[4], b[4], bmap.get(int(a[0])), bmap.get(int(b[0]))) for a, b in zip(rows[:-1], rows[1:])]
+        rets = [(c1 / c0 - 1, b1 / b0 - 1) for c0, c1, b0, b1 in pairs if c0 and b0 and b1]
+        hist = rets[-289:-6]
+        if len(hist) >= 48:
+            mx = sum(x for _, x in hist) / len(hist)
+            my = sum(y for y, _ in hist) / len(hist)
+            var = sum((x - mx) ** 2 for _, x in hist)
+            beta = sum((x - mx) * (y - my) for y, x in hist) / var if var else 0.0
+            b6, b0_ = bmap.get(int(rows[-1][0])), bmap.get(int(rows[-7][0]))
+            if b6 and b0_ and rows[-7][4]:
+                out['pd_btc_beta'] = beta
+                out['pd_vs_btc_resid'] = direction * ((rows[-1][4] / rows[-7][4] - 1) - beta * (b6 / b0_ - 1))
     coin, btc = bars_5m(minutes), bars_5m(btc_minutes)
     if len(coin) >= 7 and len(btc) >= 7 and coin[-7][4] and btc[-7][4]:
         out['pd_vs_btc'] = direction * ((coin[-1][4] / coin[-7][4] - 1) - (btc[-1][4] / btc[-7][4] - 1))

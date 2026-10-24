@@ -1448,6 +1448,22 @@ class Scanner:
         binance = spot[4] * self.fetcher.symbol_map.key_multiplier.get(md.symbol, 1.0)
         return coinbase / binance - 1 if binance else None
 
+    async def _btc_m5(self) -> List:
+        """eng-160b: BTC's last 290 closed 5m candles for the beta residual (pd_vs_btc_resid), cached per 5 minutes."""
+        now = time.time() * 1000
+        cached = getattr(self, '_btc_m5_cache', None)
+        if cached and now - cached[0] < 300_000:
+            return cached[1]
+        try:
+            k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
+                                              {'symbol': 'BTCUSDT', 'interval': '5m', 'limit': 290}, priority=1, weight=2)
+            rows = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4])] for x in k or [] if int(x[6]) < now]
+            self._btc_m5_cache = (now, rows)
+            return rows
+        except Exception as e:
+            logger.debug(f"BTC 5m for the beta residual: {e!r}")
+            return []
+
     async def _pd_enrich(self, symbol: str, sig: Dict) -> None:
         """eng-159: the detector's features on the source's 24h baselines - the last 289 closed 5m candles (REST, once
         per PUMP / DUMP START) + the 1m ring; the activation lead time found by the detector is kept."""
@@ -1462,7 +1478,8 @@ class Scanner:
             lead = sig.get('pd_activation_lead_s')
             minutes = self._minute_candles(symbol)
             feats = pdf.features(minutes, [], int(sig['direction']), [r[:7] for r in m5])
-            feats.update(pdf.extras(m5, minutes, self._minute_candles('BTC/USDT:USDT'), int(sig['direction'])))
+            btc_m5 = await self._btc_m5()
+            feats.update(pdf.extras(m5, minutes, self._minute_candles('BTC/USDT:USDT'), int(sig['direction']), btc_m5))
             if feats:
                 sig.update(feats)
                 sig['pd_activation_lead_s'] = lead
@@ -1470,7 +1487,8 @@ class Scanner:
                         f"(cluster {sig.get('pd_vol_cluster')}), range x{sig.get('pd_range_ratio', 0):.1f} "
                         f"(cluster {sig.get('pd_range_cluster')}), move3 {sig.get('pd_move3', 0):+.1%}, "
                         f"breakout {sig.get('pd_breakout', 0):+.2%}, trades x{sig.get('pd_trades_ratio_5m', 0):.1f}, "
-                        f"vs 12h MA {sig.get('pd_price_vs_ma12h', 0):+.1%}, vs BTC {sig.get('pd_vs_btc', 0):+.1%}, "
+                        f"vs 12h MA {sig.get('pd_price_vs_ma12h', 0):+.1%}, vs BTC {sig.get('pd_vs_btc', 0):+.1%} "
+                        f"(resid {sig.get('pd_vs_btc_resid', 0):+.1%}, beta {sig.get('pd_btc_beta', 0):.2f}), "
                         f"rush z {sig.get('rush_z_30s', 0):.1f}, base {sig.get('pd_base_n')} x 5m")
         except Exception as e:
             logger.warning(f"PD features {symbol}: {e!r}")

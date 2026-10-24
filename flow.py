@@ -736,7 +736,10 @@ def stacked_imbalance(levels: Dict[int, List[float]], direction: int) -> int:
 class RushBook:
     """
     eng-89, "rush orders" (La Morgia et al., arXiv 2005.06610: pump detection on Binance within seconds): one taker
-    market order that ate several price levels prints as several aggTrades with the SAME trade time and side. Counted
+    market order that ate several price levels prints as several aggTrades with the SAME trade time and side.
+    A PROXY, narrower than the paper (review eng-160b): the paper groups raw trades of one side in the same ms; aggTrade
+    already merges the fills of one taker at one price, so a market order filled at a single level is not counted here -
+    only multi-level sweeps are. Neither is an exact market-order count (no parent order id in the public stream). Counted
     per second per coin in a one-hour ring (Binance futures only: its aggTrade carries the match time T). Journaled as
     features and as RUSH rows - data collection, no trading.
     """

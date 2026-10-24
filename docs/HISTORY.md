@@ -984,6 +984,17 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-160b (2026-10-24, external review of eng-159c)
+- `pd_vs_btc_resid` + `pd_btc_beta`: the coin's 30-minute return minus beta x BTC's, beta from the previous 5m returns
+  only (up to 288, aligned by candle time; BTC 5m cached per 5 min) - closer to the BOCD detector's alt-vs-BTC model
+  than the plain difference `pd_vs_btc` (both journaled, judged apart).
+- `pd_trades_ratio_5m` only when the 24h median is >= 20 trades a 5m candle (a near-dead coin's ratio is noise). It is a
+  closed-candle context feature; the second-scale reading stays the rush-order proxy.
+- RushBook documented as a proxy: aggTrade merges one taker's fills at one price, so only multi-level sweeps count
+  (the paper groups raw same-ms trades). Columns kept as rush_* for journal continuity.
+- Not done on purpose: the reviewer's offline ablation (the owner: no backtests) - the live journal holds every feature
+  per card, and the comparison is made on live outcomes.
+
 ## eng-160 (2026-10-24, the owner: trade geometry scenario B as a shadow variant)
 - `variant_retest` for PUMP START / DUMP START (SignalBook._retest_variants): every such card with a plan is watched -
   entered, vetoed (low_rr) or expired alike, so the variant has no survivorship - for 24 x 5m after the signal.
@@ -1002,7 +1013,10 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   Nghiem et al.), 30-s random forests on historical P&D labels (Fantazzini & Xiao, La Morgia - needs labeled events),
   market-cap / developer-activity factors (Charfeddine & Mahrous, Victor & Hagemann), sub-second cross-venue impact
   (Albers et al.), L2 add / cancel for small caps (no books there).
-- Not found under the cited title / author: Tsuchiya 2021, Schmalz 2026, Kitvanitphasu 2026.
+- CORRECTION (external review, re-checked 2026-10-24): Tsuchiya 2021 (Digital Finance, doi 10.1007/s42521-021-00034-6),
+  Schmalz 2026 (SSRN 7227998, preprint) and Kitvanitphasu et al. 2026 (RIBAF 81, doi 10.1016/j.ribaf.2025.103163)
+  DO exist - my "not found / likely invented" was wrong. None gives a rule usable here (exchange-level P&D success;
+  OFI on Binance.US BTC that flipped sign across 7 / 9 / 17 days; VPIN and BTC jumps).
 
 ## eng-159b (2026-10-24, checked against the source: aleks-ent PUMP_DETECTION_RULES.md, read in full)
 - Baselines now as the source: medians of the PREVIOUS 288 closed 5m candles (REST, one call per PUMP / DUMP START,
