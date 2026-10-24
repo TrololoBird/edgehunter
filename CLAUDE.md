@@ -72,6 +72,8 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - eng-158: smallcap.py - live 1m PUMP / DUMP START on the small caps outside the universe (cards + demo).
     - eng-159: pd_features - median baselines, 5m layer, LATE / SPIKE_FAIL (shadow), pd_* journal columns.
     - eng-160: variant_retest (shadow) for PUMP / DUMP START - retest of the pre-move 2h range edge +- 0.25 ATR(5m).
+    - eng-161: 1m hole refill + log, small caps attached at start-up, small-cap failing-gate log.
+    - eng-162: logic_version eng-162; +1R partial before the SAR / % trail branches; installer user edgehunter; constraints.txt.
     - Deleted (eng-35): Third Eye, Bomberman, OI accumulation, fib 0.5, the standalone SMT / absorption setups, the 15m
       phase reversals (BULL A / B / E, BEAR C). The paragraphs below that still name them describe the history.
 

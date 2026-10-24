@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Everything after install.sh in one go (run as root on the VPS):   bash /opt/edgehunter/deploy/setup_server.sh
-#  - the latest code of the checked-out branch, polars pinned to the version the bot was tested with
+#  - the latest code of the checked-out branch, core packages pinned by constraints.txt (the versions the bot runs with)
 #  - the dashboard public over HTTPS (deploy/web_access.sh)
 #  - config.local.toml: [web] open_browser = false; merged with config.from_laptop.toml when you copied it
 #    (BingX demo keys, Telegram token / channel) - signals.db / demo_trades.db / scanner_state.json / models are used
@@ -12,7 +12,7 @@ cd "$APP"
 
 git config --global --add safe.directory "$APP"     # the tree belongs to the edgehunter user
 git pull --ff-only
-sudo -u edgehunter "$APP/.venv/bin/python" -m pip install -q -r "$APP/requirements.txt"
+sudo -u edgehunter "$APP/.venv/bin/python" -m pip install -q -r "$APP/requirements.txt" -c "$APP/constraints.txt"
 
 CFG="$APP/config.local.toml"
 touch "$CFG"

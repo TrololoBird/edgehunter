@@ -984,6 +984,17 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-162 (2026-10-24, external audit EDGEHUNTER_AUDIT_PRELIMINARY, confirmed findings)
+- EH-LOGIC-001: logic_version eng-155 -> eng-162 (eng-156..161 changed vetoes, enabled setups, detection and journaling
+  under the old label); keep_waiting_from eng-162 (by its own rule: detection / vetoes changed).
+- EH-TRADE-002: the +1R partial is its own step (`SignalBook._partial_1r`) run before the SAR / % trail branches, which
+  return early - BB1 / trail_pct cards booked no PARTIAL although the executor placed tp0 for new trades (journal R vs
+  demo R disagreed). Break-even stays off where a plan has its own trail.
+- EH-DOC-003: _trail docstring and the partial_share comment describe the current behaviour.
+- EH-DEPLOY-001: deploy/install.sh USER_NAME=edgehunter (the units run User=edgehunter; a clean install could not start).
+- EH-DEPLOY-004: constraints.txt (polars 2.0.0, ccxt 4.5.85, numpy, uvloop, orjson, picows, aiohttp as on the VPS) used by
+  install.sh / setup_server.sh; README no longer says polars 1.44.2.
+
 ## eng-161 (2026-10-24, PLAN_next priority 1)
 - 1m holes: `DataFetcher.minute_holes` / `patch_minute_holes` + `Scanner._minute_hole_pass` (each Health minute): the
   closed futures minutes missing in a universe coin's buffer (a stream reconnect left them for good - seed_minutes ran

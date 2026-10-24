@@ -45,7 +45,7 @@ systemctl start edgehunter-bot
 | дашборд с ноутбука | `ssh -L 8765:127.0.0.1:8765 root@SERVER`, затем открыть http://127.0.0.1:8765 |
 | статистика | `cd /opt/edgehunter && sudo -u edgehunter .venv/bin/python stats.py --days 7` |
 
-Всё после install.sh одной командой: `bash /opt/edgehunter/deploy/setup_server.sh` (свежий код, polars 1.44.2, конфиг,
+Всё после install.sh одной командой: `bash /opt/edgehunter/deploy/setup_server.sh` (свежий код, версии ключевых пакетов из constraints.txt — polars 2.0.0, ccxt 4.5.85 и др., конфиг,
 публичный дашборд, запуск). Бот слушает только 127.0.0.1; снаружи дашборд открыт ПУБЛИЧНО (без логина) через Caddy по
 HTTPS на `https://<ip>.sslip.io` (`deploy/web_access.sh`). Пост в Telegram (`/api/briefing?send=1`) и `/api/debug`
 отвечают только локальным запросам (`webui._local`).

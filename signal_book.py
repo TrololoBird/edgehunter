@@ -750,17 +750,37 @@ class SignalBook:
         if status in ('SL', 'TP3') or (status == 'CLOSED' and s.entered_at):
             self.events.append((s, status))
 
+    def _partial_1r(self, s: TrackedSignal, hi: Optional[float], lo: Optional[float]) -> None:
+        """eng-105 / eng-155: partial_share of the position out once price traded +partial_r R (the demo's tp0, or a
+        PARTIAL event -> executor.on_partial for trades opened without it); once per card, not for unit systems, not
+        where the plan's TP1 is nearer than +partial_r R. eng-162: its own step, for the trailing plans too - the
+        executor already placed tp0 for new SAR / % trail trades while the card never booked it (journal vs demo R)."""
+        plan, lv, d = s.plan or {}, s.levels, s.direction
+        if hi is None or lo is None or not lv.get('entry') or not lv.get('sl') or plan.get('p1r_done') or s.units:
+            return
+        cfg = CONFIG.executor
+        risk = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
+        fav = (hi - lv['entry']) if d > 0 else (lv['entry'] - lo)
+        if risk and cfg.partial_share and fav >= cfg.partial_r * risk and (
+                plan.get('no_tp') or not lv.get('tp1') or d * (lv['tp1'] - lv['entry']) > risk * cfg.partial_r):
+            plan['p1r_done'] = True
+            s.part_ms.setdefault('p1r', int(s.managed_ms or 0))
+            self.events.append((s, 'PARTIAL'))
+
     def _trail(self, s: TrackedSignal, candles_of, hi: Optional[float] = None, lo: Optional[float] = None) -> None:
         """
         Stop management of an open trade, only ever toward the trade (a RESTOP event moves the demo's stop):
         - plan 'sar': Wilder's Parabolic SAR of the plan's bars (BB1 4h);
         - plan 'trail_pct': a % trail behind the best price;
-        - plan 'be_after_r': break-even + costs after +R (globally off since eng-111; ORB sets it, eng-154);
-        - the partial at +1R: off (partial_share 0 since eng-123);
+        - the partial at +partial_r R (executor.partial_share of the position, eng-155): for EVERY plan, the trailing
+          ones included, checked first (_partial_1r);
+        - break-even + costs after +1R (strategies.be_after_1r, eng-155; a plan's own be_after_r wins) for the plans
+          without their own trail (sar / trail_pct keep theirs);
         - plan 'trail_after_tp1' (half at TP1, then the EMA20 trail): off - _plan resets it while
           strategies.ema_trail_after_tp1 is False (eng-111); only band_exit plans keep it.
         """
         plan, lv, d = s.plan or {}, s.levels, s.direction
+        self._partial_1r(s, hi, lo)      # eng-162 (audit EH-TRADE-002): before the trail branches, which return
         sar = plan.get('sar')
         if sar and candles_of and lv.get('sl'):
             # eng-127, Bollinger's Method I: Wilder's Parabolic SAR of the plan's bars, stepped once per CLOSED bar
@@ -808,13 +828,6 @@ class SignalBook:
         if hi is not None and lo is not None and lv.get('entry') and lv.get('sl'):
             risk = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
             fav = (hi - lv['entry']) if d > 0 else (lv['entry'] - lo)
-            # eng-105 (the owner's rule, independent of break-even since eng-111): the partial at +1R (the demo's tp0)
-            if risk and fav >= CONFIG.executor.partial_r * risk and CONFIG.executor.partial_share \
-                    and not plan.get('p1r_done') and not s.units and (plan.get('no_tp') or not lv.get('tp1') or
-                                                                      d * (lv['tp1'] - lv['entry']) > risk * CONFIG.executor.partial_r):
-                plan['p1r_done'] = True
-                s.part_ms.setdefault('p1r', int(s.managed_ms or 0))
-                self.events.append((s, 'PARTIAL'))     # eng-155: the demo takes the half if its tp0 has not
             if be_r and risk and fav >= be_r * risk:
                 # eng-84: the stop to break-even + costs once price traded +be_r R its way (off by default, eng-111)
                 be = lv['entry'] * (1 + d * BE_COST)

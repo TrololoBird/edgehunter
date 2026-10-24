@@ -1035,12 +1035,15 @@ class JournalConfig:
     # Stored with every row; stats.py compares only rows produced by the same signal logic
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
-    logic_version: str = "eng-155"
+    # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
+    logic_version: str = "eng-162"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
-    keep_waiting_from: str = "eng-152"
+    # eng-162: eng-156..161 changed vetoes (against_bias blocking, crowd_max), enabled setups, detection (DUMP START,
+    # small caps, median RVOL) - by the rule above the waiting cards of older versions expire at this restart
+    keep_waiting_from: str = "eng-162"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"
@@ -1108,12 +1111,12 @@ class ExecutorConfig:
     limit_wait_min: int = 15      # a touch plan's BingX limit kept this long after Binance's touch (eng-46)
     # eng-105: partial profit at +1R - partial_share of the position out at +partial_r R (an exchange take-profit
     # order); the rest keeps its stop and the method's exit (break-even after +1R is off since eng-111). Skipped where
-    # the plan's TP1 is nearer than +1R. Off since eng-123 (partial_share 0).
+    # the plan's TP1 is nearer than +1R. ON (0.5) since eng-155, every plan incl. trailing ones (eng-162).
     # eng-105: no resting limits - a touch of the zone only arms the entry; the trade opens at the CLOSE of
     # the trigger-timeframe candle that touched the zone and closed back on the trade's side of its line
     touch_confirm_close: bool = True
     partial_r: float = 1.0
-    partial_share: float = 0.5       # eng-155 (the owner): half out at +1R again (off since eng-123); open trades too
+    partial_share: float = 0.5       # eng-155 (the owner): half out at +1R, open trades and trailing plans too (eng-162)
     max_leverage: int = 5            # eng-84: 2-5x (the 3-5-7 rule); the risk is set by the stop, cross margin
     # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak). eng-125: the
     # numbers were picked inside those ranges, no source -> off (0); the risk per trade (1%, the Turtles' unit) stays
