@@ -255,7 +255,8 @@ class PumpStartStrategy(Strategy):
         return (x.sig.get('anchor_ts'), 'start') if x.sig.get('pump_low') is not None else None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
-        sig, atr = x.sig, x.atr
+        sig = x.sig
+        atr = x.atr or sig.get('atr_15m')     # eng-158: a small cap has no 15m frame - the watch's ATR
         if sig.get('pump_low') is None or not atr:
             return None
         close = sig['anchor_close']
@@ -295,7 +296,8 @@ class DumpStartStrategy(Strategy):
         return (x.sig.get('anchor_ts'), 'dstart') if x.sig.get('dump_high') is not None else None
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
-        sig, atr = x.sig, x.atr
+        sig = x.sig
+        atr = x.atr or sig.get('atr_15m')     # eng-158: a small cap has no 15m frame - the watch's ATR
         if sig.get('dump_high') is None or not atr:
             return None
         close = sig['anchor_close']

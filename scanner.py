@@ -146,6 +146,8 @@ class Scanner:
         from extdata import ExternalData
         self.ext = ExternalData(self.fetcher)
         self.book = SignalBook()
+        from smallcap import SmallCapWatch
+        self.smallcap = SmallCapWatch(self.fetcher) if CONFIG.strategies.smallcap_watch else None
         self.market_data: Dict[str, MarketData] = {}
         self._running = False
         self._tasks: List[asyncio.Task] = []
@@ -786,6 +788,12 @@ class Scanner:
         warmed_up = time.time() - self._started_at >= CONFIG.tier0.warmup_sec
         if warmed_up:
             signals += self._detect_setups()
+            if self.smallcap is not None:
+                for symbol, sig in self.smallcap.drain():
+                    if symbol in self.market_data:
+                        continue                 # joined the universe meanwhile: its own detector decides
+                    logger.info(f"Setup detected: {symbol} {sig['setup']} - {sig['setup_note']} (small cap, live 1m)")
+                    signals.append((symbol, sig))
         current_keys = {(symbol, sig['alert_type']) for symbol, sig in signals if not sig.get('is_setup')}
         persistent = [(symbol, sig) for symbol, sig in signals
                       if sig['is_structured'] or sig.get('is_setup') or (symbol, sig['alert_type']) in self._previous_keys]
@@ -929,6 +937,7 @@ class Scanner:
                                                      priority=2, weight=40)
                 by_id = getattr(self.fetcher.futures_exchange, 'markets_by_id', {}) or {}
                 wanted = []
+                qv: Dict[str, float] = {}
                 for t in rows or []:
                     m = by_id.get(t.get('symbol'))
                     m = m[0] if isinstance(m, list) else m
@@ -939,6 +948,7 @@ class Scanner:
                         continue
                     if float(t.get('quoteVolume') or 0) >= cfg.wide_min_volume:
                         wanted.append((m['symbol'], t['symbol'], float(t.get('lastPrice') or 0)))
+                        qv[m['symbol']] = float(t.get('quoteVolume') or 0)
                 sem = asyncio.Semaphore(4)
 
                 async def one(sym, bid, last):
@@ -964,6 +974,9 @@ class Scanner:
                         await self.journal.arecord([(sym, sig)], {sym: last or h1[-1][4]})
 
                 await asyncio.gather(*(one(*w) for w in wanted))
+                if self.smallcap is not None:
+                    # eng-158: the same coins on the live 1m watch (one dynamic Binance connection)
+                    await self.smallcap.set_coins([(s, b, qv.get(s, 0.0)) for s, b, _ in wanted], self.wide_h1)
                 for sym in [s for s in self.wide_h1 if s in self.market_data or s not in {w[0] for w in wanted}]:
                     self.wide_h1.pop(sym, None)
                 logger.info(f"Wide watch: {len(wanted)} perpetuals outside the universe scanned in "
@@ -1436,7 +1449,8 @@ class Scanner:
         """FINAL futures 1m candles only: entry triggers are closes, and a running minute's close is just the live price."""
         md = self.market_data.get(symbol)
         if md is None:
-            return []
+            # eng-158: a small cap's card is fed by the small-cap watch
+            return self.smallcap.minutes(symbol) if self.smallcap is not None else []
         return [c for c in list(md.minute_klines) if c[0] <= md.minute_closed_until]
 
     PRICE_MAX_AGE_SEC = 60
@@ -1448,7 +1462,7 @@ class Scanner:
         """
         md = self.market_data.get(symbol)
         if md is None:
-            return None
+            return self.smallcap.price(symbol) if self.smallcap is not None else None    # eng-158
         now_ms = time.time() * 1000
         candidates = []
         if md.ticker_samples:
@@ -1839,7 +1853,8 @@ class Scanner:
                         f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
                         f"smt pairs {pairs}/{len(ctxs)}, 1m gaps patched {RESAMPLE_QUALITY['patched']} / dropped "
                         f"{RESAMPLE_QUALITY['dropped']} (main process), streams " + ", ".join(rates)
-                        + (f"; {gc_line}" if gc_line else '') + (f"; {failed}" if failed else ''))
+                        + (f"; {gc_line}" if gc_line else '') + (f"; {failed}" if failed else '')
+                        + (f"; {self.smallcap.health()}" if self.smallcap is not None else ''))
             if time.time() - last_memory >= 600:
                 # where the memory sits (process classes + the bot's own structures), every 10 minutes
                 last_memory = time.time()

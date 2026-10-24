@@ -80,6 +80,8 @@ class PlanInput:
             return self.context.atr
         if self.df is not None and 'atr' in self.df.columns and self.df.height:
             return self.df['atr'][-1]
+        if self.df is None and (self.sig or {}).get('atr_15m'):
+            return self.sig['atr_15m']          # eng-158: a small cap (smallcap.py) has no 15m frame
         return None
 
     @property

@@ -839,6 +839,9 @@ class StrategiesConfig:
     dump_vol_x: float = 3.0
     # eng-57 wide watch: perpetuals outside the universe above this 24h volume (pretraining's floor, research_pumps)
     wide_min_volume: float = 3_000_000
+    # eng-158: live 1m watch of those perpetuals for PUMP START / DUMP START (smallcap.py): cards + demo like the universe
+    smallcap_watch: bool = True
+    smallcap_minutes: int = 180               # 1m ring per coin (PUMP START needs 120; ~7 MB for 150 coins)
     # eng-127: OI build = Pring's rule (strategies/oi_build.py, shadow); the OI robots' thresholds are deleted
     oi_build_ttl: tuple = (900, 900, 4 * 3600)
     # ICT optimal trade entry for the continuations (trend / momentum): the pullback into 0.62-0.79 of a leg that left

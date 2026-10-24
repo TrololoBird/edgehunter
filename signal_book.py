@@ -1021,7 +1021,8 @@ class SignalBook:
             # The first plan needs the coin's 15m history (after a start it loads in the background); a leg strategy
             # also its 1h history and level map (loaded once the card exists)
             frame = frames.get(s.symbol)
-            if frame is None or frame.height < 20:
+            # eng-158: a small cap outside the universe has no 15m frame - its plan runs on the watch's minutes / ATR
+            if (frame is None or frame.height < 20) and not (s.sig or {}).get('smallcap'):
                 s.status = 'BIAS'
                 if age > cfg.watch_ttl_sec:
                     self._finish(s, 'EXPIRED', now, f"no 15m history for {_dur(cfg.watch_ttl_sec)}")

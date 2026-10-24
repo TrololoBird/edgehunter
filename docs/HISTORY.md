@@ -984,6 +984,17 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-158 (2026-10-24, the owner: catch pump / dump starts in the small caps too - KAT -44%, WET -46% were missed)
+- `smallcap.py` SmallCapWatch: the wide watch's perpetuals (outside the universe, >= wide_min_volume) on ONE dynamic
+  Binance futures connection of 1m klines (no universe stream restart); a 180-minute ring per coin (~7 MB / 150).
+  Each final minute: |15m move| >= pump_start_min_pct gates; then REST 15m volatility + 5m OI change, and
+  PUMP START / DUMP START decide. A hit is a normal setup signal -> card, journal, demo (BingX).
+- Small-cap inputs: futures taker flow instead of spot (`flow_src` 'futures'), rvol = minute / (24h volume / 1440),
+  ATR = 1h ATR(14) / 2 (`sig['atr_15m']`, used by PlanInput.atr when there is no 15m frame).
+- Scanner: `_price_of` / `_minute_candles` fall back to the watch for coins outside the universe; the card's first plan
+  does not wait for a 15m frame when `sig['smallcap']`. Health line: "small caps N coins, checks, setups".
+- After a restart the watch re-attaches with the wide watch (~10 min); a small-cap trade keeps its exchange stop.
+
 ## eng-157 (2026-10-24, the owner's order: every strategy on, collect the data; pumps AND dumps)
 - `strategies.disabled_setups` emptied: BULL E, BULL A, PUMP TOP, PUMP START, OI BUILD LONG / SHORT produce cards and
   journal again (demo_off_setups was already empty).
