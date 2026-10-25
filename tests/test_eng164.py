@@ -171,3 +171,14 @@ def test_crowd_counts_the_recent_cluster_only():
     assert not book.crowded('trendline', -1, now) and book.crowded_open(-1)
     book.signals.update({f'n{k}': SimpleNamespace(entered_at=now - 600, finished=False, direction=-1) for k in range(6)})
     assert book.crowded('trendline', -1, now)
+
+
+def test_briefing_stop_goes_beyond_every_stacked_zone():
+    """eng-168j: the long's stop below the support lands in the next support, then the one after: beyond both."""
+    import briefing_chart
+    zones = [{'lo': 120.0, 'hi': 121.0, 'side': 1, 'tol': 0.1, 'pad': 0.2, 'mid': 120.5},
+             {'lo': 98.0, 'hi': 99.0, 'side': -1, 'tol': 0.1, 'pad': 0.5, 'mid': 98.5},
+             {'lo': 97.0, 'hi': 97.8, 'side': -1, 'tol': 0.1, 'pad': 0.5, 'mid': 97.4},
+             {'lo': 96.0, 'hi': 96.7, 'side': -1, 'tol': 0.1, 'pad': 0.5, 'mid': 96.3}]
+    p = briefing_chart.plan(100.0, zones)
+    assert p['long'] is not None and p['long']['stop'] < 96.0

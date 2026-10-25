@@ -449,16 +449,20 @@ class Briefing:
                 # zones closer than 1.5 1h ATR to the previous pick are one step (a range's 1h turns made a zone every
                 # ~300 on BTC 82.5-87k): the stronger stays
                 if chosen and side * (near - edge) < max(m['tol'], chosen[-1]['tol'], 1.5 * atr1h):
-                    # within the pierce of the previous pick: price treats them as one place - keep the stronger
-                    if rank(m) < rank(chosen[-1]):
-                        chosen[-1] = m
-                        edge = m['hi'] if side > 0 else m['lo']
+                    # within the pierce of the previous pick: one place. eng-168j (audit): the NEAREST barrier stays
+                    # (a stronger farther zone replaced it and TP1 jumped past a level price meets first); the
+                    # farther zone's strength / labels are added to it as context
+                    chosen[-1] = {**chosen[-1], 'strength': chosen[-1]['strength'] + m['strength'],
+                                  'labels': list(dict.fromkeys(chosen[-1]['labels'] + m['labels']))}
                     continue
                 chosen.append(m)
                 edge = m['hi'] if side > 0 else m['lo']
             return chosen
         for m in cands:
             m['lo'], m['hi'] = min(m['lo'], m['hi']), max(m['lo'], m['hi'])
+            # eng-168j (audit): after a split / merge / trim the level price stays INSIDE the zone (a split kept the
+            # old 'mid' beyond the cut, and targets use it)
+            m['mid'] = min(max(m['mid'], m['lo']), m['hi'])
         above, below = ladder(1, 3), ladder(-1, 2)
         out = []
         for side, group in ((1, above[::-1]), (0, [cur] if cur else []), (-1, below)):
@@ -546,8 +550,10 @@ class Briefing:
                 out['scenarios'][side] = None
                 continue
             e = sum(sc['entry']) / 2
-            risk, reward = abs(e - sc['stop']), abs(sc['targets'][0] - e)
-            rr = reward / risk if risk else 0.0
+            # eng-168j (audit): R:R from the WORST price of the entry range (the far one for the trade), not its middle
+            worst = max(sc['entry']) if d > 0 else min(sc['entry'])
+            risk, reward = abs(worst - sc['stop']), d * (sc['targets'][0] - worst)
+            rr = max(reward, 0.0) / risk if risk else 0.0
             dist = abs(e - price) / atr1h if atr1h else None
             checks = []
             aligned = bias in ('bull', 'bear') and ((bias == 'bull') == (d == 1))
@@ -567,7 +573,7 @@ class Briefing:
                 checks.append(('Карточки бота', 'bad', f"{len(against_cards)} против"))
             bad = sum(1 for _, s, _ in checks if s == 'bad')
             warn = sum(1 for _, s, _ in checks if s == 'warn')
-            verdict = 'нет' if bad else 'осторожно' if warn >= 2 else 'условия выполнены' if warn == 0 else 'приемлемо'
+            verdict = 'нет' if bad else 'осторожно' if warn >= 2 else 'формальные условия выполнены' if warn == 0 else 'приемлемо'
             out['scenarios'][side] = {
                 'name': name, 'cond': sc['cond'], 'tag': sc.get('tag'), 'entry': list(sc['entry']), 'stop': sc['stop'],
                 'targets': list(sc['targets']), 'p': sc['p'], 'rr': rr, 'checks': checks, 'verdict': verdict}
@@ -703,7 +709,7 @@ class Briefing:
             symbol = f"{base}/USDT:USDT"
             o = self.outcomes(symbol, 14)
             if o.get('tally'):
-                coins[base] = o['tally']
+                coins[base] = {**o['tally'], 'r': o.get('r') or {}}
         if not coins:
             return
         os.makedirs('data', exist_ok=True)
@@ -828,6 +834,7 @@ class Briefing:
         since = time.time() - days * 86400
         now = time.time() * 1000
         tally: Dict[str, Dict[str, int]] = {}
+        r_sum: Dict[str, float] = {}
         for r in recs:
             sym = r.get('symbol')
             if r.get('ts', 0) < since or (symbol and sym != symbol):
@@ -843,7 +850,19 @@ class Briefing:
                 cls = self._outcome_class(txt)
                 tally.setdefault(name, {}).setdefault(cls, 0)
                 tally[name][cls] += 1
-        return {'days': days, 'tally': tally}
+                # eng-168j (audit): the result in R, not only counts (TP1: its R from the reaction close; stop: -1)
+                rv = self._outcome_r(txt)
+                if rv is not None:
+                    r_sum[name] = round(r_sum.get(name, 0.0) + rv, 2)
+        return {'days': days, 'tally': tally, 'r': r_sum}
+
+    @staticmethod
+    def _outcome_r(txt: str) -> Optional[float]:
+        import re
+        if txt.startswith('вход → стоп'):
+            return -1.0
+        m = re.match(r'вход → TP1 \(([+-][0-9.]+)R\)', txt)
+        return float(m.group(1)) if m else None
 
     def recap(self) -> str:
         # audit N23: the MSK day the header names (was the UTC day), and the period actually covered by the minute

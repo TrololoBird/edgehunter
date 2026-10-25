@@ -106,10 +106,12 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
     def push_stop(side, stop):
         """A stop inside another zone goes beyond that zone's far edge + its pad (Osler: stops cluster just beyond a
         level - BTC's short stop 84 087 sat inside the resistance 83 577-84 273)."""
-        for z in (up if side < 0 else dn):
+        # eng-168j (audit): beyond EVERY zone the stop lands in (one push left it inside the next stacked zone). A chain
+        # that makes the stop too wide is not published: scenario() rejects R:R < 1 with the pushed stop (ETH's long
+        # stop at -3.8% was published before that check existed)
+        for z in (up if side < 0 else dn):                   # near -> far
             if z['lo'] - z.get('tol', 0.0) <= stop <= z['hi'] + z.get('tol', 0.0):
-                # one zone only: chained through every stacked zone ETH's long stop fell to -3.8%
-                return (z['hi'] + z.get('pad', 0.0)) if side < 0 else (z['lo'] - z.get('pad', 0.0))
+                stop = (z['hi'] + z.get('pad', 0.0)) if side < 0 else (z['lo'] - z.get('pad', 0.0))
         return stop
 
     def scenario(side, e0, e1, stop, cond, tag, first=None):
