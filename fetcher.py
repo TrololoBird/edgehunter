@@ -1374,7 +1374,7 @@ class DataFetcher:
         h1, h4, d1, w1 = (rows(k) for k in ks)
         if len(h1) < 50 or len(d1) < 20:
             return None
-        out = {'h1': h1, 'h4': h4, 'd1': d1, 'w1': w1, 'price': h1[-1][4]}
+        out = {'h1': h1, 'h4': h4, 'd1': d1, 'w1': w1, 'price': h1[-1][4], 'fetched_at': time.time()}
         if len(self._light_cache) > 64:
             self._light_cache.clear()
         self._light_cache[symbol] = (time.time(), out)

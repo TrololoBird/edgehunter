@@ -763,7 +763,7 @@ class WebUI:
             c = await self.scanner.fetcher.light_candles(symbol)
             if c is None:
                 return {'symbol': symbol, 'error': 'монета не найдена среди USDT-перпетуалов Binance или мало истории'}
-            md, src = b.light_src(symbol, c['price'], c['h1'], c['h4'], c['d1'], c['w1'])
+            md, src = b.light_src(symbol, c['price'], c['h1'], c['h4'], c['d1'], c['w1'], c.get('fetched_at'))
             async with sem:
                 res = await asyncio.to_thread(b.analyze, symbol, md, src, cards)
         if len(cache) > 200:
@@ -780,13 +780,21 @@ class WebUI:
         if not re.fullmatch(r'[A-Z0-9]{1,20}/USDT:USDT', symbol):
             return self._json({'error': 'неверный тикер'})
         mk = getattr(self.scanner.fetcher.futures_exchange, 'markets', None) or {}
-        if symbol not in self.scanner.market_data and symbol not in mk:
-            for pre in ('1000', '10000', '1000000'):       # Binance lists small-price coins as 1000PEPE, 1000000MOG
-                alt = f"{pre}{base}/USDT:USDT"
-                if alt in mk:
-                    symbol = alt
-                    break
-        return self._json(await self._analysis_of(symbol))
+        # eng-168q (audit #5): every listed contract the input can mean (BASE and the 1000 / 10000 / 1000000 BASE
+        # contracts Binance lists for small-price coins); the exact one is analysed when it exists, the others are
+        # returned as alternatives for an explicit choice - never a silent substitution
+        alts = [f"{pre}{base}/USDT:USDT" for pre in ('1000', '10000', '1000000')]
+        listed = [x for x in [symbol] + alts if x in self.scanner.market_data or x in mk]
+        if symbol not in listed and listed:
+            if len(listed) > 1:
+                return self._json({'symbol': symbol, 'error': 'неоднозначный тикер: выберите контракт',
+                                   'alternatives': listed})
+            symbol = listed[0]
+        res = dict(await self._analysis_of(symbol))
+        others = [x for x in listed if x != symbol]
+        if others:
+            res['alternatives'] = others
+        return self._json(res)
 
     async def _pinned(self, request):
         """The pinned coins' analysis, always (CONFIG.exchange.pinned_bases that are in the universe)."""

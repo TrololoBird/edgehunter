@@ -358,12 +358,16 @@ class Briefing:
     @staticmethod
     def _history_high(md) -> Tuple[Optional[float], int]:
         """The highest high of the daily / weekly history held (price discovery above it), with its depth in days."""
-        d1, w1 = list(md.d1), list(md.w1)
+        # eng-168q (audit #5): closed candles only (REST rows of a coin outside the universe hold the forming day / week)
+        # and the depth by timestamps, not by the count of candles
+        now = time.time() * 1000
+        d1 = [c for c in md.d1 if c[0] + 86_400_000 <= now]
+        w1 = [c for c in md.w1 if c[0] + 7 * 86_400_000 <= now]
         highs = [c[2] for c in d1] + [c[2] for c in w1]
         if not highs:
             return None, 0
-        days = max(len(d1), len(w1) * 7)
-        return max(highs), days
+        first = min([c[0] for c in d1[:1]] + [c[0] for c in w1[:1]])
+        return max(highs), int(round((now - first) / 86_400_000))
 
     def key_zones(self, symbol: str, src: Optional[Dict] = None, keep_state: bool = True) -> Tuple[Optional[float], List[Dict]]:
         """
@@ -428,14 +432,26 @@ class Briefing:
         cands: List[Dict] = []
         for z in zs:
             near = [l for l in keep if z['lo'] - 0.6 * atr1h <= l.price <= z['hi'] + 0.6 * atr1h]
+            # eng-168q (audit #5): 'здесь же' only for a level whose price / band meets the zone; the others within
+            # 0.6 ATR(1h) are 'рядом' with their distance (they were all called 'здесь же')
+            def meets(l):
+                lo_, hi_ = sorted((l.price, l.body if l.body is not None else l.price))
+                return hi_ >= z['lo'] and lo_ <= z['hi']
+            here_ = [l for l in near if meets(l)]
+            beside = [(l, min(abs(l.price - z['lo']), abs(l.price - z['hi'])) / atr1h) for l in near if not meets(l)]
+            # eng-168q: the pierce model measures swing_15m / swing_1h / equal / pdhl / round only - a zone of 4h / 1d
+            # pivots takes swing_1h (the project's ZONE_KIND mapping); the source is kept and shown
             kind = 'swing_1h'
             tol = min(overshoot(symbol, kind, z['price'], 'p50') or 0.1 * atr1h, 0.5 * atr1h)
             pad = min(max(overshoot(symbol, kind, z['price'], 'p80') or 0.0, 0.5 * atr1h), atr1h)
             tfs = '/'.join(z['tfs'])
             what = f"{z['touches']} касан{'ие' if z['touches'] == 1 else 'ия' if z['touches'] < 5 else 'ий'} ({tfs})"                 + (', смена роли' if z['flip'] else '')
+            higher = [t for t in z['tfs'] if t != '1h']
             cands.append({'lo': z['lo'], 'hi': z['hi'], 'mid': z['price'], 'strength': z['strength'],
-                          'labels': list(dict.fromkeys(l.label for l in near)), 'tol': tol, 'pad': pad,
-                          'sr_desc': what})
+                          'labels': list(dict.fromkeys(l.label for l in here_)),
+                          'near': list(dict.fromkeys(f"{l.label} ({d:.1f} ATR)" for l, d in beside)),
+                          'tol': tol, 'pad': pad, 'sr_desc': what,
+                          'pierce_src': 'swing_1h' + (f" (для {'/'.join(higher)} нет своей статистики)" if higher else '')})
         if not cands:
             return price, []
         # zones that overlap are one place: merged (up to 1.5 x ATR(1h) wide) - the cap above kept BTC's 81 857-82 500
@@ -461,6 +477,7 @@ class Briefing:
                 merged[-1] = {**strong, 'lo': a['lo'], 'hi': max(a['hi'], m['hi']),
                               'strength': a['strength'] + m['strength'],
                               'labels': list(dict.fromkeys(a['labels'] + m['labels'])),
+                              'near': list(dict.fromkeys(a.get('near', []) + m.get('near', []))),
                               'tol': max(a['tol'], m['tol']), 'pad': max(a['pad'], m['pad'])}
             else:
                 merged.append(m)
@@ -517,9 +534,11 @@ class Briefing:
             for m in group:
                 labels = sorted(m['labels'], key=_label_rank)
                 out.append({'lo': m['lo'], 'hi': m['hi'], 'mid': m['mid'], 'side': side, 'strength': m['strength'],
+                            'near': m.get('near', [])[:3], 'pierce_src': m.get('pierce_src'),
                             'tol': m['tol'],
                             'pad': m['pad'], 'label': ' · '.join(labels[:4]),
-                            'desc': (m.get('sr_desc', '') + (f"; здесь же: {', '.join(describe(m['labels']).split(', ')[:2])}" if m['labels'] else ''))
+                            'desc': (m.get('sr_desc', '') + (f"; здесь же: {', '.join(describe(m['labels']).split(', ')[:2])}" if m['labels'] else '')
+                                     + (f"; рядом: {', '.join(m.get('near', [])[:2])}" if m.get('near') else ''))
                             .lstrip('; ') or describe(m['labels'])})
         return price, out
 
@@ -554,7 +573,7 @@ class Briefing:
         return '\n'.join(lines)
 
     @staticmethod
-    def light_src(symbol: str, price: float, h1: List, h4: List, d1: List, w1: List):
+    def light_src(symbol: str, price: float, h1: List, h4: List, d1: List, w1: List, fetched_at: Optional[float] = None):
         """A coin outside the universe, from REST candles only (rows [ts, o, h, l, c, ...]): the same shape key_zones /
         htf_bias read. No flows, liquidations or level map - the zones are the swing clusters of sr.zones alone."""
         import types
@@ -566,7 +585,7 @@ class Briefing:
             if len(closed) >= 15:
                 from levels import atr_of
                 tf[k] = atr_of(closed)                       # Wilder's ATR14, the bot's one ATR
-        return md, {'price': price, 'levels': [], 'tf': tf, 'md': md}
+        return md, {'price': price, 'levels': [], 'tf': tf, 'md': md, 'fetched_at': fetched_at}
 
     def analyze(self, symbol: str, md=None, src: Optional[Dict] = None, cards: Optional[List[Dict]] = None) -> Dict:
         """The web analysis of one coin (pinned or typed in): zones, higher-timeframe bias, the long / short scenarios
@@ -599,11 +618,15 @@ class Briefing:
         out = {'symbol': symbol, 'base': _short(symbol), 'price': price, 'light': src is not None,
                'scope': 'limited' if src is not None else 'full', 'notices': notices,
                'data_as_of': {'last_closed_1h': int(h1c[-1][0] + HOUR_MS) if h1c else None,
-                              'source': 'binance_rest' if src is not None else 'memory', 'generated_at': int(now_ms)},
+                              'source': 'binance_rest' if src is not None else 'memory', 'generated_at': int(now_ms),
+                              # eng-168q (audit #5): when the data set was actually fetched (REST rows come from a 5-min
+                              # cache) and what the price is (the forming 1h candle's last close at that time)
+                              'fetched_at': (src or {}).get('fetched_at'),
+                              'price_src': 'close of the forming 1h at fetch' if src is not None else 'live last price'},
                'chg_day': (price / d1c[-1][4] - 1) * 100 if d1c else None,
                'bias': bias, 'bias_ru': BIAS_RU.get(bias, bias), 'bias_line': self._bias_line(symbol, bias, st),
                'atr1h': atr1h, 'atr1d': atr1d,
-               'zones': [{k: z[k] for k in ('lo', 'hi', 'side', 'strength', 'label')} for z in zones],
+               'zones': [{k: z.get(k) for k in ('lo', 'hi', 'side', 'strength', 'label', 'near', 'pierce_src')} for z in zones],
                'macro': [f"{dt:%H:%M} {name}" for dt, name in events], 'scenarios': {}, 'cards': cards or []}
         if src is None:
             out['outcomes'] = self.outcomes(symbol, 14, md)
@@ -678,6 +701,11 @@ class Briefing:
         events = macro_today(datetime.now(MSK))
         if events:
             out.append('Макро сегодня (МСК): ' + ', '.join(f"{dt:%H:%M} {name}" for dt, name in events))
+        import macro_calendar
+        why = macro_calendar.coverage(time.time() * 1000)
+        if why:
+            # eng-168q (audit #5): the calendar's degraded state is said where the user reads the macro line
+            out.append(f"⚠️ Макро-календарь неполон ({why}): новые события могут отсутствовать")
         return '\n'.join(out)
 
     def cards(self, title: str) -> List[Tuple[bytes, str]]:

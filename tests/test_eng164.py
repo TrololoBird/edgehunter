@@ -250,3 +250,51 @@ def test_xau_365_leg_needs_paxg_at_both_dates():
     b._proxy_history = lambda base: {'1d': gap}
     bias, st = b._bias_of('XAU/USDT:USDT', md)
     assert st['proxy'] is None and st['tsm'] == 1.0             # no PAXG close near the start date: no proxy
+
+
+def test_breakeven_share_from_the_worst_entry():
+    """eng-168o: p uses the worst entry of the range (the same basis as the R:R >= 1 check)."""
+    import briefing_chart
+    zones = [{'lo': 110.0, 'hi': 111.0, 'side': 1, 'tol': 0.1, 'pad': 0.2, 'mid': 110.5},
+             {'lo': 98.0, 'hi': 99.0, 'side': -1, 'tol': 0.2, 'pad': 0.5, 'mid': 98.5}]
+    p = briefing_chart.plan(100.0, zones)
+    lg = p['long']
+    worst = max(lg['entry'])
+    assert abs(lg['p'] - abs(worst - lg['stop']) / (abs(worst - lg['stop']) + abs(lg['targets'][0] - worst))) < 1e-12
+
+
+def test_partial_post_hour_bar_carries_the_hour_open():
+    """eng-168o: the bar built from the post-hour's minutes has the hour's open as its time."""
+    from briefing import Briefing, HOUR_MS
+    t = 472_300 * HOUR_MS
+    post = t + 10 * 60_000
+    minutes = [[post + k * 60_000, 100, 100.5, 99.5, 100] for k in range(50)]
+    sc = {'long': {'entry': (99.0, 99.4), 'stop': 98.0, 'targets': [105.0], 'tag': 'отскок от поддержки'}}
+    seen = []
+    b = Briefing.__new__(Briefing)
+    b.score_detail = lambda s, side, bars, cancel_at=None: (seen.append(bars) or ('не включился', None, None, None))
+    b._score_record({'ts': post / 1000, 'scenario': sc}, [], minutes)
+    assert seen and seen[0][0][0] == t
+
+
+def test_history_high_ignores_forming_candles():
+    """eng-168q: the forming day / week (REST rows of a coin outside the universe) is not the history's high."""
+    import time
+    from types import SimpleNamespace
+    from briefing import Briefing
+    day = 86_400_000
+    now = int(time.time() * 1000)
+    d1 = [[now - (40 - k) * day, 1, 10, 1, 5] for k in range(40)] + [[now - 1000, 1, 99, 1, 50]]   # forming: high 99
+    hi, days = Briefing._history_high(SimpleNamespace(d1=d1, w1=[]))
+    assert hi == 10 and 39 <= days <= 41
+
+
+def test_empty_calendar_load_replaces_the_old_week():
+    """eng-168q: a successful load with no USD High / Medium event clears the previous list; an error body keeps it."""
+    import macro_calendar as mc
+    mc.set_live([{'country': 'USD', 'impact': 'High', 'title': 'CPI', 'date': '2026-10-01T08:30:00-04:00'}], 1.0)
+    assert mc.LIVE
+    mc.set_live({'error': 'rate limited'}, 2.0)
+    assert mc.LIVE and mc.LIVE_AT == 1.0
+    mc.set_live([], 3.0)
+    assert mc.LIVE == [] and mc.LIVE_AT == 3.0

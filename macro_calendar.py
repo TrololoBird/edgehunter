@@ -42,6 +42,8 @@ LIVE_MAX_AGE_SEC = 6 * 3600.0     # audit B06: older than this the weekly source
 
 def set_live(rows, fetched_at: float = None) -> None:
     global LIVE, LIVE_AT
+    if rows is not None and not isinstance(rows, list):
+        return                                   # not a calendar (an error body): keep the last good list
     out = []
     for r in rows or []:
         if r.get('country') != 'USD' or r.get('impact') not in ('High', 'Medium'):
@@ -51,7 +53,9 @@ def set_live(rows, fetched_at: float = None) -> None:
         except (KeyError, ValueError):
             continue
         out.append((t, r.get('title') or '?', r['impact']))
-    if out:
+    # eng-168q (audit #5): a successful load replaces the list even when it holds no USD High / Medium event (an
+    # empty week kept the previous week's list as if current); a failed load never reaches here
+    if rows is not None:
         LIVE = sorted(out)
         LIVE_AT = fetched_at or time.time()
 
