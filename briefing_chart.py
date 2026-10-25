@@ -135,7 +135,11 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         # closer than its stop (R:R < 1 from the worst entry) is still shown, marked 'as a trade: unfavourable'
         # (rr_ok False); it was dropped, and with the honest obstacle map (eng-168v) most cards had no scenario at all.
         # The trade-grade scenarios (rr_ok) are preferred when choosing a variant and tallied apart.
-        rr_ok = side * (tg[0] - worst) >= abs(worst - stop)
+        # eng-168z (audit #8): as a trade, net of the round trip (journal.fee_round_trip + 2 x levels.slippage_bps):
+        # a gross R:R of ~1 is a losing trade after costs
+        from config import CONFIG
+        cost = worst * (CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4)
+        rr_ok = side * (tg[0] - worst) - cost >= abs(worst - stop) + cost
         return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag, 'rr_ok': rr_ok,
                 'conf_tf': tf,
                 # eng-168o (audit #4): the breakeven share on the same basis as the R:R check - the worst entry

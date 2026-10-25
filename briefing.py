@@ -65,7 +65,9 @@ def to_4h(bars: List) -> List:
         grp.setdefault(int(b[0]) // H4_MS * H4_MS, []).append(b)
     for t in sorted(grp):
         g = sorted(grp[t], key=lambda x: x[0])
-        if g[-1][0] + 3_600_000 >= t + H4_MS:          # the group reaches the 4h close (the post hour may be partial)
+        # eng-168z (audit #8): a 4h bar only from ALL four of its hours (a missing hour inside, or the hours before a
+        # post in the middle of the interval, made a '4h candle' of 2-3 hours)
+        if {int(x[0]) for x in g} >= {t + k * 3_600_000 for k in range(4)}:
             out.append([t, g[0][1], max(x[2] for x in g), min(x[3] for x in g), g[-1][4]])
     return out
 
@@ -74,12 +76,10 @@ def conf_tf(zone: Dict) -> str:
     """eng-168y (the owner: analysis is not the bot's strategies): the candle that confirms a close beyond a zone
     follows the zone's own timeframe - 4h for a zone of 4h / 1d / 1w pivots or a higher map level (previous day / week /
     month extremes, the value area), 1h for an intraday one (1h pivots, today's extremes, sessions)."""
-    if set(zone.get('tfs') or ()) & {'4h', '1d', '1w'}:
-        return '4h'
-    if any(str(l).startswith(HIGHER_LABELS) or any(t in str(l) for t in (' 4h', ' 1d', ' 1w'))
-           for l in (zone.get('labels') or [])):
-        return '4h'
-    return '1h'
+    # eng-168z (audit #8): from the zone's structured origin only - the timeframes of its own pivots ('tfs') and, for a
+    # map-level zone, the period of that level ('1d' for PD / PW / PM / year / weekly swing / POC / VA). The labels are
+    # text for the reader: a nearby '1d low' or 'breaker 4h' named in them made almost every zone 4h.
+    return '4h' if set(zone.get('tfs') or ()) & {'4h', '1d', '1w'} else '1h'
 
 
 def _short(symbol: str) -> str:
@@ -1297,7 +1297,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b168y'
+    RULES_V = 'b168z'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):

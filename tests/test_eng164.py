@@ -386,7 +386,8 @@ def test_confirmation_timeframe_follows_the_zone():
     """eng-168y: a zone of 4h / 1d pivots or a higher map level confirms on 4h; an intraday one on 1h; to_4h groups."""
     from briefing import conf_tf, to_4h, H4_MS
     assert conf_tf({'tfs': ['1h', '4h']}) == '4h'
-    assert conf_tf({'tfs': ['1h'], 'labels': ['PDH']}) == '4h'
+    assert conf_tf({'tfs': ['1h'], 'labels': ['PDH', 'breaker 4h']}) == '1h'      # eng-168z: labels do not decide
+    assert conf_tf({'tfs': ['1d'], 'labels': ['PDH']}) == '4h'                     # a PD map-level zone
     assert conf_tf({'tfs': ['1h'], 'labels': ['day high', 'Asia low']}) == '1h'
     t = 100 * H4_MS
     bars = [[t + k * 3_600_000, 10 + k, 11 + k, 9 + k, 10.5 + k] for k in range(6)]
@@ -398,3 +399,11 @@ def test_recap_words():
     from briefing import Briefing
     assert Briefing.human_outcome('вход, без исхода', 0.3) == 'вошли, в работе (+0.30R по рынку)'
     assert Briefing.human_outcome('не включился') == 'условие не наступило'
+
+
+def test_to_4h_needs_all_four_hours():
+    """eng-168z: a missing hour inside the interval -> no 4h bar."""
+    from briefing import to_4h, H4_MS
+    t = 200 * H4_MS
+    bars = [[t + k * 3_600_000, 1, 2, 0.5, 1.5] for k in (0, 1, 3)]
+    assert to_4h(bars) == []
