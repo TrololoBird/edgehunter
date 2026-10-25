@@ -809,7 +809,7 @@ class Briefing:
             symbol = f"{base}/USDT:USDT"
             o = self.outcomes(symbol, 14)
             if o.get('tally'):
-                coins[base] = {**o['tally'], 'r': o.get('r') or {}}
+                coins[base] = {**o['tally'], 'r': o.get('r') or {}, 'exec': o.get('exec') or {}}
         if not coins:
             return
         os.makedirs('data', exist_ok=True)
@@ -939,13 +939,85 @@ class Briefing:
                 continue
             res, _ = self._score_record(r, closed, minutes, until_ms=until)
             done = []
-            for name, txt, _tag, resolved, rv in res:
+            for name, txt, _tag, resolved, rv, _det in res:
                 if resolved is not None and resolved >= day0:
                     done.append(f"{name}: {txt}")
                 elif resolved is None and txt.startswith('вход, без исхода') and day0 <= until <= now:
                     done.append(f"{name}: истёк открытым ({rv:+.2f}R по рынку)")
             if done:
                 out.append(f"· завершились сегодня — {r['title']} {r['slot'][5:]}: " + '; '.join(done))
+        return out
+
+    EXEC_MODEL = 'execution_model_v1'
+
+    @staticmethod
+    def exec_detail(sc: Dict, side: int, fill: float, after: List) -> Dict:
+        """eng-168r (audit #6): two measures of an ENTERED scenario, kept apart.
+        Scenario (the forecast): whether TP1 / TP2 / the stop traded after the entry, MFE / MAE in R of price from the
+        entry, hours to the first of TP1 / stop. Execution (execution_model_v1, the bot's own rule): 50% out at +1R,
+        the rest's stop to break-even + costs, the rest out at TP2 (TP1 when there is no TP2 beyond +1R) or that stop;
+        costs = journal.fee_round_trip + 2 x levels.slippage_bps (base) on the whole position, funding NOT included. One 1h candle
+        touching a stop and a target: the order is unknown - the stop is taken (conservative) and the outcome is marked
+        ambiguous. Undecided at the end of `after` (the 72h horizon): marked to market at the last close."""
+        stop, tps = sc['stop'], list(sc['targets'])
+        risk = abs(fill - stop)
+        out = {'model': Briefing.EXEC_MODEL, 'tp1_hit': False, 'tp2_hit': False, 'stop_hit': False,
+               'mfe_r': 0.0, 'mae_r': 0.0, 'hours': None, 'exec_r': None, 'ambiguous': False, 'resolved': False}
+        if not risk or not after:
+            return out
+        cost_frac = CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4
+        cost_r = cost_frac * fill / risk
+        part = fill + side * risk                                    # +1R
+        rest_t = next((t for t in tps[1:] if side * (t - part) > 0), tps[0])
+        if side * (rest_t - part) < 0:
+            rest_t = part
+        be = fill + side * cost_frac * fill
+        tp1, tp2 = tps[0], (tps[1] if len(tps) > 1 else None)
+        partial = False
+        t0 = after[0][0]
+        for c in after:
+            hi_r, lo_r = side * ((c[2] if side > 0 else c[3]) - fill) / risk, side * ((c[3] if side > 0 else c[2]) - fill) / risk
+            out['mfe_r'], out['mae_r'] = max(out['mfe_r'], hi_r), min(out['mae_r'], lo_r)
+            fav = c[2] if side > 0 else c[3]
+            adv = c[3] if side > 0 else c[2]
+            stop_now = side * (adv - stop) <= 0
+            if side * (fav - tp1) >= 0 and not out['tp1_hit'] and not (stop_now and not out['tp1_hit']):
+                out['tp1_hit'] = True
+                out['hours'] = out['hours'] or round((c[0] + HOUR_MS - t0) / HOUR_MS, 1)
+            if tp2 is not None and side * (fav - tp2) >= 0 and out['tp1_hit']:
+                out['tp2_hit'] = True
+            if stop_now and not out['tp1_hit'] and not out['stop_hit']:
+                out['stop_hit'] = True
+                out['hours'] = out['hours'] or round((c[0] + HOUR_MS - t0) / HOUR_MS, 1)
+            if out['resolved']:
+                continue
+            if not partial:
+                hit_part = side * (fav - part) >= 0
+                if stop_now:
+                    out['ambiguous'] = out['ambiguous'] or hit_part
+                    out['exec_r'], out['resolved'] = -1.0 - cost_r, True
+                    continue
+                if hit_part:
+                    partial = True
+                    if side * (fav - rest_t) >= 0:
+                        out['exec_r'], out['resolved'] = 0.5 + 0.5 * side * (rest_t - fill) / risk - cost_r, True
+                        continue
+                    if side * (adv - be) <= 0:                     # back to break-even inside the same candle
+                        out['ambiguous'] = True
+                        out['exec_r'], out['resolved'] = 0.5 + 0.5 * side * (be - fill) / risk - cost_r, True
+                    continue
+            else:
+                hit_be, hit_t = side * (adv - be) <= 0, side * (fav - rest_t) >= 0
+                if hit_be:
+                    out['ambiguous'] = out['ambiguous'] or hit_t
+                    out['exec_r'], out['resolved'] = 0.5 + 0.5 * side * (be - fill) / risk - cost_r, True
+                elif hit_t:
+                    out['exec_r'], out['resolved'] = 0.5 + 0.5 * side * (rest_t - fill) / risk - cost_r, True
+        if not out['resolved']:
+            mtm = side * (after[-1][4] - fill) / risk
+            out['exec_r'] = (0.5 + 0.5 * mtm if partial else mtm) - cost_r
+        out['mfe_r'], out['mae_r'] = round(out['mfe_r'], 2), round(out['mae_r'], 2)
+        out['exec_r'] = round(out['exec_r'], 2)
         return out
 
     def _score_record(self, r: Dict, closed: List, minutes: List, until_ms: Optional[float] = None):
@@ -976,8 +1048,15 @@ class Briefing:
                 cancel['long'] = tsh
         for key, side, name in (('long', 1, 'лонг'), ('short', -1, 'шорт')):
             if sc.get(key):
-                txt, resolved, rv, _entry = self.score_detail(sc[key], side, bars, cancel_at=cancel.get(key))
-                res.append((name, txt, sc[key].get('tag', ''), resolved, rv))
+                txt, resolved, rv, entry = self.score_detail(sc[key], side, bars, cancel_at=cancel.get(key))
+                det = None
+                if entry is not None:
+                    # the entry is the reaction candle's close: the trade lives on the candles after it
+                    fill = next((c[4] for c in bars if c[0] + HOUR_MS == entry), None)
+                    after = [c for c in bars if c[0] >= entry]
+                    if fill is not None:
+                        det = self.exec_detail(sc[key], side, fill, after)
+                res.append((name, txt, sc[key].get('tag', ''), resolved, rv, det))
         return res, ambiguous
 
     @staticmethod
@@ -1011,6 +1090,7 @@ class Briefing:
         now = time.time() * 1000
         tally: Dict[str, Dict[str, int]] = {}
         r_sum: Dict[str, float] = {}
+        ex: Dict[str, Dict] = {}
         for r in recs:
             sym = r.get('symbol')
             if r.get('ts', 0) < since or (symbol and sym != symbol) or r.get('rules_v') != self.RULES_V:
@@ -1025,7 +1105,7 @@ class Briefing:
             # pinned coins not posted) are a separate shadow tally ('<side> (тихие)'), not mixed with the posted ones
             until = r['ts'] * 1000 + self.OUTCOME_HOURS * HOUR_MS
             res, _ = self._score_record(r, closed, minutes, until_ms=until)
-            for name, txt, _tag, _resolved, rdet in res:
+            for name, txt, _tag, _resolved, rdet, det in res:
                 cls = self._outcome_class(txt)
                 rv = self._outcome_r(txt)
                 if cls == 'open' and now >= until:
@@ -1038,7 +1118,19 @@ class Briefing:
                 # eng-168j (audit): the result in R, not only counts (TP1: its R from the reaction close; stop: -1)
                 if rv is not None:
                     r_sum[name] = round(r_sum.get(name, 0.0) + rv, 2)
-        return {'days': days, 'tally': tally, 'r': r_sum}
+                if det is not None:
+                    # eng-168r: the forecast's measures and the execution model's R, apart from the TP1-only 'r'
+                    e = ex.setdefault(name, {'model': self.EXEC_MODEL, 'n': 0, 'exec_r': 0.0, 'tp1': 0, 'tp2': 0,
+                                             'stop': 0, 'mfe_r': 0.0, 'mae_r': 0.0, 'ambiguous': 0, 'unresolved': 0})
+                    e['n'] += 1
+                    e['exec_r'] = round(e['exec_r'] + det['exec_r'], 2)
+                    e['tp1'] += det['tp1_hit']; e['tp2'] += det['tp2_hit']; e['stop'] += det['stop_hit']
+                    e['mfe_r'] = round(e['mfe_r'] + det['mfe_r'], 2); e['mae_r'] = round(e['mae_r'] + det['mae_r'], 2)
+                    e['ambiguous'] += det['ambiguous']; e['unresolved'] += not det['resolved']
+        for e in ex.values():                     # sums -> means for the excursions
+            e['mfe_r'] = round(e['mfe_r'] / e['n'], 2) if e['n'] else None
+            e['mae_r'] = round(e['mae_r'] / e['n'], 2) if e['n'] else None
+        return {'days': days, 'tally': tally, 'r': r_sum, 'exec': ex}
 
     @staticmethod
     def _outcome_r(txt: str) -> Optional[float]:

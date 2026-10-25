@@ -298,3 +298,27 @@ def test_empty_calendar_load_replaces_the_old_week():
     assert mc.LIVE and mc.LIVE_AT == 1.0
     mc.set_live([], 3.0)
     assert mc.LIVE == [] and mc.LIVE_AT == 3.0
+
+
+def test_execution_model_v1_partial_then_break_even():
+    """eng-168r: 50% at +1R, the rest's stop to break-even + costs: +1R then back to entry ~ +0.5R - costs."""
+    from briefing import Briefing, HOUR_MS
+    from config import CONFIG
+    sc = {'stop': 98.0, 'targets': [104.0, 106.0], 'entry': (99, 100), 'tag': 'x'}
+    t = 472_400 * HOUR_MS
+    after = [[t, 100, 102.2, 100.5, 102.0],         # +1R (102) reached, low above break-even + costs
+             [t + HOUR_MS, 102, 102.1, 99.5, 99.6]]   # back below break-even
+    d = Briefing.exec_detail(sc, 1, 100.0, after)
+    cost_frac = CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4
+    cost_r = cost_frac * 100 / 2
+    assert d['resolved'] and not d['ambiguous'] and not d['tp1_hit']
+    assert abs(d['exec_r'] - round(0.5 + 0.5 * cost_frac * 100 / 2 - cost_r, 2)) < 0.011
+    assert d['mfe_r'] == 1.1 and d['mae_r'] == -0.25
+
+
+def test_execution_model_v1_stop_and_target_in_one_candle_is_ambiguous():
+    """eng-168r: a candle through +1R and the stop - order unknown: the stop, marked ambiguous."""
+    from briefing import Briefing, HOUR_MS
+    sc = {'stop': 98.0, 'targets': [104.0], 'entry': (99, 100), 'tag': 'x'}
+    d = Briefing.exec_detail(sc, 1, 100.0, [[472_400 * HOUR_MS, 100, 102.5, 97.5, 99.0]])
+    assert d['ambiguous'] and d['exec_r'] < -1.0 and d['stop_hit']
