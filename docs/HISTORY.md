@@ -984,6 +984,19 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
   On INVALID the pool-2 touch is searched on the 1m candles since the zone. Not covered: a second raid after a live
   entry or after the card ended - variant_pool2 compares only touches before the card's end.
 
+## eng-167 (2026-10-25, remaining review items closed)
+- Executor (trade-geometry review, sections 11 / 17): leverage cut until BingX's isolated liquidation estimate
+  (entry x (1 -+ 1/lev)) lies beyond the stop with a 20% margin (Turtle 2N stops of 10-46% at 5x were liquidation-first);
+  demo_trades journals slip_bps (entry fill vs the decision quote), latency_ms (card entry -> order), leverage.
+- htf_bias blocks LONGS (live 13 days: longs against the coin's bearish top-down bias 9 of 9 lost, -1.0R; shorts tagged
+  htf_bias +1.06R on 16 - the bias lags a falling market, so shorts stay shadow).
+- Small caps: the flow gate uses the taker flow over the same 15 minutes as the move (`flow_15m`; the last 5 minutes
+  caught the selling after the spike: APR +17.9% / RVOL 83 rejected); REST seeding limited to 8 at once.
+- Journal-only features: pd_vpin (VPIN of the 1m ring), pd_impact_ratio (last 5m price impact vs its 288-bar median);
+  PUMP TOP shadow veto pt_squeeze (OI rising with spot buying, audit F-14).
+- Not changed (owner's decisions): daily loss limit / pause after stops (off), public dashboard, README / LICENSE,
+  strategy modes (detect / paper / small / paused). Measurement items need live data (PLAN_next 10-14, 38).
+
 ## eng-166 (2026-10-24, why sweep cards miss TP1 without an entry)
 - Live 15:12-22:00 (after eng-153): MISSED share of closed sweep cards ROSE (37% -> 52%); of 54 MISSED, 52 never armed
   (no structure shift + FVG on the trigger timeframe), 2 armed without a CE fill. On real Binance 15m data 29 of 39

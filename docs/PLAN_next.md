@@ -127,7 +127,11 @@ Rejected (checked in code):
     2N stop, 10 / 20-day exits, +1 unit per 0.5N, 4 units / coin) - match; unit counting extracted
     (SignalBook._direction_units) and tested (tests/test_eng164.py) with the ORB one-hour break-even and the small-cap
     failing-gate log.
-37. INVESTIGATE small-cap flow window: APR +17.9% in 15m on RVOL 83 and OI +2% was rejected 'taker flow against the move' -
+37. DONE eng-167 (15m flow): small-cap flow window: APR +17.9% in 15m on RVOL 83 and OI +2% was rejected 'taker flow against the move' -
     the flow is the last 5 minutes only (selling after the spike). Compare with the flow over the 15-minute move.
 
 38. DONE eng-166: sweep MISSED root cause - TP1 inside the MSS swing (29 / 39 cards); targets from beyond it. Measure MISSED share after 24h.
+39. DONE eng-167: liquidation-before-stop guard (leverage), slip_bps / latency_ms / leverage in demo_trades.
+40. DONE eng-167: htf_bias blocking for longs (9 / 9 lost); shorts stay shadow.
+41. DONE eng-167: pd_vpin, pd_impact_ratio, pt_squeeze shadow, small-cap seed semaphore.
+42. OWNER: daily loss limit / pause after N stops (executor.daily_loss_r / pause_losses = 0), public dashboard, README.

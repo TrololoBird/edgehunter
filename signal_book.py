@@ -1466,6 +1466,10 @@ class SignalBook:
             key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
             reason = shadow_veto(s.sig, htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
                                                       (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/')))
+            if reason is None and s.direction > 0 and 'htf_bias' in (s.sig.get('shadow_veto') or '').split(','):
+                # eng-167 (live, 13 days): longs against the coin's bearish top-down bias 9 of 9 lost (-1.0R); shorts
+                # tagged htf_bias +1.06R on 16 (the bias lags a falling market) - blocking for longs only
+                reason = 'htf_bias'
         rg_state = (hb.get('coin') or {}).get('rg')
         if rg_state:
             from strategies import regime as rg

@@ -234,6 +234,31 @@ def extras(m5_rest: Sequence[Sequence[float]], minutes: Sequence[Sequence[float]
             if b6 and b0_ and rows[-7][4]:
                 out['pd_btc_beta'] = beta
                 out['pd_vs_btc_resid'] = direction * ((rows[-1][4] / rows[-7][4] - 1) - beta * (b6 / b0_ - 1))
+    # eng-167 (audit, journal only): VPIN of the 1m ring (Easley, Lopez de Prado & O'Hara 2012: equal-volume buckets,
+    # |buy - sell| / bucket, the mean of the last 10 of 50) and the price-impact ratio of the last 5m bar vs its 288-bar
+    # median (|close - open| / (open x quote volume): a high value = a thin-book move; Cont, Kukanov & Stoikov 2014)
+    mins = [c for c in minutes if len(c) > 6 and c[5] and c[5] > 0]
+    total = sum(c[5] for c in mins)
+    if len(mins) >= 30 and total > 0:
+        size, cur, imb, out_b = total / 50.0, 0.0, 0.0, []
+        for c in mins:
+            q, delta = c[5], (2 * c[6] - c[5]) / c[5]
+            while cur + q >= size:
+                fill = size - cur
+                imb += fill * delta
+                out_b.append(abs(imb) / size)
+                q -= fill
+                cur, imb = 0.0, 0.0
+            cur += q
+            imb += q * delta
+        if out_b:
+            recent = out_b[-10:]
+            out['pd_vpin'] = sum(recent) / len(recent)
+    imp = [abs(r[4] - r[1]) / (r[1] * r[5]) for r in rows[-289:-1] if r[1] and r[5]]
+    if len(imp) >= 50 and rows and rows[-1][1] and rows[-1][5]:
+        med = sorted(imp)[len(imp) // 2]
+        if med > 0:
+            out['pd_impact_ratio'] = abs(rows[-1][4] - rows[-1][1]) / (rows[-1][1] * rows[-1][5]) / med
     coin, btc = bars_5m(minutes), bars_5m(btc_minutes)
     if len(coin) >= 7 and len(btc) >= 7 and coin[-7][4] and btc[-7][4]:
         out['pd_vs_btc'] = direction * ((coin[-1][4] / coin[-7][4] - 1) - (btc[-1][4] / btc[-7][4] - 1))

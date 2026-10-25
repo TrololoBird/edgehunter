@@ -366,6 +366,12 @@ class PumpTopStrategy(Strategy):
     uses_minutes = True
     default_tf = '15m'
 
+    def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
+        # eng-167 (audit F-14, hypothesis): OI still rising with spot buying = an ongoing squeeze, not a top - shadow
+        if (sig.get('oi_change_5m') or 0) > 0 and (sig.get('spot_cvd_5m') or 0) > 0:
+            return 'pt_squeeze'
+        return None
+
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), 'top') if x.sig.get('pump_high') is not None else None
 

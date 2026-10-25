@@ -139,6 +139,7 @@ class DemoExecutor:
                               ('entry_order', 'TEXT'), ('fill_confirmed', 'INTEGER'), ('funding_usd', 'REAL'),
                               ('close_pending_reason', 'TEXT'), ('close_pending_r', 'REAL'),
                               ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER'),
+                              ('slip_bps', 'REAL'), ('latency_ms', 'INTEGER'), ('leverage', 'INTEGER'),
                               ('logic_version', 'TEXT'), ('partial_done', 'INTEGER')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
@@ -564,6 +565,13 @@ class DemoExecutor:
         # eng-127: a system without a stop (Connors: "stops hurt") - the 'stop' is only the R unit (1 daily ATR, the
         # Turtles' N sizing) and the position runs at 1x, so the account carries it to any price without a liquidation
         leverage = 1 if no_stop else cfg.max_leverage
+        if not no_stop and fill_est:
+            # eng-167 (trade-geometry review, section 11): the stop must come before a liquidation. BingX's estimate of
+            # an isolated position's liquidation is entry x (1 -+ 1 / leverage): the leverage is cut until that lies
+            # beyond the stop with a 20% margin (a Turtle 2N stop of 10-46% at 5x would have been liquidated first)
+            frac = abs(fill_est - lv['sl']) / fill_est
+            while leverage > 1 and 1.0 / leverage <= 1.2 * frac:
+                leverage -= 1
         qty = min(risk_usd / (stop_dist + fee), balance * leverage / lv['entry'], cfg.max_notional_usd / lv['entry'])
         if n:
             # eng-55: the full pyramid (turtle_max_units units) must fit the notional cap - a smaller unit (a lower risk
@@ -640,6 +648,12 @@ class DemoExecutor:
                                     for k in ('tp1', 'tp2', 'tp3')},     # no_tp: placeholders are no targets
                  # the risk the size was computed from (stop distance + the round trip's costs): R = -1 at the stop
                  'risk_usd': qty * (abs(fill - lv['sl']) + fee), 'no_stop': int(no_stop),
+                 # eng-167 (section 17.2): entry slippage vs the decision quote (positive = adverse), the time from the
+                 # card's entry to the order, the leverage used
+                 'slip_bps': (d * (fill - fill_est) / fill_est * 1e4) if fill_est else None,
+                 'latency_ms': int(time.time() * 1000 - float(getattr(s, 'entered_at', 0) or 0) * 1000)
+                 if getattr(s, 'entered_at', None) else None,
+                 'leverage': leverage,
                  'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed),
                  'trail': int(bool((getattr(s, 'plan', None) or {}).get('trail_after_tp1'))),
                  'no_tp': int(bool((getattr(s, 'plan', None) or {}).get('no_tp')))}

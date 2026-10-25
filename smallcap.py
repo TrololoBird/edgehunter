@@ -55,6 +55,7 @@ class SmallCapWatch:
         self._activation = ActivationLog()          # eng-159: lead time (base: the 24h mean minute - no 15m history here)
         self._stream = None
         self._seeding: set = set()
+        self._seed_sem = asyncio.Semaphore(8)       # eng-167: at most 8 REST seeds at once (audit F-04)
         self.detections = 0
         self.checks = 0
 
@@ -161,9 +162,10 @@ class SmallCapWatch:
 
     async def _seed(self, sym: str, bid: str) -> None:
         try:
-            k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
-                                              {'symbol': bid, 'interval': '1m', 'limit': CONFIG.strategies.smallcap_minutes},
-                                              priority=2, weight=2)
+            async with self._seed_sem:
+                k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
+                                                  {'symbol': bid, 'interval': '1m', 'limit': CONFIG.strategies.smallcap_minutes},
+                                                  priority=2, weight=2)
             now = time.time() * 1000
             rows = [(int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7]), float(x[10]),
                      float(x[5])) for x in k or [] if int(x[6]) < now]
@@ -224,7 +226,10 @@ class SmallCapWatch:
             oi_change = oi_vals[-1] / oi_vals[0] - 1 if len(oi_vals) == 2 and oi_vals[0] else 0.0
             minutes = [list(c) for c in ring]
             now_ms = int(last[0]) + MINUTE_MS
-            flow = sum(2 * c[6] - c[5] for c in minutes if c[0] + MINUTE_MS > now_ms - 300_000)
+            # eng-167 (plan item 37): the taker flow over the SAME 15 minutes as the move - the last 5 minutes alone caught
+            # the selling after the spike (APR +17.9% in 15m on RVOL 83 rejected 'taker flow against the move')
+            flow5 = sum(2 * c[6] - c[5] for c in minutes if c[0] + MINUTE_MS > now_ms - 300_000)
+            flow = sum(2 * c[6] - c[5] for c in minutes if c[0] + MINUTE_MS > now_ms - 900_000)
             avg_minute = (self.qv24.get(sym) or 0) / 1440
             rvol = last[5] / avg_minute if avg_minute else 0.0
             m = {'rvol_1m': rvol, 'oi_change_5m': oi_change, 'spot_cvd_5m': flow}
@@ -254,6 +259,8 @@ class SmallCapWatch:
             self.detections += 1
             found.update(pdf.features(minutes, m15, found['direction']))
             found['pd_activation_lead_s'] = self._activation.lead_s(sym, found['direction'], int(found['event_ts']))
+            found['flow_15m'] = flow
+            found['spot_cvd_5m_futures'] = flow5
             sig = dict(found, is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
                        long_score=0, short_score=0, alert_type='LONG' if found['direction'] > 0 else 'SHORT',
                        atr_15m=atr, volume_24h=self.qv24.get(sym), smallcap=True, flow_src='futures',
