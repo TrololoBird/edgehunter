@@ -1472,11 +1472,15 @@ class SignalBook:
             else:
                 reason = 'market_down'
         hb = (confirms or {}).get('_bias') or {}
+        # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py). eng-168 (audit):
+        # evaluated even after an earlier veto so its shadow tag is journaled on every row (no censoring by order)
+        key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
+        bias_reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
+                                    (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/'))
         if reason is None:
-            # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py)
-            key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
-            reason = shadow_veto(s.sig, htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
-                                                      (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/')))
+            reason = shadow_veto(s.sig, bias_reason)
+        else:
+            shadow_veto(s.sig, bias_reason)      # tag only; a blocking reason after a veto does not replace it
             # eng-168: the eng-167 block of longs only removed - untagged longs lost nearly as much (-0.77R on 80 vs
             # -1.0R on 9) in a 13-day falling market: the side's market beta, not the filter; htf_bias is a shadow tag
             # for both sides again until it is measured in a rising market too
@@ -1486,11 +1490,13 @@ class SignalBook:
             s.sig['regime2'] = rg.label(rg_state)
             if reason is None:
                 reason = shadow_veto(s.sig, rg.verdict(rg_state, s.mode, s.direction))
-        if reason is None and s.mode not in htf_bias.EXEMPT and s.mode not in htf_bias.DAILY \
+        if s.mode not in htf_bias.EXEMPT and s.mode not in htf_bias.DAILY \
                 and (hb.get('coin') or {}).get('h4') == -s.direction:
             # eng-84, the owner's review of the live trades: longs bought inside a falling 4h trend (BB W, AUCTION) -
-            # an intraday entry also needs the 4h trend not against it (the daily bias alone updates once a day)
-            reason = shadow_veto(s.sig, 'h4_against')
+            # an intraday entry also needs the 4h trend not against it (the daily bias alone updates once a day).
+            # eng-168: tagged after an earlier veto too (the earlier reason stays)
+            h4_reason = shadow_veto(s.sig, 'h4_against')
+            reason = reason or h4_reason
         adx4 = (hb.get('coin') or {}).get('adx4')
         if reason is None and adx4 is not None:
             # eng-84, market regime by ADX(14) of 4h (Wilder: > 25 trend, < 25 range): momentum / trend methods only in

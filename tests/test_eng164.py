@@ -115,3 +115,12 @@ def test_enter_shadow_tags_are_per_attempt():
     body = src[i:i + 2500]
     assert body.count('self._new_attempt(s)') == 0 and src.count('self._new_attempt(s)') == 2
     assert "s.direction > 0 and 'htf_bias' in" not in src
+
+
+def test_range_is_its_own_tag_for_with_bias_setups():
+    from strategies import bias
+    assert bias.gate('sweep', 1, 'range', None, False) == 'htf_range'
+    assert bias.gate('supply_demand', -1, 'range', None, False) == 'htf_range'
+    assert bias.gate('sweep', 1, 'bear', None, False) == 'htf_bias'
+    assert bias.gate('orb', 1, 'range', None, False) == 'htf_bias'
+    assert bias.gate('bollinger', 1, 'range', None, False) is None

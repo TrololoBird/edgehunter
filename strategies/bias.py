@@ -105,6 +105,10 @@ def gate(strategy: str, direction: int, coin_bias: Optional[str], btc_bias: Opti
     # executor) instead of blocking the trade
     if coin_bias == 'conflict':
         return 'htf_conflict'
+    if strategy in WITH_BIAS and coin_bias == 'range':
+        # eng-168 (audit): a range is not "against the trend" - its own tag, so the htf_bias sample holds only
+        # entries against a bull / bear tide (ICT's raid of a range edge, Seiden's reversal zones work in ranges)
+        return 'htf_range'
     if strategy in TREND or strategy in WITH_BIAS:
         return None if coin_bias == side else 'htf_bias'
     if strategy in RANGE:

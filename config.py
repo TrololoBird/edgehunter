@@ -687,7 +687,7 @@ class StrategiesConfig:
                             # their test were traded)
                             'no_bias', 'no_supply', 'no_demand', 'no_orderflow', 'no_oi', 'no_level', 'no_htf_poi',
                             '<confirmations>',     # every missing entry confirmation (confirm.required_names)
-                            'htf_bias', 'htf_conflict', 'rg_breakout_in_range', 'rg_countertrend',
+                            'htf_bias', 'htf_conflict', 'htf_range', 'rg_breakout_in_range', 'rg_countertrend',
                             'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day',
                             'sweep_no_htf_bias')   # eng-151 (external audit #1): shadow, outcome journaled
     # eng-157, the owner's order: EVERY setup on - cards and journal for all, data first, the verdict later
