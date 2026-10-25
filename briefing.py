@@ -822,6 +822,8 @@ class Briefing:
             return 'cancelled'
         return 'no_entry'
 
+    OUTCOME_HOURS = 72
+
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
         counts by scenario side and outcome class. A tally of what the plan rules did, not a verdict on them."""
@@ -844,10 +846,17 @@ class Briefing:
                 continue
             closed = [c for c in m.h1 if c[0] + HOUR_MS <= now]
             minutes = [c for c in list(getattr(m, 'minute_klines', []) or []) if c[0] + 60_000 <= now]
-            day_end = datetime.strptime(str(r['slot'])[:10], '%Y-%m-%d').replace(tzinfo=MSK) + timedelta(days=1)
-            res, _ = self._score_record(r, closed, minutes, until_ms=day_end.timestamp() * 1000)
+            # eng-168k (audit): a fixed horizon after the post (OUTCOME_HOURS), not the end of its MSK day - a target
+            # 2-3 ATR away was cut at midnight; unresolved at the horizon = 'expired', not 'open'. Silent records (the
+            # pinned coins not posted) are a separate shadow tally ('<side> (тихие)'), not mixed with the posted ones
+            until = r['ts'] * 1000 + self.OUTCOME_HOURS * HOUR_MS
+            res, _ = self._score_record(r, closed, minutes, until_ms=until)
             for name, txt, _tag in res:
                 cls = self._outcome_class(txt)
+                if cls == 'open' and now >= until:
+                    cls = 'expired'
+                if r.get('silent'):
+                    name = f"{name} (тихие)"
                 tally.setdefault(name, {}).setdefault(cls, 0)
                 tally[name][cls] += 1
                 # eng-168j (audit): the result in R, not only counts (TP1: its R from the reaction close; stop: -1)
@@ -1164,8 +1173,16 @@ class Briefing:
                             await asyncio.to_thread(self._save, slot, title)
                 for dt, name in macro_today(now):
                     if timedelta(0) <= dt - now <= timedelta(minutes=30):
+                        # eng-168k (audit): the text says what the trading guard really does - signal_book's
+                        # macro_calendar.blackout: CPI / FOMC dates and the live calendar's High events, from
+                        # levels.macro_before_min before to macro_after_min after (was '30 / 60, CPI and FOMC': wrong)
+                        import macro_calendar
+                        lv = CONFIG.levels
+                        guard = (f"новые входы бота блокируются с {lv.macro_before_min} мин до по "
+                                 f"{lv.macro_after_min} мин после" if macro_calendar.blackout(dt.timestamp() * 1000)
+                                 else "входы бота этим событием не блокируются")
                         self._post(f"📅 Через {int((dt - now).total_seconds() // 60)} мин: {name} ({dt:%H:%M} МСК) — "
-                                   f"входы бота за 30 мин до / 60 после CPI и FOMC блокируются",
+                                   f"{guard}",
                                    key=f"macro|{dt:%Y%m%d%H%M}", every_sec=86400, topic='briefing')
                 await asyncio.to_thread(self.check_shock)        # eng-168i: every check off the event loop
                 await asyncio.to_thread(self.check_demo)          # SQLite reads off the event loop

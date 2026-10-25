@@ -120,7 +120,9 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         tg, note = targets(side, e, first)
         if not tg:
             return None
-        if abs(tg[0] - e) < abs(e - stop):
+        # eng-168k (audit): R:R >= 1 from the WORST price of the entry range (the web checklist's measure too)
+        worst = max(e0, e1) if side > 0 else min(e0, e1)
+        if side * (tg[0] - worst) < abs(worst - stop):
             # TP1 closer than the stop: R:R < 1 - not a scenario (BTC 2026-10-08 09:30: a long 51 under the next
             # resistance, a short's TP1 -0.3% for a +1.6% stop - and its 'chance' read 82%); the card says why
             out['skip_' + ('long' if side > 0 else 'short')] = (
@@ -302,11 +304,11 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                     arrowprops=dict(arrowstyle='->', color=colr, lw=2.2, ls='--'), zorder=5)
     # scenario tags
     if p['long']:
-        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\nшанс TP1 по расстоянию: {p['long']['p'] * 100:.0f}%*",
+        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\nбезубыточная доля TP1: {p['long']['p'] * 100:.0f}%*",
                 fontsize=9.5, weight='bold', color='white', ha='center', va='top', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=GREEN2, ec='none'))
     if p['short']:
-        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\nшанс TP1 по расстоянию: {p['short']['p'] * 100:.0f}%*",
+        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\nбезубыточная доля TP1: {p['short']['p'] * 100:.0f}%*",
                 fontsize=9.5, weight='bold', color='white', ha='center', va='bottom', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=RED, ec='none'))
     ax.text(1.5, y0 + pad * 0.15, source, fontsize=13, weight='bold', color='#d0d0d0', zorder=5)
@@ -369,7 +371,7 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                                       boxstyle='round,pad=0.006', fc='#fdeeee', ec=RED, lw=1.2))
     fig.text(0.04, 0.058, '⚠  ' + msg, fontsize=11.5, weight='bold', color=RED, va='top')
     fig.text(0.075, 0.036, msg_sub, fontsize=9.5, color=RED, va='top')
-    fig.text(0.98, 0.006, '*шанс TP1 по расстоянию, если вход сработает · зоны = где цена разворачивалась · не совет', fontsize=7, color=GREY, ha='right', va='bottom')
+    fig.text(0.98, 0.006, '*доля сделок с TP1, при которой сценарий в ноль (по расстояниям, без комиссий); это не прогноз · зоны — прошлые развороты цены, реакция не гарантирована · не совет', fontsize=7, color=GREY, ha='right', va='bottom')
     buf = io.BytesIO()
     fig.savefig(buf, format='png')
     plt.close(fig)
