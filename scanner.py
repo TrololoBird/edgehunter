@@ -1867,7 +1867,9 @@ class Scanner:
         while self._running:
             await asyncio.sleep(30)
             try:
-                cards = sorted({s.symbol for s in self.book.signals.values() if not s.finished})
+                # eng-168y: the pinned / briefing coins first - their positioning is in every briefing and analysis
+                pinned = [f"{b}/USDT:USDT" for b in CONFIG.exchange.pinned_bases if f"{b}/USDT:USDT" in self.market_data]
+                cards = list(dict.fromkeys(pinned + sorted({s.symbol for s in self.book.signals.values() if not s.finished})))
                 due = [s for s in cards if self.positioning.ratio_age(s) >= cfg.positioning_cache_sec]
                 due += [s for s in self.market_data
                         if s not in cards and self.positioning.ratio_age(s) >= cfg.positioning_universe_sec]
