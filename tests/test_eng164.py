@@ -55,3 +55,53 @@ def test_smallcap_why_not_names_the_failing_gate():
     assert SmallCapWatch._why_not(m, {'rvol_1m': 2}, 0.005, m[-1][0] + 60_000, [], move).startswith('RVOL')
     assert SmallCapWatch._why_not(m, {'rvol_1m': 6, 'oi_change_5m': 0.01, 'spot_cvd_5m': -1}, 0.005,
                                   m[-1][0] + 60_000, [], move) == 'taker flow against the move'
+
+
+def test_span_targets_keep_tp1_beyond_the_risk_span():
+    from strategies.pump import _risk_span, _span_targets
+    span = _risk_span(100.0, 96.0, 4.0, 1.0)                   # |close - extreme| + 0.25 ATR = 4.25
+    t, _ = _span_targets([103.0, 110.0, 110.0], ['zone', 'ext', 'ext'], 100.0, 1, span)
+    assert all(x - 100.0 >= span for x in t)
+    t, _ = _span_targets([97.0], ['zone'], 100.0, -1, _risk_span(100.0, 104.0, 4.0, 1.0))
+    assert all(100.0 - x >= 4.25 for x in t)
+
+
+def test_raid_swing_is_the_level_fvg_setup_must_break():
+    from strategies.ict import fvg_setup, raid_swing
+    step, t0 = 900_000, 1_792_800_000_000
+    bars, p = [], 1.10
+    for i in range(60):
+        hi, lo = p * 1.002, p * 0.998
+        if i == 40:
+            hi, lo = 1.05, 1.03
+        bars.append([t0 + i * step, p, hi, lo, p * 0.999, 1, 1])
+        p *= 0.998
+    since = t0 + 50 * step
+    assert raid_swing(bars, 1, since, step) == 1.05
+    assert fvg_setup(bars, 1, since, step) is None            # no close above 1.05 yet: no armed entry
+
+
+def test_rolling_5m_bar_used_mid_bucket():
+    from strategies import pd_features as pdf
+    t0 = 1_792_800_000_000 + 2 * 60_000                        # minutes end mid 5m bucket
+    m, p = [], 1.0
+    for i in range(240):
+        o = p
+        if i >= 237:
+            p *= 1.01
+        m.append([t0 + i * 60_000, o, max(o, p), min(o, p), p, 5000.0 if i >= 237 else 1000.0, 2000.0])
+    m5 = [[t0 - (300 - i) * 300_000 - 240 * 60_000, 1, 1.001, 0.999, 1, 5000.0, 2500.0] for i in range(290)]
+    f = pdf.features(m, [], 1, m5)
+    assert f.get('pd_rolling_bar') == 1 and f['pd_move3'] > 0.02
+
+
+def test_dump_start_fires_on_a_long_flush():
+    from strategies.pump import dump_start
+    t0, m, p = 1_792_800_000_000, [], 1.0
+    for i in range(240):
+        if i >= 225:
+            p *= 0.996
+        m.append([t0 + i * 60_000, p, p * 1.001, p * 0.999, p, 1000.0, 400.0])
+    h1 = [[t0 - (200 - i) * 3_600_000, 1, 1.01, 0.95, 1, 1e6, 5e5] for i in range(200)]
+    d = dump_start(m, {'rvol_1m': 6, 'oi_change_5m': -0.02, 'spot_cvd_5m': -500}, 0.005, m[-1][0] + 60_000, h1)
+    assert d is not None and d['pd_dump_oi_regime'] == 'long_flush'
