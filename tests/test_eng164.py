@@ -227,3 +227,26 @@ def test_oco_cancels_the_opposite_scenario_of_the_zone():
     res, _ = Briefing._score_record(Briefing.__new__(Briefing), rec, bars, [])
     short = next(x for x in res if x[0] == 'шорт')
     assert short[1].startswith('отменён: включился встречный') and short[3] == t + HOUR_MS
+
+
+def test_xau_365_leg_needs_paxg_at_both_dates():
+    """eng-168p: PAXG must exist within a day of both chain dates; a gap -> no proxy (tsm from the contract only)."""
+    import time
+    from types import SimpleNamespace
+    from briefing import Briefing
+    day = 86_400_000
+    now = int(time.time() * 1000) // day * day
+    d1 = [[now - (300 - k) * day, 100, 101, 99, 100 + k * 0.1] for k in range(300)]     # 300 days, rising
+    paxg_full = [[d1[0][0] - (200 - k) * day, 50, 51, 49, 200 - k * 0.5] for k in range(201)]   # falling, ends at day 0
+    b = Briefing.__new__(Briefing)
+    b.cfg = SimpleNamespace(bias_h4_adx=0)
+    coin = {'bias': 'bull', 'tsm': 1.0, 'w1': 1, 'd1': 1, 'h4': 1, 'adx4': 20.0}
+    b.sc = SimpleNamespace(fetcher=SimpleNamespace(htf_bias=lambda md, t: {'coin': dict(coin)}))
+    md = SimpleNamespace(d1=d1, symbol='XAU/USDT:USDT')
+    b._proxy_history = lambda base: {'1d': paxg_full}
+    bias, st = b._bias_of('XAU/USDT:USDT', md)
+    assert st['proxy'] is not None and st['tsm'] < 1.0          # the PAXG leg (falling) entered the 365-day sign
+    gap = [c for c in paxg_full if not (d1[0][0] - 70 * day <= c[0] <= d1[0][0] - 60 * day)]
+    b._proxy_history = lambda base: {'1d': gap}
+    bias, st = b._bias_of('XAU/USDT:USDT', md)
+    assert st['proxy'] is None and st['tsm'] == 1.0             # no PAXG close near the start date: no proxy

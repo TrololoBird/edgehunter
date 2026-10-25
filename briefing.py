@@ -275,16 +275,23 @@ class Briefing:
             hist = self._proxy_history(base)
             now_ms = time.time() * 1000
             d1 = [c for c in md.d1 if c[0] + 86_400_000 <= now_ms]
-            paxg = [c for c in (hist.get('1d') or []) if c[0] < (d1[0][0] if d1 else 0)]
-            # eng-168o (audit #4): the days the contract covers by its timestamps (a missing day must not shift the leg)
+            paxg = list(hist.get('1d') or [])
+            # eng-168p: the days the contract covers by its timestamps; the chain is contiguous - PAXG from (first
+            # contract day - need) to the contract's FIRST day itself, the contract from that day's close on (the PAXG
+            # leg ended the day before and the contract's first day's move fell out); both PAXG ends must exist within
+            # 1 day of their date, else no proxy (a gap in PAXG made 'the nearest candle' weeks away)
             need = 365 - int(round((d1[-1][0] - d1[0][0]) / 86_400_000)) if d1 else 0
-            if d1 and len(paxg) > need > 0:
+            day = 86_400_000
+
+            def at(t):
+                c = min(paxg, key=lambda x: abs(x[0] - t)) if paxg else None
+                return c if c is not None and abs(c[0] - t) <= day else None
+            p_end = at(d1[0][0]) if d1 else None
+            p_start = at(d1[0][0] - need * day) if d1 and need > 0 else None
+            if p_end is not None and p_start is not None and p_start[0] < p_end[0]:
                 import numpy as np
                 from strategies import bias as htf
-                # the PAXG close nearest to `need` days before the contract's first day, by date
-                t0 = d1[0][0] - need * 86_400_000
-                base_px = min(paxg, key=lambda c: abs(c[0] - t0))
-                leg = d1[-1][4] / d1[0][4] * (paxg[-1][4] / base_px[4])
+                leg = d1[-1][4] / d1[0][4] * (p_end[4] / p_start[4])
                 signs = [np.sign(d1[-1][4] / d1[-1 - n][4] - 1) for n in (30, 90) if len(d1) > n] + [np.sign(leg - 1)]
                 coin['tsm'] = round(float(np.mean(signs)), 3)
                 coin['bias'] = htf.bias_of({'tsm': coin['tsm'], 'w1': coin.get('w1'), 'd1': coin.get('d1'),
