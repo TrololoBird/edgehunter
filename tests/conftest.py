@@ -92,3 +92,12 @@ def _no_optimized_profiles(monkeypatch):
     by every research_optimize run) are switched off."""
     from strategies import profiles
     monkeypatch.setattr(profiles, 'select', lambda strategy, regime: (None, None))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_macro_calendar(monkeypatch):
+    """eng-168s: entries fail closed without a fresh weekly macro calendar - tests run with a fresh, empty one."""
+    import time
+    import macro_calendar
+    monkeypatch.setattr(macro_calendar, 'LIVE', [])
+    monkeypatch.setattr(macro_calendar, 'LIVE_AT', time.time())

@@ -322,3 +322,16 @@ def test_execution_model_v1_stop_and_target_in_one_candle_is_ambiguous():
     sc = {'stop': 98.0, 'targets': [104.0], 'entry': (99, 100), 'tag': 'x'}
     d = Briefing.exec_detail(sc, 1, 100.0, [[472_400 * HOUR_MS, 100, 102.5, 97.5, 99.0]])
     assert d['ambiguous'] and d['exec_r'] < -1.0 and d['stop_hit']
+
+
+def test_macro_gate_fails_closed_without_a_fresh_calendar(monkeypatch):
+    """eng-168s: never loaded or older than LIVE_MAX_AGE_SEC -> live_ok False (new entries wait)."""
+    import time
+    import macro_calendar as mc
+    now = time.time() * 1000
+    monkeypatch.setattr(mc, 'LIVE_AT', 0.0)
+    assert not mc.live_ok(now)
+    monkeypatch.setattr(mc, 'LIVE_AT', time.time() - mc.LIVE_MAX_AGE_SEC - 60)
+    assert not mc.live_ok(now)
+    monkeypatch.setattr(mc, 'LIVE_AT', time.time() - 60)
+    assert mc.live_ok(now)

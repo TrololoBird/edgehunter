@@ -75,6 +75,12 @@ def upcoming(now_ms: float, within_ms: float):
     return min(soon) if soon else None
 
 
+def live_ok(now_ms: float) -> bool:
+    """eng-168s (audit #6, fail-closed): the weekly calendar is loaded and fresh (LIVE_MAX_AGE_SEC). Without it a
+    release may sit right on a new entry unseen - new entries / recommendations wait; open positions are managed."""
+    return bool(LIVE_AT) and now_ms / 1000 - LIVE_AT <= LIVE_MAX_AGE_SEC
+
+
 def coverage(now_ms: float):
     """Audit B06: why the macro veto may be blind right now, else None. The veto fails open (no source = no window), so
     the degraded state must at least be visible: the weekly feed lost / stale, or the hand list of CPI / FOMC / NFP

@@ -657,6 +657,9 @@ class Briefing:
                                f"{dist:.1f} ATR(1h)"))
             if events:
                 checks.append(('Макро сегодня', 'warn', ', '.join(n for _, n in events)[:80]))
+            import macro_calendar
+            if not macro_calendar.live_ok(time.time() * 1000):
+                checks.append(('Макро-календарь', 'bad', 'не загружен / устарел - новые входы бота на паузе'))
             mine = [c for c in (cards or []) if c.get('direction') == d]
             against_cards = [c for c in (cards or []) if c.get('direction') == -d]
             if mine:
@@ -705,7 +708,8 @@ class Briefing:
         why = macro_calendar.coverage(time.time() * 1000)
         if why:
             # eng-168q (audit #5): the calendar's degraded state is said where the user reads the macro line
-            out.append(f"⚠️ Макро-календарь неполон ({why}): новые события могут отсутствовать")
+            out.append(f"⚠️ Макро-календарь неполон ({why}): новые события могут отсутствовать"
+                       + ("; новые входы бота на паузе до обновления" if not macro_calendar.live_ok(time.time() * 1000) else ''))
         return '\n'.join(out)
 
     def cards(self, title: str) -> List[Tuple[bytes, str]]:
@@ -1120,10 +1124,13 @@ class Briefing:
                     r_sum[name] = round(r_sum.get(name, 0.0) + rv, 2)
                 if det is not None:
                     # eng-168r: the forecast's measures and the execution model's R, apart from the TP1-only 'r'
-                    e = ex.setdefault(name, {'model': self.EXEC_MODEL, 'n': 0, 'exec_r': 0.0, 'tp1': 0, 'tp2': 0,
-                                             'stop': 0, 'mfe_r': 0.0, 'mae_r': 0.0, 'ambiguous': 0, 'unresolved': 0})
+                    e = ex.setdefault(name, {'model': self.EXEC_MODEL, 'n': 0, 'exec_r': 0.0, 'exec_mtm_r': 0.0,
+                                             'tp1': 0, 'tp2': 0, 'stop': 0, 'mfe_r': 0.0, 'mae_r': 0.0,
+                                             'ambiguous': 0, 'unresolved': 0})
                     e['n'] += 1
-                    e['exec_r'] = round(e['exec_r'] + det['exec_r'], 2)
+                    # eng-168s (audit #6): realized R and the unrealized mark-to-market of undecided trades apart
+                    key_r = 'exec_r' if det['resolved'] else 'exec_mtm_r'
+                    e[key_r] = round(e[key_r] + det['exec_r'], 2)
                     e['tp1'] += det['tp1_hit']; e['tp2'] += det['tp2_hit']; e['stop'] += det['stop_hit']
                     e['mfe_r'] = round(e['mfe_r'] + det['mfe_r'], 2); e['mae_r'] = round(e['mae_r'] + det['mae_r'], 2)
                     e['ambiguous'] += det['ambiguous']; e['unresolved'] += not det['resolved']
@@ -1218,6 +1225,9 @@ class Briefing:
                 # audit C15: the target must still be ahead of the reaction close (a signed reward, not abs)
                 if x.get('cur_bound') and sc.get('oco_done') not in (None, key):
                     continue                     # eng-168n: the opposite scenario of this zone already entered
+                import macro_calendar
+                if not macro_calendar.live_ok(time.time() * 1000):
+                    continue                     # eng-168s: fail-closed - no 'scenario on' without a fresh calendar
                 if armed and self.reaction(x, side, c) and side * (c[4] - x['stop']) > 0 \
                         and side * (x['targets'][0] - c[4]) >= abs(c[4] - x['stop']):     # eng-168l: R:R >= 1
                     rr = side * (x['targets'][0] - c[4]) / abs(c[4] - x['stop'])

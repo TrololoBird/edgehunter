@@ -1476,9 +1476,12 @@ class SignalBook:
         """Enter, or journal the entry that would have been taken with the veto reason (the card keeps waiting)."""
         entered_at = now_ms / 1000
         if reason is None:
-            from macro_calendar import blackout
+            from macro_calendar import blackout, live_ok
             if blackout(now_ms):
                 reason = 'macro_event'
+            elif not live_ok(now_ms):
+                # eng-168s (audit #6): fail-closed - no fresh macro calendar, no NEW entry (open trades are managed)
+                reason = 'macro_unknown'
         # eng-106 / eng-127: RSI2X (Connors' original entry), BB3 (Bollinger's Method III), the cascade reversals and
         # Pring's OI rule are measured in shadow beside the traded rules (SHADOW_SETUPS)
         if reason is None:
