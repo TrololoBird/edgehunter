@@ -847,6 +847,7 @@ class SignalJournal:
         # the card belongs to the logic that opened it (a trade kept across a version bump finishes under its version)
         if getattr(tracked, 'logic_version', None):
             row['logic_version'] = tracked.logic_version
+        from signal_book import card_tp1      # lazy: signal_book imports journal
         targets = plan.get('targets') or []
         sources = plan.get('target_src') or []
         notes = getattr(tracked, 'veto_notes', None) or []
@@ -854,7 +855,8 @@ class SignalJournal:
                     'strategy': tracked.mode, 'anchor': _anchor_json(tracked.plan),
                     'zone_src': plan.get('zone_src'), 'perp_led': 0,
                     'entry': lv.get('entry'), 'sl': lv.get('sl'),
-                    'tp1': lv.get('tp1', targets[0] if targets else None),
+                    # eng-168c: an unentered card journals the TP1 the trade would take (the system's level target)
+                    'tp1': lv.get('tp1', card_tp1(plan) if targets else None),
                     'tp2': lv.get('tp2', targets[1] if len(targets) > 1 else None),
                     'tp3': lv.get('tp3', targets[2] if len(targets) > 2 else None),
                     'tp1_src': lv.get('tp1_src', sources[0] if sources else None),

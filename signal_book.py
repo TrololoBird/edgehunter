@@ -1653,7 +1653,7 @@ class SignalBook:
         bars = [b for b in bars_5m(list(candles_of(s.symbol))) if b[0] >= start // FIVE_MS * FIVE_MS + FIVE_MS]
         band = 0.25 * atr
         touched = False
-        tp1 = ((s.plan or {}).get('targets') or [None])[0]
+        tp1 = card_tp1(s.plan) if (s.plan or {}).get('targets') else None
         for i, b in enumerate(bars[:self.RETEST_BARS]):
             close_ms = int(b[0]) + FIVE_MS
             if not touched and tp1 is not None and d * ((b[2] if d > 0 else b[3]) - tp1) >= 0:
