@@ -380,3 +380,21 @@ def test_unfavourable_scenario_is_shown_and_marked():
     assert p['long'] is not None and p['long']['rr_ok'] is False
     lm = Briefing.level_map(100.5, zones, 1)
     assert any(x.startswith('📌 Пока выше') for x in lm) and any(x.startswith('▲') for x in lm)
+
+
+def test_confirmation_timeframe_follows_the_zone():
+    """eng-168y: a zone of 4h / 1d pivots or a higher map level confirms on 4h; an intraday one on 1h; to_4h groups."""
+    from briefing import conf_tf, to_4h, H4_MS
+    assert conf_tf({'tfs': ['1h', '4h']}) == '4h'
+    assert conf_tf({'tfs': ['1h'], 'labels': ['PDH']}) == '4h'
+    assert conf_tf({'tfs': ['1h'], 'labels': ['day high', 'Asia low']}) == '1h'
+    t = 100 * H4_MS
+    bars = [[t + k * 3_600_000, 10 + k, 11 + k, 9 + k, 10.5 + k] for k in range(6)]
+    b4 = to_4h(bars)
+    assert len(b4) == 1 and b4[0] == [t, 10, 14, 9, 13.5]       # the second 4h group is incomplete
+
+
+def test_recap_words():
+    from briefing import Briefing
+    assert Briefing.human_outcome('вход, без исхода', 0.3) == 'вошли, в работе (+0.30R по рынку)'
+    assert Briefing.human_outcome('не включился') == 'условие не наступило'

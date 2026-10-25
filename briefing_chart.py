@@ -120,7 +120,10 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
                 stop = (z['hi'] + z.get('pad', 0.0)) if side < 0 else (z['lo'] - z.get('pad', 0.0))
         return stop
 
-    def scenario(side, e0, e1, stop, cond, tag, first=None):
+    def scenario(side, e0, e1, stop, cond, tag, first=None, zone=None):
+        # eng-168y: the confirming candle follows the governing zone's timeframe (4h for 4h / 1d / higher map levels)
+        tf = (zone or {}).get('conf_tf', '1h')
+        cond = cond.replace('1h', tf)
         e = (e0 + e1) / 2
         stop = push_stop(side, stop)
         tg, note = targets(side, e, first)
@@ -134,6 +137,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         # The trade-grade scenarios (rr_ok) are preferred when choosing a variant and tallied apart.
         rr_ok = side * (tg[0] - worst) >= abs(worst - stop)
         return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag, 'rr_ok': rr_ok,
+                'conf_tf': tf,
                 # eng-168o (audit #4): the breakeven share on the same basis as the R:R check - the worst entry
                 'p': abs(worst - stop) / (abs(worst - stop) + abs(tg[0] - worst))}
     def bounce():
@@ -143,7 +147,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         z = dn[0]
         return scenario(1, z['lo'], z['hi'] + z.get('tol', 0.0), z['lo'] - z.get('pad', 0.0),
                         f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и бычья свеча 1h с закрытием выше "
-                        f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки')
+                        f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки', zone=z)
 
     def fade():
         """Short from the nearest resistance above: its test + a bearish 1h reaction candle (the reference card)."""
@@ -152,7 +156,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         z = up[0]
         return scenario(-1, z['lo'] - z.get('tol', 0.0), z['hi'], z['hi'] + z.get('pad', 0.0),
                         f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и медвежья свеча 1h с закрытием ниже "
-                        f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления')
+                        f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления', zone=z)
 
     if cur:
         tol, pad = cur.get('tol') or 0.0, cur.get('pad', 0.0)
@@ -177,16 +181,16 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
             return c
         up_break = lambda: mark(scenario(1, cur['hi'], cur['hi'] + tol, cur['lo'] - pad,
                                          f"закрытие 1h выше {_fmt(cur['hi'])}, ретест и бычья свеча 1h с закрытием выше {_fmt(cur['hi'] + tol)}",
-                                         'закрепление выше'))
+                                         'закрепление выше', zone=cur))
         from_low = lambda: mark(scenario(1, cur['lo'], cur['lo'] + band, cur['lo'] - pad,
                                          f"тест низа {_fmt(cur['lo'])} (допуск {_fmt(band)}) и бычья свеча 1h с закрытием выше {_fmt(cur['lo'] + band)}",
-                                         'от низа зоны', first=cur['hi'])) if wide else None
+                                         'от низа зоны', first=cur['hi'], zone=cur)) if wide else None
         dn_break = lambda: mark(scenario(-1, cur['lo'] - tol, cur['lo'], cur['hi'] + pad,
                                          f"закрытие 1h ниже {_fmt(cur['lo'])}, ретест и медвежья свеча 1h с закрытием ниже {_fmt(cur['lo'] - tol)}",
-                                         'закрепление ниже'))
+                                         'закрепление ниже', zone=cur))
         from_top = lambda: mark(scenario(-1, cur['hi'] - band, cur['hi'], cur['hi'] + pad,
                                          f"тест верха {_fmt(cur['hi'])} (допуск {_fmt(band)}) и медвежья свеча 1h с закрытием ниже {_fmt(cur['hi'] - band)}",
-                                         'от верха зоны', first=cur['lo'])) if wide else None
+                                         'от верха зоны', first=cur['lo'], zone=cur)) if wide else None
         if pos >= 0.65:
             out['long'] = first_valid(up_break(), bounce(), from_low())
         elif pos <= 0.40 and wide:
@@ -211,12 +215,12 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
             z = dn[0]
             out['long'] = scenario(1, z['lo'], z['hi'] + z.get('tol', 0.0), z['lo'] - z.get('pad', 0.0),
                                    f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и бычья свеча 1h с закрытием выше "
-                                   f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки')
+                                   f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки', zone=z)
         if up:
             z = up[0]
             out['short'] = scenario(-1, z['lo'] - z.get('tol', 0.0), z['hi'], z['hi'] + z.get('pad', 0.0),
                                     f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и медвежья свеча 1h с закрытием ниже "
-                                    f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления')
+                                    f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления', zone=z)
     return out
 
 

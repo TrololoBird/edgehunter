@@ -630,7 +630,8 @@ function anCard(a) {
   if (!a || a.error) return `<div class="box"><h4>${esc((a && a.symbol) || '')}</h4><div class="empty">${esc((a && a.error) || 'нет данных')}</div>${altLine(a)}</div>`;
   const zones = (a.zones || []).slice().sort((x, y) => y.lo - x.lo).map(z => {
     const tag = z.side > 0 ? '<span class="bad">сопр.</span>' : z.side < 0 ? '<span class="good">подд.</span>' : '<span class="cyan">цена в зоне</span>';
-    return `<tr><td>${tag}</td><td class="mono">${fp(z.lo)}–${fp(z.hi)}</td><td class="mono">${Math.round(z.strength)}</td><td>${esc(z.label)}</td></tr>`;
+    const near = (z.near && z.near.length) ? `<div class="dim">рядом: ${z.near.map(esc).join(', ')}</div>` : '';
+    return `<tr><td>${tag}</td><td class="mono">${fp(z.lo)}–${fp(z.hi)}<div class="dim">подтверждение ${esc(z.conf_tf || '1h')}</div></td><td class="mono">${Math.round(z.strength)}</td><td>${esc(z.label)}${near}</td></tr>`;
   }).join('');
   const sc = ['long', 'short'].map(k => {
     const s = a.scenarios && a.scenarios[k];
@@ -653,6 +654,8 @@ function anCard(a) {
     <div class="dim">${esc(a.bias_line || '')}</div>
     ${(a.notices || []).map(n => `<div class="dim warn">${esc(n)}</div>`).join('')}
     ${altLine(a)}
+    ${(a.level_map && a.level_map.length) ? `<div class="box" style="margin:6px 0">${a.level_map.map(l => `<div>${esc(l)}</div>`).join('')}</div>` : ''}
+    ${a.positioning ? `<div class="dim">${esc(a.positioning)}</div>` : ''}
     ${a.data_as_of && a.data_as_of.fetched_at ? `<div class="dim">загружено: ${new Date(a.data_as_of.fetched_at * 1000).toLocaleTimeString()} (цена — последнее значение текущей 1h на момент загрузки)</div>` : ''}
     ${a.data_as_of && a.data_as_of.last_closed_1h ? `<div class="dim">данные: последняя закрытая 1h ${new Date(a.data_as_of.last_closed_1h).toLocaleString()} · ${a.data_as_of.source === 'binance_rest' ? 'REST Binance' : 'память бота'}</div>` : ''}
     ${a.macro && a.macro.length ? `<div class="warn">Макро сегодня (МСК): ${a.macro.map(esc).join(', ')}</div>` : ''}

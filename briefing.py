@@ -54,6 +54,34 @@ DEMO_RU = {'SL': 'стоп', 'EXCHANGE': 'закрыта биржей (стоп 
            'ERROR': 'не открыта: ошибка биржи', 'UNKNOWN': 'исход входа неизвестен (биржа не ответила)'}
 
 
+H4_MS = 4 * 3_600_000
+HIGHER_LABELS = ('PDH', 'PDL', 'PWH', 'PWL', 'PMH', 'PML', 'POC', 'VAH', 'VAL', 'd high', 'd low', '52w')
+
+
+def to_4h(bars: List) -> List:
+    """eng-168y: closed 1h bars [ts, o, h, l, c] -> the complete 4h bars (UTC 4h boundaries) they make."""
+    out, grp = [], {}
+    for b in bars:
+        grp.setdefault(int(b[0]) // H4_MS * H4_MS, []).append(b)
+    for t in sorted(grp):
+        g = sorted(grp[t], key=lambda x: x[0])
+        if g[-1][0] + 3_600_000 >= t + H4_MS:          # the group reaches the 4h close (the post hour may be partial)
+            out.append([t, g[0][1], max(x[2] for x in g), min(x[3] for x in g), g[-1][4]])
+    return out
+
+
+def conf_tf(zone: Dict) -> str:
+    """eng-168y (the owner: analysis is not the bot's strategies): the candle that confirms a close beyond a zone
+    follows the zone's own timeframe - 4h for a zone of 4h / 1d / 1w pivots or a higher map level (previous day / week /
+    month extremes, the value area), 1h for an intraday one (1h pivots, today's extremes, sessions)."""
+    if set(zone.get('tfs') or ()) & {'4h', '1d', '1w'}:
+        return '4h'
+    if any(str(l).startswith(HIGHER_LABELS) or any(t in str(l) for t in (' 4h', ' 1d', ' 1w'))
+           for l in (zone.get('labels') or [])):
+        return '4h'
+    return '1h'
+
+
 def _short(symbol: str) -> str:
     return symbol.split('/')[0]
 
@@ -346,22 +374,22 @@ class Briefing:
         lines = []
         if up:
             nxt = up[1]['lo'] if len(up) > 1 else None
-            lines.append(f"▲ {_fmt(up[0]['lo'])}–{_fmt(up[0]['hi'])}: закрепление 1h выше {_fmt(up[0]['hi'])}"
+            lines.append(f"▲ {_fmt(up[0]['lo'])}–{_fmt(up[0]['hi'])}: закрепление {up[0].get('conf_tf', '1h')} выше {_fmt(up[0]['hi'])}"
                          + (f" → {_fmt(nxt)}" if nxt else ' → выше уровней карты нет'))
         if cur:
-            lines.append(f"◆ цена в зоне {_fmt(cur['lo'])}–{_fmt(cur['hi'])}: ждём закрытие 1h за ней")
+            lines.append(f"◆ цена в зоне {_fmt(cur['lo'])}–{_fmt(cur['hi'])}: ждём закрытие {cur.get('conf_tf', '1h')} за ней")
         if dn:
             nxt = dn[1]['hi'] if len(dn) > 1 else None
-            lines.append(f"▼ {_fmt(dn[0]['lo'])}–{_fmt(dn[0]['hi'])}: закрытие 1h ниже {_fmt(dn[0]['lo'])}"
+            lines.append(f"▼ {_fmt(dn[0]['lo'])}–{_fmt(dn[0]['hi'])}: закрытие {dn[0].get('conf_tf', '1h')} ниже {_fmt(dn[0]['lo'])}"
                          + (f" → {_fmt(nxt)}" if nxt else ' → ниже уровней карты нет'))
         sup = cur['lo'] if cur else (dn[0]['lo'] if dn else None)
         res = cur['hi'] if cur else (up[0]['hi'] if up else None)
         tgt_up = up[0]['lo'] if up else None
         tgt_dn = dn[0]['hi'] if dn else None
         if sb == 1 and sup and tgt_up:
-            lines.append(f"📌 Пока выше {_fmt(sup)}, приоритет — тест {_fmt(tgt_up)}; закрытие 1h ниже {_fmt(sup)} сменит сценарий")
+            lines.append(f"📌 Пока выше {_fmt(sup)}, приоритет — тест {_fmt(tgt_up)}; закрытие {(cur or dn[0]).get('conf_tf', '1h')} ниже {_fmt(sup)} сменит сценарий")
         elif sb == -1 and res and tgt_dn:
-            lines.append(f"📌 Пока ниже {_fmt(res)}, приоритет — тест {_fmt(tgt_dn)}; закрепление 1h выше {_fmt(res)} сменит сценарий")
+            lines.append(f"📌 Пока ниже {_fmt(res)}, приоритет — тест {_fmt(tgt_dn)}; закрепление {(cur or up[0]).get('conf_tf', '1h')} выше {_fmt(res)} сменит сценарий")
         elif tgt_up and tgt_dn:
             lines.append(f"📌 Импульс 1–3 дн. нейтрален: диапазон {_fmt(tgt_dn)}–{_fmt(tgt_up)}, сценарий решит выход за него")
         return lines
@@ -509,7 +537,8 @@ class Briefing:
                           'labels': list(dict.fromkeys(l.label for l in here_)),
                           'near': list(dict.fromkeys(f"{l.label} ({d:.1f} ATR)" for l, d in beside)),
                           'tol': tol, 'pad': pad, 'sr_desc': what,
-                          'pierce_src': 'swing_1h' + (f" (для {'/'.join(higher)} нет своей статистики)" if higher else '')})
+                          'pierce_src': 'swing_1h' + (f" (для {'/'.join(higher)} нет своей статистики)" if higher else ''),
+                          'tfs': list(z['tfs'])})
         # eng-168w (trace, audit #7): the key levels of the map are zones of their OWN when no pivot cluster holds
         # them - the previous day / week high / low and today's extremes (pdhl), equal highs / lows (equal: resting
         # stops), the week / month / year extremes, the value area (POC / VAH / VAL naked / 4-day / previous day).
@@ -537,7 +566,8 @@ class Briefing:
             pad_ = min(max(overshoot(symbol, pkind, l.price, 'p80') or 0.0, 0.5 * atr1h), atr1h)
             cands.append({'lo': lo_, 'hi': hi_, 'mid': l.price, 'strength': strength, 'labels': [l.label],
                           'near': [], 'tol': tol_, 'pad': pad_, 'sr_desc': 'уровень карты (без разворотов рядом)',
-                          'pierce_src': pkind, 'map_level': True})
+                          'pierce_src': pkind, 'map_level': True,
+                          'tfs': ['1h'] if (l.kind == 'equal' or l.label in ('day high', 'day low')) else ['1d']})
         if not cands:
             return price, []
         # zones that overlap are one place: merged (up to 1.5 x ATR(1h) wide) - the cap above kept BTC's 81 857-82 500
@@ -564,6 +594,7 @@ class Briefing:
                               'strength': a['strength'] + m['strength'],
                               'labels': list(dict.fromkeys(a['labels'] + m['labels'])),
                               'near': list(dict.fromkeys(a.get('near', []) + m.get('near', []))),
+                              'tfs': list(dict.fromkeys(a.get('tfs', []) + m.get('tfs', []))),
                               'tol': max(a['tol'], m['tol']), 'pad': max(a['pad'], m['pad'])}
             else:
                 merged.append(m)
@@ -621,6 +652,7 @@ class Briefing:
                 labels = sorted(m['labels'], key=_label_rank)
                 out.append({'lo': m['lo'], 'hi': m['hi'], 'mid': m['mid'], 'side': side, 'strength': m['strength'],
                             'near': m.get('near', [])[:3], 'pierce_src': m.get('pierce_src'),
+                            'conf_tf': conf_tf(m), 'tfs': m.get('tfs', []),
                             'tol': m['tol'],
                             'pad': m['pad'], 'label': ' · '.join(labels[:4]),
                             'desc': (m.get('sr_desc', '') + (f"; здесь же: {', '.join(describe(m['labels']).split(', ')[:2])}" if m['labels'] else '')
@@ -717,7 +749,11 @@ class Briefing:
                'chg_day': (price / d1c[-1][4] - 1) * 100 if d1c else None,
                'bias': bias, 'bias_ru': BIAS_RU.get(bias, bias), 'bias_line': self._bias_line(symbol, bias, st),
                'atr1h': atr1h, 'atr1d': atr1d,
-               'zones': [{k: z.get(k) for k in ('lo', 'hi', 'side', 'strength', 'label', 'near', 'pierce_src')} for z in zones],
+               'zones': [{k: z.get(k) for k in ('lo', 'hi', 'side', 'strength', 'label', 'near', 'pierce_src', 'conf_tf')}
+                         for z in zones],
+               # eng-168y: the if-then level map with its base view and the crowd (universe coins only)
+               'level_map': self.level_map(price, zones, self.session_bias(md)),
+               'positioning': self.positioning_line(symbol) if src is None else None,
                'macro': [f"{dt:%H:%M} {name}" for dt, name in events], 'scenarios': {}, 'cards': cards or []}
         if src is None:
             out['outcomes'] = self.outcomes(symbol, 14, md)
@@ -955,8 +991,9 @@ class Briefing:
         armed = not breakout
         fill, fill_ms = None, None
         touched = False
+        step = H4_MS if len(bars) > 1 and bars[1][0] - bars[0][0] >= H4_MS else HOUR_MS
         for c in bars:
-            end = c[0] + HOUR_MS
+            end = c[0] + step
             if cancel_at is not None and fill is None and end >= cancel_at:
                 return 'отменён: включился встречный сценарий', cancel_at, None, None
             if not armed:
@@ -1008,10 +1045,11 @@ class Briefing:
         for r in recs:
             if r.get('symbol') != symbol or not str(r.get('slot', '')).startswith(today):
                 continue
-            res, ambiguous = self._score_record(r, closed, minutes)
+            res, ambiguous = self._score_record(r, closed, minutes, fetch_minutes=True)
             if res:
-                out.append(f"· {r['title']} ({r['slot'][-5:]}): " + '; '.join(f"{name}: {txt}" for name, txt, *_ in res)
-                           + (' (час публикации не оценён: нет минутных свечей)' if ambiguous else ''))
+                out.append(f"· {r['slot'][-5:]} {r['title'].replace('Сводка ', '')}: "
+                           + '; '.join(f"{name} — {self.human_outcome(txt, rv)}" for name, txt, _t, _res, rv, *_ in res)
+                           + (' (час публикации не оценён)' if ambiguous else ''))
         return out
 
     def _resolved_today(self, symbol: str, md, day0: int) -> List[str]:
@@ -1036,11 +1074,11 @@ class Briefing:
             until = r['ts'] * 1000 + self.OUTCOME_HOURS * HOUR_MS
             if until < day0:
                 continue
-            res, _ = self._score_record(r, closed, minutes, until_ms=until)
+            res, _ = self._score_record(r, closed, minutes, until_ms=until, fetch_minutes=True)
             done = []
             for name, txt, _tag, resolved, rv, _det in res:
                 if resolved is not None and resolved >= day0:
-                    done.append(f"{name}: {txt}")
+                    done.append(f"{name} — {self.human_outcome(txt, rv)}")
                 elif resolved is None and txt.startswith('вход, без исхода') and day0 <= until <= now:
                     done.append(f"{name}: истёк открытым ({rv:+.2f}R по рынку)")
             if done:
@@ -1147,7 +1185,32 @@ class Briefing:
             return det
         return None
 
-    def _score_record(self, r: Dict, closed: List, minutes: List, until_ms: Optional[float] = None):
+    _MIN_CACHE: Dict = {}
+
+    def _post_minutes(self, symbol: str, post_ms: float, first_full: int) -> List:
+        """eng-168y: the 1m candles of the post's hour after the post, from Binance REST when the bot's ~10h minute
+        ring no longer holds them (the recap at 23:30 scored the 02:30 / 09:30 posts without their hour). Cached."""
+        key = (symbol, int(post_ms) // 60_000)
+        if key not in self._MIN_CACHE:
+            import json
+            import urllib.request
+            out = []
+            try:
+                b = symbol.split('/')[0] + 'USDT'
+                url = (f"https://fapi.binance.com/fapi/v1/klines?symbol={b}&interval=1m"
+                       f"&startTime={int(post_ms) // 60_000 * 60_000}&endTime={first_full - 1}&limit=61")
+                with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'edgehunter-bot/1.0'}),
+                                            timeout=15) as resp:
+                    out = [[float(x) for x in k[:5]] for k in json.loads(resp.read())]
+            except Exception as e:
+                errors.report('briefing.post_minutes', e, symbol)
+            if len(self._MIN_CACHE) > 2000:
+                self._MIN_CACHE.clear()
+            self._MIN_CACHE[key] = out
+        return [c for c in self._MIN_CACHE[key] if post_ms <= c[0] < first_full and c[0] + 60_000 <= time.time() * 1000]
+
+    def _score_record(self, r: Dict, closed: List, minutes: List, until_ms: Optional[float] = None,
+                      fetch_minutes: bool = False):
         """One saved briefing record against the closed 1h candles after its post: ([(name, result, tag)], ambiguous).
         audit N22: only prices AFTER the post. The hour holding the post is scored on its 1m candles after the post's
         minute; without them that hour is left out and said so (its OHLC may be before the post)."""
@@ -1155,6 +1218,8 @@ class Briefing:
         post_ms = r['ts'] * 1000
         first_full = (int(post_ms) // HOUR_MS + 1) * HOUR_MS
         head = [c for c in minutes if post_ms <= c[0] < first_full]
+        if not head and post_ms % HOUR_MS and fetch_minutes and r.get('symbol'):
+            head = self._post_minutes(r['symbol'], post_ms, first_full)
         ambiguous = not head and post_ms % HOUR_MS != 0
         # the post-hour's minutes after the post as ONE partial 1h bar (the reaction rule reads 1h candle shapes)
         # eng-168o (audit #4): the partial bar carries the HOUR's open time (its end = that hour's close); it carried
@@ -1163,23 +1228,27 @@ class Briefing:
             if head and head[-1][0] + 60_000 >= first_full else []
         bars = part + [c for c in closed if c[0] >= first_full and (until_ms is None or c[0] < until_ms)]
         res = []
+        bars4 = to_4h(bars)
+        tfb = lambda x: bars4 if (x or {}).get('conf_tf') == '4h' else bars     # eng-168y: the scenario's candle
         # eng-168n (OCO): the long and short tied to the same current zone cancel each other - the one entered first
         # cancels the other unless that one had already entered
         cancel = {}
         lg, sh = sc.get('long'), sc.get('short')
         if lg and sh and lg.get('cur_bound') and sh.get('cur_bound'):
-            tl, tsh = self.entry_ms(lg, 1, bars), self.entry_ms(sh, -1, bars)
+            tl, tsh = self.entry_ms(lg, 1, tfb(lg)), self.entry_ms(sh, -1, tfb(sh))
             if tl is not None and (tsh is None or tsh > tl):
                 cancel['short'] = tl
             elif tsh is not None and (tl is None or tl > tsh):
                 cancel['long'] = tsh
         for key, side, name in (('long', 1, 'лонг'), ('short', -1, 'шорт')):
             if sc.get(key):
-                txt, resolved, rv, entry = self.score_detail(sc[key], side, bars, cancel_at=cancel.get(key))
+                sb_ = tfb(sc[key])
+                txt, resolved, rv, entry = self.score_detail(sc[key], side, sb_, cancel_at=cancel.get(key))
                 det = None
                 if entry is not None:
-                    # the entry is the reaction candle's close: the trade lives on the candles after it
-                    fill = next((c[4] for c in bars if c[0] + HOUR_MS == entry), None)
+                    # the entry is the reaction candle's close: the trade lives on the 1h candles after it
+                    step = H4_MS if sb_ is bars4 else HOUR_MS
+                    fill = next((c[4] for c in sb_ if c[0] + step == entry), None)
                     after = [c for c in bars if c[0] >= entry]
                     if fill is not None:
                         det = self.exec_detail(sc[key], side, fill, after)
@@ -1188,6 +1257,29 @@ class Briefing:
                     det = dict(det or {}, sweep=sw)
                 res.append((name, txt, sc[key].get('tag', ''), resolved, rv, det))
         return res, ambiguous
+
+    @staticmethod
+    def human_outcome(txt: str, r: Optional[float] = None) -> str:
+        """eng-168y: the scorer's status in words for the recap."""
+        if txt.startswith('вход → TP1'):
+            return f"вошли, цель 1 взята ({r:+.1f}R)" if r is not None else 'вошли, цель 1 взята'
+        if txt.startswith('вход → стоп'):
+            return 'вошли, стоп (−1R)'
+        if txt.startswith('вход, без исхода'):
+            return 'вошли, в работе' + (f" ({r:+.2f}R по рынку)" if r is not None else '')
+        if txt.startswith('отменён: включился встречный'):
+            return 'отменён: сработал встречный сценарий'
+        if txt.startswith('отменён'):
+            return 'отменён: закрытие за стопом до входа'
+        if 'слишком далеко' in txt:
+            return 'пропущен: свеча входа закрылась почти у цели'
+        if txt.startswith('пропущен'):
+            return 'пропущен: свеча входа закрылась за целью'
+        if txt.startswith('закрепление без ретеста'):
+            return 'пробой без возврата к уровню' + (' (цена дошла до цели без входа)' if 'TP1' in txt else '')
+        if txt.startswith('тест без реакции'):
+            return 'цена дошла до зоны, разворотной свечи не было'
+        return 'условие не наступило'
 
     @staticmethod
     def _outcome_class(txt: str) -> str:
@@ -1205,7 +1297,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b168x'
+    RULES_V = 'b168y'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
@@ -1337,28 +1429,43 @@ class Briefing:
             if len(closed) < 2 or self._last_h1.get(symbol) == closed[-1][0]:
                 continue
             self._last_h1[symbol] = closed[-1][0]
-            c, p = closed[-1], closed[-2]
+            h4_closed = to_4h(closed) if (closed[-1][0] + HOUR_MS) % H4_MS == 0 else []
             for z in zones:
+                tf = z.get('conf_tf', '1h')
+                # eng-168y: a 4h zone is judged on the 4h close (only when this 1h close ends a 4h candle)
+                if tf == '4h':
+                    if len(h4_closed) < 2:
+                        continue
+                    c, p = h4_closed[-1], h4_closed[-2]
+                else:
+                    c, p = closed[-1], closed[-2]
                 lbl = f"{_fmt(z['lo'])}–{_fmt(z['hi'])}"
                 msg = None
                 if p[4] <= z['hi'] < c[4]:
-                    msg = f"⬆️ {_short(symbol)}: закрепление 1h выше зоны {lbl} (закрытие {_fmt(c[4])})"
+                    msg = f"⬆️ {_short(symbol)}: закрепление {tf} выше зоны {lbl} (закрытие {_fmt(c[4])})"
                 elif p[4] >= z['lo'] > c[4]:
-                    msg = f"⬇️ {_short(symbol)}: закрепление 1h ниже зоны {lbl} (закрытие {_fmt(c[4])})"
+                    msg = f"⬇️ {_short(symbol)}: закрепление {tf} ниже зоны {lbl} (закрытие {_fmt(c[4])})"
                 elif c[2] > z['hi'] and c[4] < z['hi'] and p[4] < z['hi']:
-                    msg = f"↩️ {_short(symbol)}: снятие верха {lbl} (хай {_fmt(c[2])}) и возврат под зону"
+                    msg = f"↩️ {_short(symbol)}: снятие верха {lbl} (хай {_fmt(c[2])}) и возврат под зону ({tf})"
                 elif c[3] < z['lo'] and c[4] > z['lo'] and p[4] > z['lo']:
-                    msg = f"↪️ {_short(symbol)}: снятие низа {lbl} (лой {_fmt(c[3])}) и возврат над зону"
+                    msg = f"↪️ {_short(symbol)}: снятие низа {lbl} (лой {_fmt(c[3])}) и возврат над зону ({tf})"
                 if msg:
                     self._post(msg + f"\n{z.get('desc') or z['label']}" + self._scenario_note(symbol, c[4]),
                                key=f"lvl|{symbol}|{z['lo']:.8g}|{msg[:2]}", every_sec=4 * 3600)
             # the scenario's REACTION on this closed 1h candle (breakouts only after their 1h close beyond): the entry
             sc = self.scenario.get(symbol) or {}
-            since = [x for x in closed if x[0] >= (sc.get('ts') or 0) * 1000 - HOUR_MS + 1]
             for key, side, name in (('long', 1, 'Лонг'), ('short', -1, 'Шорт')):
                 x = sc.get(key)
                 if not x:
                     continue
+                if x.get('conf_tf') == '4h':
+                    if len(h4_closed) < 2:
+                        continue                         # eng-168y: a 4h scenario reacts on a 4h close only
+                    c = h4_closed[-1]
+                    since = [b for b in h4_closed if b[0] + H4_MS > (sc.get('ts') or 0) * 1000]
+                else:
+                    c = closed[-1]
+                    since = [b for b in closed if b[0] >= (sc.get('ts') or 0) * 1000 - HOUR_MS + 1]
                 e0, e1 = sorted(x['entry'])
                 armed = not x['tag'].startswith('закрепление') or any(
                     (side > 0 and b[4] > e0) or (side < 0 and b[4] < e1) for b in since[:-1])
