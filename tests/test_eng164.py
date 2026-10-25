@@ -367,3 +367,16 @@ def test_sweep_and_reclaim_shadow_entry():
     d = Briefing.sweep_variant(sc, 1, bars)
     assert d and d['fill'] == 99.4 and abs(d['stop'] - (98.6 - 0.25)) < 1e-9 and d['tp1_hit'] and d['resolved']
     assert Briefing.sweep_variant(sc, 1, bars[:1]) is None
+
+
+def test_unfavourable_scenario_is_shown_and_marked():
+    """eng-168x: TP1 closer than the stop -> the scenario stays (analysis), rr_ok False; the level map has a base view."""
+    import briefing_chart
+    from briefing import Briefing
+    zones = [{'lo': 101.0, 'hi': 101.3, 'side': 1, 'tol': 0.1, 'pad': 0.2, 'mid': 101.1},
+             {'lo': 100.4, 'hi': 100.6, 'side': 0, 'tol': 0.1, 'pad': 0.2, 'mid': 100.5},
+             {'lo': 99.0, 'hi': 100.0, 'side': -1, 'tol': 0.1, 'pad': 1.0, 'mid': 99.5}]
+    p = briefing_chart.plan(100.5, zones, atr_1d=5.0, atr_1h=1.0)
+    assert p['long'] is not None and p['long']['rr_ok'] is False
+    lm = Briefing.level_map(100.5, zones, 1)
+    assert any(x.startswith('📌 Пока выше') for x in lm) and any(x.startswith('▲') for x in lm)

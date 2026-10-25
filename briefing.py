@@ -334,6 +334,38 @@ class Briefing:
             return -1
         return 0
 
+    @staticmethod
+    def level_map(price: float, zones: List[Dict], sb: Optional[int]) -> List[str]:
+        """eng-168x (the owner: the briefing is analysis and possible scenarios): the levels as an if-then map - for the
+        nearest resistance / support (and the zone price is in) what a 1h close beyond it opens (the next zone), plus ONE
+        base view: with the fast 1-3 day background up 'while above S, a test of R first', down mirrored, neutral = the
+        range between them. Conditions only, no probability claimed."""
+        up = sorted([z for z in zones if z['side'] == 1], key=lambda z: z['lo'])
+        dn = sorted([z for z in zones if z['side'] == -1], key=lambda z: -z['hi'])
+        cur = next((z for z in zones if z['side'] == 0), None)
+        lines = []
+        if up:
+            nxt = up[1]['lo'] if len(up) > 1 else None
+            lines.append(f"▲ {_fmt(up[0]['lo'])}–{_fmt(up[0]['hi'])}: закрепление 1h выше {_fmt(up[0]['hi'])}"
+                         + (f" → {_fmt(nxt)}" if nxt else ' → выше уровней карты нет'))
+        if cur:
+            lines.append(f"◆ цена в зоне {_fmt(cur['lo'])}–{_fmt(cur['hi'])}: ждём закрытие 1h за ней")
+        if dn:
+            nxt = dn[1]['hi'] if len(dn) > 1 else None
+            lines.append(f"▼ {_fmt(dn[0]['lo'])}–{_fmt(dn[0]['hi'])}: закрытие 1h ниже {_fmt(dn[0]['lo'])}"
+                         + (f" → {_fmt(nxt)}" if nxt else ' → ниже уровней карты нет'))
+        sup = cur['lo'] if cur else (dn[0]['lo'] if dn else None)
+        res = cur['hi'] if cur else (up[0]['hi'] if up else None)
+        tgt_up = up[0]['lo'] if up else None
+        tgt_dn = dn[0]['hi'] if dn else None
+        if sb == 1 and sup and tgt_up:
+            lines.append(f"📌 Пока выше {_fmt(sup)}, приоритет — тест {_fmt(tgt_up)}; закрытие 1h ниже {_fmt(sup)} сменит сценарий")
+        elif sb == -1 and res and tgt_dn:
+            lines.append(f"📌 Пока ниже {_fmt(res)}, приоритет — тест {_fmt(tgt_dn)}; закрепление 1h выше {_fmt(res)} сменит сценарий")
+        elif tgt_up and tgt_dn:
+            lines.append(f"📌 Импульс 1–3 дн. нейтрален: диапазон {_fmt(tgt_dn)}–{_fmt(tgt_up)}, сценарий решит выход за него")
+        return lines
+
     def positioning_line(self, symbol: str) -> Optional[str]:
         """eng-168w: the crowd beside the levels - the Binance share of accounts long (global long / short ratio) and the
         open interest change over the last hour. Context only: no rule reads it."""
@@ -613,6 +645,8 @@ class Briefing:
         pos = self.positioning_line(symbol)
         if pos:
             lines.append(pos)
+        md_ = self.sc.market_data.get(symbol)
+        lines += self.level_map(price, zones, self.session_bias(md_))
         for z in zones:
             tag = {1: '🔴 сопр.', 0: '🔵 цена в зоне', -1: '🟢 подд.'}[z['side']]
             lines.append(f"{tag} {_fmt(z['lo'])}–{_fmt(z['hi'])} [{z['strength']:.0f}] {z['label']}")
@@ -794,6 +828,9 @@ class Briefing:
                                             ath=ath, ath_days=ath_days, hi24=hi24, lo24=lo24)
                 pos = self.positioning_line(symbol)
                 cap = f"<b>{_short(symbol)}</b> · {bias_line}" + (f"\n{pos}" if pos else '')
+                lm = self.level_map(price, self.zones.get(symbol) or [], self.session_bias(md))
+                if lm:
+                    cap += '\n' + '\n'.join(lm)
                 out.append((png, (head + '\n\n' + cap) if not out else cap))
             except Exception as e:
                 errors.report('briefing.card', e, symbol)
@@ -1168,7 +1205,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b168w'
+    RULES_V = 'b168x'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
@@ -1206,6 +1243,8 @@ class Briefing:
                     cls, rv = 'expired_open', rdet
                 if r.get('silent'):
                     name = f"{name} (тихие)"
+                if ((r.get('scenario') or {}).get('long' if name.startswith('лонг') else 'short') or {}).get('rr_ok') is False:
+                    name = f"{name} (R:R<1)"               # eng-168x: analysis-only scenarios tallied apart
                 tally.setdefault(name, {}).setdefault(cls, 0)
                 tally[name][cls] += 1
                 # eng-168j (audit): the result in R, not only counts (TP1: its R from the reaction close; stop: -1)
@@ -1330,9 +1369,11 @@ class Briefing:
                 if not macro_calendar.live_ok(time.time() * 1000):
                     continue                     # eng-168s: fail-closed - no 'scenario on' without a fresh calendar
                 if armed and self.reaction(x, side, c) and side * (c[4] - x['stop']) > 0 \
-                        and side * (x['targets'][0] - c[4]) >= abs(c[4] - x['stop']):     # eng-168l: R:R >= 1
+                        and (side * (x['targets'][0] - c[4]) >= abs(c[4] - x['stop'])            # eng-168l: R:R >= 1
+                             or (x.get('rr_ok') is False and side * (x['targets'][0] - c[4]) > 0)):  # eng-168x
                     rr = side * (x['targets'][0] - c[4]) / abs(c[4] - x['stop'])
-                    self._post(f"✅ {_short(symbol)}: реакция у зоны — {name.lower()}-сценарий включён\n"
+                    self._post(f"✅ {_short(symbol)}: реакция у зоны — {name.lower()}-сценарий включён"
+                               + (" (как сделка невыгодно: цель ближе стопа)" if x.get('rr_ok') is False else '') + "\n"
                                f"Вход ~{_fmt(c[4])} (закрытие 1h) · стоп {_fmt(x['stop'])} · цели "
                                + ' / '.join(_fmt(t) for t in x['targets']) + f" · R:R {rr:.1f}",
                                key=f"react|{symbol}|{key}|{sc.get('ts')}", every_sec=24 * 3600)

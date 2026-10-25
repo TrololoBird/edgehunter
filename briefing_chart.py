@@ -128,14 +128,12 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
             return None
         # eng-168k (audit): R:R >= 1 from the WORST price of the entry range (the web checklist's measure too)
         worst = max(e0, e1) if side > 0 else min(e0, e1)
-        if side * (tg[0] - worst) < abs(worst - stop):
-            # TP1 closer than the stop: R:R < 1 - not a scenario (BTC 2026-10-08 09:30: a long 51 under the next
-            # resistance, a short's TP1 -0.3% for a +1.6% stop - and its 'chance' read 82%); the card says why
-            out['skip_' + ('long' if side > 0 else 'short')] = (
-                f"нет выгодного входа: первая цель {_fmt(tg[0])} ({_pct(tg[0], e)})\n"
-                f"ближе стопа {_fmt(stop)} ({_pct(stop, e)}), R:R < 1")
-            return None
-        return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag,
+        # eng-168x (the owner): the briefing is ANALYSIS - a possible scenario, not a trade order. A scenario whose TP1 is
+        # closer than its stop (R:R < 1 from the worst entry) is still shown, marked 'as a trade: unfavourable'
+        # (rr_ok False); it was dropped, and with the honest obstacle map (eng-168v) most cards had no scenario at all.
+        # The trade-grade scenarios (rr_ok) are preferred when choosing a variant and tallied apart.
+        rr_ok = side * (tg[0] - worst) >= abs(worst - stop)
+        return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag, 'rr_ok': rr_ok,
                 # eng-168o (audit #4): the breakeven share on the same basis as the R:R check - the worst entry
                 'p': abs(worst - stop) / (abs(worst - stop) + abs(tg[0] - worst))}
     def bounce():
@@ -170,7 +168,8 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         band = min(tol, 0.3 * width) if width > 0 else tol
 
         def first_valid(*cands):
-            return next((c for c in cands if c), None)
+            # eng-168x: the first trade-grade (R:R >= 1) variant in the position's order, else the first possible one
+            return next((c for c in cands if c and c.get('rr_ok')), None) or next((c for c in cands if c), None)
 
         def mark(c):
             if c:
@@ -337,11 +336,11 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                     arrowprops=dict(arrowstyle='->', color=colr, lw=2.2, ls='--'), zorder=5)
     # scenario tags
     if p['long']:
-        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\nбезубыточная доля TP1: {p['long']['p'] * 100:.0f}%*",
+        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\n" + (f"безубыточная доля TP1: {p['long']['p'] * 100:.0f}%*" if p['long'].get('rr_ok', True) else 'как сделка невыгодно: цель ближе стопа'),
                 fontsize=9.5, weight='bold', color='white', ha='center', va='top', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=GREEN2, ec='none'))
     if p['short']:
-        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\nбезубыточная доля TP1: {p['short']['p'] * 100:.0f}%*",
+        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\n" + (f"безубыточная доля TP1: {p['short']['p'] * 100:.0f}%*" if p['short'].get('rr_ok', True) else 'как сделка невыгодно: цель ближе стопа'),
                 fontsize=9.5, weight='bold', color='white', ha='center', va='bottom', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=RED, ec='none'))
     ax.text(1.5, y0 + pad * 0.15, source, fontsize=13, weight='bold', color='#d0d0d0', zorder=5)
