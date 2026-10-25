@@ -105,3 +105,13 @@ def test_dump_start_fires_on_a_long_flush():
     h1 = [[t0 - (200 - i) * 3_600_000, 1, 1.01, 0.95, 1, 1e6, 5e5] for i in range(200)]
     d = dump_start(m, {'rvol_1m': 6, 'oi_change_5m': -0.02, 'spot_cvd_5m': -500}, 0.005, m[-1][0] + 60_000, h1)
     assert d is not None and d['pd_dump_oi_regime'] == 'long_flush'
+
+
+def test_enter_shadow_tags_are_per_attempt():
+    """eng-168: a shadow tag added by an earlier entry attempt must not survive into the next attempt."""
+    import signal_book
+    src = open(signal_book.__file__).read()
+    i = src.index('def _enter(')
+    body = src[i:i + 2500]
+    assert body.count('self._new_attempt(s)') == 0 and src.count('self._new_attempt(s)') == 2
+    assert "s.direction > 0 and 'htf_bias' in" not in src

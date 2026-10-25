@@ -1217,6 +1217,15 @@ class SignalBook:
             self._finish(s, 'EXPIRED', now, f"price did not reach the zone in {_dur(watch_ttl)}")
         return None
 
+    @staticmethod
+    def _new_attempt(s: TrackedSignal) -> None:
+        """eng-168 (audit of htf_bias): the shadow tags of an entry attempt belong to THAT attempt. A card waits over
+        many passes and its sig is replaced only while the setup re-appears, so a tag from an earlier attempt (a bias
+        that has since changed) stayed and was journaled with the entry. The setup-time tags are the baseline."""
+        if '_shadow_base' not in s.sig:
+            s.sig['_shadow_base'] = s.sig.get('shadow_veto')
+        s.sig['shadow_veto'] = s.sig['_shadow_base']
+
     def _try_entry(self, s: TrackedSignal, price: float, now_ms: int, candles_of,
                    confirm_of: Optional[ConfirmCheck]) -> Optional[TrackedSignal]:
         d = s.direction
@@ -1256,6 +1265,7 @@ class SignalBook:
             # history, not an entry a human could take now. Look for the next one after it.
             s.zone_since_ms = trigger['time']
             return None
+        self._new_attempt(s)
         levels = entry_levels(s.plan, trigger['entry'], trigger['extreme'], d)
         if not levels or d * (price - levels['sl']) <= 0:
             return None
@@ -1388,6 +1398,7 @@ class SignalBook:
         Entry at the setup's confirmation (the closed candle that confirmed it), at the current price: taken when R:R
         to TP1 allows it, else the card waits in its zone for a trigger.
         """
+        self._new_attempt(s)
         levels = entry_levels(s.plan, price, None, s.direction)
         if not levels or s.direction * (price - levels['sl']) <= 0:
             return None
@@ -1466,10 +1477,9 @@ class SignalBook:
             key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
             reason = shadow_veto(s.sig, htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
                                                       (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/')))
-            if reason is None and s.direction > 0 and 'htf_bias' in (s.sig.get('shadow_veto') or '').split(','):
-                # eng-167 (live, 13 days): longs against the coin's bearish top-down bias 9 of 9 lost (-1.0R); shorts
-                # tagged htf_bias +1.06R on 16 (the bias lags a falling market) - blocking for longs only
-                reason = 'htf_bias'
+            # eng-168: the eng-167 block of longs only removed - untagged longs lost nearly as much (-0.77R on 80 vs
+            # -1.0R on 9) in a 13-day falling market: the side's market beta, not the filter; htf_bias is a shadow tag
+            # for both sides again until it is measured in a rising market too
         rg_state = (hb.get('coin') or {}).get('rg')
         if rg_state:
             from strategies import regime as rg

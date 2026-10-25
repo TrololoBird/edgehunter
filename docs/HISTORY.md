@@ -1182,3 +1182,8 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - Not a full return to eng-148: pierce pools (4.5) stay live. Silver Bullet unchanged (entry stop still nearest -
   owner's call). `variant_pool2` rows not comparable with eng-151. `sl_old` == invalid now.
 - Includes d69bb88 (variant_pool2 enters at the pool's own untaken price).
+
+## eng-168 (25.10) — htf_bias audit
+- The eng-167 block of longs on the htf_bias tag removed: untagged longs lost almost as much (−0.77R on 80 vs −1.0R on 9) in a 13-day falling market, which is the side's beta, not the filter. htf_bias is a shadow tag for both sides again.
+- Bug: the shadow tags of an entry attempt survived into later attempts of a waiting card (sig is replaced only while the setup re-appears), so a stale htf_bias tag could block a long that was by then with the trend and mislabel journal rows. `SignalBook._new_attempt` resets to the setup-time tags at the start of each attempt.
+- Recorded, not applied (measurement first): 'range' tagging WITH_BIAS setups, a faster tide (EMA20 d1, TSM 7/14/30, Kaufman ER), unconditional collection of all filter reasons (censoring by order), cluster-based sample rules, unused gate() btc_bias/is_btc. Journal `daily_bias` is ICT's prior-day close vs range (scanner.py), not bias.d1 - hence its mismatch with the veto.
