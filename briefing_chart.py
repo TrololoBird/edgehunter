@@ -52,7 +52,7 @@ def _pct(x: float, price: float) -> str:
 
 
 def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: Optional[float] = None,
-         ath_days: int = 0) -> Dict:
+         ath_days: int = 0, atr_1h: Optional[float] = None) -> Dict:
     """
     The two scenarios of the card (eng-74, the 2026-10-07 review):
     - price INSIDE a zone: long = a 1h close above it + a retest, short = a 1h close below it + a retest;
@@ -151,29 +151,50 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
 
     if cur:
         tol, pad = cur.get('tol') or 0.0, cur.get('pad', 0.0)
+        # eng-168n (audit #3): inside the current zone the variant follows WHERE the price is in it, not the best R:R
+        # (the edge variants won by their short stop even with price pressed against the opposite edge). An edge-to-
+        # edge trade only in a zone at least 1.5 1h-ATR wide (a narrower one is eaten by the reaction candle); its
+        # entry band at most 0.3 of the zone from the edge. A preferred variant that fails R:R >= 1 (worst entry,
+        # pushed stop) falls back to the next valid one.
+        width = cur['hi'] - cur['lo']
+        a1h = atr_1h or (atr_1d / 5 if atr_1d else 0.0)
+        wide = bool(a1h) and width >= 1.5 * a1h
+        pos = (price - cur['lo']) / width if width > 0 else 0.5
+        band = min(tol, 0.3 * width) if width > 0 else tol
 
-        def best(*cands):
-            # per side the variant with the better R:R to TP1 (None = R:R < 1, the skip text stays)
-            ok = [c for c in cands if c]
-            return max(ok, key=lambda c: abs(c['targets'][0] - sum(c['entry']) / 2) /
-                       abs(sum(c['entry']) / 2 - c['stop'])) if ok else None
-        # breakout of the zone (a 1h close beyond + the retest), or - inside a range-wide zone - its edges: buy the
-        # support edge, sell the resistance edge, the target the opposite boundary, the stop beyond the edge
-        # (classic range trading: entries at the edges, not in the middle)
-        out['long'] = best(
-            scenario(1, cur['hi'], cur['hi'] + tol, cur['lo'] - pad,
-                     f"закрытие 1h выше {_fmt(cur['hi'])}, ретест и бычья свеча 1h с закрытием выше {_fmt(cur['hi'] + tol)}", 'закрепление выше'),
-            bounce(),
-            scenario(1, cur['lo'], cur['lo'] + tol, cur['lo'] - pad,
-                     f"тест низа {_fmt(cur['lo'])} (допуск {_fmt(tol)}) и бычья свеча 1h с закрытием выше {_fmt(cur['lo'] + tol)}", 'от низа зоны',
-                     first=cur['hi']))
-        out['short'] = best(
-            scenario(-1, cur['lo'] - tol, cur['lo'], cur['hi'] + pad,
-                     f"закрытие 1h ниже {_fmt(cur['lo'])}, ретест и медвежья свеча 1h с закрытием ниже {_fmt(cur['lo'] - tol)}", 'закрепление ниже'),
-            fade(),
-            scenario(-1, cur['hi'] - tol, cur['hi'], cur['hi'] + pad,
-                     f"тест верха {_fmt(cur['hi'])} (допуск {_fmt(tol)}) и медвежья свеча 1h с закрытием ниже {_fmt(cur['hi'] - tol)}", 'от верха зоны',
-                     first=cur['lo']))
+        def first_valid(*cands):
+            return next((c for c in cands if c), None)
+
+        def mark(c):
+            if c:
+                c['cur_bound'] = True          # tied to the current zone: the pair cancels each other (OCO)
+            return c
+        up_break = lambda: mark(scenario(1, cur['hi'], cur['hi'] + tol, cur['lo'] - pad,
+                                         f"закрытие 1h выше {_fmt(cur['hi'])}, ретест и бычья свеча 1h с закрытием выше {_fmt(cur['hi'] + tol)}",
+                                         'закрепление выше'))
+        from_low = lambda: mark(scenario(1, cur['lo'], cur['lo'] + band, cur['lo'] - pad,
+                                         f"тест низа {_fmt(cur['lo'])} (допуск {_fmt(band)}) и бычья свеча 1h с закрытием выше {_fmt(cur['lo'] + band)}",
+                                         'от низа зоны', first=cur['hi'])) if wide else None
+        dn_break = lambda: mark(scenario(-1, cur['lo'] - tol, cur['lo'], cur['hi'] + pad,
+                                         f"закрытие 1h ниже {_fmt(cur['lo'])}, ретест и медвежья свеча 1h с закрытием ниже {_fmt(cur['lo'] - tol)}",
+                                         'закрепление ниже'))
+        from_top = lambda: mark(scenario(-1, cur['hi'] - band, cur['hi'], cur['hi'] + pad,
+                                         f"тест верха {_fmt(cur['hi'])} (допуск {_fmt(band)}) и медвежья свеча 1h с закрытием ниже {_fmt(cur['hi'] - band)}",
+                                         'от верха зоны', first=cur['lo'])) if wide else None
+        if pos >= 0.65:
+            out['long'] = first_valid(up_break(), bounce(), from_low())
+        elif pos <= 0.40 and wide:
+            out['long'] = first_valid(from_low(), bounce(), up_break())
+        else:
+            out['long'] = first_valid(bounce(), up_break(), from_low())
+        if pos <= 0.35:
+            out['short'] = first_valid(dn_break(), fade(), from_top())
+        elif pos >= 0.60 and wide:
+            out['short'] = first_valid(from_top(), fade(), dn_break())
+        else:
+            out['short'] = first_valid(fade(), dn_break(), from_top())
+        if out['long'] and out['short'] and out['long'].get('cur_bound') and out['short'].get('cur_bound'):
+            out['oco'] = True
     else:
         if dn:
             z = dn[0]

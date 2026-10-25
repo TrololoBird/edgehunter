@@ -106,38 +106,73 @@ def zones(candles: Dict[str, Sequence[Sequence[float]]], now_ms: float, tol: flo
             # a single place: the band reaches from the wick toward the bodies, a quarter of the tolerance
             mid = (lo + hi) / 2
             lo, hi = mid - 0.125 * tol, mid + 0.125 * tol
-        strength, sides = 0.0, set()
+        # eng-168n (audit #3): the zone's STRUCTURE (its pivots: timeframe, volume, age; the strongest first move once)
+        # apart from its REACTIONS after it formed - the reaction was counted three times (the react >= 1 filter, the
+        # (1 + react) factor per pivot, +0.5 per wick back incl. the pivots' own bars) and breaks through were free
+        base, sides = 0.0, set()
         for p in g:
             age_d = max(0.0, (now_ms - p['ts']) / 86_400_000)
             decay = 0.5 ** (age_d / half_life_days)
             vol = 0.75 + 0.25 * min(p['vol'], 3.0)            # 1.0 at an average candle, 1.5 at 3x volume
-            strength += TF_WEIGHT[p['tf']] * (1 + min(p['react'], 5.0)) * vol * decay
+            base += TF_WEIGHT[p['tf']] * vol * decay
             sides.add(p['side'])
+        structure = base * (1.0 + 0.15 * min(max(p['react'] for p in g), 5.0))
         first = min(p['ts'] for p in g)
-        rejections = 0
-        if len(h1):
-            later = h1[h1[:, 0] > first]
-            piv_ts = {p['ts'] for p in g if p['tf'] == '1h'}
-            prev_close, counted = None, False
-            for r in later:
-                # a rejection: the candle came from OUTSIDE (the previous close on one side), wicked into the band and
-                # closed back out on that side; consecutive ones are one episode (a range's candles crossing the band
-                # back and forth counted 20-29 'touches' everywhere)
-                hit = False
-                if prev_close is not None and r[0] not in piv_ts:
-                    from_above = prev_close > hi and r[3] <= hi and r[4] > hi
-                    from_below = prev_close < lo and r[2] >= lo and r[4] < lo
-                    hit = from_above or from_below
-                if hit and not counted:
-                    rejections += 1
-                counted = hit
-                prev_close = r[4]
-        strength += 0.5 * rejections
+        stats = reaction_stats(h1, lo, hi, first, g)
+        rejections = stats['rejections']
+        chop = 0.65 if stats['approaches'] >= 3 and stats['breaks'] > rejections else 1.0
+        strength = (structure + 0.5 * min(rejections, 5)) * chop
         if len(g) == 1 and g[0]['tf'] == '1h' and g[0]['react'] < 2.0 and rejections == 0:
             continue                                   # one minor 1h turn, never revisited: not a level
         out.append({'lo': lo, 'hi': hi, 'price': (lo + hi) / 2, 'touches': len(g) + rejections,
                     'pivots': len(g), 'rejections': rejections, 'flip': len(sides) == 2,
+                    'structure_score': round(structure, 2), 'reaction_stats': stats,
                     'tfs': sorted({p['tf'] for p in g}, key=list(TF_MS).index),
                     'react': max(p['react'] for p in g), 'last_ts': max(p['ts'] for p in g),
                     'strength': strength})
+    return out
+
+
+def reaction_stats(h1: np.ndarray, lo: float, hi: float, first_ms: float, group: List[Dict]) -> Dict:
+    """eng-168n: how price met the band [lo, hi] on the closed 1h candles AFTER its first pivot, the pivots' own bars
+    (within one candle of their timeframe) left out. An approach starts on a candle that came from outside (the
+    previous close beyond one edge) and traded into the band; it ends on the first close outside: back on the
+    approach side = a rejection, beyond the far edge = a break (closes inside keep it open). max_pierce_atr: the deepest
+    wick past the near edge on a rejection, in ATR14(1h)."""
+    out = {'approaches': 0, 'rejections': 0, 'breaks': 0, 'hold_rate': None, 'max_pierce_atr': None}
+    if not len(h1):
+        return out
+    atr = _atr(h1[:, 2], h1[:, 3], h1[:, 4])
+    skip = [(p['ts'], TF_MS[p['tf']]) for p in group]
+    prev_close, side, deepest = None, 0, 0.0           # side: +1 an approach from above, -1 from below, 0 none open
+    pierce = []
+    for k in range(len(h1)):
+        r = h1[k]
+        if r[0] <= first_ms or any(abs(r[0] - t) <= w for t, w in skip):
+            prev_close = r[4]
+            continue
+        if side == 0 and prev_close is not None:
+            if prev_close > hi and r[3] <= hi:
+                side, deepest = 1, hi - r[3]
+                out['approaches'] += 1
+            elif prev_close < lo and r[2] >= lo:
+                side, deepest = -1, r[2] - lo
+                out['approaches'] += 1
+        elif side:
+            deepest = max(deepest, (hi - r[3]) if side > 0 else (r[2] - lo))
+        if side:
+            if (side > 0 and r[4] > hi) or (side < 0 and r[4] < lo):
+                out['rejections'] += 1
+                a = atr[k] if np.isfinite(atr[k]) and atr[k] > 0 else None
+                if a:
+                    pierce.append(float(deepest / a))
+                side = 0
+            elif (side > 0 and r[4] < lo) or (side < 0 and r[4] > hi):
+                out['breaks'] += 1
+                side = 0
+        prev_close = r[4]
+    if out['approaches']:
+        out['hold_rate'] = round(out['rejections'] / out['approaches'], 2)
+    if pierce:
+        out['max_pierce_atr'] = round(float(max(pierce)), 2)
     return out

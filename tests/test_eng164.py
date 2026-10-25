@@ -191,8 +191,39 @@ def test_briefing_score_detail_marks_an_open_trade_to_market():
     t = 1_700_000_000_000
     react = [t, 99.5, 101.0, 99.2, 100.5]                     # low <= e1, close > e1 and > open: entry 100.5
     later = [t + HOUR_MS, 100.5, 101.5, 100.2, 101.75]
-    txt, resolved, r = Briefing.score_detail(sc, 1, [react, later])
+    txt, resolved, r, _e = Briefing.score_detail(sc, 1, [react, later])
     assert txt == 'вход, без исхода' and resolved is None and r == 0.5
     stop = [t + 2 * HOUR_MS, 101.0, 101.0, 97.5, 98.0]
-    txt, resolved, r = Briefing.score_detail(sc, 1, [react, later, stop])
+    txt, resolved, r, _e = Briefing.score_detail(sc, 1, [react, later, stop])
     assert txt.startswith('вход → стоп') and resolved == t + 3 * HOUR_MS and r == -1.0
+
+
+def _cur_zones():
+    return [{'lo': 110.0, 'hi': 111.0, 'side': 1, 'tol': 0.1, 'pad': 0.2, 'mid': 110.5},
+            {'lo': 100.0, 'hi': 103.0, 'side': 0, 'tol': 0.2, 'pad': 0.4, 'mid': 101.5},
+            {'lo': 92.0, 'hi': 93.0, 'side': -1, 'tol': 0.1, 'pad': 0.2, 'mid': 92.5}]
+
+
+def test_variant_inside_the_zone_follows_the_price_position():
+    """eng-168n: price at the zone's top -> the long is the breakout; at its bottom of a wide zone -> from the low."""
+    import briefing_chart
+    top = briefing_chart.plan(102.8, _cur_zones(), atr_1d=5.0, atr_1h=1.0)
+    assert top['long']['tag'] == 'закрепление выше'
+    low = briefing_chart.plan(100.3, _cur_zones(), atr_1d=5.0, atr_1h=1.0)
+    assert low['long']['tag'] == 'от низа зоны' and low['short']['tag'] == 'закрепление ниже'
+    assert low.get('oco') and low['long'].get('cur_bound') and low['short'].get('cur_bound')
+
+
+def test_oco_cancels_the_opposite_scenario_of_the_zone():
+    """eng-168n: the long entered first -> the cur-bound short of the same post is cancelled at that candle."""
+    from briefing import Briefing, HOUR_MS
+    t = 472_223 * HOUR_MS                                            # an hour boundary
+    lg = {'entry': (100.0, 100.6), 'stop': 99.6, 'targets': [103.0], 'tag': 'от низа зоны', 'cur_bound': True}
+    sh = {'entry': (99.8, 100.0), 'stop': 103.4, 'targets': [93.0], 'tag': 'закрепление ниже', 'cur_bound': True}
+    rec = {'ts': (t - 60_000) / 1000, 'scenario': {'long': lg, 'short': sh}}   # posted a minute before t
+    bars = [[t, 100.2, 101.0, 100.1, 100.8],                         # long reaction: entry 100.8
+            [t + HOUR_MS, 100.8, 100.9, 99.0, 99.5],                 # a close below the zone (would arm the short)
+            [t + 2 * HOUR_MS, 99.5, 99.9, 99.2, 99.3]]
+    res, _ = Briefing._score_record(Briefing.__new__(Briefing), rec, bars, [])
+    short = next(x for x in res if x[0] == 'шорт')
+    assert short[1].startswith('отменён: включился встречный') and short[3] == t + HOUR_MS

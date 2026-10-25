@@ -531,12 +531,14 @@ class Briefing:
             lines.append(f"{tag} {_fmt(z['lo'])}–{_fmt(z['hi'])} [{z['strength']:.0f}] {z['label']}")
         tf = self.sc._tf_atrs(symbol)
         ath, days = self._history_high(md) if md else (None, 0)
-        p = briefing_chart.plan(price, zones, tf.get('1d'), ath, days)
+        p = briefing_chart.plan(price, zones, tf.get('1d'), ath, days, atr_1h=tf.get('1h'))
         for side, name in (('long', 'Лонг'), ('short', 'Шорт')):
             sc = p[side]
             if sc:
                 lines.append(f"{name}: {sc['cond']}; стоп {_fmt(sc['stop'])}; цели "
                              + ' / '.join(_fmt(t) for t in sc['targets']))
+        if p.get('oco'):
+            lines.append('Включение одного сценария у текущей зоны отменяет встречный')
         self.scenario[symbol] = {'long': p['long'], 'short': p['short'], 'price': price, 'ts': time.time()}
         return '\n'.join(lines)
 
@@ -570,7 +572,7 @@ class Briefing:
         tf = (src or {}).get('tf') or self.sc._tf_atrs(symbol, md)
         atr1d, atr1h = tf.get('1d'), tf.get('1h')
         ath, days = self._history_high(md)
-        p = briefing_chart.plan(price, zones, atr1d, ath, days)
+        p = briefing_chart.plan(price, zones, atr1d, ath, days, atr_1h=atr1h)
         events = macro_today(datetime.now(MSK))
         d1c = [c for c in md.d1 if c[0] + 86_400_000 <= time.time() * 1000]       # closed days only (REST rows hold today's)
         out = {'symbol': symbol, 'base': _short(symbol), 'price': price, 'light': src is not None,
@@ -721,7 +723,8 @@ class Briefing:
                         continue
                     bias, st = self._bias_of(symbol)
                     ath, days = self._history_high(md)
-                    p = briefing_chart.plan(price, zones, self.sc._tf_atrs(symbol).get('1d'), ath, days)
+                    p = briefing_chart.plan(price, zones, self.sc._tf_atrs(symbol).get('1d'), ath, days,
+                                            atr_1h=self.sc._tf_atrs(symbol).get('1h'))
                 except Exception as e:
                     errors.report('briefing._save', e, f"Silent briefing record failed for {symbol}")
                     continue
@@ -774,7 +777,15 @@ class Briefing:
         return cls.score_detail(sc, side, bars)[0]
 
     @classmethod
-    def score_detail(cls, sc: Dict, side: int, bars: List) -> Tuple[str, Optional[float], Optional[float]]:
+    def entry_ms(cls, sc: Dict, side: int, bars: List) -> Optional[float]:
+        # eng-168n: the close time of the reaction candle that entered the scenario (None = not entered)
+        return cls.score_detail(sc, side, bars)[3]
+
+    @classmethod
+    def score_detail(cls, sc: Dict, side: int, bars: List,
+                     cancel_at: Optional[float] = None) -> Tuple[str, Optional[float], Optional[float], Optional[float]]:
+        # eng-168n: 4th value = the entry candle's close time; cancel_at (OCO) = the opposite scenario of the same
+        # zone entered at that time - not entered by then = cancelled
         """score_scenario's (text, resolved_ms, r). eng-168m: resolved_ms = the close of the candle that ended it (TP1 /
         stop / cancelled / missed), None while undecided; r = the result in R (TP1 R, -1), and for an entered scenario
         still undecided the mark-to-market R at the last candle's close (an 'expired open' trade is not dropped)."""
@@ -788,10 +799,12 @@ class Briefing:
         stop, tp1 = sc['stop'], sc['targets'][0]
         breakout = sc['tag'].startswith('закрепление')
         armed = not breakout
-        fill = None
+        fill, fill_ms = None, None
         touched = False
         for c in bars:
             end = c[0] + HOUR_MS
+            if cancel_at is not None and fill is None and end >= cancel_at:
+                return 'отменён: включился встречный сценарий', cancel_at, None, None
             if not armed:
                 if (side > 0 and c[4] > e0) or (side < 0 and c[4] < e1):
                     armed = True
@@ -799,30 +812,30 @@ class Briefing:
             if fill is None:
                 touched = touched or (c[3] <= e1 and c[2] >= e0)
                 if side * (c[4] - stop) <= 0:
-                    return 'отменён: закрытие за стопом до реакции', end, None
+                    return 'отменён: закрытие за стопом до реакции', end, None, None
                 if cls.reaction(sc, side, c):
-                    fill = c[4]
+                    fill, fill_ms = c[4], end
                     if side * (tp1 - fill) <= 0:
                         # audit C15: the reaction closed at / beyond TP1 - no trade with a target ahead
-                        return 'пропущен: реакция закрылась за TP1', end, None
+                        return 'пропущен: реакция закрылась за TP1', end, None, None
                     if side * (tp1 - fill) < abs(fill - stop):
                         # eng-168l (audit #3): a reaction candle that closed most of the way to TP1 leaves R:R < 1
                         # from its close - the publication rule (R:R >= 1) applies to the real entry too
-                        return 'пропущен: реакция закрылась слишком далеко (R:R < 1)', end, None
+                        return 'пропущен: реакция закрылась слишком далеко (R:R < 1)', end, None, None
                 continue
             if (c[3] <= stop) if side > 0 else (c[2] >= stop):
-                return 'вход → стоп (−1R)', end, -1.0
+                return 'вход → стоп (−1R)', end, -1.0, fill_ms
             if (c[2] >= tp1) if side > 0 else (c[3] <= tp1):
                 r = side * (tp1 - fill) / abs(fill - stop)
-                return f"вход → TP1 ({r:+.1f}R)", end, round(r, 2)
+                return f"вход → TP1 ({r:+.1f}R)", end, round(r, 2), fill_ms
         if fill is not None:
             mtm = side * (bars[-1][4] - fill) / abs(fill - stop) if abs(fill - stop) > 0 else 0.0
-            return 'вход, без исхода', None, round(mtm, 2)
+            return 'вход, без исхода', None, round(mtm, 2), fill_ms
         if armed and breakout and not touched:
             far = max(c[2] for c in bars) if side > 0 else min(c[3] for c in bars)
             reached = (far >= tp1) if side > 0 else (far <= tp1)
-            return 'закрепление без ретеста' + (' — цена дошла до TP1 без входа' if reached else ''), None, None
-        return ('тест без реакции' if touched else 'не включился'), None, None
+            return 'закрепление без ретеста' + (' — цена дошла до TP1 без входа' if reached else ''), None, None, None
+        return ('тест без реакции' if touched else 'не включился'), None, None, None
 
     def _score_today(self, symbol: str, md) -> List[str]:
         """Today's saved briefings of the coin (data/briefings.jsonl), each scenario scored on the closed 1h candles."""
@@ -894,9 +907,19 @@ class Briefing:
             if head and head[-1][0] + 60_000 >= first_full else []
         bars = part + [c for c in closed if c[0] >= first_full and (until_ms is None or c[0] < until_ms)]
         res = []
+        # eng-168n (OCO): the long and short tied to the same current zone cancel each other - the one entered first
+        # cancels the other unless that one had already entered
+        cancel = {}
+        lg, sh = sc.get('long'), sc.get('short')
+        if lg and sh and lg.get('cur_bound') and sh.get('cur_bound'):
+            tl, tsh = self.entry_ms(lg, 1, bars), self.entry_ms(sh, -1, bars)
+            if tl is not None and (tsh is None or tsh > tl):
+                cancel['short'] = tl
+            elif tsh is not None and (tl is None or tl > tsh):
+                cancel['long'] = tsh
         for key, side, name in (('long', 1, 'лонг'), ('short', -1, 'шорт')):
             if sc.get(key):
-                txt, resolved, rv = self.score_detail(sc[key], side, bars)
+                txt, resolved, rv, _entry = self.score_detail(sc[key], side, bars, cancel_at=cancel.get(key))
                 res.append((name, txt, sc[key].get('tag', ''), resolved, rv))
         return res, ambiguous
 
@@ -916,7 +939,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b168l'
+    RULES_V = 'b168n'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
@@ -1044,6 +1067,8 @@ class Briefing:
                 armed = not x['tag'].startswith('закрепление') or any(
                     (side > 0 and b[4] > e0) or (side < 0 and b[4] < e1) for b in since[:-1])
                 # audit C15: the target must still be ahead of the reaction close (a signed reward, not abs)
+                if x.get('cur_bound') and sc.get('oco_done') not in (None, key):
+                    continue                     # eng-168n: the opposite scenario of this zone already entered
                 if armed and self.reaction(x, side, c) and side * (c[4] - x['stop']) > 0 \
                         and side * (x['targets'][0] - c[4]) >= abs(c[4] - x['stop']):     # eng-168l: R:R >= 1
                     rr = side * (x['targets'][0] - c[4]) / abs(c[4] - x['stop'])
@@ -1051,6 +1076,8 @@ class Briefing:
                                f"Вход ~{_fmt(c[4])} (закрытие 1h) · стоп {_fmt(x['stop'])} · цели "
                                + ' / '.join(_fmt(t) for t in x['targets']) + f" · R:R {rr:.1f}",
                                key=f"react|{symbol}|{key}|{sc.get('ts')}", every_sec=24 * 3600)
+                    if x.get('cur_bound'):
+                        sc['oco_done'] = key
 
     def session_now(self) -> Optional[str]:
         # audit N23: the opens in their own zones (DST of each), not fixed MSK hours: Tokyo 09:00, London 08:00,
