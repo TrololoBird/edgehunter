@@ -282,11 +282,37 @@ class Briefing:
         return bias, {**coin, 'range_mid': (b or {}).get('range_mid'), 'proxy': since,
                                   'days': len(md.d1)}
 
+    @staticmethod
+    def session_bias(md) -> Optional[int]:
+        """eng-168l (audit #3): the fast background of the next 1-3 days beside the weekly one (which read 'bull' in 11 of
+        14 falling sessions): +1 when the last closed 4h is above its EMA20, the EMA20 rose over 3 candles (12h) and the
+        24h return is positive; -1 mirrored; 0 else. A display / checklist context, not a trading filter; the periods
+        are this module's choice (no source)."""
+        if md is None:
+            return None
+        now = time.time() * 1000
+        h4 = [c[4] for c in md.h4 if c[0] + 4 * HOUR_MS <= now]
+        h1 = [c[4] for c in md.h1 if c[0] + HOUR_MS <= now]
+        if len(h4) < 30 or len(h1) < 25:
+            return None
+        from strategies.ind_panel import ema
+        import numpy as np
+        e = ema(np.asarray(h4, dtype=float), 20)
+        r24 = h1[-1] / h1[-25] - 1
+        if h4[-1] > e[-1] > e[-4] and r24 > 0:
+            return 1
+        if h4[-1] < e[-1] < e[-4] and r24 < 0:
+            return -1
+        return 0
+
     def _bias_line(self, symbol: str, bias: Optional[str], st: Dict) -> str:
         """The higher timeframe as BACKGROUND (Elder's tide: a filter of direction over weeks, not the session's
         forecast - it said 'bull' for BTC / ETH / SOL through 11 of 14 falling sessions, 2026-10-05..07)."""
         line = (f"Фон (недели): {BIAS_RU.get(bias, bias)} · неделя {_arrow(st.get('w1'))} · день "
                 f"{_arrow(st.get('d1'))} · 4h {_arrow(st.get('h4'))}")
+        sb = self.session_bias(self.sc.market_data.get(symbol))
+        if sb is not None:
+            line += f" · Импульс 1–3 дн.: {({1: 'рост', -1: 'падение', 0: 'нейтрально'})[sb]}"
         if st.get('proxy'):
             sym, ts = st['proxy']
             since = datetime.fromtimestamp(ts / 1000, MSK).strftime('%m.%Y') if ts else '?'
@@ -559,6 +585,11 @@ class Briefing:
             aligned = bias in ('bull', 'bear') and ((bias == 'bull') == (d == 1))
             against = bias in ('bull', 'bear') and not aligned
             checks.append(('Старший ТФ', 'ok' if aligned else 'bad' if against else 'warn', BIAS_RU.get(bias, bias)))
+            sb = self.session_bias(md)
+            if sb is not None:
+                # eng-168l: the fast background against the scenario is a warning (a counter-move inside the weekly tide)
+                checks.append(('Импульс 1–3 дн.', 'ok' if sb == d else 'warn',
+                               {1: 'рост', -1: 'падение', 0: 'нейтрально'}[sb]))
             checks.append(('R:R до TP1', 'ok' if rr >= 2 else 'warn' if rr >= 1 else 'bad', f"{rr:.1f}"))
             if dist is not None:
                 checks.append(('Вход от цены', 'ok' if dist <= 1.5 else 'warn' if dist <= 4 else 'bad',
@@ -660,7 +691,7 @@ class Briefing:
         with open(os.path.join('data', 'briefings.jsonl'), 'a', encoding='utf-8') as f:
             for symbol in self.watched():
                 bias, st = self._bias_of(symbol)
-                f.write(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol,
+                f.write(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'rules_v': self.RULES_V,
                                     'price': self.sc._price_of(symbol), 'bias': bias,
                                     'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
                                     'zones': self.zones.get(symbol) or [], 'scenario': self.scenario.get(symbol)},
@@ -683,7 +714,7 @@ class Briefing:
                 except Exception as e:
                     errors.report('briefing._save', e, f"Silent briefing record failed for {symbol}")
                     continue
-                f.write(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'silent': True,
+                f.write(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'silent': True, 'rules_v': self.RULES_V,
                                     'price': price, 'bias': bias,
                                     'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
                                     'zones': zones, 'scenario': {'long': p['long'], 'short': p['short'], 'price': price,
@@ -755,6 +786,10 @@ class Briefing:
                     if side * (tp1 - fill) <= 0:
                         # audit C15: the reaction closed at / beyond TP1 - no trade with a target ahead
                         return 'пропущен: реакция закрылась за TP1'
+                    if side * (tp1 - fill) < abs(fill - stop):
+                        # eng-168l (audit #3): a reaction candle that closed most of the way to TP1 leaves R:R < 1
+                        # from its close - the publication rule (R:R >= 1) applies to the real entry too
+                        return 'пропущен: реакция закрылась слишком далеко (R:R < 1)'
                 continue
             if (c[3] <= stop) if side > 0 else (c[2] >= stop):
                 return 'вход → стоп (−1R)'
@@ -823,6 +858,10 @@ class Briefing:
         return 'no_entry'
 
     OUTCOME_HOURS = 72
+    # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
+    # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
+    # score_scenario().
+    RULES_V = 'b168l'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
@@ -839,7 +878,7 @@ class Briefing:
         r_sum: Dict[str, float] = {}
         for r in recs:
             sym = r.get('symbol')
-            if r.get('ts', 0) < since or (symbol and sym != symbol):
+            if r.get('ts', 0) < since or (symbol and sym != symbol) or r.get('rules_v') != self.RULES_V:
                 continue
             m = md if (md is not None and sym == symbol) else self.sc.market_data.get(sym)
             if m is None:
@@ -883,7 +922,12 @@ class Briefing:
             price = self.sc._price_of(symbol)
             if md is None or not price:
                 continue
-            today = [c for c in md.minute_klines if c[0] >= day0]
+            # eng-168l (audit #3): the day's range from the closed 1h candles since 00:00 MSK plus the minutes after the
+            # last of them (the ~10h minute ring alone missed Asia and the morning)
+            now_ms = time.time() * 1000
+            h1d = [c for c in md.h1 if c[0] >= day0 and c[0] + HOUR_MS <= now_ms]
+            tail_from = h1d[-1][0] + HOUR_MS if h1d else day0
+            today = h1d + [c for c in md.minute_klines if c[0] >= tail_from]
             if not today:
                 continue
             hi, lo = max(c[2] for c in today), min(c[3] for c in today)
@@ -944,7 +988,7 @@ class Briefing:
                     (side > 0 and b[4] > e0) or (side < 0 and b[4] < e1) for b in since[:-1])
                 # audit C15: the target must still be ahead of the reaction close (a signed reward, not abs)
                 if armed and self.reaction(x, side, c) and side * (c[4] - x['stop']) > 0 \
-                        and side * (x['targets'][0] - c[4]) > 0:
+                        and side * (x['targets'][0] - c[4]) >= abs(c[4] - x['stop']):     # eng-168l: R:R >= 1
                     rr = side * (x['targets'][0] - c[4]) / abs(c[4] - x['stop'])
                     self._post(f"✅ {_short(symbol)}: реакция у зоны — {name.lower()}-сценарий включён\n"
                                f"Вход ~{_fmt(c[4])} (закрытие 1h) · стоп {_fmt(x['stop'])} · цели "
@@ -1066,7 +1110,10 @@ class Briefing:
             price = self.sc._price_of(symbol) or evs[-1][2]
             self._post(f"⚡ {_short(symbol)} {where}: " + '; '.join(labels) + self._zone_note(symbol, lo, hi)
                        + self._scenario_note(symbol, price),
-                       key=f"anom|{symbol}|{'|'.join(sorted(set(e[1] for e in evs)))}", every_sec=1800)
+                       # eng-168l: the side is part of the key (a long flush then a short squeeze of the same types
+                       # 12 minutes later is a new event, not a repeat)
+                       key=f"anom|{symbol}|{'L' if liq_l >= liq_s else 'S'}|{'+' if evs[-1][2] >= evs[0][2] else '-'}|"
+                           f"{'|'.join(sorted(set(e[1] for e in evs)))}", every_sec=1800)
 
     def _zone_note(self, symbol: str, lo: float, hi: float) -> str:
         """Which briefing zone the events happened at, within its tolerance."""
@@ -1088,6 +1135,17 @@ class Briefing:
             if not x:
                 continue
             e0, e1 = sorted(x['entry'])
+            # eng-168l (audit #3): a scenario already resolved since its post (TP1 / stop / cancelled / missed) is
+            # reported as such, not as still waiting
+            md = self.sc.market_data.get(symbol)
+            if md is not None and sc.get('ts'):
+                now_ms = time.time() * 1000
+                bars = [c for c in md.h1 if c[0] >= int(sc['ts'] * 1000) // HOUR_MS * HOUR_MS + HOUR_MS
+                        and c[0] + HOUR_MS <= now_ms]
+                res = self.score_scenario(x, side, bars)
+                if res.startswith(('вход →', 'отменён', 'пропущен')):
+                    notes.append(f"{name}-сценарий уже завершён: {res}")
+                    continue
             if side * (price - x['stop']) <= 0:
                 notes.append(f"{name}-сценарий отменён: цена за стопом {_fmt(x['stop'])}")
             elif x['tag'].startswith('закрепление') and side * (price - (e0 if side > 0 else e1)) > 0:
