@@ -142,8 +142,9 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         rr_ok = side * (tg[0] - worst) - cost >= abs(worst - stop) + cost
         return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag, 'rr_ok': rr_ok,
                 'conf_tf': tf,
-                # eng-168o (audit #4): the breakeven share on the same basis as the R:R check - the worst entry
-                'p': abs(worst - stop) / (abs(worst - stop) + abs(tg[0] - worst))}
+                # eng-168o / audit #9: the breakeven share on the same basis as the 'as a trade' check - the worst entry,
+                # NET of the round trip: (risk + cost) / (risk + reward)
+                'p': (abs(worst - stop) + cost) / (abs(worst - stop) + abs(tg[0] - worst))}
     def bounce():
         """Long from the nearest support below: its test + a bullish 1h reaction candle."""
         if not dn:
@@ -411,7 +412,7 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                                       boxstyle='round,pad=0.006', fc='#fdeeee', ec=RED, lw=1.2))
     fig.text(0.04, 0.058, '⚠  ' + msg, fontsize=11.5, weight='bold', color=RED, va='top')
     fig.text(0.075, 0.036, msg_sub, fontsize=9.5, color=RED, va='top')
-    fig.text(0.98, 0.006, '*доля сделок с TP1, при которой сценарий в ноль (по расстояниям, без комиссий); это не прогноз · зоны — прошлые развороты цены, реакция не гарантирована · не совет', fontsize=7, color=GREY, ha='right', va='bottom')
+    fig.text(0.98, 0.006, '*доля сделок с TP1, при которой сценарий в ноль (с комиссией и проскальзыванием); это не прогноз · зоны — прошлые развороты цены, реакция не гарантирована · не совет', fontsize=7, color=GREY, ha='right', va='bottom')
     buf = io.BytesIO()
     fig.savefig(buf, format='png')
     plt.close(fig)

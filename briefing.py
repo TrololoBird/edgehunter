@@ -64,10 +64,10 @@ def to_4h(bars: List) -> List:
     for b in bars:
         grp.setdefault(int(b[0]) // H4_MS * H4_MS, []).append(b)
     for t in sorted(grp):
-        g = sorted(grp[t], key=lambda x: x[0])
-        # eng-168z (audit #8): a 4h bar only from ALL four of its hours (a missing hour inside, or the hours before a
-        # post in the middle of the interval, made a '4h candle' of 2-3 hours)
-        if {int(x[0]) for x in g} >= {t + k * 3_600_000 for k in range(4)}:
+        # eng-168z / audit #9: exactly the four hours of the interval, one row each (a duplicate row of an hour or a
+        # misaligned timestamp is no 4h bar)
+        g = sorted({int(x[0]): x for x in grp[t]}.values(), key=lambda x: x[0])
+        if [int(x[0]) for x in g] == [t + k * 3_600_000 for k in range(4)] and len(grp[t]) == 4:
             out.append([t, g[0][1], max(x[2] for x in g), min(x[3] for x in g), g[-1][4]])
     return out
 

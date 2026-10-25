@@ -260,7 +260,10 @@ def test_breakeven_share_from_the_worst_entry():
     p = briefing_chart.plan(100.0, zones)
     lg = p['long']
     worst = max(lg['entry'])
-    assert abs(lg['p'] - abs(worst - lg['stop']) / (abs(worst - lg['stop']) + abs(lg['targets'][0] - worst))) < 1e-12
+    from config import CONFIG
+    cost = worst * (CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4)     # net since audit #9
+    expect = (abs(worst - lg['stop']) + cost) / (abs(worst - lg['stop']) + abs(lg['targets'][0] - worst))
+    assert abs(lg['p'] - expect) < 1e-12
 
 
 def test_partial_post_hour_bar_carries_the_hour_open():
@@ -407,3 +410,25 @@ def test_to_4h_needs_all_four_hours():
     t = 200 * H4_MS
     bars = [[t + k * 3_600_000, 1, 2, 0.5, 1.5] for k in (0, 1, 3)]
     assert to_4h(bars) == []
+
+
+def test_to_4h_rejects_duplicates_and_misaligned_rows():
+    from briefing import to_4h, H4_MS
+    t = 300 * H4_MS
+    full = [[t + k * 3_600_000, 1, 2, 0.5, 1.5] for k in range(4)]
+    assert len(to_4h(full)) == 1
+    assert to_4h(full + [[t + 3_600_000, 1, 9, 0.1, 1.5]]) == []                 # a duplicate hour
+    assert to_4h(full[:3] + [[t + 3 * 3_600_000 + 60_000, 1, 2, 0.5, 1.5]]) == []   # a misaligned row
+
+
+def test_costs_flip_a_borderline_trade():
+    """eng-168z: gross R:R just above 1 is 'unfavourable as a trade' once the round trip is counted."""
+    import briefing_chart
+    zones = [{'lo': 102.1, 'hi': 102.3, 'side': 1, 'tol': 0.0, 'pad': 0.0, 'mid': 102.2},
+             {'lo': 99.0, 'hi': 100.0, 'side': -1, 'tol': 0.0, 'pad': 0.0, 'mid': 99.5}]
+    p = briefing_chart.plan(100.6, zones)
+    lg = p['long']                      # entry 99-100 (worst 100), stop 99, TP1 102.1: gross R:R 2.1 -> trade-grade
+    assert lg['rr_ok']
+    zones[0].update(lo=101.02, hi=101.1)                       # gross R:R 1.02 -> net below 1
+    p = briefing_chart.plan(100.6, zones)
+    assert p['long']['rr_ok'] is False and p['long']['p'] > 0.5
