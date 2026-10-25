@@ -101,3 +101,6 @@ def _fresh_macro_calendar(monkeypatch):
     import macro_calendar
     monkeypatch.setattr(macro_calendar, 'LIVE', [])
     monkeypatch.setattr(macro_calendar, 'LIVE_AT', time.time())
+    import official_calendar                     # eng-168t: no real cache in tests
+    monkeypatch.setattr(official_calendar, '_loaded', True)
+    monkeypatch.setattr(official_calendar, 'STATE', {'events': [], 'sources': {}})

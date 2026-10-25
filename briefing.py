@@ -135,10 +135,17 @@ def macro_today(now: datetime) -> List[Tuple[datetime, str]]:
     day 10:00, jobless claims every Thursday 08:30) - rules, not a published calendar: holidays / shutdowns move them."""
     import macro_calendar
     day = now.astimezone(MSK).date()
-    if macro_calendar.LIVE:
+    # eng-168t: the official schedules (BLS / ISM / FOMC) first, then the live week's events not already listed (same
+    # release within 10 minutes)
+    import official_calendar
+    official = [(datetime.fromtimestamp(e['t'] / 1000, MSK), e['title'] + ' ❗' + (' (не подтверждено)' if e['status'] == 'unconfirmed' else ''))
+                for e in official_calendar.all_events() if datetime.fromtimestamp(e['t'] / 1000, MSK).date() == day]
+    if macro_calendar.LIVE or official:
         # eng-72: the real week calendar (ForexFactory, USD high / medium impact) replaces the publication rules
-        return [(datetime.fromtimestamp(t / 1000, MSK), f"{name}{' ❗' if imp == 'High' else ''}")
+        live = [(datetime.fromtimestamp(t / 1000, MSK), f"{name}{' ❗' if imp == 'High' else ''}")
                 for t, name, imp in macro_calendar.LIVE if datetime.fromtimestamp(t / 1000, MSK).date() == day]
+        live = [x for x in live if not any(abs((x[0] - o_[0]).total_seconds()) <= 600 for o_ in official)]
+        return sorted(official + live)
     out = []
     for t, name in macro_calendar.TIMES:
         dt = datetime.fromtimestamp(t / 1000, MSK)

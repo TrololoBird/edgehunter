@@ -1616,9 +1616,20 @@ class DataFetcher:
             req = urllib.request.Request(url, headers={'User-Agent': 'edgehunter'})
             with urllib.request.urlopen(req, timeout=25) as resp:
                 return json.load(resp)
-        last = {'cal': 0.0, 'strikes': 0.0}
+        last = {'cal': 0.0, 'strikes': 0.0, 'official': 0.0}
         while self._running:
             now = time.time()
+            if now - last['official'] > 6 * 3600:
+                # eng-168t: the official schedules (BLS / ISM / FOMC) - the blackout's primary source
+                last['official'] = now
+                try:
+                    import official_calendar
+                    st = await asyncio.to_thread(official_calendar.refresh)
+                    logger.info("Official calendar: " + ', '.join(
+                        f"{k} {v.get('n', 0)} ev" + (f" ERR {v['error']}" if v.get('error') else '')
+                        for k, v in st['sources'].items()))
+                except Exception as e:
+                    errors.report('fetcher.official_calendar', e)
             if now - last['cal'] > 3600:
                 # cached on disk: the feed answers 429 to frequent callers (each restart refetched it)
                 cache = os.path.join('models', 'ff_calendar.json')

@@ -60,10 +60,17 @@ def set_live(rows, fetched_at: float = None) -> None:
         LIVE_AT = fetched_at or time.time()
 
 
+def _sources():
+    """eng-168t: every blocking release - the official schedules first (official_calendar), the hand list, the live
+    week's High events. A release present in several sources blocks once in practice (same minute windows)."""
+    import official_calendar
+    return official_calendar.blocking_events() + list(TIMES) + [(t, n) for t, n, imp in LIVE if imp == 'High']
+
+
 def blackout(now_ms: float):
     """The release whose window `now_ms` falls in, else None."""
     cfg = CONFIG.levels
-    for t, name in list(TIMES) + [(t, n) for t, n, imp in LIVE if imp == 'High']:
+    for t, name in _sources():
         if t - cfg.macro_before_min * 60_000 <= now_ms <= t + cfg.macro_after_min * 60_000:
             return name
     return None
@@ -71,14 +78,21 @@ def blackout(now_ms: float):
 
 def upcoming(now_ms: float, within_ms: float):
     """eng-100: (time, name) of the next high-impact release within `within_ms` from now, else None."""
-    soon = [(t, n) for t, n in list(TIMES) + [(t, n) for t, n, imp in LIVE if imp == 'High'] if now_ms < t <= now_ms + within_ms]
+    soon = [(t, n) for t, n in _sources() if now_ms < t <= now_ms + within_ms]
     return min(soon) if soon else None
 
 
-def live_ok(now_ms: float) -> bool:
-    """eng-168s (audit #6, fail-closed): the weekly calendar is loaded and fresh (LIVE_MAX_AGE_SEC). Without it a
-    release may sit right on a new entry unseen - new entries / recommendations wait; open positions are managed."""
+def ff_fresh(now_ms: float) -> bool:
     return bool(LIVE_AT) and now_ms / 1000 - LIVE_AT <= LIVE_MAX_AGE_SEC
+
+
+def live_ok(now_ms: float) -> bool:
+    """eng-168s / eng-168t (audit #6, fail-closed): every blocking category (CPI, NFP, PPI, FOMC, ISM M / S) is
+    covered - by its official schedule (fresh and reaching official_calendar.COVER_DAYS ahead) or, for the uncovered
+    ones, by a fresh ForexFactory week. Otherwise a release may sit on a new entry unseen: new entries /
+    recommendations wait; open positions are managed."""
+    import official_calendar
+    return not official_calendar.uncovered(now_ms) or ff_fresh(now_ms)
 
 
 def coverage(now_ms: float):
@@ -86,6 +100,10 @@ def coverage(now_ms: float):
     the degraded state must at least be visible: the weekly feed lost / stale, or the hand list of CPI / FOMC / NFP
     already past its last date."""
     why = []
+    import official_calendar
+    off = official_calendar.status_text(now_ms)
+    if off:
+        why.append(f"official: {off}")
     if not LIVE_AT:
         why.append('weekly calendar never loaded')
     elif now_ms / 1000 - LIVE_AT > LIVE_MAX_AGE_SEC:
