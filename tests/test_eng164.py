@@ -355,3 +355,15 @@ def test_targets_include_the_current_zone_beyond_the_entry():
     p = briefing_chart.plan(104.5, zones, atr_1d=10.0, atr_1h=2.0)
     lg = p['long']
     assert lg is not None and lg['tag'] == 'отскок от поддержки' and lg['targets'][0] == 104.0
+
+
+def test_sweep_and_reclaim_shadow_entry():
+    """eng-168w: a candle below the entry range's low closing back above it enters; stop beyond its low."""
+    from briefing import Briefing, HOUR_MS
+    sc = {'entry': (99.0, 100.0), 'stop': 98.0, 'targets': [104.0], 'tag': 'отскок от поддержки'}
+    t = 472_600 * HOUR_MS
+    bars = [[t, 100.5, 100.6, 99.5, 99.8], [t + HOUR_MS, 99.8, 99.9, 98.6, 99.4],     # sweep below 99, close 99.4
+            [t + 2 * HOUR_MS, 99.4, 104.2, 99.3, 104.0]]
+    d = Briefing.sweep_variant(sc, 1, bars)
+    assert d and d['fill'] == 99.4 and abs(d['stop'] - (98.6 - 0.25)) < 1e-9 and d['tp1_hit'] and d['resolved']
+    assert Briefing.sweep_variant(sc, 1, bars[:1]) is None

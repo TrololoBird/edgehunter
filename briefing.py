@@ -334,6 +334,25 @@ class Briefing:
             return -1
         return 0
 
+    def positioning_line(self, symbol: str) -> Optional[str]:
+        """eng-168w: the crowd beside the levels - the Binance share of accounts long (global long / short ratio) and the
+        open interest change over the last hour. Context only: no rule reads it."""
+        try:
+            r = (getattr(self.sc, 'positioning', None).ratios.get(symbol) or {}).get('binance_global')
+        except AttributeError:
+            r = None
+        md = self.sc.market_data.get(symbol)
+        oi = None
+        if md is not None and getattr(md, 'oi_samples', None):
+            from strategies.oi_build import _oi_change
+            oi = _oi_change(list(md.oi_samples), time.time() * 1000, 60)
+        parts = []
+        if r:
+            parts.append(f"лонгов {r / (1 + r) * 100:.0f}% счетов (Binance)")
+        if oi is not None:
+            parts.append(f"открытый интерес {oi * 100:+.1f}% за час")
+        return ('Позиционирование: ' + ', '.join(parts)) if parts else None
+
     def _bias_line(self, symbol: str, bias: Optional[str], st: Dict) -> str:
         """The higher timeframe as BACKGROUND (Elder's tide: a filter of direction over weeks, not the session's
         forecast - it said 'bull' for BTC / ETH / SOL through 11 of 14 falling sessions, 2026-10-05..07)."""
@@ -459,6 +478,34 @@ class Briefing:
                           'near': list(dict.fromkeys(f"{l.label} ({d:.1f} ATR)" for l, d in beside)),
                           'tol': tol, 'pad': pad, 'sr_desc': what,
                           'pierce_src': 'swing_1h' + (f" (для {'/'.join(higher)} нет своей статистики)" if higher else '')})
+        # eng-168w (trace, audit #7): the key levels of the map are zones of their OWN when no pivot cluster holds
+        # them - the previous day / week high / low and today's extremes (pdhl), equal highs / lows (equal: resting
+        # stops), the week / month / year extremes, the value area (POC / VAH / VAL naked / 4-day / previous day).
+        # They were labels of the pivot clusters only, so a PDH / PWH on the path to TP1 (73 traced scenarios) was no
+        # obstacle and no target. Band: the level +- 0.15 ATR(1h) (or its body edge within one ATR); tol / pad from
+        # the measured pierce of its own kind where the model has one (pdhl, equal), else swing_1h.
+        prom = {'pdhl': ('pdhl', 2.0), 'equal': ('equal', 1.5), 'pmhl': ('pdhl', 3.0), 'year': ('pdhl', 3.0),
+                'swing_1w': ('swing_1h', 3.0), 'poc': ('swing_1h', 2.0), 'va': ('swing_1h', 2.0)}
+        for l in keep:
+            spec = prom.get(l.kind.split('_')[0] if l.kind.startswith(('poc', 'va')) else l.kind)
+            if spec is None or ' (pierce)' in (l.label or ''):
+                continue
+            if l.kind == 'pdhl' and l.label not in ('PDH', 'PDL', 'PWH', 'PWL', 'day high', 'day low'):
+                continue                                   # session extremes stay labels (they would flood the ladder)
+            if abs(l.price - price) > self.cfg.span_atr_1d * atr1d:
+                continue
+            if any(c['lo'] - c['tol'] <= l.price <= c['hi'] + c['tol'] for c in cands):
+                continue                                   # a pivot cluster holds it: its label already names it
+            pkind, strength = spec
+            half = 0.15 * atr1h
+            lo_, hi_ = l.price - half, l.price + half
+            if l.body is not None and 0 < abs(l.body - l.price) <= atr1h:
+                lo_, hi_ = sorted((l.price, l.body))
+            tol_ = min(overshoot(symbol, pkind, l.price, 'p50') or 0.1 * atr1h, 0.5 * atr1h)
+            pad_ = min(max(overshoot(symbol, pkind, l.price, 'p80') or 0.0, 0.5 * atr1h), atr1h)
+            cands.append({'lo': lo_, 'hi': hi_, 'mid': l.price, 'strength': strength, 'labels': [l.label],
+                          'near': [], 'tol': tol_, 'pad': pad_, 'sr_desc': 'уровень карты (без разворотов рядом)',
+                          'pierce_src': pkind, 'map_level': True})
         if not cands:
             return price, []
         # zones that overlap are one place: merged (up to 1.5 x ATR(1h) wide) - the cap above kept BTC's 81 857-82 500
@@ -563,6 +610,9 @@ class Briefing:
         d1 = list(md.d1) if md else []
         chg = f"{(price / d1[-1][4] - 1) * 100:+.2f}% к закрытию дня" if d1 else ''
         lines = [f"<b>{_short(symbol)}</b> {_fmt(price)} ({chg})", self._bias_line(symbol, bias, st)]
+        pos = self.positioning_line(symbol)
+        if pos:
+            lines.append(pos)
         for z in zones:
             tag = {1: '🔴 сопр.', 0: '🔵 цена в зоне', -1: '🟢 подд.'}[z['side']]
             lines.append(f"{tag} {_fmt(z['lo'])}–{_fmt(z['hi'])} [{z['strength']:.0f}] {z['label']}")
@@ -742,7 +792,8 @@ class Briefing:
                                             self.zones.get(symbol) or [], tf.get('1h'), bias_line, tf.get('1d'),
                                             candles_1h=list(md.h1), tf_label='1h',
                                             ath=ath, ath_days=ath_days, hi24=hi24, lo24=lo24)
-                cap = f"<b>{_short(symbol)}</b> · {bias_line}"
+                pos = self.positioning_line(symbol)
+                cap = f"<b>{_short(symbol)}</b> · {bias_line}" + (f"\n{pos}" if pos else '')
                 out.append((png, (head + '\n\n' + cap) if not out else cap))
             except Exception as e:
                 errors.report('briefing.card', e, symbol)
@@ -1032,6 +1083,33 @@ class Briefing:
         out['exec_r'] = round(out['exec_r'], 2)
         return out
 
+    @classmethod
+    def sweep_variant(cls, sc: Dict, side: int, bars: List) -> Optional[Dict]:
+        """eng-168w, a SHADOW entry measured beside the scenario's own (nothing is posted or traded on it): the sweep and
+        reclaim of the zone - a closed 1h candle trades beyond the zone's FAR edge (a long: below the entry range's low)
+        and closes back inside / above it; entry at that close, the stop beyond that candle's extreme by a quarter of
+        the entry range (the swept stops are behind it), the scenario's own targets; taken only with R:R >= 1 from the
+        close. Scored with exec_detail (execution_model_v1). None = no sweep and reclaim within the bars."""
+        e0, e1 = sorted(sc['entry'])
+        far = e0 if side > 0 else e1
+        buf = 0.25 * (e1 - e0)
+        tp1 = sc['targets'][0]
+        for k, c in enumerate(bars):
+            if side > 0 and c[3] < far and c[4] > far:
+                stop = c[3] - buf
+            elif side < 0 and c[2] > far and c[4] < far:
+                stop = c[2] + buf
+            else:
+                continue
+            fill = c[4]
+            risk = abs(fill - stop)
+            if not risk or side * (tp1 - fill) < risk:
+                return {'skipped': 'R:R < 1 from the reclaim close'}
+            det = cls.exec_detail(dict(sc, stop=stop), side, fill, bars[k + 1:])
+            det.update(entry_ms=c[0] + HOUR_MS, stop=stop, fill=fill)
+            return det
+        return None
+
     def _score_record(self, r: Dict, closed: List, minutes: List, until_ms: Optional[float] = None):
         """One saved briefing record against the closed 1h candles after its post: ([(name, result, tag)], ambiguous).
         audit N22: only prices AFTER the post. The hour holding the post is scored on its 1m candles after the post's
@@ -1068,6 +1146,9 @@ class Briefing:
                     after = [c for c in bars if c[0] >= entry]
                     if fill is not None:
                         det = self.exec_detail(sc[key], side, fill, after)
+                sw = self.sweep_variant(sc[key], side, bars)
+                if det is not None or sw:
+                    det = dict(det or {}, sweep=sw)
                 res.append((name, txt, sc[key].get('tag', ''), resolved, rv, det))
         return res, ambiguous
 
@@ -1087,7 +1168,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b168v'
+    RULES_V = 'b168w'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
@@ -1130,7 +1211,19 @@ class Briefing:
                 # eng-168j (audit): the result in R, not only counts (TP1: its R from the reaction close; stop: -1)
                 if rv is not None:
                     r_sum[name] = round(r_sum.get(name, 0.0) + rv, 2)
-                if det is not None:
+                sw = (det or {}).get('sweep')
+                if sw and sw.get('exec_r') is not None:
+                    # eng-168w: the shadow sweep-and-reclaim entry, its own tally beside the scenario's entry
+                    w = ex.setdefault(name + ' · вынос', {'model': self.EXEC_MODEL, 'n': 0, 'exec_r': 0.0,
+                                                           'exec_mtm_r': 0.0, 'tp1': 0, 'tp2': 0, 'stop': 0,
+                                                           'mfe_r': 0.0, 'mae_r': 0.0, 'ambiguous': 0, 'unresolved': 0})
+                    w['n'] += 1
+                    w['exec_r' if sw['resolved'] else 'exec_mtm_r'] = round(
+                        w['exec_r' if sw['resolved'] else 'exec_mtm_r'] + sw['exec_r'], 2)
+                    w['tp1'] += sw['tp1_hit']; w['tp2'] += sw['tp2_hit']; w['stop'] += sw['stop_hit']
+                    w['mfe_r'] = round(w['mfe_r'] + sw['mfe_r'], 2); w['mae_r'] = round(w['mae_r'] + sw['mae_r'], 2)
+                    w['ambiguous'] += sw['ambiguous']; w['unresolved'] += not sw['resolved']
+                if det is not None and 'exec_r' in det:
                     # eng-168r: the forecast's measures and the execution model's R, apart from the TP1-only 'r'
                     e = ex.setdefault(name, {'model': self.EXEC_MODEL, 'n': 0, 'exec_r': 0.0, 'exec_mtm_r': 0.0,
                                              'tp1': 0, 'tp2': 0, 'stop': 0, 'mfe_r': 0.0, 'mae_r': 0.0,
