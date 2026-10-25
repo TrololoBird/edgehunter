@@ -621,7 +621,10 @@ function renderHealth() {
 // ------------------------------------------------------------------------------------------------ analysis tab
 // Pinned coins always + any typed ticker: zones, scenarios and a mechanical checklist (briefing.Briefing.analyze).
 let anQuery = localStorage.getItem('anq') || '', anLast = 0;
-const VERDICT_CLS = { 'нет': 'bad', 'осторожно': 'warn', 'приемлемо': 'warn', 'условия выполнены': 'good' };
+const VERDICT_CLS = { 'нет': 'bad', 'осторожно': 'warn', 'приемлемо': 'warn', 'формальные условия выполнены': 'good' };
+// eng-168o: the verdict of a limited analysis carries a prefix; a limited one is never shown as 'good'
+const verdictCls = v => { const base = String(v || '').replace(/^ограниченный анализ: /, ''); const c = VERDICT_CLS[base] || '';
+  return base !== String(v || '') && c === 'good' ? 'warn' : c; };
 function anCard(a) {
   if (!a || a.error) return `<div class="box"><h4>${esc((a && a.symbol) || '')}</h4><div class="empty">${esc((a && a.error) || 'нет данных')}</div></div>`;
   const zones = (a.zones || []).slice().sort((x, y) => y.lo - x.lo).map(z => {
@@ -632,7 +635,7 @@ function anCard(a) {
     const s = a.scenarios && a.scenarios[k];
     if (!s) return `<div class="box"><h4>${k === 'long' ? 'Лонг' : 'Шорт'}</h4><div class="dim">сценария нет</div></div>`;
     const checks = s.checks.map(([n, st, v]) => `<span>${esc(n)}</span><span class="${st === 'ok' ? 'good' : st === 'bad' ? 'bad' : 'warn'}">${esc(v)}</span>`).join('');
-    return `<div class="box"><h4>${esc(s.name)} <span class="pill ${VERDICT_CLS[s.verdict] || ''}">${esc(s.verdict)}</span></h4>
+    return `<div class="box"><h4>${esc(s.name)} <span class="pill ${verdictCls(s.verdict)}">${esc(s.verdict)}</span></h4>
       <div class="dim">${esc(s.cond)}</div>
       <div class="kv"><span>вход</span><span class="mono">${fp(s.entry[0])}–${fp(s.entry[1])}</span><span>стоп</span><span class="mono">${fp(s.stop)}</span>
       <span>цели</span><span class="mono">${s.targets.map(fp).join(' / ')}</span><span>R:R до TP1</span><span class="mono">${s.rr.toFixed(1)}</span>
@@ -647,6 +650,8 @@ function anCard(a) {
       ${a.chg_day != null ? `<span class="${a.chg_day >= 0 ? 'good' : 'bad'}">${a.chg_day >= 0 ? '+' : ''}${a.chg_day.toFixed(2)}%</span>` : ''}
       ${a.light ? '<span class="pill warn" title="монета вне вселенной бота: только свечи Binance, без потоков, ликвидаций и карты уровней">только свечи</span>' : ''}</h4>
     <div class="dim">${esc(a.bias_line || '')}</div>
+    ${(a.notices || []).map(n => `<div class="dim warn">${esc(n)}</div>`).join('')}
+    ${a.data_as_of && a.data_as_of.last_closed_1h ? `<div class="dim">данные: последняя закрытая 1h ${new Date(a.data_as_of.last_closed_1h).toLocaleString()} · ${a.data_as_of.source === 'binance_rest' ? 'REST Binance' : 'память бота'}</div>` : ''}
     ${a.macro && a.macro.length ? `<div class="warn">Макро сегодня (МСК): ${a.macro.map(esc).join(', ')}</div>` : ''}
     ${cards ? `<div>Карточки бота: ${cards}</div>` : ''}
     <div class="tablewrap"><table><tbody>${zones || '<tr><td class="dim">зон рядом нет</td></tr>'}</tbody></table></div>

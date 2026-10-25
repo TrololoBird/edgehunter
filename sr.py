@@ -138,7 +138,7 @@ def reaction_stats(h1: np.ndarray, lo: float, hi: float, first_ms: float, group:
     (within one candle of their timeframe) left out. An approach starts on a candle that came from outside (the
     previous close beyond one edge) and traded into the band; it ends on the first close outside: back on the
     approach side = a rejection, beyond the far edge = a break (closes inside keep it open). max_pierce_atr: the deepest
-    wick past the near edge on a rejection, in ATR14(1h)."""
+    wick past the near edge on a rejection (max_pierce_on_rejection), in ATR14(1h)."""
     out = {'approaches': 0, 'rejections': 0, 'breaks': 0, 'hold_rate': None, 'max_pierce_atr': None}
     if not len(h1):
         return out
@@ -171,6 +171,9 @@ def reaction_stats(h1: np.ndarray, lo: float, hi: float, first_ms: float, group:
                 out['breaks'] += 1
                 side = 0
         prev_close = r[4]
+    # eng-168o (audit #4): the window the statistics actually cover (the loaded 1h history may start after the
+    # zone's first pivot - a daily pivot can be 120 days old, the 1h list ~20 days)
+    out['from_ms'] = int(max(first_ms, h1[0, 0]))
     if out['approaches']:
         out['hold_rate'] = round(out['rejections'] / out['approaches'], 2)
     if pierce:

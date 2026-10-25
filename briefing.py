@@ -276,11 +276,15 @@ class Briefing:
             now_ms = time.time() * 1000
             d1 = [c for c in md.d1 if c[0] + 86_400_000 <= now_ms]
             paxg = [c for c in (hist.get('1d') or []) if c[0] < (d1[0][0] if d1 else 0)]
-            need = 365 - (len(d1) - 1)
+            # eng-168o (audit #4): the days the contract covers by its timestamps (a missing day must not shift the leg)
+            need = 365 - int(round((d1[-1][0] - d1[0][0]) / 86_400_000)) if d1 else 0
             if d1 and len(paxg) > need > 0:
                 import numpy as np
                 from strategies import bias as htf
-                leg = d1[-1][4] / d1[0][4] * (paxg[-1][4] / paxg[-1 - need][4])
+                # the PAXG close nearest to `need` days before the contract's first day, by date
+                t0 = d1[0][0] - need * 86_400_000
+                base_px = min(paxg, key=lambda c: abs(c[0] - t0))
+                leg = d1[-1][4] / d1[0][4] * (paxg[-1][4] / base_px[4])
                 signs = [np.sign(d1[-1][4] / d1[-1 - n][4] - 1) for n in (30, 90) if len(d1) > n] + [np.sign(leg - 1)]
                 coin['tsm'] = round(float(np.mean(signs)), 3)
                 coin['bias'] = htf.bias_of({'tsm': coin['tsm'], 'w1': coin.get('w1'), 'd1': coin.get('d1'),
@@ -427,7 +431,7 @@ class Briefing:
                           'sr_desc': what})
         if not cands:
             return price, []
-        # zones that overlap are one place: merged (up to a daily ATR wide) - the cap above kept BTC's 81 857-82 500
+        # zones that overlap are one place: merged (up to 1.5 x ATR(1h) wide) - the cap above kept BTC's 81 857-82 500
         # and 81 511-82 414 apart and the card drew one inside the other (2026-10-08 09:30)
         cands.sort(key=lambda m: m['lo'])
         merged = [cands[0]]
@@ -439,7 +443,7 @@ class Briefing:
                 a['labels'] = list(dict.fromkeys(a['labels'] + m['labels']))
                 continue
             if m['lo'] <= a['hi'] and max(a['hi'], m['hi']) - a['lo'] > 1.5 * atr1h:
-                # overlapping but together wider than a daily ATR: split at the middle of the overlap (XAU 4 109-4 165
+                # overlapping but together wider than 1.5 x ATR(1h): split at the middle of the overlap (XAU 4 109-4 165
                 # and 4 161-4 173 were drawn one inside the other)
                 cut = (m['lo'] + min(a['hi'], m['hi'])) / 2
                 a['hi'], m = cut, {**m, 'lo': cut}
@@ -575,7 +579,20 @@ class Briefing:
         p = briefing_chart.plan(price, zones, atr1d, ath, days, atr_1h=atr1h)
         events = macro_today(datetime.now(MSK))
         d1c = [c for c in md.d1 if c[0] + 86_400_000 <= time.time() * 1000]       # closed days only (REST rows hold today's)
+        now_ms = time.time() * 1000
+        h1c = [c for c in md.h1 if c[0] + HOUR_MS <= now_ms]
+        notices = []
+        if src is not None:
+            # eng-168o (audit #4): a coin outside the universe is a LIMITED analysis - REST candles only, no level map,
+            # no flow, pierce statistics of a liquidity group, no bot cards possible
+            notices.append('Ограниченный анализ: только свечи Binance (нет карты уровней, потоков и своей статистики '
+                           'проколов); монета вне контура сигналов бота')
+        if bias is None and len([c for c in md.d1 if c[0] + 86_400_000 <= now_ms]) < 60:
+            notices.append('Старший фон: недостаточно истории (нужно 60 закрытых дней)')
         out = {'symbol': symbol, 'base': _short(symbol), 'price': price, 'light': src is not None,
+               'scope': 'limited' if src is not None else 'full', 'notices': notices,
+               'data_as_of': {'last_closed_1h': int(h1c[-1][0] + HOUR_MS) if h1c else None,
+                              'source': 'binance_rest' if src is not None else 'memory', 'generated_at': int(now_ms)},
                'chg_day': (price / d1c[-1][4] - 1) * 100 if d1c else None,
                'bias': bias, 'bias_ru': BIAS_RU.get(bias, bias), 'bias_line': self._bias_line(symbol, bias, st),
                'atr1h': atr1h, 'atr1d': atr1d,
@@ -597,7 +614,8 @@ class Briefing:
             checks = []
             aligned = bias in ('bull', 'bear') and ((bias == 'bull') == (d == 1))
             against = bias in ('bull', 'bear') and not aligned
-            checks.append(('Старший ТФ', 'ok' if aligned else 'bad' if against else 'warn', BIAS_RU.get(bias, bias)))
+            checks.append(('Старший ТФ', 'ok' if aligned else 'bad' if against else 'warn',
+                           BIAS_RU.get(bias, bias) if bias is not None else 'недостаточно данных'))
             sb = self.session_bias(md)
             if sb is not None:
                 # eng-168l: the fast background against the scenario is a warning (a counter-move inside the weekly tide)
@@ -618,6 +636,8 @@ class Briefing:
             bad = sum(1 for _, s, _ in checks if s == 'bad')
             warn = sum(1 for _, s, _ in checks if s == 'warn')
             verdict = 'нет' if bad else 'осторожно' if warn >= 2 else 'формальные условия выполнены' if warn == 0 else 'приемлемо'
+            if src is not None:
+                verdict = f"ограниченный анализ: {verdict}"
             out['scenarios'][side] = {
                 'name': name, 'cond': sc['cond'], 'tag': sc.get('tag'), 'entry': list(sc['entry']), 'stop': sc['stop'],
                 'targets': list(sc['targets']), 'p': sc['p'], 'rr': rr, 'checks': checks, 'verdict': verdict}
@@ -903,7 +923,9 @@ class Briefing:
         head = [c for c in minutes if post_ms <= c[0] < first_full]
         ambiguous = not head and post_ms % HOUR_MS != 0
         # the post-hour's minutes after the post as ONE partial 1h bar (the reaction rule reads 1h candle shapes)
-        part = [[head[0][0], head[0][1], max(c[2] for c in head), min(c[3] for c in head), head[-1][4]]] \
+        # eng-168o (audit #4): the partial bar carries the HOUR's open time (its end = that hour's close); it carried
+        # the first minute's time, so its close time / an entry on it read up to an hour late
+        part = [[first_full - HOUR_MS, head[0][1], max(c[2] for c in head), min(c[3] for c in head), head[-1][4]]] \
             if head and head[-1][0] + 60_000 >= first_full else []
         bars = part + [c for c in closed if c[0] >= first_full and (until_ms is None or c[0] < until_ms)]
         res = []
@@ -939,7 +961,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b168n'
+    RULES_V = 'b168o'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):

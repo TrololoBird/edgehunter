@@ -59,7 +59,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
     - price BETWEEN zones: long = the retest of the nearest support from above with a reaction, short = the retest of
       the nearest resistance from below with a rejection;
     a retest / close counts within the zone's measured pierce (`tol`: Murphy - zones, not prices; Bulkowski - the
-    close beyond decides, not an exact touch); the stop beyond the WHOLE zone + `pad` (the p80 pierce, >= 1.5 1h ATR -
+    close beyond decides, not an exact touch); the stop beyond the WHOLE zone + `pad` (the p80 pierce clamped to 0.5-1 ATR(1h) -
     Osler: stops cluster just beyond levels; was a quarter of the zone / 0.1%: ETH's stop sat 6 dollars below the
     edge); targets are real zones' near edges only - ATR steps only above the highest high of the history held
     (`ath`, price discovery), labelled; percentages from the ENTRY.
@@ -130,7 +130,8 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
                 f"ближе стопа {_fmt(stop)} ({_pct(stop, e)}), R:R < 1")
             return None
         return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag,
-                'p': abs(e - stop) / (abs(e - stop) + abs(tg[0] - e))}
+                # eng-168o (audit #4): the breakeven share on the same basis as the R:R check - the worst entry
+                'p': abs(worst - stop) / (abs(worst - stop) + abs(tg[0] - worst))}
     def bounce():
         """Long from the nearest support below: its test + a bullish 1h reaction candle."""
         if not dn:
@@ -195,6 +196,11 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
             out['short'] = first_valid(fade(), dn_break(), from_top())
         if out['long'] and out['short'] and out['long'].get('cur_bound') and out['short'].get('cur_bound'):
             out['oco'] = True
+        # eng-168o (audit #4): a rejected candidate left 'нет выгодного входа' on the card although another variant
+        # of that side was chosen - the skip text stays only when the side has no scenario
+        for side_ in ('long', 'short'):
+            if out[side_]:
+                out.pop('skip_' + side_, None)
     else:
         if dn:
             z = dn[0]
