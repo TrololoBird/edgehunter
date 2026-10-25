@@ -119,11 +119,11 @@ def test_enter_shadow_tags_are_per_attempt():
 
 def test_range_is_its_own_tag_for_with_bias_setups():
     from strategies import bias
-    assert bias.gate('sweep', 1, 'range', None, False) == 'htf_range'
-    assert bias.gate('supply_demand', -1, 'range', None, False) == 'htf_range'
-    assert bias.gate('sweep', 1, 'bear', None, False) == 'htf_bias'
-    assert bias.gate('orb', 1, 'range', None, False) == 'htf_bias'
-    assert bias.gate('bollinger', 1, 'range', None, False) is None
+    assert bias.gate('sweep', 1, 'range') == 'htf_range'
+    assert bias.gate('supply_demand', -1, 'range') == 'htf_range'
+    assert bias.gate('sweep', 1, 'bear') == 'htf_bias'
+    assert bias.gate('orb', 1, 'range') == 'htf_bias'
+    assert bias.gate('bollinger', 1, 'range') is None
 
 
 def test_card_tp1_is_the_systems_own_level_target():

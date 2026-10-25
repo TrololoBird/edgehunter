@@ -677,7 +677,10 @@ class StrategiesConfig:
     # eng-165: 'not_in_pool' BLOCKS (owner, live: entries tagged with it -0.20R a trade vs +0.01R without, 50 / 64
     # entries, 8h replay). Bug fixed here: an inline comment added in eng-159 commented out the rest of this line, so
     # 'not_in_pool' / 'h4_against' / 'regime_flat' had silently been blocking since 2026-10-24 19:10.
+    # eng-168 (owner, 25.10): 'not_in_pool' back in shadow - -0.20R vs +0.01R is inside the noise; the clean eng-168
+    # sample needs the full entry flow
     shadow_vetoes: tuple = ('against_trend', 'pd_late', 'pd_spike_fail',   # eng-159: detector phases
+                            'not_in_pool',
                             'no_prior_trend',                             # eng-164
                             'pt_squeeze',                                 # eng-167 (audit F-14)
                             'h4_against', 'regime_flat',

@@ -91,8 +91,7 @@ def bias_of(st: Optional[Dict], daily_method: bool = False) -> Optional[str]:
     return 'conflict'
 
 
-def gate(strategy: str, direction: int, coin_bias: Optional[str], btc_bias: Optional[str],
-         is_btc: bool) -> Optional[str]:
+def gate(strategy: str, direction: int, coin_bias: Optional[str]) -> Optional[str]:
     """The veto reason of an entry against the top-down bias, None when allowed. audit C08: an unknown bias is
     'no_bias' (journaled - in shadow under 'no_*' while the bias's role in each source is unsettled), not a silent
     pass recorded as if the bias agreed."""
@@ -102,7 +101,7 @@ def gate(strategy: str, direction: int, coin_bias: Optional[str], btc_bias: Opti
         return 'no_bias'
     side = 'bull' if direction > 0 else 'bear'
     # eng-100: the 'btc_bias' veto removed - BTC's direction now scales the risk (the 7-day momentum regime in the
-    # executor) instead of blocking the trade
+    # executor) instead of blocking the trade; eng-168: its unused btc_bias / is_btc arguments removed
     if coin_bias == 'conflict':
         return 'htf_conflict'
     if strategy in WITH_BIAS and coin_bias == 'range':

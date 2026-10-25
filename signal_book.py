@@ -1486,8 +1486,7 @@ class SignalBook:
         # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py). eng-168 (audit):
         # evaluated even after an earlier veto so its shadow tag is journaled on every row (no censoring by order)
         key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
-        bias_reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key),
-                                    (hb.get('btc') or {}).get(key), s.symbol.startswith('BTC/'))
+        bias_reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key))
         if reason is None:
             reason = shadow_veto(s.sig, bias_reason)
         else:
