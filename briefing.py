@@ -1107,11 +1107,15 @@ class Briefing:
             await asyncio.sleep(30)
         await asyncio.sleep(120)                            # the maps / histories of the watched coins
         # the zones to watch exist from the start (a briefing is not sent at start-up)
-        for symbol in self.watched():
-            try:
-                self.key_zones(symbol) and self.coin_text(symbol)
-            except Exception as e:
-                errors.report('briefing.init', e, symbol)
+        # eng-168i: off the event loop - the zones (sr.zones, ~1-2 s CPU a coin) and the XAU proxy history (a blocking
+        # urllib request, 20 s timeout) blocked the scanner's loop 1.5-2.2 s at a time (watchdog, 24-25.10)
+        def init_zones():
+            for symbol in self.watched():
+                try:
+                    self.key_zones(symbol) and self.coin_text(symbol)
+                except Exception as e:
+                    errors.report('briefing.init', e, symbol)
+        await asyncio.to_thread(init_zones)
         # the 1h candles closed before the start were judged by the previous run: alerts only for candles that close
         # from now on (each restart re-alerted the last closed hour: CL at 01:02 and 01:07)
         now_ms = time.time() * 1000
@@ -1144,14 +1148,14 @@ class Briefing:
                         self._post(f"📅 Через {int((dt - now).total_seconds() // 60)} мин: {name} ({dt:%H:%M} МСК) — "
                                    f"входы бота за 30 мин до / 60 после CPI и FOMC блокируются",
                                    key=f"macro|{dt:%Y%m%d%H%M}", every_sec=86400, topic='briefing')
-                self.check_shock()
+                await asyncio.to_thread(self.check_shock)        # eng-168i: every check off the event loop
                 await asyncio.to_thread(self.check_demo)          # SQLite reads off the event loop
                 await asyncio.to_thread(self.check_anomalies)
                 if tick % 2 == 0:
-                    self.check_levels()
+                    await asyncio.to_thread(self.check_levels)    # key_zones / coin_text: sr.zones CPU
                 if tick % 15 == 0:
                     await asyncio.to_thread(self.check_bias)
-                    self.check_health()
+                    await asyncio.to_thread(self.check_health)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
