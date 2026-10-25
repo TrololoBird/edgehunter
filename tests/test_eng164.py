@@ -132,3 +132,10 @@ def test_card_tp1_is_the_systems_own_level_target():
     assert card_tp1(plan) == 110.0
     assert card_tp1({'targets': [101.0], 'exit': {'tp': ['trail']}}) == 101.0
     assert card_tp1({'targets': [101.0]}) == 101.0
+
+
+def test_continuation_new_high_before_the_zone_is_not_missed():
+    """eng-168e: the source guard exists - a continuation's TP1 at the impulse end does not end a card outside the zone."""
+    import signal_book
+    src = open(signal_book.__file__).read()
+    assert "eng-168e" in src and "frozen_in_zone" in src[src.index('eng-168e') - 400:src.index('eng-168e')]

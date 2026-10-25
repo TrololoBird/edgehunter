@@ -1150,6 +1150,17 @@ class SignalBook:
         # eng-108: with structural lifetimes EVERY waiting card ends once TP1 traded before an entry (its structural end;
         # the invented waiting clocks are gone)
         tp_seen = self._tp1_since(s, candles_of, tp1, plan) if version_no(s.logic_version) >= 141 else None
+        imp = plan.get('impulse') or {}
+        if imp.get('end') is not None and s.status != 'ZONE' and getattr(strategy, 'frozen_in_zone', False) \
+                and abs(tp1 - imp['end']) <= 1e-9 * max(abs(tp1), 1.0):
+            # eng-168e: a continuation's TP1 is the impulse's own end (ICT's prior high, extension 1.0) and its plan
+            # follows a continuing impulse until price reaches the OTE zone. A new high before the pullback is the leg
+            # extending (the next plan moves its end), not "TP1 reached" - that ended 113 of 114 MISSED continuation
+            # cards whose price never came back to the zone. After the zone was reached the plan is frozen and the
+            # MISSED rule applies as before.
+            tp_seen = None
+            if d * (price - tp1) >= 0:
+                return None
         if (plan.get('missable') or CONFIG.strategies.structural_lifetimes) and (d * (price - tp1) >= 0
                                                                                   or tp_seen is not None):
             reasons = ', '.join(sorted(set(s.veto_log)))
