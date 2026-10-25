@@ -335,3 +335,12 @@ def test_macro_gate_fails_closed_without_a_fresh_calendar(monkeypatch):
     assert not mc.live_ok(now)
     monkeypatch.setattr(mc, 'LIVE_AT', time.time() - 60)
     assert mc.live_ok(now)
+
+
+def test_forecast_counts_tp1_only_before_the_stop():
+    """eng-168u: stop first, TP1 later -> stop_hit only (TP1 after the stop is not a forecast hit)."""
+    from briefing import Briefing, HOUR_MS
+    sc = {'stop': 98.0, 'targets': [103.0], 'entry': (99, 100), 'tag': 'x'}
+    t = 472_500 * HOUR_MS
+    d = Briefing.exec_detail(sc, 1, 100.0, [[t, 100, 100.5, 97.5, 98.2], [t + HOUR_MS, 98.2, 104.0, 98.1, 103.5]])
+    assert d['stop_hit'] and not d['tp1_hit']

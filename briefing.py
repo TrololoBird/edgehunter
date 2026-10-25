@@ -992,7 +992,8 @@ class Briefing:
             fav = c[2] if side > 0 else c[3]
             adv = c[3] if side > 0 else c[2]
             stop_now = side * (adv - stop) <= 0
-            if side * (fav - tp1) >= 0 and not out['tp1_hit'] and not (stop_now and not out['tp1_hit']):
+            # eng-168u: the forecast counts the FIRST of TP1 / stop only (TP1 after the stop was counted as a hit too)
+            if side * (fav - tp1) >= 0 and not out['tp1_hit'] and not out['stop_hit'] and not stop_now:
                 out['tp1_hit'] = True
                 out['hours'] = out['hours'] or round((c[0] + HOUR_MS - t0) / HOUR_MS, 1)
             if tp2 is not None and side * (fav - tp2) >= 0 and out['tp1_hit']:
