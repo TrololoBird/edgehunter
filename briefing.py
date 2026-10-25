@@ -264,17 +264,28 @@ class Briefing:
         md = md if md is not None else self.sc.market_data.get(symbol)
         if md is None:
             return None, {}
-        src, since = md, None
+        since = None
         base = _short(symbol)
-        if base in self.PROXY and 0 < len(md.d1) < 366:
+        b = self.sc.fetcher.htf_bias(md, time.time() * 1000)
+        coin = dict((b or {}).get('coin') or {})
+        if base in self.PROXY and 0 < len(md.d1) < 366 and coin.get('d1') is not None:
+            # eng-168m (audit #3): every indicator (EMA / ADX / the 30 / 90-day signs) on the contract's OWN candles; the
+            # proxy (PAXG spot) only completes the 365-day return as a product of the two legs' relative moves, each
+            # on its own dates - no candle splice, no scale from one overlap candle
             hist = self._proxy_history(base)
-            if hist.get('1d'):
-                import types
-                src = types.SimpleNamespace(symbol=md.symbol, h1=md.h1, h4=md.h4, last_price=md.last_price, d1=self._splice(list(md.d1), hist['1d']),
-                                            w1=self._splice(list(md.w1), hist.get('1w') or []))
-                since = (self.PROXY[base], md.d1[0][0] if md.d1 else None)
-        b = self.sc.fetcher.htf_bias(src, time.time() * 1000)
-        coin = (b or {}).get('coin') or {}
+            now_ms = time.time() * 1000
+            d1 = [c for c in md.d1 if c[0] + 86_400_000 <= now_ms]
+            paxg = [c for c in (hist.get('1d') or []) if c[0] < (d1[0][0] if d1 else 0)]
+            need = 365 - (len(d1) - 1)
+            if d1 and len(paxg) > need > 0:
+                import numpy as np
+                from strategies import bias as htf
+                leg = d1[-1][4] / d1[0][4] * (paxg[-1][4] / paxg[-1 - need][4])
+                signs = [np.sign(d1[-1][4] / d1[-1 - n][4] - 1) for n in (30, 90) if len(d1) > n] + [np.sign(leg - 1)]
+                coin['tsm'] = round(float(np.mean(signs)), 3)
+                coin['bias'] = htf.bias_of({'tsm': coin['tsm'], 'w1': coin.get('w1'), 'd1': coin.get('d1'),
+                                            'h4': coin.get('h4'), 'adx4': coin.get('adx4')})
+                since = (self.PROXY[base], d1[0][0])
         bias, h4, adx4 = coin.get('bias'), coin.get('h4'), coin.get('adx4')
         if self.cfg.bias_h4_adx > 0 and bias in ('bull', 'bear') and h4 == (-1 if bias == 'bull' else 1) and \
                 adx4 is not None and adx4 >= self.cfg.bias_h4_adx:
@@ -316,7 +327,7 @@ class Briefing:
         if st.get('proxy'):
             sym, ts = st['proxy']
             since = datetime.fromtimestamp(ts / 1000, MSK).strftime('%m.%Y') if ts else '?'
-            line += f" · история {_short(symbol)} с {since}, раньше {sym}"
+            line += f" · {_short(symbol)} с {since}, 365д-тренд дополнен {sym}"
         elif st.get('days') and st['days'] < 366:
             line += f" · история {st['days']} дн. (нет 12-мес. импульса)"
         return line
@@ -760,6 +771,13 @@ class Briefing:
 
     @classmethod
     def score_scenario(cls, sc: Dict, side: int, bars: List) -> str:
+        return cls.score_detail(sc, side, bars)[0]
+
+    @classmethod
+    def score_detail(cls, sc: Dict, side: int, bars: List) -> Tuple[str, Optional[float], Optional[float]]:
+        """score_scenario's (text, resolved_ms, r). eng-168m: resolved_ms = the close of the candle that ended it (TP1 /
+        stop / cancelled / missed), None while undecided; r = the result in R (TP1 R, -1), and for an entered scenario
+        still undecided the mark-to-market R at the last candle's close (an 'expired open' trade is not dropped)."""
         """
         One briefing scenario against the 1h candles after its post: 'закрепление' plans arm on a 1h close beyond the
         zone, then every plan enters on its reaction candle's close (`reaction`); then the first of the stop or TP1
@@ -773,6 +791,7 @@ class Briefing:
         fill = None
         touched = False
         for c in bars:
+            end = c[0] + HOUR_MS
             if not armed:
                 if (side > 0 and c[4] > e0) or (side < 0 and c[4] < e1):
                     armed = True
@@ -780,28 +799,30 @@ class Briefing:
             if fill is None:
                 touched = touched or (c[3] <= e1 and c[2] >= e0)
                 if side * (c[4] - stop) <= 0:
-                    return 'отменён: закрытие за стопом до реакции'
+                    return 'отменён: закрытие за стопом до реакции', end, None
                 if cls.reaction(sc, side, c):
                     fill = c[4]
                     if side * (tp1 - fill) <= 0:
                         # audit C15: the reaction closed at / beyond TP1 - no trade with a target ahead
-                        return 'пропущен: реакция закрылась за TP1'
+                        return 'пропущен: реакция закрылась за TP1', end, None
                     if side * (tp1 - fill) < abs(fill - stop):
                         # eng-168l (audit #3): a reaction candle that closed most of the way to TP1 leaves R:R < 1
                         # from its close - the publication rule (R:R >= 1) applies to the real entry too
-                        return 'пропущен: реакция закрылась слишком далеко (R:R < 1)'
+                        return 'пропущен: реакция закрылась слишком далеко (R:R < 1)', end, None
                 continue
             if (c[3] <= stop) if side > 0 else (c[2] >= stop):
-                return 'вход → стоп (−1R)'
+                return 'вход → стоп (−1R)', end, -1.0
             if (c[2] >= tp1) if side > 0 else (c[3] <= tp1):
-                return f"вход → TP1 ({side * (tp1 - fill) / abs(fill - stop):+.1f}R)"
+                r = side * (tp1 - fill) / abs(fill - stop)
+                return f"вход → TP1 ({r:+.1f}R)", end, round(r, 2)
         if fill is not None:
-            return 'вход, без исхода'
+            mtm = side * (bars[-1][4] - fill) / abs(fill - stop) if abs(fill - stop) > 0 else 0.0
+            return 'вход, без исхода', None, round(mtm, 2)
         if armed and breakout and not touched:
             far = max(c[2] for c in bars) if side > 0 else min(c[3] for c in bars)
             reached = (far >= tp1) if side > 0 else (far <= tp1)
-            return 'закрепление без ретеста' + (' — цена дошла до TP1 без входа' if reached else '')
-        return 'тест без реакции' if touched else 'не включился'
+            return 'закрепление без ретеста' + (' — цена дошла до TP1 без входа' if reached else ''), None, None
+        return ('тест без реакции' if touched else 'не включился'), None, None
 
     def _score_today(self, symbol: str, md) -> List[str]:
         """Today's saved briefings of the coin (data/briefings.jsonl), each scenario scored on the closed 1h candles."""
@@ -822,8 +843,41 @@ class Briefing:
                 continue
             res, ambiguous = self._score_record(r, closed, minutes)
             if res:
-                out.append(f"· {r['title']} ({r['slot'][-5:]}): " + '; '.join(f"{name}: {txt}" for name, txt, _ in res)
+                out.append(f"· {r['title']} ({r['slot'][-5:]}): " + '; '.join(f"{name}: {txt}" for name, txt, *_ in res)
                            + (' (час публикации не оценён: нет минутных свечей)' if ambiguous else ''))
+        return out
+
+    def _resolved_today(self, symbol: str, md, day0: int) -> List[str]:
+        """eng-168m (audit #3): the published scenarios of the previous days (within OUTCOME_HOURS) whose outcome came
+        TODAY (MSK): TP1 / stop / cancelled / missed on a candle closed today, or the horizon ended today with the trade
+        still open (marked to market). The recap scored only today's posts."""
+        import json
+        try:
+            with open(os.path.join('data', 'briefings.jsonl'), encoding='utf-8') as f:
+                recs = [json.loads(x) for x in f if x.strip()]
+        except (OSError, ValueError):
+            return []
+        now = time.time() * 1000
+        today = f"{datetime.now(MSK):%Y-%m-%d}"
+        closed = [c for c in md.h1 if c[0] + HOUR_MS <= now]
+        minutes = [c for c in md.minute_klines if c[0] + 60_000 <= now]
+        out = []
+        for r in recs:
+            if r.get('symbol') != symbol or r.get('silent') or r.get('rules_v') != self.RULES_V \
+                    or str(r.get('slot', '')).startswith(today):
+                continue
+            until = r['ts'] * 1000 + self.OUTCOME_HOURS * HOUR_MS
+            if until < day0:
+                continue
+            res, _ = self._score_record(r, closed, minutes, until_ms=until)
+            done = []
+            for name, txt, _tag, resolved, rv in res:
+                if resolved is not None and resolved >= day0:
+                    done.append(f"{name}: {txt}")
+                elif resolved is None and txt.startswith('вход, без исхода') and day0 <= until <= now:
+                    done.append(f"{name}: истёк открытым ({rv:+.2f}R по рынку)")
+            if done:
+                out.append(f"· завершились сегодня — {r['title']} {r['slot'][5:]}: " + '; '.join(done))
         return out
 
     def _score_record(self, r: Dict, closed: List, minutes: List, until_ms: Optional[float] = None):
@@ -842,7 +896,8 @@ class Briefing:
         res = []
         for key, side, name in (('long', 1, 'лонг'), ('short', -1, 'шорт')):
             if sc.get(key):
-                res.append((name, self.score_scenario(sc[key], side, bars), sc[key].get('tag', '')))
+                txt, resolved, rv = self.score_detail(sc[key], side, bars)
+                res.append((name, txt, sc[key].get('tag', ''), resolved, rv))
         return res, ambiguous
 
     @staticmethod
@@ -890,16 +945,17 @@ class Briefing:
             # pinned coins not posted) are a separate shadow tally ('<side> (тихие)'), not mixed with the posted ones
             until = r['ts'] * 1000 + self.OUTCOME_HOURS * HOUR_MS
             res, _ = self._score_record(r, closed, minutes, until_ms=until)
-            for name, txt, _tag in res:
+            for name, txt, _tag, _resolved, rdet in res:
                 cls = self._outcome_class(txt)
+                rv = self._outcome_r(txt)
                 if cls == 'open' and now >= until:
-                    cls = 'expired'
+                    # eng-168m: entered and undecided at the horizon - 'expired_open', marked to market in R
+                    cls, rv = 'expired_open', rdet
                 if r.get('silent'):
                     name = f"{name} (тихие)"
                 tally.setdefault(name, {}).setdefault(cls, 0)
                 tally[name][cls] += 1
                 # eng-168j (audit): the result in R, not only counts (TP1: its R from the reaction close; stop: -1)
-                rv = self._outcome_r(txt)
                 if rv is not None:
                     r_sum[name] = round(r_sum.get(name, 0.0) + rv, 2)
         return {'days': days, 'tally': tally, 'r': r_sum}
@@ -946,6 +1002,7 @@ class Briefing:
                     res = 'цена в зоне' if z['lo'] <= price <= z['hi'] else ('вышли вверх' if price > z['hi'] else 'вышли вниз')
                 lines.append(f"· {_fmt(z['lo'])}–{_fmt(z['hi'])}: {res}")
             lines += self._score_today(symbol, md)
+            lines += self._resolved_today(symbol, md, day0)
             parts.append('\n'.join(lines))
         return '\n\n'.join(parts)
 

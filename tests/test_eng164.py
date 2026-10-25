@@ -182,3 +182,17 @@ def test_briefing_stop_goes_beyond_every_stacked_zone():
              {'lo': 96.0, 'hi': 96.7, 'side': -1, 'tol': 0.1, 'pad': 0.5, 'mid': 96.3}]
     p = briefing_chart.plan(100.0, zones)
     assert p['long'] is not None and p['long']['stop'] < 96.0
+
+
+def test_briefing_score_detail_marks_an_open_trade_to_market():
+    """eng-168m: an entered scenario still undecided reports its mark-to-market R; a stop reports its candle's close."""
+    from briefing import Briefing, HOUR_MS
+    sc = {'entry': (99.0, 100.0), 'stop': 98.0, 'targets': [104.0], 'tag': 'отскок от поддержки'}
+    t = 1_700_000_000_000
+    react = [t, 99.5, 101.0, 99.2, 100.5]                     # low <= e1, close > e1 and > open: entry 100.5
+    later = [t + HOUR_MS, 100.5, 101.5, 100.2, 101.75]
+    txt, resolved, r = Briefing.score_detail(sc, 1, [react, later])
+    assert txt == 'вход, без исхода' and resolved is None and r == 0.5
+    stop = [t + 2 * HOUR_MS, 101.0, 101.0, 97.5, 98.0]
+    txt, resolved, r = Briefing.score_detail(sc, 1, [react, later, stop])
+    assert txt.startswith('вход → стоп') and resolved == t + 3 * HOUR_MS and r == -1.0
