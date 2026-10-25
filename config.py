@@ -815,6 +815,11 @@ class StrategiesConfig:
     # eng-156: 6 again - the Turtles' closely correlated markets limit (Faith, Original Turtle Rules: 4 / 6 / 10 / 12);
     # 28 trendline shorts were open at once on 2026-10-24, one ~28R bet on the market falling
     crowd_max: int = 6
+    # eng-168h: the cap counts the trades entered in this direction within crowd_window_h (a cluster: the live losers
+    # were 4-6 entries on one candle close - TL TOUCH DOWN 16:00-20:01 24.10, BB W 16.10 08:00). Counting EVERY open
+    # trade let multi-day Turtle / Connors / trendline positions fill all slots: from 24.10 18:20 no entry at all for
+    # 17h (19 shorts and 6 longs open). The open count above crowd_max stays a shadow tag ('crowded_open').
+    crowd_window_h: float = 4.0
     # eng-128: the data-mined layers (models/profiles.json, profiles_regime.json: research_optimize's filters, stops,
     # break-even, time stops, the 'regime_off' veto; models/exit_overlays.json: research_overlays' early exits and the
     # alts_with filter) have no source - fitted on the archive, several negative on their own validation: off

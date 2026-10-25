@@ -1487,6 +1487,9 @@ class SignalBook:
             reason = 'sd_score'          # eng-127: Seiden / OTA - below 8 of 10 odds enhancer points no trade
         if reason is None and self.crowded(s.mode, s.direction, entered_at):
             reason = 'crowded'
+        if self.crowded_open(s.direction):
+            have = set(filter(None, (s.sig.get('shadow_veto') or '').split(',')))
+            s.sig['shadow_veto'] = ','.join(sorted(have | {'crowded_open'}))
         if reason is None and self._market_down(s):
             if s.group_key in self.MARKET_DOWN_SHADOW:
                 have = set(filter(None, (s.sig.get('shadow_veto') or '').split(',')))
@@ -2164,8 +2167,16 @@ class SignalBook:
         # live 11-21.10 Turtle 10 trades -11.6R, 0 winners, entered together; crowded signals -0.22R vs clean +0.01R)
         if CONFIG.strategies.crowd_max <= 0:
             return False                 # eng-148, the owner: no position-count limit on the demo account
+        cfg = CONFIG.strategies
+        since = now - cfg.crowd_window_h * 3600 if cfg.crowd_window_h > 0 else float('-inf')
+        n = sum(1 for o in self.signals.values() if o.entered_at and not o.finished and o.direction == direction
+                and o.entered_at >= since)
+        return n >= cfg.crowd_max
+
+    def crowded_open(self, direction: int) -> bool:
+        """eng-168h: every open trade in this direction (the old crowd count) - journaled as a shadow tag only."""
         n = sum(1 for o in self.signals.values() if o.entered_at and not o.finished and o.direction == direction)
-        return n >= CONFIG.strategies.crowd_max
+        return CONFIG.strategies.crowd_max > 0 and n >= CONFIG.strategies.crowd_max
 
     def _time_exit(self, s: TrackedSignal, now: float) -> Tuple[Optional[str], Optional[float]]:
         """Why the trade ends by time now (eng-47, Strategy.time_exit) and the time it fell due; (None, None) = it runs."""

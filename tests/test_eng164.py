@@ -158,3 +158,16 @@ def test_impulse_start_moves_to_the_pullback_swing_after_a_bos():
     df = pl.DataFrame(pad + rows)
     imp = find_impulse(df, 1)
     assert imp is not None and imp['end'] == 130.5 and imp['start'] == 109.5
+
+
+def test_crowd_counts_the_recent_cluster_only():
+    """eng-168h: multi-day open trades do not fill the crowd slots; entries within crowd_window_h do."""
+    from types import SimpleNamespace
+    from signal_book import SignalBook
+    book = SignalBook()
+    now = 1_000_000.0
+    old = {f'o{k}': SimpleNamespace(entered_at=now - 86400, finished=False, direction=-1) for k in range(10)}
+    book.signals = dict(old)
+    assert not book.crowded('trendline', -1, now) and book.crowded_open(-1)
+    book.signals.update({f'n{k}': SimpleNamespace(entered_at=now - 600, finished=False, direction=-1) for k in range(6)})
+    assert book.crowded('trendline', -1, now)
