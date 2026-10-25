@@ -81,7 +81,13 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
     out = {'names': names, 'cur': cur, 'up': up, 'dn': dn, 'long': None, 'short': None}
 
     def targets(side, entry, first=None):
+        # eng-168v (audit #7, traced on 16 days of saved scenarios): the CURRENT zone (price inside it at the post) lay
+        # between a support-bounce / resistance-fade entry and its TP1 in 125 entered scenarios, at a median 0.52R -
+        # targets were taken from the resistances / supports only, so the first obstacle was skipped and 104 of them
+        # passed R:R >= 1 on a farther zone. The current zone beyond the entry is a target / obstacle like the others.
         pool = up if side > 0 else dn
+        if cur is not None and side * ((cur['lo'] if side > 0 else cur['hi']) - entry) > 0:
+            pool = sorted(pool + [cur], key=lambda z: z['lo'] if side > 0 else -z['hi'])
         # a range trade's first target is the zone's opposite boundary (buy support, sell resistance)
         tg = [first] if first is not None and side * (first - entry) > 0 else []
         for z in pool:

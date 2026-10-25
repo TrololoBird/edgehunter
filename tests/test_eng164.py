@@ -344,3 +344,14 @@ def test_forecast_counts_tp1_only_before_the_stop():
     t = 472_500 * HOUR_MS
     d = Briefing.exec_detail(sc, 1, 100.0, [[t, 100, 100.5, 97.5, 98.2], [t + HOUR_MS, 98.2, 104.0, 98.1, 103.5]])
     assert d['stop_hit'] and not d['tp1_hit']
+
+
+def test_targets_include_the_current_zone_beyond_the_entry():
+    """eng-168v: a support bounce under the zone price sits in targets that zone first (it was skipped)."""
+    import briefing_chart
+    zones = [{'lo': 110.0, 'hi': 111.0, 'side': 1, 'tol': 0.1, 'pad': 0.2, 'mid': 110.5},
+             {'lo': 104.0, 'hi': 105.0, 'side': 0, 'tol': 0.1, 'pad': 0.2, 'mid': 104.5},
+             {'lo': 98.0, 'hi': 99.0, 'side': -1, 'tol': 0.1, 'pad': 0.3, 'mid': 98.5}]
+    p = briefing_chart.plan(104.5, zones, atr_1d=10.0, atr_1h=2.0)
+    lg = p['long']
+    assert lg is not None and lg['tag'] == 'отскок от поддержки' and lg['targets'][0] == 104.0

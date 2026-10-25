@@ -1087,7 +1087,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b168o'
+    RULES_V = 'b168v'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
