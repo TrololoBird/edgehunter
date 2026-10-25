@@ -139,3 +139,22 @@ def test_continuation_new_high_before_the_zone_is_not_missed():
     import signal_book
     src = open(signal_book.__file__).read()
     assert "eng-168e" in src and "frozen_in_zone" in src[src.index('eng-168e') - 400:src.index('eng-168e')]
+
+
+def test_impulse_start_moves_to_the_pullback_swing_after_a_bos():
+    """eng-168f: up 100 -> 120 (swing high), pullback to 110 (50%, a 2/2 swing low), rally to 130 (BOS), then two
+    lower candles: the leg is 110 -> 130, not 100 -> 130."""
+    import polars as pl
+    from levels import find_impulse
+    path = [100, 104, 108, 112, 116, 120, 118, 115, 112, 110, 113, 117, 121, 125, 130, 128, 127]
+    path = [102, 101] + path
+    rows = []
+    t0 = 1_700_000_000_000
+    for k, p in enumerate(path):
+        rows.append({'timestamp': t0 + k * 900_000, 'open': p, 'high': p + 0.5, 'low': p - 0.5, 'close': p,
+                     'atr': 1.0})
+    pad = [{'timestamp': t0 - (20 - k) * 900_000, 'open': 103.0, 'high': 103.4, 'low': 102.6, 'close': 103.0,
+            'atr': 1.0} for k in range(20)]
+    df = pl.DataFrame(pad + rows)
+    imp = find_impulse(df, 1)
+    assert imp is not None and imp['end'] == 130.5 and imp['start'] == 109.5

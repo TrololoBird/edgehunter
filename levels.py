@@ -148,6 +148,40 @@ def find_impulse(df: Optional[pl.DataFrame], leg_direction: int,
             start, start_ts = (c[3] if leg_direction > 0 else c[2]), int(c[0])
     if start is None:
         return None
+    # eng-168f (ICT dealing range): after a pullback of >= 0.382 of the move that made a confirmed 2/2 swing, and a
+    # break of the swing high (low) before it (BOS), the grid goes on the NEW range - the pullback's swing is the
+    # leg's start, not the oldest extreme of the whole run (the grid stretched over two or three waves). The rest of
+    # the qualification (timeframe, ATR, minimum leg) applies to the re-anchored leg; if it fails, the old one stays.
+    whole = (start, start_ts)
+    idx = {int(r[0]): k for k, r in enumerate(rows)}
+    s_idx = idx.get(start_ts)
+    if s_idx is not None:
+        sgn = 1 if leg_direction > 0 else -1
+        ext_hi = hi if leg_direction > 0 else [-v for v in lo]      # the leg's side, signed so that 'up' is the move
+        ext_lo = lo if leg_direction > 0 else [-v for v in hi]
+        for k in range(end_idx - 2, s_idx + 2, -1):
+            if not (ext_lo[k] == min(ext_lo[k - 2:k + 3]) and ext_lo[k] < min(ext_lo[k - 2:k])):
+                continue                                    # not a confirmed 2/2 pullback swing
+            j = max(range(s_idx, k), key=lambda i: ext_hi[i])
+            if j < s_idx + 2 or not (ext_hi[j] == max(ext_hi[j - 2:j + 3])):
+                continue                                    # the high before the pullback is no confirmed swing
+            base = sgn * start
+            if ext_hi[j] - base <= 0 or (ext_hi[j] - ext_lo[k]) < 0.382 * (ext_hi[j] - base):
+                continue                                    # a shallow dip, not a new dealing range
+            if not ext_hi[end_idx] > ext_hi[j]:
+                continue                                    # no break of structure beyond that swing
+            start, start_ts = sgn * ext_lo[k], int(rows[k][0])
+            break
+    for attempt in ((start, start_ts), whole) if (start, start_ts) != whole else (whole,):
+        start, start_ts = attempt
+        found = _qualify(rows, htf, start, start_ts, end, end_ts, atr_15m)
+        if found is not None:
+            return found
+    return None
+
+
+def _qualify(rows, htf, start, start_ts, end, end_ts, atr_15m):
+    """find_impulse's timeframe / ATR / minimum-leg qualification of one start (eng-168f split)."""
     # no candle beyond the end in the history (a new high / low): the origin is the extreme of the whole history
     duration = end_ts - start_ts
     # eng-123, Elder's factor of five: the leg's timeframe is the largest of 15m / 1h / 4h holding >= 5 of its candles

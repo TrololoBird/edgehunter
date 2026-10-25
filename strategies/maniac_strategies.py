@@ -133,6 +133,25 @@ class SupplyDemandStrategy(_System):
                                'stop_src': 'beyond the distal line', 'tp_src': 'the opposing 4h supply / demand zone (Seiden)'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
                          sd_score=score, min_rr_on_tp1=True, key=(sig['anchor_ts'], near))
+        if plan and not plan.get('skip'):
+            # eng-168g: Seiden's 3:1 is measured from a limit at the PROXIMAL line with the stop beyond the distal one -
+            # checked here, at the card, with the stop the entry will use (distal + the measured pierce / zone pad):
+            # a zone that cannot pay 3:1 even from its proximal line is no card (it waited for its first touch and
+            # died there as low_rr - 272 cards). The confirmed entry (executor.touch_confirm_close: the close back out
+            # of the zone, ~1/3 of the reward spent) then needs 2:1 - 3:1 from the confirmation close would demand
+            # ~4.5:1 from the zone, which Seiden never asked.
+            from config import CONFIG
+            from strategies.geometry import entry_levels
+            try:
+                lv = entry_levels(plan, near, None, d)
+            except Exception:
+                lv = None
+            rr = (lv or {}).get('rr_tp1') if isinstance(lv, dict) else getattr(lv, 'rr_tp1', None)
+            if rr is None or rr < self.min_rr:
+                return {'skip': 'low_rr'}
+            plan['sd_rr_proximal'] = round(float(rr), 2)
+            if CONFIG.executor.touch_confirm_close:
+                plan['min_rr'] = 2.0
         return plan
 
 
