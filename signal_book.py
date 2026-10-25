@@ -193,6 +193,17 @@ def shadow_veto(sig: Dict, reason: Optional[str]) -> Optional[str]:
     return reason
 
 
+def card_tp1(plan: Dict) -> float:
+    """eng-168: the TP1 the trade will actually take. A system with its own level target (exit['tp'] = ['level',
+    price, ...], e.g. Silver Bullet's PDH / PDL) exits there (geometry.exit_target), while plan['targets'][0] is the
+    nearest map pool from select_targets - checking tp1_passed / MISSED against that pool dropped 64 of 123 Silver
+    Bullet setups whose draw was still ahead of the price."""
+    spec = ((plan or {}).get('exit') or {}).get('tp') or ()
+    if len(spec) > 1 and spec[0] == 'level' and spec[1] is not None:
+        return float(spec[1])
+    return plan['targets'][0]
+
+
 DEFERRED = object()     # eng-147: SignalBook._enter's 'entry held for the crowd ranking' marker
 
 
@@ -1072,7 +1083,7 @@ class SignalBook:
             if s.plan is None or not s.plan['targets']:
                 self._drop(s, now, self._skip_reason.pop((s.symbol, s.group_key), 'no_leg') if s.plan is None else 'no_room')
                 return None
-            if s.plan.get('missable') and s.plan['entry'] != 'confirm' and d * (price - s.plan['targets'][0]) >= 0:
+            if s.plan.get('missable') and s.plan['entry'] != 'confirm' and d * (price - card_tp1(s.plan)) >= 0:
                 # eng-74: a waiting card whose TP1 is already behind the price was born MISSED (ETH FLUSH REVERSAL
                 # 2026-10-07 10:08, created after the bounce): not a card
                 self._drop(s, now, 'tp1_passed')
@@ -1135,7 +1146,7 @@ class SignalBook:
             self._pool2_on_invalid(s, candles_of, now_ms)
             self._finish(s, 'INVALID', now, self._invalid_reason(s, price, invalid))
             return None
-        tp1 = plan['targets'][0]
+        tp1 = card_tp1(plan)
         # eng-108: with structural lifetimes EVERY waiting card ends once TP1 traded before an entry (its structural end;
         # the invented waiting clocks are gone)
         tp_seen = self._tp1_since(s, candles_of, tp1, plan) if version_no(s.logic_version) >= 141 else None
@@ -1149,7 +1160,7 @@ class SignalBook:
                      else f"price never came back to the zone {plan['zone_lo']:.6g}-{plan['zone_hi']:.6g}")
             skipped = (f"; {s.vetoed_triggers} trigger(s) vetoed" + (f": {reasons}" if reasons else '')
                        if s.vetoed_triggers else f"; no {plan['trigger_minutes']}m trigger") + f" ({where})"
-            self._finish(s, 'MISSED', now, f"TP1 {tp1:.6g} ({plan['target_src'][0]}) reached before an entry" + skipped)
+            self._finish(s, 'MISSED', now, f"TP1 {tp1:.6g} ({(plan.get('exit') or {}).get('tp_src') if tp1 != plan['targets'][0] else plan['target_src'][0]}) reached before an entry" + skipped)
             return None
         if plan.get('reset') is not None and s.status == 'ZONE' and d * (price - plan['reset']) > 0:
             s.status, s.zone_since_ms = 'WATCH', None       # the leg extended without a trigger: re-measure it

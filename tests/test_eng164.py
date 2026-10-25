@@ -124,3 +124,11 @@ def test_range_is_its_own_tag_for_with_bias_setups():
     assert bias.gate('sweep', 1, 'bear', None, False) == 'htf_bias'
     assert bias.gate('orb', 1, 'range', None, False) == 'htf_bias'
     assert bias.gate('bollinger', 1, 'range', None, False) is None
+
+
+def test_card_tp1_is_the_systems_own_level_target():
+    from signal_book import card_tp1
+    plan = {'targets': [101.0, 105.0], 'exit': {'tp': ['level', 110.0, 1.0, None]}}
+    assert card_tp1(plan) == 110.0
+    assert card_tp1({'targets': [101.0], 'exit': {'tp': ['trail']}}) == 101.0
+    assert card_tp1({'targets': [101.0]}) == 101.0
