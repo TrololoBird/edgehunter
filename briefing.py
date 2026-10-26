@@ -531,7 +531,8 @@ class Briefing:
             tol = min(overshoot(symbol, kind, z['price'], 'p50') or 0.1 * atr1h, 0.5 * atr1h)
             pad = min(max(overshoot(symbol, kind, z['price'], 'p80') or 0.0, 0.5 * atr1h), atr1h)
             tfs = '/'.join(z['tfs'])
-            what = f"{z['touches']} касан{'ие' if z['touches'] == 1 else 'ия' if z['touches'] < 5 else 'ий'} ({tfs})"                 + (', смена роли' if z['flip'] else '')
+            what = f"{z['touches']} касан{'ие' if z['touches'] == 1 else 'ия' if z['touches'] < 5 else 'ий'} ({tfs})"                 + (', смена роли' if z['flip'] else '') \
+                + (', свежий разворот (реакция ещё не досчитана)' if z.get('fresh') else '')
             higher = [t for t in z['tfs'] if t != '1h']
             cands.append({'lo': z['lo'], 'hi': z['hi'], 'mid': z['price'], 'strength': z['strength'],
                           'labels': list(dict.fromkeys(l.label for l in here_)),
@@ -1160,21 +1161,32 @@ class Briefing:
 
     @classmethod
     def sweep_variant(cls, sc: Dict, side: int, bars: List) -> Optional[Dict]:
-        """eng-168w, a SHADOW entry measured beside the scenario's own (nothing is posted or traded on it): the sweep and
-        reclaim of the zone - a closed 1h candle trades beyond the zone's FAR edge (a long: below the entry range's low)
-        and closes back inside / above it; entry at that close, the stop beyond that candle's extreme by a quarter of
-        the entry range (the swept stops are behind it), the scenario's own targets; taken only with R:R >= 1 from the
-        close. Scored with exec_detail (execution_model_v1). None = no sweep and reclaim within the bars."""
+        """eng-168w / eng-169 (audit #10, the ICT liquidity sweep as defined there), a SHADOW entry measured beside the
+        scenario's own - nothing is posted or traded on it. The pool is the scenario zone's FAR edge (a cluster of swing
+        extremes / a map level: resting stops beyond it). A closed 1h candle:
+          - trades beyond that edge by 0.05..0.8 ATR(1h) (deeper = a run, not a sweep);
+          - closes back beyond the zone's MIDDLE (displacement), with the rejecting wick >= 40% of its range;
+        entry at its close, stop beyond its extreme by max(0.25 ATR(1h), 0.25 x its range), the scenario's targets,
+        R:R >= 1 from the close. Old records without the zone / ATR fall back to the entry range and its width.
+        Scored with exec_detail (execution_model_v1). None = no such candle within the bars."""
         e0, e1 = sorted(sc['entry'])
-        far = e0 if side > 0 else e1
-        buf = 0.25 * (e1 - e0)
+        lo, hi = sc.get('zone') or (e0, e1)
+        atr = sc.get('atr1h') or (e1 - e0) or None
+        if not atr:
+            return None
+        far, mid = (lo if side > 0 else hi), (lo + hi) / 2
         tp1 = sc['targets'][0]
         for k, c in enumerate(bars):
-            if side > 0 and c[3] < far and c[4] > far:
-                stop = c[3] - buf
-            elif side < 0 and c[2] > far and c[4] < far:
-                stop = c[2] + buf
+            rng = max(c[2] - c[3], 1e-12)
+            if side > 0:
+                depth, wick = far - c[3], min(c[1], c[4]) - c[3]
+                ok = 0.05 * atr <= depth <= 0.8 * atr and c[4] > mid and wick / rng >= 0.4
+                stop = c[3] - max(0.25 * atr, 0.25 * rng)
             else:
+                depth, wick = c[2] - far, c[2] - max(c[1], c[4])
+                ok = 0.05 * atr <= depth <= 0.8 * atr and c[4] < mid and wick / rng >= 0.4
+                stop = c[2] + max(0.25 * atr, 0.25 * rng)
+            if not ok:
                 continue
             fill = c[4]
             risk = abs(fill - stop)
@@ -1297,7 +1309,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b168z'
+    RULES_V = 'b169a'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):

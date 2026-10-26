@@ -64,11 +64,11 @@ def pivots(candles: Sequence[Sequence[float]], tf: str, width: int = 2, react_ba
         if h[i] == h[win].max() and (h[i] > h[i - width:i]).all() and (h[i] >= h[i + 1:i + width + 1]).all():
             react = (h[i] - l[after].min()) / atr[i] if after.stop > after.start else 0.0
             out.append({'ts': ts[i], 'price': h[i], 'body': max(o[i], c[i]), 'side': 1, 'tf': tf,
-                        'react': float(react), 'vol': vol})
+                        'react': float(react), 'vol': vol, 'react_full': after.stop - after.start >= react_bars})
         if l[i] == l[win].min() and (l[i] < l[i - width:i]).all() and (l[i] <= l[i + 1:i + width + 1]).all():
             react = (h[after].max() - l[i]) / atr[i] if after.stop > after.start else 0.0
             out.append({'ts': ts[i], 'price': l[i], 'body': min(o[i], c[i]), 'side': -1, 'tf': tf,
-                        'react': float(react), 'vol': vol})
+                        'react': float(react), 'vol': vol, 'react_full': after.stop - after.start >= react_bars})
     return out
 
 
@@ -127,6 +127,8 @@ def zones(candles: Dict[str, Sequence[Sequence[float]]], now_ms: float, tol: flo
         out.append({'lo': lo, 'hi': hi, 'price': (lo + hi) / 2, 'touches': len(g) + rejections,
                     'pivots': len(g), 'rejections': rejections, 'flip': len(sides) == 2,
                     'structure_score': round(structure, 2), 'reaction_stats': stats,
+                    # eng-169 (audit #9): a pivot younger than its 10-bar reaction window - its reaction is preliminary
+                    'fresh': any(not p.get('react_full', True) for p in g),
                     'tfs': sorted({p['tf'] for p in g}, key=list(TF_MS).index),
                     'react': max(p['react'] for p in g), 'last_ts': max(p['ts'] for p in g),
                     'strength': strength})

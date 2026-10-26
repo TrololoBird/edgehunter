@@ -361,16 +361,18 @@ def test_targets_include_the_current_zone_beyond_the_entry():
 
 
 def test_sweep_and_reclaim_shadow_entry():
-    """eng-168w: a candle below the entry range's low closing back above it enters; stop beyond its low."""
+    """eng-169: the ICT sweep - beyond the far edge by 0.05..0.8 ATR, close past the zone's middle, wick >= 40%."""
     from briefing import Briefing, HOUR_MS
-    sc = {'entry': (99.0, 100.0), 'stop': 98.0, 'targets': [104.0], 'tag': 'отскок от поддержки'}
+    sc = {'entry': (99.0, 100.2), 'zone': [99.0, 100.0], 'atr1h': 1.0, 'stop': 98.0, 'targets': [104.0],
+          'tag': 'отскок от поддержки'}
     t = 472_600 * HOUR_MS
-    bars = [[t, 100.5, 100.6, 99.5, 99.8], [t + HOUR_MS, 99.8, 99.9, 98.6, 99.4],     # sweep below 99, close 99.4
-            [t + 2 * HOUR_MS, 99.4, 104.2, 99.3, 104.0]]
+    bars = [[t, 100.5, 100.6, 99.5, 99.8],
+            [t + HOUR_MS, 99.3, 99.9, 98.6, 99.7],             # 0.4 below 99, close 99.7 > mid 99.5, wick 0.7 / 1.3
+            [t + 2 * HOUR_MS, 99.7, 104.2, 99.6, 104.0]]
     d = Briefing.sweep_variant(sc, 1, bars)
-    assert d and d['fill'] == 99.4 and abs(d['stop'] - (98.6 - 0.25)) < 1e-9 and d['tp1_hit'] and d['resolved']
-    assert Briefing.sweep_variant(sc, 1, bars[:1]) is None
-
+    assert d and d['fill'] == 99.7 and abs(d['stop'] - (98.6 - 0.325)) < 1e-9 and d['tp1_hit']
+    deep = [bars[0], [t + HOUR_MS, 99.3, 99.9, 97.9, 99.7], bars[2]]   # 1.1 ATR beyond: a run, not a sweep
+    assert Briefing.sweep_variant(sc, 1, deep) is None
 
 def test_unfavourable_scenario_is_shown_and_marked():
     """eng-168x: TP1 closer than the stop -> the scenario stays (analysis), rr_ok False; the level map has a base view."""

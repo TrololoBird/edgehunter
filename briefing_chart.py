@@ -121,8 +121,11 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         return stop
 
     def scenario(side, e0, e1, stop, cond, tag, first=None, zone=None):
-        # eng-168y: the confirming candle follows the governing zone's timeframe (4h for 4h / 1d / higher map levels)
-        tf = (zone or {}).get('conf_tf', '1h')
+        # eng-168y / eng-169 (both audits, the acceptance measurement): a REACTION at a zone (bounce / rejection / from an
+        # edge) is confirmed by a 1h candle; an ACCEPTANCE beyond a zone ('закрепление') by the zone's own timeframe -
+        # 4h for a zone of 4h+ pivots or a higher map level (a 4h close beyond such a zone came back to the origin side
+        # within 4h in 32% of 400 cases vs 45% on a 1h close), 1h for an intraday zone
+        tf = (zone or {}).get('conf_tf', '1h') if tag.startswith('закрепление') else '1h'
         cond = cond.replace('1h', tf)
         e = (e0 + e1) / 2
         stop = push_stop(side, stop)
@@ -141,7 +144,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         cost = worst * (CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4)
         rr_ok = side * (tg[0] - worst) - cost >= abs(worst - stop) + cost
         return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag, 'rr_ok': rr_ok,
-                'conf_tf': tf,
+                'conf_tf': tf, 'zone': [zone['lo'], zone['hi']] if zone else None, 'atr1h': atr_1h,
                 # eng-168o / audit #9: the breakeven share on the same basis as the 'as a trade' check - the worst entry,
                 # NET of the round trip: (risk + cost) / (risk + reward)
                 'p': (abs(worst - stop) + cost) / (abs(worst - stop) + abs(tg[0] - worst))}
@@ -151,7 +154,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
             return None
         z = dn[0]
         return scenario(1, z['lo'], z['hi'] + z.get('tol', 0.0), z['lo'] - z.get('pad', 0.0),
-                        f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и бычья свеча 1h с закрытием выше "
+                        f"касание {_fmt(z['hi'] + z.get('tol', 0.0))} (зона {_fmt(z['lo'])}–{_fmt(z['hi'])} с допуском) и бычья свеча 1h с закрытием выше "
                         f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки', zone=z)
 
     def fade():
@@ -160,7 +163,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
             return None
         z = up[0]
         return scenario(-1, z['lo'] - z.get('tol', 0.0), z['hi'], z['hi'] + z.get('pad', 0.0),
-                        f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и медвежья свеча 1h с закрытием ниже "
+                        f"касание {_fmt(z['lo'] - z.get('tol', 0.0))} (зона {_fmt(z['lo'])}–{_fmt(z['hi'])} с допуском) и медвежья свеча 1h с закрытием ниже "
                         f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления', zone=z)
 
     if cur:
@@ -219,12 +222,12 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         if dn:
             z = dn[0]
             out['long'] = scenario(1, z['lo'], z['hi'] + z.get('tol', 0.0), z['lo'] - z.get('pad', 0.0),
-                                   f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и бычья свеча 1h с закрытием выше "
+                                   f"касание {_fmt(z['hi'] + z.get('tol', 0.0))} (зона {_fmt(z['lo'])}–{_fmt(z['hi'])} с допуском) и бычья свеча 1h с закрытием выше "
                                    f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки', zone=z)
         if up:
             z = up[0]
             out['short'] = scenario(-1, z['lo'] - z.get('tol', 0.0), z['hi'], z['hi'] + z.get('pad', 0.0),
-                                    f"тест зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} и медвежья свеча 1h с закрытием ниже "
+                                    f"касание {_fmt(z['lo'] - z.get('tol', 0.0))} (зона {_fmt(z['lo'])}–{_fmt(z['hi'])} с допуском) и медвежья свеча 1h с закрытием ниже "
                                     f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления', zone=z)
     return out
 
