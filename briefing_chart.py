@@ -422,10 +422,10 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
         b = _fmt(p['up'][0]['lo']) if p['up'] else '—'
         msg = f"ЦЕНА МЕЖДУ ЗОНАМИ {a} И {b}. ЖДЁМ РЕТЕСТА ОДНОЙ ИЗ НИХ."
     msg_sub = context_text or 'Входить в середине диапазона не рекомендуется.'
-    fig.patches.append(FancyBboxPatch((0.02, 0.024), 0.96, 0.046, transform=fig.transFigure,
+    fig.patches.append(FancyBboxPatch((0.02, 0.031), 0.96, 0.040, transform=fig.transFigure,
                                       boxstyle='round,pad=0.006', fc='#fdeeee', ec=RED, lw=1.2))
     fig.text(0.04, 0.058, '⚠  ' + msg, fontsize=11.5, weight='bold', color=RED, va='top')
-    fig.text(0.075, 0.040, msg_sub, fontsize=9.5, color=RED, va='top')
+    fig.text(0.075, 0.045, msg_sub, fontsize=9.5, color=RED, va='top')
     fig.text(0.5, 0.004, '*доля сделок с TP1, при которой сценарий в ноль (с комиссией и проскальзыванием); это не прогноз\n'
              'зоны — прошлые развороты цены, реакция не гарантирована · не совет', fontsize=7, color=GREY, ha='center',
              va='bottom', linespacing=1.1)
