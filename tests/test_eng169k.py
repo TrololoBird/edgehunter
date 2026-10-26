@@ -8,7 +8,7 @@ def _plan():
 def test_near_tp1_is_stepped_over_to_the_next_level():
     # risk 2: TP1 100.4 is ~0.15R, the next levels 103 / 106 are >= 0.5R
     out = geometry.finish_levels(_plan(), 100.0, 98.0, [100.4, 103.0, 106.0], ['1h swing'] * 3, 1, 'x')
-    assert out['tp1'] > 102 and out['rr_tp1'] >= 0.5
+    assert out['tp1'] > 102 and out['rr_tp1'] >= 0.5 and out['tp1_stepped'] == 1
     assert 'eng-169k' not in (out['rr_reason'] or '')
 
 
@@ -22,7 +22,7 @@ def test_no_level_beyond_half_r_is_low_rr():
 
 def test_tp1_at_or_beyond_half_r_untouched():
     out = geometry.finish_levels(_plan(), 100.0, 98.0, [102.0, 104.0, 106.0], ['1h swing'] * 3, 1, 'x')
-    assert out['tp1'] < 102 and out['rr_tp1'] >= 0.5
+    assert out['tp1'] < 102 and out['rr_tp1'] >= 0.5 and out['tp1_stepped'] == 0
 
 
 def test_short_mirrored():

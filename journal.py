@@ -301,7 +301,7 @@ EXTRA_COLUMNS = {
     # ml.py: IsolationForest score, market regime, P(4h edge > 0) of the online model (shadow)
     'ml_score': 'REAL', 'regime': 'TEXT', 'p_edge': 'REAL',
     # mtf-5: level-map sources of the entry zone / targets / stop, card outcomes (kind='card') with their reason
-    'zone_src': 'TEXT', 'tp1_src': 'TEXT', 'tp2_src': 'TEXT', 'tp3_src': 'TEXT', 'sl_src': 'TEXT', 'reason': 'TEXT',
+    'zone_src': 'TEXT', 'tp1_stepped': 'INTEGER', 'tp1_src': 'TEXT', 'tp2_src': 'TEXT', 'tp3_src': 'TEXT', 'sl_src': 'TEXT', 'reason': 'TEXT',
     'setup_ts_ms': 'INTEGER',
     # positioning.py: Binance long/short accounts (global / top), Hyperliquid large accounts' net position, Coinbase premium
     'ls_global': 'REAL', 'ls_top': 'REAL', 'hl_net_usd': 'REAL', 'cb_premium': 'REAL', 'market_crowd': 'INTEGER',
@@ -794,6 +794,7 @@ class SignalJournal:
                                   if not k.startswith('_') and confirm.positive(v)),
                     'perp_led': 0, 'p_edge': tracked.sig.get('p_edge'),
                     'tp1_src': lv.get('tp1_src'), 'tp2_src': lv.get('tp2_src'), 'tp3_src': lv.get('tp3_src'),
+                    'tp1_stepped': lv.get('tp1_stepped'),   # eng-169k: levels stepped over to reach TP1 >= 0.5R
                     'range_pos': lv.get('range_pos'),
                     'zone_edge': lv.get('zone_edge'), 'trigger_over_atr': lv.get('trigger_over_atr'),
                     'cost_r': lv.get('cost_r'), 'rr_trigger': lv.get('rr_trigger'),
