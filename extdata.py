@@ -199,9 +199,15 @@ class ExternalData:
             try:
                 if not markets or time.time() - listed_at > 3600:
                     rows = await self._json(f"{UPBIT}/market/all")
+                    if not isinstance(rows, list):
+                        raise ValueError(f"Upbit market/all answered {str(rows)[:150]}")
                     markets = [x['market'] for x in rows if str(x.get('market', '')).startswith('KRW-')]
                     listed_at = time.time()
                 rows = await self._json(f"{UPBIT}/ticker?markets={','.join(markets)}")
+                if not isinstance(rows, list):
+                    # eng-169b: an error object ({'error': {...}}, e.g. a delisted market / rate limit) was iterated
+                    # as keys -> "'str' object has no attribute 'get'"
+                    raise ValueError(f"Upbit ticker answered {str(rows)[:150]}")
                 self._upbit = {x['market'][4:]: (float(x['trade_price']), float(x.get('trade_timestamp') or 0) / 1000)
                                for x in rows if x.get('trade_price')}
                 self._upbit_t = time.time()

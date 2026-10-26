@@ -1224,3 +1224,8 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - sr.zones marks `fresh` zones (pivot with an incomplete 10-bar reaction window), shown in the zone description.
 - docs/BRIEFING_HEURISTICS.md: registry of unsourced parameters. RULES_V b169a.
 - Interface pass: "цена уже у зоны (допуск до X)" instead of a touch level beyond the price; the card's current-zone banner / subtitle use the zone's conf_tf (said 1h for 4h zones); background line and footer wrap instead of being cut; numbers in conditions never split across lines; web shows "не окупается" instead of a breakeven share above 100%.
+
+## eng-169b (2026-10-26)
+- executor._place_tps: a take-profit the exchange rejects because price already passed it (BingX 110413; ENA: 14s entry latency) is taken at market (reduceOnly) instead of leaving that part without a target.
+- extdata.upbit_loop: an error object from Upbit is reported with its text (was "'str' object has no attribute 'get'").
+- ccxt 4.5.90.

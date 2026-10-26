@@ -1,7 +1,7 @@
 # Runtime of the bot on the VPS (Ubuntu, Python 3.14, uvloop). Dev / research tools: requirements-dev.txt.
 # Upper bounds on every package whose next major version breaks APIs; ccxt pins its own uvloop / orjson / multidict /
 # certifi versions exactly, so those follow ccxt (upgrading them alone would break its declared dependencies).
-ccxt>=4.5.85,<5          # REST of every venue, the BingX demo (executor.py)
+ccxt>=4.5.90,<5          # REST of every venue, the BingX demo (executor.py)
 polars>=2.0,<3           # batched indicator + scoring pass (2.0: joins keep no row order unless maintain_order)
 numpy>=2.5,<3            # order-flow ring buffers, levels, research
 picows>=2.3,<3           # WebSocket client: frames handled in the data callback
