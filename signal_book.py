@@ -436,8 +436,8 @@ class SignalBook:
         self._retest_watch: Dict[int, 'TrackedSignal'] = {}     # eng-160: PUMP / DUMP START cards awaiting a retest
         self.events = []
         self.finished_now = []
-        # cards of an older signal logic (restored from the state): an entered one closes at market, a waiting one
-        # expires - their stops / targets / filters are not the current rules (live 2026-10-01: an eng-7 auction card
+        # cards of an older signal logic (restored from the state): a waiting one is re-planned by the current rules
+        # (eng-169g; was: expired) - their stops / targets / filters are not the current rules (live 2026-10-01: an eng-7 auction card
         # with 0 confirmations and ATR-step targets still traded beside eng-35 cards)
         # An ENTERED one keeps its trade to the end under its own levels (eng-43: closing every trade at each version
         # bump left the demo with almost no finished trades); only a WAITING card of an older logic expires
@@ -448,8 +448,22 @@ class SignalBook:
             if keep_from and version_no(old.logic_version) >= version_no(keep_from):
                 old.logic_version = CONFIG.journal.logic_version    # eng-87: same card rules, kept
                 continue
-            reason = f"expired at start: a waiting card of the older signal logic {old.logic_version or '<eng-35'}"
-            self._finish(old, 'EXPIRED', now, reason)
+            # eng-169g (Wyckoff lost 21 of ~48 cards in 3 days to version bumps, none reached an entry): a waiting card of
+            # an older logic is RE-PLANNED by the current rules instead of expired - its plan / references / armed
+            # trigger are dropped and the next pass builds the first plan as for a new card (a card whose anchor no
+            # longer qualifies is dropped there, by the current rules)
+            if (old.plan or {}).get('entry') == 'confirm' or (old.plan or {}).get('confirm_only'):
+                # an entry at the signal's close: re-planned it would enter now on an old signal - expires as before
+                self._finish(old, 'EXPIRED', now, f"expired at start: a waiting card of the older signal logic "
+                                                  f"{old.logic_version or '<eng-35'}")
+                continue
+            old.replanned_at = now
+            logger.info(f"Card {old.symbol} {old.group_key}: re-planned at start (logic {old.logic_version or '<eng-35'} "
+                        f"-> {CONFIG.journal.logic_version})")
+            old.plan, old.levels, old.activated, old.reached, old.invalid_price = None, None, False, None, None
+            old.confirm_checked, old.armed, old.zone_since_ms, old.pending_since = False, None, None, None
+            old.status = 'BIAS'
+            old.logic_version = CONFIG.journal.logic_version
 
         candidates = []
         directional: List[Tuple[int, Dict]] = []
@@ -711,36 +725,46 @@ class SignalBook:
         self.vetoed.append((s.symbol, s.group_key, reason, s.sig))
 
     def _activate(self, s: TrackedSignal, plan: Dict, price: float, now: float):
-        """The card's first plan: fix its references and close the open card of the opposite direction."""
+        """The card's first plan: fix its references (eng-169g: it no longer closes the opposite card - only its ENTRY
+        does, _close_opposites; a plan alone closed open trades at market: 31 in 3 days, ~45 cards by the then
+        journal-only OI BUILD)."""
         s.activated = True
         s.reached = plan.get('reached')
         if plan.get('fix_invalid'):
             s.invalid_price = plan.get('invalid')
+
+    def _close_opposites(self, s: TrackedSignal, price: float, now: float):
+        """
+        eng-169g: an ENTRY (not a vetoed copy) closes the coin's opposite cards. A waiting card yields to an opposite
+        entry of the same or a higher timeframe; an ENTERED trade only to one of a STRICTLY higher timeframe (the owner:
+        "which entry is stronger" - a same-timeframe opposite signal is the same weight against a position already
+        working, so it is journaled on the new card ('opposite_open'), the trade keeps its levels).
+        """
         rank = TF_RANK.get(self._tf(s), 2)
         mine = self.strategy(s)
-        for o in self.signals.values():
+        for o in list(self.signals.values()):
             if o is s or o.finished or o.symbol != s.symbol or o.direction == s.direction:
                 continue
-            # crypto_maniac's systems run independently (as in his bots): their signals never close another
-            # strategy's card, nor are theirs closed by others - only the same system's opposite signal does
             other = self.strategy(o)
-            if mine is not None and other is not None and mine.name != other.name and                     (mine.name in MANIAC_NAMES or other.name in MANIAC_NAMES):
+            if mine is not None and other is not None and mine.name != other.name and \
+                    (mine.name in MANIAC_NAMES or other.name in MANIAC_NAMES):
                 continue
-            # Only a setup of the same or a higher timeframe overrules a card: a 5m event against a 1h idea is noise
-            # inside it, the two coexist
-            if rank < TF_RANK.get(self._tf(o), 2):
+            o_rank = TF_RANK.get(self._tf(o), 2)
+            if rank < o_rank:
+                continue
+            if o.entered_at and rank == o_rank:
+                have = set(filter(None, (s.sig.get('shadow_veto') or '').split(',')))
+                s.sig['shadow_veto'] = ','.join(sorted(have | {'opposite_open'}))
                 continue
             if o.entered_at and mine is not None and other is not None and mine.name != other.name and \
                     (getattr(other, 'time_exit', 'bars') != 'bars' or o.best_target):
-                # eng-48: a trade with its method's own exit (Turtles, Connors, cup, Seiden, the sessions) is not
-                # closed by another method's 15m event (ZEC's RSI(2) by a SWEEP HIGH), and a trade that already took
-                # TP1 runs on its levels (1000PEPE's W-bottom at +2.5R closed for an M-top that lost)
+                # eng-48: a trade with its method's own exit, or past TP1, runs on its levels
                 continue
             o.last_price = price
             if o.entered_at:
-                self._finish(o, 'CLOSED', now, f"opposite setup {s.group_key} confirmed: closed at market")
+                self._finish(o, 'CLOSED', now, f"opposite entry {s.group_key} ({self._tf(s)}): closed at market")
             else:
-                self._finish(o, 'INVALID', now, f"opposite setup {s.group_key} confirmed")
+                self._finish(o, 'INVALID', now, f"opposite entry {s.group_key} ({self._tf(s)})")
 
     def _finish(self, s: TrackedSignal, status: str, now: float, reason: str = ''):
         key = (s.plan or {}).get('key')
@@ -1071,7 +1095,7 @@ class SignalBook:
             # eng-158: a small cap outside the universe has no 15m frame - its plan runs on the watch's minutes / ATR
             if (frame is None or frame.height < 20) and not (s.sig or {}).get('smallcap'):
                 s.status = 'BIAS'
-                if age > cfg.watch_ttl_sec:
+                if now - max(s.created, getattr(s, 'replanned_at', 0.0) or 0.0) > cfg.watch_ttl_sec:
                     self._finish(s, 'EXPIRED', now, f"no 15m history for {_dur(cfg.watch_ttl_sec)}")
                 return None
             if s.pending_since is None:
@@ -1627,6 +1651,7 @@ class SignalBook:
         else:
             s.managed_ms = (now_ms // MINUTE_MS + 1) * MINUTE_MS
         self.day_dir.setdefault((s.symbol, int(now_ms // 86_400_000)), s.direction)
+        self._close_opposites(s, levels['entry'], now_ms / 1000)
         self.events.append((s, 'ENTRY'))
         return s
 

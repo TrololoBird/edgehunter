@@ -1250,3 +1250,7 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - SHADOW_SETUPS emptied: OI BUILD, BB3, RSI2 cross-back, RSI2X SHORT, FLUSH / SQUEEZE REVERSAL trade on the demo (were journaled only: 2296 OI BUILD, 25 BB3, 3 + 1 Connors entries blocked in 3 days).
 - crowd_max 0 (eng-148 had it off by the owner, eng-156 put 6 back): no cap in the book or the executor; the cluster stays a journal tag at crowd_tag 6 ('crowded', 'crowded_open').
 - Remaining entry skips are data / price checks, not limits: BingX market missing, coin already held (one-way mode), R:R / TP1 at BingX's price, basis > 0.6%.
+
+## eng-169g (2026-10-26)
+- Opposite signals: only an ENTRY closes the coin's opposite cards (was: the new card's first plan - 31 open trades closed at market in 3 days, ~45 cards killed by the then journal-only OI BUILD). A waiting card yields to an opposite entry of the same or a higher timeframe; an entered trade only to a strictly higher one (same timeframe: journaled 'opposite_open', the trade keeps its levels).
+- Version bump: a waiting zone / pullback card of an older logic is re-planned by the current rules (plan reset, first plan built again) instead of expired (Wyckoff lost 21 of ~48 cards to bumps in 3 days). Confirm-entry cards still expire (they would enter on an old signal). The no-15m-history clock starts at the re-plan.
