@@ -1244,3 +1244,4 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - executor.max_entry_basis = 0.6%: no demo entry while BingX VST is off Binance by more.
 - Binance futures defaultType 'swap'. PO3: OI expectation -1 and CVD divergence like the sweep.
 - Breaker "no liquidity sweep" finding withdrawn (the OB already requires a close beyond the swing).
+- Hotfix: version_no('eng-169e') raised on int('169e') and returned 0 - every eng-169e card read as the oldest logic (candle invalidation / TP1-before-entry rules of >= 137 / 141 off, journal stats excluded). Now the number after 'eng-' (suffix ignored), in signal_book and stats.

@@ -17,6 +17,7 @@ the same hour). "Edge" is a setup's return in its direction minus that baseline,
 every short look good. [lo..hi] = 90% bootstrap interval of the mean: an interval that straddles 0 means the
 sample cannot tell the setup from noise yet.
 """
+import re
 import argparse
 import bisect
 import json
@@ -1059,11 +1060,10 @@ def robustness_table(console: Console, rows: List):
 
 
 def version_no(v: Optional[str]) -> int:
-    """'eng-57' -> 57 (0 for anything else)."""
-    try:
-        return int(str(v).split('-')[1])
-    except (IndexError, ValueError):
-        return 0
+    """'eng-57' -> 57, 'eng-169e' -> 169 (a letter suffix marks a sub-release of the same number; 0 for anything else).
+    eng-169e: int('169e') raised -> 0, so every card of eng-169e read as the oldest logic (the >= 137 / 141 rules off)."""
+    m = re.match(r'eng-(\d+)', str(v or ''))
+    return int(m.group(1)) if m else 0
 
 
 def card_r_net(row) -> Optional[float]:

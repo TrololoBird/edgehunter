@@ -32,6 +32,7 @@ Filters (each journaled with its reason instead of silently dropped, so stats.py
 Statuses follow the futures price at each scan; the journal replays each entry on 1m candles with a manual fill.
 Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CONFIG.tier0.display_hold_sec.
 """
+import re
 import copy
 import logging
 import time
@@ -231,11 +232,10 @@ FUNDING_PAID: Optional[Callable[[str, float, float], Optional[float]]] = None
 
 
 def version_no(v: Optional[str]) -> int:
-    """'eng-57' -> 57 (0 for anything else): logic versions compare by number, never as strings."""
-    try:
-        return int(str(v).split('-')[1])
-    except (IndexError, ValueError):
-        return 0
+    """'eng-57' -> 57, 'eng-169e' -> 169 (a letter suffix marks a sub-release of the same number; 0 for anything else).
+    eng-169e: int('169e') raised -> 0, so every card of eng-169e read as the oldest logic (the >= 137 / 141 rules off)."""
+    m = re.match(r'eng-(\d+)', str(v or ''))
+    return int(m.group(1)) if m else 0
 
 
 def _exit_flags(s: 'TrackedSignal') -> Dict:
