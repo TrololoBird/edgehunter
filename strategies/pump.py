@@ -59,7 +59,7 @@ def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     low = min(c[3] for c in minutes[-16:])
     return {'setup': 'PUMP START', 'direction': 1,
             'setup_note': f"+{move:.1%} in 15m ({move / vol_15m:.1f}x the 15m volatility), RVOL {m.get('rvol_1m', 0):.1f}, "
-                          f"OI rising, spot buying, a fresh 24h high",
+                          f"OI rising, {m.get('flow_src') or 'spot'} buying, a fresh 24h high",
             'anchor_level': max(c[2] for c in quiet) if quiet else base[4], 'anchor_extreme': low,
             'anchor_label': 'ignition', 'anchor_ts': int(base[0]), 'anchor_close': last[4],
             'pump_low': low, 'pump_move': move, 'event_ts': int(last[0]) + MINUTE_MS}
@@ -98,7 +98,7 @@ def dump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     high = max(c[2] for c in minutes[-16:])
     return {'setup': 'DUMP START', 'direction': -1,
             'setup_note': f"{move:.1%} in 15m ({-move / vol_15m:.1f}x the 15m volatility), RVOL {m.get('rvol_1m', 0):.1f}, "
-                          f"OI {'rising (short build)' if (m.get('oi_change_5m') or 0) > 0 else 'falling (long flush)'}, spot selling, a fresh 24h low",
+                          f"OI {'rising (short build)' if (m.get('oi_change_5m') or 0) > 0 else 'falling (long flush)'}, {m.get('flow_src') or 'spot'} selling, a fresh 24h low",
             'anchor_level': min(c[3] for c in quiet) if quiet else base[4], 'anchor_extreme': high,
             'anchor_label': 'dump ignition', 'anchor_ts': int(base[0]), 'anchor_close': last[4],
             'dump_high': high, 'pump_move': move, 'event_ts': int(last[0]) + MINUTE_MS,

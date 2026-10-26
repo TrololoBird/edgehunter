@@ -1270,3 +1270,9 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 ## eng-169k (2026-10-26)
 - TP1 nearer than `levels.min_tp1_rr` (0.5R net of costs) is stepped over: TP1 = the next level, the freed last slot is projected by the 1R-step rule; no level that far -> low_rr. Journal (248 entered cards): TP1 < 0.25R -2.1R / 22, 0.25-0.50R -11.3R / 27, 0.50-1.20R +13.1R / 73. At a near TP1 the card took a third for ~0.1R and kept two thirds at the full stop until +1R (no break-even before +1R, no +1R half while TP1 < 1R): 12 of the 31 that touched it ended red; 13 of 21 with an in-trade MFE went on past +1R. By the same numbers the step-over is about neutral on the past cards (+4.4R on the runners vs -5.2R on the reversals): kept as one exit scheme, measured from here.
 - Not changed: methods with their own targets (own_repeats, range / extension intents, a level exit such as Silver Bullet's draw).
+
+## eng-169l (2026-10-26)
+- OI BUILD out of MANAGE_EXEMPT: its second half kept the full stop after the +1R partial (no break-even). The EMA trail after TP1 stays off globally (ema_trail_after_tp1), so only break-even + costs after +1R is added; the fixed time exit is unchanged.
+- Journal: trade_mfe_r / trade_mae_r on entry rows - the excursion over the card's own life (entry minute .. its exit), written with card_r. mfe_r (4h after the signal) and mfe_life_r (to the ORIGINAL stop) ignore the actual exit.
+- PUMP / DUMP START notes name the flow source: the small-cap watch says 'futures buying / selling' (no spot pair there), the universe 'spot'.
+- tests: the trendline 3%-of-the-line check is a behaviour test (was a source-text match).

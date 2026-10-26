@@ -81,7 +81,9 @@ from strategies import bias as htf_bias, confirm, profiles
 
 # eng-84: methods whose exits are their own long-horizon rule (the Turtles' channel, Connors' SMA5, O'Neil's measured
 # move): no break-even / partial management
-MANAGE_EXEMPT = ('breakout', 'connors', 'cup_handle', 'oi_build')
+# eng-169l: oi_build out - it has no own exit beyond the fixed time stop, so its second half kept the full stop after
+# +1R (the EMA trail after TP1 stays off globally: ema_trail_after_tp1)
+MANAGE_EXEMPT = ('breakout', 'connors', 'cup_handle')
 # break-even + the round trip's costs (taker 0.05% x 2 + slippage ~0.05%): a break-even stop that fills is ~0, not -costs
 BE_COST = 0.0015
 # eng-84: the regime each method needs (ADX(14) of 4h): trend-following methods / mean-reversion methods
@@ -273,6 +275,9 @@ class TrackedSignal:
     last_seen: float = 0.0
     last_price: float = 0.0
     zone_since_ms: Optional[int] = None
+    # eng-169l: the best / worst move in R (first unit's risk) over the trade's OWN life: entry minute .. its exit
+    trade_mfe_r: Optional[float] = None
+    trade_mae_r: Optional[float] = None
     levels: Optional['CardLevels'] = None
     entered_at: Optional[float] = None
     best_target: int = 0
@@ -2047,6 +2052,11 @@ class SignalBook:
                     why_t += f" (due {time.strftime('%H:%M', time.gmtime(due_t))} UTC, marked at that minute's close)"
                     return self._finish(s, 'CLOSED', due_t, why_t)
             s.managed_ms = int(c[0]) + MINUTE_MS
+            risk0 = lv.get('risk0') or abs(lv['entry'] - lv['sl'])
+            if risk0 and int(c[0]) + MINUTE_MS > entry_ms:
+                fav, adv = d * ((hi if d > 0 else lo) - lv['entry']) / risk0, d * ((lo if d > 0 else hi) - lv['entry']) / risk0
+                s.trade_mfe_r = fav if s.trade_mfe_r is None else max(s.trade_mfe_r, fav)
+                s.trade_mae_r = adv if s.trade_mae_r is None else min(s.trade_mae_r, adv)
             stop_hit = not (s.plan or {}).get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl']))
             chan_hit = channel is not None and ((lo < channel) if d > 0 else (hi > channel))
             # audit C06: both against the position - the level nearer the open is crossed first (a channel above a

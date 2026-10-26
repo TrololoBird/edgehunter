@@ -232,7 +232,8 @@ class SmallCapWatch:
             flow = sum(2 * c[6] - c[5] for c in minutes if c[0] + MINUTE_MS > now_ms - 900_000)
             avg_minute = (self.qv24.get(sym) or 0) / 1440
             rvol = last[5] / avg_minute if avg_minute else 0.0
-            m = {'rvol_1m': rvol, 'oi_change_5m': oi_change, 'spot_cvd_5m': flow}
+            # eng-169l: 'spot_cvd_5m' here is the FUTURES taker flow (no spot pair) - the note says so
+            m = {'rvol_1m': rvol, 'oi_change_5m': oi_change, 'spot_cvd_5m': flow, 'flow_src': 'futures'}
             if base1:
                 m['rvol_1m_med'] = last[5] / base1       # eng-159: the 24h median minute
             h1 = self.h1.get(sym) or []

@@ -301,7 +301,7 @@ EXTRA_COLUMNS = {
     # ml.py: IsolationForest score, market regime, P(4h edge > 0) of the online model (shadow)
     'ml_score': 'REAL', 'regime': 'TEXT', 'p_edge': 'REAL',
     # mtf-5: level-map sources of the entry zone / targets / stop, card outcomes (kind='card') with their reason
-    'zone_src': 'TEXT', 'tp1_stepped': 'INTEGER', 'tp1_src': 'TEXT', 'tp2_src': 'TEXT', 'tp3_src': 'TEXT', 'sl_src': 'TEXT', 'reason': 'TEXT',
+    'zone_src': 'TEXT', 'tp1_stepped': 'INTEGER', 'trade_mfe_r': 'REAL', 'trade_mae_r': 'REAL', 'tp1_src': 'TEXT', 'tp2_src': 'TEXT', 'tp3_src': 'TEXT', 'sl_src': 'TEXT', 'reason': 'TEXT',
     'setup_ts_ms': 'INTEGER',
     # positioning.py: Binance long/short accounts (global / top), Hyperliquid large accounts' net position, Coinbase premium
     'ls_global': 'REAL', 'ls_top': 'REAL', 'hl_net_usd': 'REAL', 'cb_premium': 'REAL', 'market_crowd': 'INTEGER',
@@ -891,9 +891,12 @@ class SignalJournal:
                 # left the entry row 'OPEN' / 'SL' only, and studies of entry rows saw card_r empty everywhere
                 # eng-102: only the entry actually taken - the card's vetoed / shadow triggers (same setup_ts_ms) got
                 # the trade's result and the veto studies read a later trade as the vetoed one's
-                self.conn.execute("UPDATE signals SET card_r = ?, best_tp = ? WHERE kind = 'entry' AND symbol = ? AND "
-                                  "group_key = ? AND setup_ts_ms = ? AND vetoed IS NULL",
-                                  (tracked.final_r, row['best_tp'], tracked.symbol, f"ENTRY {tracked.group_key}",
+                # eng-169l: trade_mfe_r / trade_mae_r - the excursion over the card's own life (entry .. its exit);
+                # mfe_r (4h after the signal) and mfe_life_r (to the ORIGINAL stop) ignore the actual exit
+                self.conn.execute("UPDATE signals SET card_r = ?, best_tp = ?, trade_mfe_r = ?, trade_mae_r = ? WHERE "
+                                  "kind = 'entry' AND symbol = ? AND group_key = ? AND setup_ts_ms = ? AND vetoed IS NULL",
+                                  (tracked.final_r, row['best_tp'], getattr(tracked, 'trade_mfe_r', None),
+                                   getattr(tracked, 'trade_mae_r', None), tracked.symbol, f"ENTRY {tracked.group_key}",
                                    int(tracked.created * 1000)))
             self.conn.commit()
 

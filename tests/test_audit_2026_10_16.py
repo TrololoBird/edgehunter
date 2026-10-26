@@ -232,10 +232,20 @@ def test_unobserved_spring_test_is_not_passed():
     assert pullback_spread_ok([], 0, 1, 1.0, 240) is None
 
 
-def test_trendline_percent_of_the_line():
-    from strategies.maniac import trendline_em_event
-    import inspect
-    assert 'pct * value(j)' in inspect.getsource(trendline_em_event)
+def test_trendline_percent_of_the_line(monkeypatch):
+    # eng-169l: behaviour, not the source text - a flat line at 100: two closes at 103.0 are 3% of the LINE (a break),
+    # but only 2.91% of the close (the old rule's reading would have rejected them)
+    from strategies import maniac
+    monkeypatch.setattr(maniac, '_em_line', lambda h, l, c, kind: {'p1': 100.0, 'slope': 0.0, 'i1': 0, 'i2': 1}
+                        if kind == 'resistance' else None)
+    n = 300
+    bars = [[k * 3_600_000, 99.8, 100.4, 99.4, 99.9, 100.0] for k in range(n)]
+    bars[-2] = [(n - 2) * 3_600_000, 100.0, 103.2, 99.9, 103.0, 400.0]
+    bars[-1] = [(n - 1) * 3_600_000, 103.0, 103.3, 102.9, 103.0, 150.0]
+    sig = maniac.trendline_em_event(bars, pct=0.03)
+    assert sig and sig['direction'] == 1
+    bars[-1][4] = 102.9                       # 2.9% of the line: no decisive close
+    assert maniac.trendline_em_event(bars, pct=0.03) is None
 
 
 def test_turtle_open_breakout_is_no_winner():
