@@ -1350,7 +1350,7 @@ class SignalBook:
             if CONFIG.strategies.smt_session:
                 confirms['killzone'] = in_session(trigger['time'], tuple(CONFIG.strategies.smt_session))
         if reason is None:
-            reason = shadow_veto(s.sig, confirm.missing(s.mode, confirms))
+            reason = shadow_veto(s.sig, confirm.missing(s.mode, confirms, s.group_key))
         if reason is None and ict_gated(s.mode, s.group_key)                 and not in_session(trigger['time'], tuple(CONFIG.strategies.smt_session)):
             reason = shadow_veto(s.sig, 'killzone')   # eng-58 rule; eng-107: shadow (unproven filter)
         if reason is None:
@@ -1460,7 +1460,7 @@ class SignalBook:
         # an entry AT the signal's close (VA80, AUCTION, BB W / M, cup): the method's own rule puts that close past
         # its level by design - journaled, not vetoed (review of eng-147)
         self._overshoot(s, levels['entry'], levels, block=False)
-        reason = shadow_veto(s.sig, confirm.missing(s.mode, confirms))
+        reason = shadow_veto(s.sig, confirm.missing(s.mode, confirms, s.group_key))
         if reason is None and CONFIG.levels.veto_low_rr and levels.get('low_rr'):
             reason = 'low_rr'
         return self._enter(s, levels, now_ms, reason, confirms)

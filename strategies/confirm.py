@@ -70,8 +70,24 @@ def required_names() -> Set[str]:
     return out
 
 
-def missing(strategy: str, confirms: Dict) -> Optional[str]:
+# eng-169h (the owner: long or short is decided by where the volume and the liquidity are): a liquidity-raid setup
+# trades only when the volume after the raid backs it - the taker delta on the trade's side OR absorption / CVD
+# divergence for it. Journal before the rule (303 cards): raids with neither -0.18R / card (21), with delta +0.21R
+# (39), delta against but absorbed +0.36R (19). Missing flow data (None) never vetoes.
+LIQ_FLOW = ('sweep', 'po3', 'wyckoff')
+LIQ_FLOW_SETUPS = ('PUMP TOP',)
+
+
+def liq_flow_missing(strategy: str, confirms: Dict, setup: str = '') -> bool:
+    if strategy not in LIQ_FLOW and not any((setup or '').startswith(x) for x in LIQ_FLOW_SETUPS):
+        return False
+    return confirms.get('flow') is False and not positive(confirms.get('orderflow'))
+
+
+def missing(strategy: str, confirms: Dict, setup: str = '') -> Optional[str]:
     """The veto reason of the first required confirmation that is negative ('no_<name>')."""
+    if confirms and liq_flow_missing(strategy, confirms, setup):
+        return 'no_flow_absorb'
     for name in required(strategy):
         if confirms.get(name) is False:
             return f'no_{name}'

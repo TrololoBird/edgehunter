@@ -1254,3 +1254,6 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 ## eng-169g (2026-10-26)
 - Opposite signals: only an ENTRY closes the coin's opposite cards (was: the new card's first plan - 31 open trades closed at market in 3 days, ~45 cards killed by the then journal-only OI BUILD). A waiting card yields to an opposite entry of the same or a higher timeframe; an entered trade only to a strictly higher one (same timeframe: journaled 'opposite_open', the trade keeps its levels).
 - Version bump: a waiting zone / pullback card of an older logic is re-planned by the current rules (plan reset, first plan built again) instead of expired (Wyckoff lost 21 of ~48 cards to bumps in 3 days). Confirm-entry cards still expire (they would enter on an old signal). The no-15m-history clock starts at the re-plan.
+
+## eng-169h (2026-10-26)
+- Liquidity raids need the volume behind them (the owner: long / short is where the volume and liquidity are): SWEEP, PO3, Wyckoff spring / UTAD and PUMP TOP enter only if after the raid the taker delta is on the trade's side OR absorption / CVD divergence backs it; neither -> blocking veto `no_flow_absorb` (journaled). No flow data never vetoes. Journal before: neither -0.18R/card (21 cards), delta +0.21R (39), delta against but absorbed +0.36R (19).
