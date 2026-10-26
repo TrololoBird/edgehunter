@@ -29,3 +29,12 @@ No backtests were run. Each card: where, fact, evidence, status, fix / test.
 - trendline: +1 (a "break / momentum" reading) for TL TOUCH, a rejection at the line - its mechanism is a fade.
 - po3 (Judas swing reversal) has no OI expectation ('n/a') and no CVD divergence check, unlike sweep / wyckoff (REVERSALS).
 - No live effect today: no required confirmations configured; promoted ones come only from a FDR-controlled journal test.
+
+## S5 - one price event counted as several independent sources - METHODOLOGY GAP, demonstrated (not changed)
+- zones.merge (zones.py): strength = sum of source weights, deduplicated only WITHIN one kind (<= 2x its weight). The docstring
+  says exactly this, so the code matches its own spec: not an implementation defect, not a divergence from the documented rule.
+- Different kinds built from the same candle (15m swing, 1h swing, equal lows, day low) all add: one low -> strength 4.0 >
+  min_strength 2.5 (an obstacle / TP1 candidate). Live TP1 labels show it: "15m low · 1h low · EQL×2 · day low".
+- RawLevel carries ts (the candle that made the level) for swings, so a per-event rule is implementable (variant C).
+- Characterization test: tests/test_audit_zone_dependence.py (documents the current behaviour; must be updated on purpose if
+  the rule changes).
