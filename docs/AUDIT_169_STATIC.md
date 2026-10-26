@@ -50,3 +50,8 @@ No backtests were run. Each card: where, fact, evidence, status, fix / test.
 - Input order: 20 shuffles of 60 mixed levels give identical zones (merge sorts by span first).
 - Chain A-B-C: measured from the zone's FIRST level (eng-27), A-B merged, C separate.
 - Width cap: a level wider than 6 ATR is its own zone and absorbs nothing.
+- Added: a zone with one swept and one live pool is not swept (swept_zone is per kind set); ties of equal prices are
+  deterministic; prices x 1000 with ATR x 1000 give the same zones x 1000 and the same strength; fetcher._closed_only keeps
+  a candle only when the exchange's closeTime is > 3 s in the past (UTC ms, no time zone involved).
+- Not applicable: re-merging merged zones (merge takes raw levels, never zones).
+- Scope: these are properties shown on the tested inputs, not a proof for every input.
