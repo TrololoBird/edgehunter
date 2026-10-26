@@ -361,10 +361,11 @@ class DemoExecutor:
                 await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
                                       {'takeProfitPrice': float(ex.price_to_precision(symbol, float(trade[f'tp{k}']))),
                                        'reduceOnly': True})
-            except Exception as e:
+            except Exception as err:
                 # eng-169b (ENA 2026-10-26: 14s entry latency, price passed TP1 before it was placed, BingX 110413
                 # rejected it and that part stayed open without a target): a target the price already reached is
                 # taken at market, the rest of the failures keep the stop
+                fail: Exception = err
                 try:
                     last = float((await ex.fetch_ticker(symbol)).get('last') or 0)
                 except Exception:
@@ -376,8 +377,8 @@ class DemoExecutor:
                         logger.info(f"Demo TP{k} {symbol}: price {last} already beyond the target, {amount} taken at market")
                         continue
                     except Exception as e2:
-                        e = e2
-                errors.report('executor._place_tps', e, f"Demo TP{k} {symbol}: the trade keeps its stop")
+                        fail = e2
+                errors.report('executor._place_tps', fail, f"Demo TP{k} {symbol}: the trade keeps its stop")
 
     @staticmethod
     def tp_parts(ex, symbol: str, qty: float, trail: bool, no_tp: bool):
