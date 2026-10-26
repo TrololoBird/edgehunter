@@ -2435,7 +2435,9 @@ class DataFetcher:
                 # None (the 15-min spot rings do not cover the window) -> evaluate() reads the Bybit-built 1m candles
                 spot_usd = venue_delta(('bybit_spot', 'coinbase'))
             else:
-                spot_usd = confirm.delta(spot, start, until_ms) + (venue_delta(('coinbase',)) or 0.0)
+                # eng-169d: a stalled Binance spot stream and no Coinbase reading = no spot reading (was 0 -> False)
+                own, cb = confirm.covered_delta(spot, start, until_ms), venue_delta(('coinbase',))
+                spot_usd = None if own is None and cb is None else (own or 0.0) + (cb or 0.0)
         out = confirm.evaluate(strategy, direction, list(md.minute_klines), spot, oi, since_ms, until_ms,
                                extreme_ms, orderflow, flow_usd=flow_usd, spot_usd=spot_usd)
         # the window the readings were taken over (journaled: a REST check can recompute them exactly)

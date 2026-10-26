@@ -1234,3 +1234,6 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 ## eng-169c (2026-10-26, external audit of the losing trades)
 - executor.on_restop: a stop BingX rejects (110412, COMP 325 / FET 302) while its price already passed the new stop is a stop hit - the rest is closed at market; any other rejection goes to errors.report with the stop that stays (was a WARNING only). The old stop is never removed first (eng-85), so the position was not unprotected.
 - Regression test for eng-155b (APE 283, 2026-10-24 16:39: the partial closed 15048 of 20065 -> 1/6 left; fixed 16:41 without a test).
+
+## eng-169d (2026-10-26)
+- strategies/confirm: a stalled / empty 1m stream gives no 'flow' / 'spot' reading (None), not False (covered_delta); fetcher passes None when neither Binance spot nor Coinbase covers the window. Static audit cards: docs/AUDIT_169_STATIC.md.

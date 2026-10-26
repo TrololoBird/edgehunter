@@ -89,6 +89,17 @@ def delta(minutes: Sequence[Sequence[float]], since_ms: int, until_ms: int) -> f
     return sum(2 * c[6] - c[5] for c in minutes if since_ms <= c[0] < until_ms)
 
 
+def covered_delta(minutes: Optional[Sequence[Sequence[float]]], since_ms: int, until_ms: int) -> Optional[float]:
+    """eng-169d (audit P2: missing data is not a negative reading): the taker delta of [since_ms, until_ms) when the 1m
+    candles cover it - at least one candle in the window and the last one opened at most 3 minutes before until_ms
+    (the oi_change rule); None otherwise. delta() of a stalled / empty stream was 0 -> 'flow' / 'spot' False, journaled
+    as an absent confirmation, counted by the promotion of required confirmations and by min_confirmations."""
+    window = [c for c in (minutes or ()) if since_ms <= c[0] < until_ms]
+    if not window or until_ms - window[-1][0] > 3 * MINUTE_MS:
+        return None
+    return sum(2 * c[6] - c[5] for c in window)
+
+
 def oi_change(samples: Sequence[Tuple[float, float]], since_ms: int, until_ms: int) -> Optional[float]:
     """
     Relative OI change from the first sample at / after since_ms to the last at / before until_ms (a listing younger
@@ -137,11 +148,13 @@ def evaluate(strategy: str, direction: int, minutes: Sequence[Sequence[float]],
     start = max(extreme_ms if extreme_ms is not None else since_ms, until_ms - HOUR_MS)
     # flow_usd / spot_usd: the multi-venue deltas over the same window when the caller has them (fetcher: every futures
     # venue; Binance spot + Coinbase / Bybit spot), else Binance's 1m candles alone
-    out: Dict = {'flow': direction * (flow_usd if flow_usd is not None else delta(minutes, start, until_ms)) > 0}
+    flow = flow_usd if flow_usd is not None else covered_delta(minutes, start, until_ms)
+    out: Dict = {'flow': None if flow is None else direction * flow > 0}
     if spot_minutes is None and spot_usd is None:
         out['spot'] = NA
     else:
-        out['spot'] = direction * (spot_usd if spot_usd is not None else delta(spot_minutes, start, until_ms)) > 0
+        spot = spot_usd if spot_usd is not None else covered_delta(spot_minutes, start, until_ms)
+        out['spot'] = None if spot is None else direction * spot > 0
     expect = OI_EXPECT.get(strategy)
     out['oi'] = NA if not expect else (None if oi is None else expect * oi > 0)
     # The raw 1h OI change for every strategy (underscore keys are not confirmations): strategies without an OI
