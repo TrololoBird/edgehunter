@@ -262,6 +262,21 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     rrs = [(direction * (t - entry) - fee) / (risk + fee) for t in targets[:3]]
     if not all(math.isfinite(r) for r in rrs):
         return None
+    # eng-169k: a first level nearer than min_tp1_rr is stepped over - TP1 is the next level (journal 26.10: TP1 < 0.5R
+    # took a third for ~0.1R and left two thirds at the full stop until +1R, 49 cards -13.4R, 12 of the 31 that touched
+    # it ended red); the repeated last slot is projected by the 1R-step rule below. No level that far -> low_rr
+    floor_tp1 = CONFIG.levels.min_tp1_rr
+    tp1_short = None
+    if floor_tp1 > 0 and rrs[0] < floor_tp1 and not plan.get('own_repeats') and plan.get('intent') not in ('range', 'extension'):
+        k = next((j for j in range(3) if rrs[j] >= floor_tp1), None)
+        if k is None:
+            tp1_short = rrs[2]
+        else:
+            targets = targets[k:3] + [targets[2]] * k
+            sources = sources[k:3] + [sources[2]] * k + list(sources[3:])
+            on_map = on_map[k:3] + [on_map[2]] * k
+            rrs = rrs[k:3] + [rrs[2]] * k
+            plan['tp1_stepped'] = k
     beyond_map = not any(direction * ((z.lo if direction > 0 else z.hi) - entry) > 0 for z in zones)
     real = [not is_synthetic(s) or (s == 'ATR step' and beyond_map) for s in sources[:3]]
     # a MAP zone the trade cannot reach in its lifetime is no target: 3 sd of a random walk over the time stop's bars
@@ -361,6 +376,8 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     if reason is None and real[0] and _min_rr(plan) > 0 and rrs[0] is not None and \
             CONFIG.levels.min_rr_tp1_floor > 0 and rrs[0] < CONFIG.levels.min_rr_tp1_floor:
         reason = f"R:R to TP1 {rrs[0]:.2f} < {CONFIG.levels.min_rr_tp1_floor:g}"
+    if reason is None and tp1_short is not None:
+        reason = f"R:R to TP1 {tp1_short:.2f} < {floor_tp1:g}: no level beyond {floor_tp1:g}R (eng-169k)"
     if reason is None and real[0] and rrs[0] is not None and rrs[0] <= 0:
         # eng-169i: a TP1 that does not pay the round trip's costs (26.10 OI BUILD: HYPE -0.02R, ONDO 0.01R entered -
         # min_rr_tp1_floor is 0 and the blended rule let them through behind far TP2 / TP3)

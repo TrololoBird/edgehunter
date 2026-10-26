@@ -460,6 +460,8 @@ class LevelsConfig:
     # (geometry.HIT_RATE) p = 0.5 -> R:R > 1 net of costs. A method's own minimum from its source stays (Strategy.min_rr)
     min_rr_tp1: float = 1.0
     veto_low_rr: bool = True
+    # eng-169k: a first target nearer than this R:R (net of costs) is stepped over to the next level; none -> low_rr
+    min_tp1_rr: float = 0.5
     # Manual execution: the journal replays entries filled this long after the trigger, plus slippage
     fill_delay_sec: int = 30
     slippage_bps: float = 5.0
@@ -1053,7 +1055,7 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-169j"   # htf_bias shadow for both sides, per-attempt shadow tags   # sweep targets beyond the raid swing   # PUMP / DUMP START targets + dump OI gate changed
+    logic_version: str = "eng-169k"   # htf_bias shadow for both sides, per-attempt shadow tags   # sweep targets beyond the raid swing   # PUMP / DUMP START targets + dump OI gate changed
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

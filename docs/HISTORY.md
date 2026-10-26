@@ -1266,3 +1266,7 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 
 ## eng-169j (2026-10-26)
 - BingX demo caps an account at 200 TP / SL orders (110206). 26.10 22:15: exactly 200 resting (69 stops + 131 targets on 69 positions); since 24.10, 52 rejections, 30 new trades closed at market without a stop (NO_STOP). Now every stop goes through `_place_stop`: on 110206 it cancels the farthest take-profit (= TP3) of a coin still holding three, and retries once; that card closes the last third at market on its TP3 (on_finish), the same exit. No coin with three targets -> the old path (closed at market).
+
+## eng-169k (2026-10-26)
+- TP1 nearer than `levels.min_tp1_rr` (0.5R net of costs) is stepped over: TP1 = the next level, the freed last slot is projected by the 1R-step rule; no level that far -> low_rr. Journal (248 entered cards): TP1 < 0.25R -2.1R / 22, 0.25-0.50R -11.3R / 27, 0.50-1.20R +13.1R / 73. At a near TP1 the card took a third for ~0.1R and kept two thirds at the full stop until +1R (no break-even before +1R, no +1R half while TP1 < 1R): 12 of the 31 that touched it ended red; 13 of 21 with an in-trade MFE went on past +1R. By the same numbers the step-over is about neutral on the past cards (+4.4R on the runners vs -5.2R on the reversals): kept as one exit scheme, measured from here.
+- Not changed: methods with their own targets (own_repeats, range / extension intents, a level exit such as Silver Bullet's draw).

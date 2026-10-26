@@ -50,8 +50,12 @@ def test_btc_unknown_does_not_fire():
     assert oi_build(*a) is None
 
 
-def test_tp1_not_paying_costs_is_low_rr():
+def test_tp1_not_paying_costs_is_low_rr(monkeypatch):
+    import dataclasses
+    from config import CONFIG
     from strategies import geometry
+    # the <= 0 rule alone (eng-169k's step-over off)
+    monkeypatch.setattr(CONFIG, 'levels', dataclasses.replace(CONFIG.levels, min_tp1_rr=0.0))
     plan = {'setup': 'ENTRY OI BUILD LONG', 'symbol': None, 'tf': '15m', 'zones': []}   # no own min_rr, as OI BUILD
     # TP1 0.05% above the entry (under the round trip's cost), TP2 / TP3 far: the blend alone passed it
     out = geometry.finish_levels(plan, 100.0, 98.0, [100.05, 106.0, 108.0], ['1h swing'] * 3, 1, 'x')
