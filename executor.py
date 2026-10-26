@@ -340,10 +340,46 @@ class DemoExecutor:
         return 'STOP' in t and 'TAKE' not in t
 
     async def _place_stop(self, symbol: str, d: int, qty: float, price: float) -> Dict:
+        """eng-169j: BingX caps an account at 200 TP / SL orders (110206; 26.10: 69 stops + 131 targets, 30 new trades
+        closed at market without a stop). A stop outranks a far target: one TP3 order of a trade still holding all
+        three is cancelled and the stop retried once - that trade's card closes the last third at market on its TP3
+        (on_finish), the same exit."""
         ex = await self._exchange()
-        return await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', qty, None,
-                                     {'stopLossPrice': float(ex.price_to_precision(symbol, price)), 'reduceOnly': True,
-                                      'workingType': 'MARK_PRICE'})
+
+        async def place():
+            return await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', qty, None,
+                                         {'stopLossPrice': float(ex.price_to_precision(symbol, price)),
+                                          'reduceOnly': True, 'workingType': 'MARK_PRICE'})
+        try:
+            return await place()
+        except Exception as e:
+            if '110206' not in str(e) or not await self._free_tp_slot(symbol):
+                raise
+            return await place()
+
+    async def _free_tp_slot(self, for_symbol: str) -> bool:
+        """Cancel the farthest take-profit of one coin that has three resting (= its TP3); True if one was cancelled."""
+        ex = await self._exchange()
+        by: Dict[str, List[Dict]] = {}
+        for o in await ex.fetch_open_orders():
+            t = str((o.get('info') or {}).get('type') or o.get('type') or '').upper()
+            if 'TAKE_PROFIT' in t and o.get('symbol') != for_symbol:
+                by.setdefault(o['symbol'], []).append(o)
+        for sym, orders in sorted(by.items(), key=lambda kv: -len(kv[1])):
+            if len(orders) < 3:
+                break
+            px = lambda o: float(o.get('triggerPrice') or o.get('stopPrice') or (o.get('info') or {}).get('stopPrice') or 0)  # noqa: E731
+            sells = all(o.get('side') == 'sell' for o in orders)       # a long's targets
+            far = max(orders, key=px) if sells else min(orders, key=px)
+            try:
+                await ex.cancel_order(far['id'], sym)
+            except Exception as e:
+                errors.report('executor._free_tp_slot', e, f"Demo cancel TP3 {sym}")
+                continue
+            logger.info(f"Demo {for_symbol}: TP/SL limit (110206) - TP3 of {sym} @ {px(far)} cancelled for the stop "
+                        f"(its card closes that third at market on TP3)")
+            return True
+        return False
 
     async def _cancel_orders(self, symbol: str, keep: str = None, stops_only: bool = False) -> None:
         """eng-85: cancel a coin's resting orders one by one (all but `keep`; only the stops with stops_only), never the
@@ -685,17 +721,13 @@ class DemoExecutor:
                  'no_tp': int(bool((getattr(s, 'plan', None) or {}).get('no_tp')))}
         try:
             if not no_stop:
-                await ex.create_order(symbol, 'market', exit_side, qty, None,
-                                      {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True,
-                                       'workingType': 'MARK_PRICE'})
+                await self._place_stop(symbol, d, qty, lv['sl'])
             elif lv.get('sl'):
                 # eng-144: a perpetual is never left without a stop - a catastrophe stop 3 R units away (Connors trades
                 # without one in his book; the exit stays the SMA5 close, this only caps a gap / delisting tail)
                 far = fill - 3 * (lv['entry'] - lv['sl']) if lv.get('entry') else None
                 if far and far > 0:
-                    await ex.create_order(symbol, 'market', exit_side, qty, None,
-                                          {'stopLossPrice': float(ex.price_to_precision(symbol, far)), 'reduceOnly': True,
-                                           'workingType': 'MARK_PRICE'})
+                    await self._place_stop(symbol, d, qty, far)
         except Exception as e:
             # never an unprotected position: recorded and closed at market
             trade['id'] = self._insert(trade)
@@ -968,7 +1000,6 @@ class DemoExecutor:
     async def _limit_filled(self, key: str, p: Dict, fill: float, qty: float) -> None:
         ex = await self._exchange()
         symbol, d, lv = p['symbol'], p['direction'], p['lv']
-        exit_side = 'sell' if d > 0 else 'buy'
         trade = self._limit_trade(key, p, fill, qty)
         if trade is None or trade.get('_limit_recorded'):
             if trade is not None:
@@ -982,9 +1013,7 @@ class DemoExecutor:
         self.pending.pop(key, None)
         self._save_pending()
         try:
-            await ex.create_order(symbol, 'market', exit_side, qty, None,
-                                  {'stopLossPrice': float(ex.price_to_precision(symbol, lv['sl'])), 'reduceOnly': True,
-                                   'workingType': 'MARK_PRICE'})
+            await self._place_stop(symbol, d, qty, lv['sl'])
         except Exception as e:
             # found filled only after price ran through the stop (live CAP 2026-10-02): out at market, never unprotected
             logger.warning(f"Demo LIMIT FILLED {symbol}: stop not placed ({e!r}): closed at market")

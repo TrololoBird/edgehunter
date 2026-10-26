@@ -1263,3 +1263,6 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - OI series: the detector's current 1h change now reads the live samples (the journal's oi_chg_60m), not the first sample of each 5m bucket (up to 5 min stale: AIGENSYN +1.45% vs -0.34%).
 - Every strategy: a TP1 whose R:R net of costs is <= 0 is low_rr (HYPE -0.02R, ONDO 0.01R entered: no own min_rr, the blended rule passed them).
 - Not done: a hard cap on simultaneous entries (the owner: no limits on the demo).
+
+## eng-169j (2026-10-26)
+- BingX demo caps an account at 200 TP / SL orders (110206). 26.10 22:15: exactly 200 resting (69 stops + 131 targets on 69 positions); since 24.10, 52 rejections, 30 new trades closed at market without a stop (NO_STOP). Now every stop goes through `_place_stop`: on 110206 it cancels the farthest take-profit (= TP3) of a coin still holding three, and retries once; that card closes the last third at market on its TP3 (on_finish), the same exit. No coin with three targets -> the old path (closed at market).
