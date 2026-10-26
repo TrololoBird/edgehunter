@@ -641,7 +641,7 @@ function anCard(a) {
       <div class="dim">${esc(s.cond)}</div>
       <div class="kv"><span>вход</span><span class="mono">${fp(s.entry[0])}–${fp(s.entry[1])}</span><span>стоп</span><span class="mono">${fp(s.stop)}</span>
       <span>цели</span><span class="mono">${s.targets.map(fp).join(' / ')}</span><span>R:R до TP1</span><span class="mono">${s.rr.toFixed(1)}</span>
-      <span>безубыточная доля TP1 (с издержками)*</span><span class="mono">${(s.p * 100).toFixed(0)}%</span>${checks}</div></div>`;
+      <span>безубыточная доля TP1 (с издержками)*</span><span class="mono">${s.p >= 1 ? 'не окупается: цель ближе стопа' : (s.p * 100).toFixed(0) + '%'}</span>${checks}</div></div>`;
   }).join('');
   const T = (a.outcomes && a.outcomes.tally) || {};
   const NM = { tp1: 'TP1', stop: 'стоп', open: 'без исхода', cancelled: 'отменён', no_entry: 'не сработал' };

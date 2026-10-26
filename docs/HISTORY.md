@@ -1223,3 +1223,4 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - Sweep shadow rewritten to the ICT definition (audit #10): measured on old records n=135, TP1 27, stop 84, -0.427R/trade - worse than base, stays shadow only.
 - sr.zones marks `fresh` zones (pivot with an incomplete 10-bar reaction window), shown in the zone description.
 - docs/BRIEFING_HEURISTICS.md: registry of unsourced parameters. RULES_V b169a.
+- Interface pass: "цена уже у зоны (допуск до X)" instead of a touch level beyond the price; the card's current-zone banner / subtitle use the zone's conf_tf (said 1h for 4h zones); background line and footer wrap instead of being cut; numbers in conditions never split across lines; web shows "не окупается" instead of a breakeven share above 100%.

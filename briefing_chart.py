@@ -18,6 +18,7 @@ The briefing card as a picture, laid out as the owner's reference (an analyst's 
 The % in the scenario tags is NOT the analyst's unexplained "probability": it is the driftless random-walk chance that
 TP1 trades before the stop from the entry (stop distance / (stop + TP1 distance)), marked with * and explained.
 """
+import re
 import io
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -77,8 +78,16 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
                         ('ПОДДЕРЖКА', 'возможен отскок / ложный пробой', GREEN),
                         ('КЛЮЧЕВАЯ ПОДДЕРЖКА', 'глобальный уровень', GREEN2)][min(i, 2)]
     if cur:
-        names[id(cur)] = ('ЗОНА РЕАКЦИИ', 'цена в зоне: ждём закрытие 1h за ней', BLUE)
+        names[id(cur)] = ('ЗОНА РЕАКЦИИ', f"цена в зоне: ждём закрытие {cur.get('conf_tf', '1h')} за ней", BLUE)
     out = {'names': names, 'cur': cur, 'up': up, 'dn': dn, 'long': None, 'short': None}
+
+    def touch(side, z):
+        """eng-169a: the trigger edge (zone edge + tol); 'касание X' when price is still beyond it, else 'цена уже у зоны'."""
+        lvl = z['hi'] + z.get('tol', 0.0) if side > 0 else z['lo'] - z.get('tol', 0.0)
+        rng = f"зона {_fmt(z['lo'])}–{_fmt(z['hi'])}"
+        if side * (price - lvl) <= 0:
+            return f"цена уже у зоны ({rng}, допуск до {_fmt(lvl)})"
+        return f"касание {_fmt(lvl)} ({rng} с допуском)"
 
     def targets(side, entry, first=None):
         # eng-168v (audit #7, traced on 16 days of saved scenarios): the CURRENT zone (price inside it at the post) lay
@@ -154,7 +163,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
             return None
         z = dn[0]
         return scenario(1, z['lo'], z['hi'] + z.get('tol', 0.0), z['lo'] - z.get('pad', 0.0),
-                        f"касание {_fmt(z['hi'] + z.get('tol', 0.0))} (зона {_fmt(z['lo'])}–{_fmt(z['hi'])} с допуском) и бычья свеча 1h с закрытием выше "
+                        f"{touch(1, z)} и бычья свеча 1h с закрытием выше "
                         f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки', zone=z)
 
     def fade():
@@ -163,7 +172,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
             return None
         z = up[0]
         return scenario(-1, z['lo'] - z.get('tol', 0.0), z['hi'], z['hi'] + z.get('pad', 0.0),
-                        f"касание {_fmt(z['lo'] - z.get('tol', 0.0))} (зона {_fmt(z['lo'])}–{_fmt(z['hi'])} с допуском) и медвежья свеча 1h с закрытием ниже "
+                        f"{touch(-1, z)} и медвежья свеча 1h с закрытием ниже "
                         f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления', zone=z)
 
     if cur:
@@ -222,12 +231,12 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         if dn:
             z = dn[0]
             out['long'] = scenario(1, z['lo'], z['hi'] + z.get('tol', 0.0), z['lo'] - z.get('pad', 0.0),
-                                   f"касание {_fmt(z['hi'] + z.get('tol', 0.0))} (зона {_fmt(z['lo'])}–{_fmt(z['hi'])} с допуском) и бычья свеча 1h с закрытием выше "
+                                   f"{touch(1, z)} и бычья свеча 1h с закрытием выше "
                                    f"{_fmt(z['hi'] + z.get('tol', 0.0))}", 'отскок от поддержки', zone=z)
         if up:
             z = up[0]
             out['short'] = scenario(-1, z['lo'] - z.get('tol', 0.0), z['hi'], z['hi'] + z.get('pad', 0.0),
-                                    f"касание {_fmt(z['lo'] - z.get('tol', 0.0))} (зона {_fmt(z['lo'])}–{_fmt(z['hi'])} с допуском) и медвежья свеча 1h с закрытием ниже "
+                                    f"{touch(-1, z)} и медвежья свеча 1h с закрытием ниже "
                                     f"{_fmt(z['lo'] - z.get('tol', 0.0))}", 'отказ от сопротивления', zone=z)
     return out
 
@@ -267,7 +276,9 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                                               boxstyle='round,pad=0.003', fc='#eef0f3', ec='none'))
         fig.text(x, 0.877, tf, fontsize=12.5, color='#333' if tf == tf_label.replace('h', 'ч') else GREY, va='center')
     if bias_text:
-        fig.text(0.42, 0.877, bias_text, fontsize=9.5, color='#555', va='center')
+        import textwrap
+        fig.text(0.42, 0.877, '\n'.join(textwrap.wrap(bias_text, 82)[:2]), fontsize=9, color='#555', va='center',
+                 linespacing=1.15)
 
     # ---- chart
     ax = fig.add_axes([0.0, 0.245, 0.87, 0.61])
@@ -393,7 +404,7 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
             rows.append(('Цели:' if i == 0 else '', f"{_fmt(t)}  ({_pct(t, em)} от входа)"))
         rows.append(('Стоп:', f"{'ниже' if side == 'long' else 'выше'} {_fmt(s['stop'])} ({_pct(s['stop'], em)} от входа)"))
         import textwrap
-        for i, line in enumerate(textwrap.wrap(s['cond'], 38)):     # long conditions wrap inside the box
+        for i, line in enumerate(textwrap.wrap(re.sub(r'(\d) (\d)', '\\1\u00a0\\2', s['cond']), 38)):   # wrap inside the box, numbers whole
             rows.append(('Условия:' if i == 0 else '', line))
         if s.get('note'):
             rows.append(('', s['note']))
@@ -405,7 +416,7 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
     cur = p['cur']
     if cur:
         where = 'В ЗОНЕ' if cur['lo'] <= price <= cur['hi'] else ('У ВЕРХА ЗОНЫ' if price > cur['hi'] else 'У НИЗА ЗОНЫ')
-        msg = f"ЦЕНА {where} {_fmt(cur['lo'])} – {_fmt(cur['hi'])}. ЖДЁМ ЗАКРЫТИЯ 1H ЗА НЕЙ."
+        msg = f"ЦЕНА {where} {_fmt(cur['lo'])} – {_fmt(cur['hi'])}. ЖДЁМ ЗАКРЫТИЯ {cur.get('conf_tf', '1h').upper()} ЗА НЕЙ."
     else:
         a = _fmt(p['dn'][0]['hi']) if p['dn'] else '—'
         b = _fmt(p['up'][0]['lo']) if p['up'] else '—'
@@ -415,7 +426,9 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                                       boxstyle='round,pad=0.006', fc='#fdeeee', ec=RED, lw=1.2))
     fig.text(0.04, 0.058, '⚠  ' + msg, fontsize=11.5, weight='bold', color=RED, va='top')
     fig.text(0.075, 0.036, msg_sub, fontsize=9.5, color=RED, va='top')
-    fig.text(0.98, 0.006, '*доля сделок с TP1, при которой сценарий в ноль (с комиссией и проскальзыванием); это не прогноз · зоны — прошлые развороты цены, реакция не гарантирована · не совет', fontsize=7, color=GREY, ha='right', va='bottom')
+    fig.text(0.5, 0.004, '*доля сделок с TP1, при которой сценарий в ноль (с комиссией и проскальзыванием); это не прогноз\n'
+             'зоны — прошлые развороты цены, реакция не гарантирована · не совет', fontsize=7, color=GREY, ha='center',
+             va='bottom', linespacing=1.1)
     buf = io.BytesIO()
     fig.savefig(buf, format='png')
     plt.close(fig)
