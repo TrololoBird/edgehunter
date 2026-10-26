@@ -814,7 +814,10 @@ class StrategiesConfig:
     # cluster at ~3R per direction (policy, not fitted)
     # eng-156: 6 again - the Turtles' closely correlated markets limit (Faith, Original Turtle Rules: 4 / 6 / 10 / 12);
     # 28 trendline shorts were open at once on 2026-10-24, one ~28R bet on the market falling
-    crowd_max: int = 6
+    # eng-169f (the owner, again: "the demo has no limits" - eng-148 had set it off, eng-156 put 6 back): no cap; the
+    # cluster is journaled as the 'crowded' / 'crowded_open' tags at crowd_tag
+    crowd_max: int = 0
+    crowd_tag: int = 6
     # eng-168h: the cap counts the trades entered in this direction within crowd_window_h (a cluster: the live losers
     # were 4-6 entries on one candle close - TL TOUCH DOWN 16:00-20:01 24.10, BB W 16.10 08:00). Counting EVERY open
     # trade let multi-day Turtle / Connors / trendline positions fill all slots: from 24.10 18:20 no entry at all for
@@ -1050,7 +1053,7 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-169e"   # htf_bias shadow for both sides, per-attempt shadow tags   # sweep targets beyond the raid swing   # PUMP / DUMP START targets + dump OI gate changed
+    logic_version: str = "eng-169f"   # htf_bias shadow for both sides, per-attempt shadow tags   # sweep targets beyond the raid swing   # PUMP / DUMP START targets + dump OI gate changed
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

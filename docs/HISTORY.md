@@ -1245,3 +1245,8 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - Binance futures defaultType 'swap'. PO3: OI expectation -1 and CVD divergence like the sweep.
 - Breaker "no liquidity sweep" finding withdrawn (the OB already requires a close beyond the swing).
 - Hotfix: version_no('eng-169e') raised on int('169e') and returned 0 - every eng-169e card read as the oldest logic (candle invalidation / TP1-before-entry rules of >= 137 / 141 off, journal stats excluded). Now the number after 'eng-' (suffix ignored), in signal_book and stats.
+
+## eng-169f (2026-10-26, the owner: "the demo account has no limits")
+- SHADOW_SETUPS emptied: OI BUILD, BB3, RSI2 cross-back, RSI2X SHORT, FLUSH / SQUEEZE REVERSAL trade on the demo (were journaled only: 2296 OI BUILD, 25 BB3, 3 + 1 Connors entries blocked in 3 days).
+- crowd_max 0 (eng-148 had it off by the owner, eng-156 put 6 back): no cap in the book or the executor; the cluster stays a journal tag at crowd_tag 6 ('crowded', 'crowded_open').
+- Remaining entry skips are data / price checks, not limits: BingX market missing, coin already held (one-way mode), R:R / TP1 at BingX's price, basis > 0.6%.

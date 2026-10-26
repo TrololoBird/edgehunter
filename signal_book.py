@@ -168,9 +168,10 @@ _REAL_NO = ('no_data', 'no_leg', 'no_room', 'no_anchor', 'no_test_data')
 # One list for _enter and the dashboard (audit N33: the page described setups by a hand-kept table)
 # audit (Connors): the book's long (RSI2X LONG) is traded; our eng-84 cross-back entry (RSI2 LONG / SHORT) and the
 # mirrored short the book does not state (RSI2X SHORT) are measured in shadow
-SHADOW_SETUPS = (('RSI2 ', 'rsi2_crossback_shadow'), ('RSI2X SHORT', 'connors_short_shadow'),
-                 ('FLUSH REVERSAL', 'cascade_shadow'), ('SQUEEZE REVERSAL', 'cascade_shadow'),
-                 ('OI BUILD ', 'oi_shadow'), ('BB3 ', 'bb3_shadow'))
+# eng-169f (the owner, 2026-10-26: "the demo account has no limits"): no setup is held back in shadow any more - RSI2
+# cross-back, RSI2X SHORT, the cascade reversals, OI BUILD and BB3 trade on the demo like every other setup (they
+# were the AI's 'no study yet' holds of eng-106 / eng-127 / eng-144, never the owner's)
+SHADOW_SETUPS: tuple = ()
 
 
 def shadow_of(group_key: str) -> Optional[str]:
@@ -1493,6 +1494,10 @@ class SignalBook:
         if self.crowded_open(s.direction):
             have = set(filter(None, (s.sig.get('shadow_veto') or '').split(',')))
             s.sig['shadow_veto'] = ','.join(sorted(have | {'crowded_open'}))
+        if self.crowded(s.mode, s.direction, entered_at, CONFIG.strategies.crowd_tag):
+            # eng-169f: the 4h cluster stays measurable as a tag (was the 'crowded' veto of crowd_max)
+            have = set(filter(None, (s.sig.get('shadow_veto') or '').split(',')))
+            s.sig['shadow_veto'] = ','.join(sorted(have | {'crowded'}))
         if reason is None and self._market_down(s):
             if s.group_key in self.MARKET_DOWN_SHADOW:
                 have = set(filter(None, (s.sig.get('shadow_veto') or '').split(',')))
@@ -2164,22 +2169,24 @@ class SignalBook:
         vals = [m.get(k) for k in ('btc_1d', 'mkt_1d')]
         return all(v is not None for v in vals) and all(v < 0 for v in vals)
 
-    def crowded(self, mode: str, direction: int, now: float) -> bool:
-        """eng-51: crowd_max open trades in this direction across all strategies (Turtles' correlated-markets limit)."""
+    def crowded(self, mode: str, direction: int, now: float, limit: Optional[int] = None) -> bool:
+        """eng-51: crowd_max open trades in this direction across all strategies (Turtles' correlated-markets limit);
+        `limit` = another count (eng-169f: the journal's crowd_tag with the cap itself off)."""
         # eng-144: Turtle / Connors cards count and are capped too (Faith: a limit on closely correlated markets;
         # live 11-21.10 Turtle 10 trades -11.6R, 0 winners, entered together; crowded signals -0.22R vs clean +0.01R)
-        if CONFIG.strategies.crowd_max <= 0:
+        cap = CONFIG.strategies.crowd_max if limit is None else limit
+        if cap <= 0:
             return False                 # eng-148, the owner: no position-count limit on the demo account
         cfg = CONFIG.strategies
         since = now - cfg.crowd_window_h * 3600 if cfg.crowd_window_h > 0 else float('-inf')
         n = sum(1 for o in self.signals.values() if o.entered_at and not o.finished and o.direction == direction
                 and o.entered_at >= since)
-        return n >= cfg.crowd_max
+        return n >= cap
 
     def crowded_open(self, direction: int) -> bool:
         """eng-168h: every open trade in this direction (the old crowd count) - journaled as a shadow tag only."""
         n = sum(1 for o in self.signals.values() if o.entered_at and not o.finished and o.direction == direction)
-        return CONFIG.strategies.crowd_max > 0 and n >= CONFIG.strategies.crowd_max
+        return CONFIG.strategies.crowd_tag > 0 and n >= CONFIG.strategies.crowd_tag
 
     def _time_exit(self, s: TrackedSignal, now: float) -> Tuple[Optional[str], Optional[float]]:
         """Why the trade ends by time now (eng-47, Strategy.time_exit) and the time it fell due; (None, None) = it runs."""
