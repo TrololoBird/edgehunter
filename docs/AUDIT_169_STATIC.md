@@ -38,3 +38,15 @@ No backtests were run. Each card: where, fact, evidence, status, fix / test.
 - RawLevel carries ts (the candle that made the level) for swings, so a per-event rule is implementable (variant C).
 - Characterization test: tests/test_audit_zone_dependence.py (documents the current behaviour; must be updated on purpose if
   the rule changes).
+
+## S6 - lookahead of the live level map (audit P0) - PASSED
+- Every buffer build_raw reads holds CLOSED candles only: 15m from the closed frame (part_candles), 1h / 4h / 1d / 1w via
+  fetcher._closed_only. The forming candle is added only to the page's chart (scanner `forming`), never to a plan.
+- Fractals need `width` closed bars on the right (range(width, n - width)); OBs look at the three following closed
+  candles; swept / mitigated / intact use the candles up to now. A level is therefore known when its last defining bar
+  closed. Not checked here: research / replay scripts (their own time slicing).
+
+## S7 - zones.merge invariants (audit P1) - PASSED, tests/test_audit_merge_invariance.py
+- Input order: 20 shuffles of 60 mixed levels give identical zones (merge sorts by span first).
+- Chain A-B-C: measured from the zone's FIRST level (eng-27), A-B merged, C separate.
+- Width cap: a level wider than 6 ATR is its own zone and absorbs nothing.
