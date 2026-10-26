@@ -9,8 +9,9 @@ Original Turtle Trading Rules"), on DAILY candles (fetcher._daily_candles_loop),
 - System 2 (the fail-safe of a skipped System 1): the 55-day breakout, taken whatever the last one did.
 - Stop: 2N from the entry. No profit target: System 1 exits on the 10-day low (a long) / high (a short), System 2 on
   the 20-day one (Scanner / SignalBook trail the exit, `trail_days`).
-- Not here: pyramiding (+1 unit every 1/2 N up to 4) and unit sizing (1% of equity per N): the card is one trade and
-  the journal measures it in R (risk = 2N).
+- Pyramiding (eng-34, SignalBook): +1 unit every 1/2 N from the previous unit's ACTUAL price (Faith), up to
+  turtle_max_units; the stop of all units moves to 2N from the newest one. R stays the first unit's risk (2N), so a
+  full pyramid stopped out loses ~2-2.5R. Not here: unit sizing (1% of equity per N).
 """
 from typing import Dict, List, Optional, Sequence, Tuple
 
