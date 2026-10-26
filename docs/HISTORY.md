@@ -1229,3 +1229,4 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - executor._place_tps: a take-profit the exchange rejects because price already passed it (BingX 110413; ENA: 14s entry latency) is taken at market (reduceOnly) instead of leaving that part without a target.
 - extdata.upbit_loop: an error object from Upbit is reported with its text (was "'str' object has no attribute 'get'").
 - ccxt 4.5.90.
+- Dependencies (pip check clean): certifi 2026.10.23, orjson 3.13.0, pandas 3.1.0, pillow 13.0.0, polars 2.1.0, python-dateutil 3.0.0, fonttools 4.67.0, ruff 0.17.2, platformdirs/pluggy/tomlkit patch. Held by ccxt 4.5.90's exact pins: cffi, pycparser, charset-normalizer, idna, multidict, propcache, uvloop; curl_cffi stays 0.16.x (0.17 needs cffi>=2.1.1).
