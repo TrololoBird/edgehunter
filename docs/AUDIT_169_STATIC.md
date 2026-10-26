@@ -30,7 +30,7 @@ No backtests were run. Each card: where, fact, evidence, status, fix / test.
 - po3 (Judas swing reversal) has no OI expectation ('n/a') and no CVD divergence check, unlike sweep / wyckoff (REVERSALS).
 - No live effect today: no required confirmations configured; promoted ones come only from a FDR-controlled journal test.
 
-## S5 - one price event counted as several independent sources - METHODOLOGY GAP, demonstrated (not changed)
+## S5 - one price event counted as several independent sources - FIXED eng-169e (owner's go-ahead)
 - zones.merge (zones.py): strength = sum of source weights, deduplicated only WITHIN one kind (<= 2x its weight). The docstring
   says exactly this, so the code matches its own spec: not an implementation defect, not a divergence from the documented rule.
 - Different kinds built from the same candle (15m swing, 1h swing, equal lows, day low) all add: one low -> strength 4.0 >
@@ -55,3 +55,14 @@ No backtests were run. Each card: where, fact, evidence, status, fix / test.
   a candle only when the exchange's closeTime is > 3 s in the past (UTC ms, no time zone involved).
 - Not applicable: re-merging merged zones (merge takes raw levels, never zones).
 - Scope: these are properties shown on the tested inputs, not a proof for every input.
+
+## eng-169e changes (owner: "make all changes, logic included")
+- zones.merge: per (side, price) event the strongest kind counts once; separate touches of one kind still add (<= 2x).
+  tests/test_audit_zone_dependence.py rewritten (one extreme in four kinds = 1.0, was 4.0).
+- Round numbers: out of STOP_POOL_KINDS and STRUCTURE_KINDS (no stop anchored on / pushed beyond them), still a TP3 pool.
+- executor.max_entry_basis 0.6%: no demo entry / resting limit while BingX is off Binance by more.
+- Binance defaultType 'swap' (ccxt 4.5.89: 'future' = dated contracts only).
+- PO3: OI expectation -1 and the CVD divergence check, as the sweep (journaled; required only if the journal promotes it).
+- Breaker finding of LEVELS_INVENTORY v1 withdrawn: the OB definition already requires a close beyond the swing.
+- Not changed: weights of measured-weak sources and of the higher timeframes (variants A / B need a measurement), pdhl split
+  (see LEVELS_INVENTORY 4.5), cluster_entry_sec (owner: not now).

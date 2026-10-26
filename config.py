@@ -1050,7 +1050,7 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-168"   # htf_bias shadow for both sides, per-attempt shadow tags   # sweep targets beyond the raid swing   # PUMP / DUMP START targets + dump OI gate changed
+    logic_version: str = "eng-169e"   # htf_bias shadow for both sides, per-attempt shadow tags   # sweep targets beyond the raid swing   # PUMP / DUMP START targets + dump OI gate changed
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
@@ -1115,6 +1115,10 @@ class ExecutorConfig:
     # past the signal price in the trade's direction by more than this: N for the Turtles, the working-tf ATR otherwise
     chase_limit_n: float = 0.5
     chase_limit_atr: float = 0.5
+    # eng-169e (the owner, 2026-10-26): no demo entry when BingX's price is off Binance's by more than this (VST small
+    # caps drift away from the market: LAB +14%, PONS +8.5% at the exit). Measured on the demo: |basis| >= 0.6% at the
+    # entry lost 0.55R a trade to its card (12 trades) against 0.06R below it. 0 = off
+    max_entry_basis: float = 0.006
     api_key: str = ""
     api_secret: str = ""
     risk_pct: float = 1.0           # the stop costs this share of account_usd

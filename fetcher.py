@@ -539,8 +539,10 @@ class DataFetcher:
     async def initialize(self) -> None:
         logger.info("Initializing REST exchanges...")
         # Each instance loads only its own market type: by default both load spot + linear + inverse (~280 MB)
+        # eng-169e: 'swap' (perpetuals) - since ccxt 4.5.89 Binance's 'future' means the dated contracts only; the bot
+        # trades the USDT perpetuals (the same 795 tickers today, the meaning no longer depends on ccxt's word)
         spot_config = {'enableRateLimit': True, 'options': {'defaultType': 'spot', 'fetchMarkets': {'types': ['spot']}}}
-        futures_config = {'enableRateLimit': True, 'options': {'defaultType': 'future', 'fetchMarkets': {'types': ['linear']}}}
+        futures_config = {'enableRateLimit': True, 'options': {'defaultType': 'swap', 'fetchMarkets': {'types': ['linear']}}}
         self.spot_exchange = getattr(ccxt, CONFIG.exchange.exchange_id)(spot_config)
         self.futures_exchange = getattr(ccxt, CONFIG.exchange.exchange_id)(futures_config)
         await asyncio.gather(self._load_markets_off_loop(self.spot_exchange, spot_config),

@@ -95,7 +95,12 @@ POOL_KINDS = ('equal', 'liq_est', 'pdhl', 'range', 'liq_hl', 'round')
 # 'book' (order-book liquidity bands) left the stop structures 2026-10-05: resting orders can be pulled (31% of large
 # crypto orders could spoof, arXiv 2504.15908) and no study shows depth holding price over hours - a stop is not
 # placed on them; they stay map levels (targets / context)
-STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'flip_1h', 'swing_1d', 'swing_1w', 'pmhl', 'year', 'equal', 'pdhl', 'range', 'round',
+# eng-169e (Osler, NY Fed SR 125 / 150: take-profits cluster AT round numbers, stop-losses just BEYOND them and their
+# triggering accelerates the move): a round number stays a level and a TP3 pool, but no stop is pushed beyond it - that
+# put our stop inside the band where the others' stops cascade. Estimated liquidations are a model, never a stop pool.
+STOP_POOL_KINDS = tuple(k for k in POOL_KINDS if k not in ('liq_est', 'round'))
+# eng-169e: 'round' left the structures a stop is anchored beyond (Osler: others' stops cascade just beyond it)
+STRUCTURE_KINDS = ('swing_15m', 'swing_1h', 'flip_1h', 'swing_1d', 'swing_1w', 'pmhl', 'year', 'equal', 'pdhl', 'range',
                    'ob_15m', 'ob_1h', 'ob_4h', 'ob_1d', 'ob_1w',
                    'breaker_15m', 'breaker_1h', 'breaker_4h', 'breaker_1d', 'breaker_1w')
 
@@ -829,7 +834,8 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
     Levels whose body-to-wick spans overlap - or lie closer than the typical pierce of their kind (p50, pierce.py:
     price treats them as one place) - become one zone spanning all of them (classic S/R zones: the region where
     price fought, body to wick; was: points within 0.3 ATR). Without the pierce model the old ATR tolerance applies.
-    Strength = sum of source weights (one kind counted <= 2x).
+    Strength = sum of source weights over distinct price events (eng-169e: one extreme in several kinds counts once, at
+    its largest weight); one kind counted <= 2x.
     """
     from pierce import measured_kind, model, overshoot
     weights = _weights()
@@ -841,10 +847,22 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
     def close_group():
         if not group:
             return
-        per_kind: Dict[str, float] = {}
+        # eng-169e (audit S5): one price extreme seen as several kinds (a 15m swing, the 1h swing, the EQL edge, the day's
+        # low - the same tick, the same side) is ONE event: it adds the largest of its weights once, not their sum (one
+        # low read 4.0 > min_strength alone). Distinct prices / sides stay separate; a kind still counts <= 2x.
+        # per (side, price) event: each kind's own touches (<= 2x its weight), the event keeps its strongest kind only
+        events: Dict[Tuple[int, float], Dict[str, float]] = {}
         for l in group:
             w = weights.get(l.kind, 0.5)
-            per_kind[l.kind] = min(per_kind.get(l.kind, 0.0) + w, 2 * w)
+            ev = events.setdefault((l.side, round(l.price, 12)), {})
+            ev[l.kind] = min(ev.get(l.kind, 0.0) + w, 2 * w)
+        per_kind: Dict[str, float] = {}
+        for ev in events.values():
+            kind = max(ev, key=lambda k: ev[k])
+            w = weights.get(kind, 0.5)
+            per_kind[kind] = min(per_kind.get(kind, 0.0) + ev[kind], 2 * w)
+        for l in group:
+            per_kind.setdefault(l.kind, 0.0)          # the zone still lists every kind it holds (labels, roles)
         strength = sum(per_kind.values())
         wsum = sum(weights.get(l.kind, 0.5) for l in group)
         price = sum(l.price * weights.get(l.kind, 0.5) for l in group) / wsum
@@ -960,9 +978,9 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
         # does not pay is low_rr, not moved closer)
         near = []
         for z in zones:
-            if not any((k in POOL_KINDS and k != 'liq_est') or k in STOP_SWINGS for k in z.kinds):
+            if not any(k in STOP_POOL_KINDS or k in STOP_SWINGS for k in z.kinds):
                 continue
-            if swept_zone(z, tuple(k for k in POOL_KINDS if k != 'liq_est') + STOP_SWINGS):
+            if swept_zone(z, STOP_POOL_KINDS + STOP_SWINGS):
                 continue                    # eng-147: its stops were taken already - nothing to hide behind
             edge = z.lo if direction > 0 else z.hi
             reach = overshoot(symbol, measured_kind(z.kinds) or 'equal', invalidation, 'p90')
@@ -974,8 +992,8 @@ def stop_beyond(zones: List[Zone], invalidation: float, entry: float, direction:
         return invalidation, label
     # Real resting stops only: an ESTIMATED liquidation cluster is a model, not orders (live eng-6: stops pushed beyond
     # one were the widest, 3.4% median, -0.16R, and 0 of 22 stopped trades reached TP1 afterwards)
-    behind = [z for z in zones if any((k in POOL_KINDS and k != 'liq_est') or k in STOP_SWINGS for k in z.kinds)
-              and not swept_zone(z, tuple(k for k in POOL_KINDS if k != 'liq_est') + STOP_SWINGS)
+    behind = [z for z in zones if any(k in STOP_POOL_KINDS or k in STOP_SWINGS for k in z.kinds)
+              and not swept_zone(z, STOP_POOL_KINDS + STOP_SWINGS)
               and 0 <= direction * (invalidation - (z.lo if direction > 0 else z.hi)) <= cfg.stop_pool_atr * atr]
     if behind:
         far = _pick_pool(behind, direction, farthest)

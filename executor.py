@@ -80,6 +80,14 @@ def _coin(symbol: str) -> str:
     return split_base((symbol or '').split('/')[0])[0]
 
 
+def basis_reject(basis: float) -> Optional[str]:
+    """eng-169e: the skip reason when BingX's price is off Binance's by more than executor.max_entry_basis, else None."""
+    cap = CONFIG.executor.max_entry_basis
+    if cap and abs(basis) > cap:
+        return f"basis {basis:+.2%} beyond {cap:.1%} (BingX off Binance)"
+    return None
+
+
 def credentials() -> tuple:
     """(key, secret): BINGX_API_KEY / BINGX_API_SECRET from the environment (systemd EnvironmentFile, mode 600)
     first, then config.local.toml [executor] - the key out of a file that sits next to the code."""
@@ -514,7 +522,9 @@ class DemoExecutor:
             # review V05: the Turtles' stop is 2N from the position's OWN entry - BingX's price, not Binance's
             lv['sl'] = fill_est - d * 2 * n_turtle * ratio
         reject = None
-        if d * (fill_est - lv['sl']) <= 0:
+        if basis_reject(basis):
+            reject = basis_reject(basis)
+        elif d * (fill_est - lv['sl']) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"
         # eng-113 (the owner): no invented chase cap - the size is recomputed at BingX's price (stop_dist below), so the
         # risk stays 1 R; the trade is judged by the formula alone (TP1 ahead, positive expectancy at that price)
@@ -793,8 +803,12 @@ class DemoExecutor:
         quote = getattr(self, '_quote', None) or {}
         ratio = float(quote.get('last') or binance_now * scale) / binance_now
         lv = {k: levels[k] * ratio for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')}
-        ex = await self._exchange()
         cfg = CONFIG.executor
+        if basis_reject(ratio / scale - 1):
+            # eng-169e: the resting limit of a coin whose BingX price is off the market is not placed either
+            self.pending[key] = {'skip': True, 'reason': basis_reject(ratio / scale - 1)}
+            return
+        ex = await self._exchange()
         balance = min(await self._balance(), cfg.account_usd)
         stop_dist = abs(lv['entry'] - lv['sl'])
         if balance <= 0 or stop_dist <= 0:

@@ -178,8 +178,8 @@ class SweepStrategy(Strategy):
         tf_atr = (x.tf_atr or {}).get(tf) if tf != '15m' else atr
         moved = None
         if tf_atr:
-            from zones import POOL_KINDS, STOP_SWINGS, swept_zone
-            kinds = tuple(k for k in POOL_KINDS if k != 'liq_est') + STOP_SWINGS
+            from zones import STOP_POOL_KINDS, STOP_SWINGS, swept_zone
+            kinds = STOP_POOL_KINDS + STOP_SWINGS
             cand = [z for z in zones if any(k in kinds for k in z.kinds) and not swept_zone(z, kinds)
                     and 0 < d * (extreme - (z.hi if d > 0 else z.lo)) <= CONFIG.strategies.zone_move_pool_atr * tf_atr]
             if cand:

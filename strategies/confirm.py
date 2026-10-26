@@ -33,11 +33,13 @@ from config import CONFIG
 NAMES = ('flow', 'spot', 'oi', 'orderflow', 'vsa')
 NA = 'n/a'
 OI_EXPECT = {'continuation': 1, 'breakout': 1, 'sweep': -1, 'wyckoff': -1,
+             # eng-169e (audit S4): PO3's Judas swing is a raid-and-reverse like the sweep - positions flushed, not added
+             'po3': -1,
              # 2026-10-05: every method gets the reading its type implies (journaled; required only when proven):
              # breaks and momentum need new positions behind them, fades of an extreme need them flushed
              'orb': 1, 'pump': 1, 'trendline': 1, 'cup_handle': 1,
              'bollinger': -1, 'market_profile': -1, 'supply_demand': -1, 'connors': -1}
-REVERSALS = ('wyckoff', 'sweep')
+REVERSALS = ('wyckoff', 'sweep', 'po3')
 MINUTE_MS = 60_000
 HOUR_MS = 3_600_000
 

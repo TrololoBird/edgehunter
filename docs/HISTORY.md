@@ -1237,3 +1237,10 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 
 ## eng-169d (2026-10-26)
 - strategies/confirm: a stalled / empty 1m stream gives no 'flow' / 'spot' reading (None), not False (covered_delta); fetcher passes None when neither Binance spot nor Coinbase covers the window. Static audit cards: docs/AUDIT_169_STATIC.md.
+
+## eng-169e (2026-10-26, logic_version eng-169e)
+- zones.merge: one price extreme seen as several kinds counts once in a zone's strength (was: 15m swing + 1h swing + EQL + day low of one candle = 4.0 > min_strength 2.5).
+- Round numbers are no stop pool / stop structure any more (Osler: others' stops cascade just beyond them); still TP3 pools.
+- executor.max_entry_basis = 0.6%: no demo entry while BingX VST is off Binance by more.
+- Binance futures defaultType 'swap'. PO3: OI expectation -1 and CVD divergence like the sweep.
+- Breaker "no liquidity sweep" finding withdrawn (the OB already requires a close beyond the swing).
