@@ -1230,3 +1230,7 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - extdata.upbit_loop: an error object from Upbit is reported with its text (was "'str' object has no attribute 'get'").
 - ccxt 4.5.90.
 - Dependencies (pip check clean): certifi 2026.10.23, orjson 3.13.0, pandas 3.1.0, pillow 13.0.0, polars 2.1.0, python-dateutil 3.0.0, fonttools 4.67.0, ruff 0.17.2, platformdirs/pluggy/tomlkit patch. Held by ccxt 4.5.90's exact pins: cffi, pycparser, charset-normalizer, idna, multidict, propcache, uvloop; curl_cffi stays 0.16.x (0.17 needs cffi>=2.1.1).
+
+## eng-169c (2026-10-26, external audit of the losing trades)
+- executor.on_restop: a stop BingX rejects (110412, COMP 325 / FET 302) while its price already passed the new stop is a stop hit - the rest is closed at market; any other rejection goes to errors.report with the stop that stays (was a WARNING only). The old stop is never removed first (eng-85), so the position was not unprotected.
+- Regression test for eng-155b (APE 283, 2026-10-24 16:39: the partial closed 15048 of 20065 -> 1/6 left; fixed 16:41 without a test).

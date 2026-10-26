@@ -1171,7 +1171,28 @@ class DemoExecutor:
                     c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
                 logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
             except Exception as e:
-                logger.warning(f"Demo restop {s.symbol}: {e!r}")
+                # eng-169c (audit: COMP 325, FET 302 - BingX 110412, the new stop already on the wrong side of the
+                # price): the old stop stays (placed-first order), but a stop the price already passed is a stop hit -
+                # the rest is closed at market as the stop order would have done; any other failure is reported
+                # (was a WARNING only: card and exchange disagreed on the stop silently)
+                await self._restop_failed(trade, s, e)
+
+    async def _restop_failed(self, trade: Dict, s, e: Exception) -> None:
+        symbol, d = trade['symbol'], trade['direction']
+        try:
+            scale = float(trade.get('scale') or 1.0)
+            new_sl = float(s.levels['sl']) * scale
+            ex = await self._exchange()
+            last = float((await ex.fetch_ticker(symbol)).get('last') or 0)
+            left = await self._position_qty(symbol)
+            if last and left > 0 and d * (last - new_sl) <= 0:
+                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
+                logger.info(f"Demo RESTOP {symbol}: price {last} already beyond the new stop {new_sl:.6g}, "
+                            f"{left} closed at market")
+                return
+        except Exception as e2:
+            errors.report('executor.on_restop', e2, f"Demo restop {symbol}: market close after a rejected stop")
+        errors.report('executor.on_restop', e, f"Demo restop {symbol}: the old stop {trade.get('sl')} stays on BingX")
 
     async def on_partial(self, s) -> None:
         """eng-155: the card went +partial_r R - partial_share of the position out. A trade opened with its tp0 order
