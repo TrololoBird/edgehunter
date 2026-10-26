@@ -241,7 +241,17 @@ class LoopDetectors:
             return None
         self._oi_build_checked[symbol] = minute
         from strategies.oi_build import oi_build
-        found = oi_build(self.minutes_of(symbol), list(getattr(md, 'oi_5m', None) or []), now_ms)
+        btc = 'BTC/USDT:USDT'
+
+        def of(fn, s):
+            try:
+                return list(fn(s) or [])
+            except KeyError:                    # replay without BTC: no relative move -> no OI build
+                return []
+        found = oi_build(self.minutes_of(symbol), list(getattr(md, 'oi_5m', None) or []), now_ms,
+                         list(getattr(md, 'oi_samples', None) or []), of(self.m15_of, symbol),
+                         None if symbol == btc else of(self.minutes_of, btc),
+                         None if symbol == btc else of(self.m15_of, btc))
         if found is None:
             return None
         key = (symbol, now_ms // 3_600_000)

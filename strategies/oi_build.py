@@ -41,20 +41,43 @@ def _close_at(minutes: Sequence[Sequence[float]], ts_ms: int) -> Optional[float]
     return None
 
 
-def oi_build(minutes: Sequence[Sequence[float]], oi_5m: Sequence, now_ms: int) -> Optional[Dict]:
-    """minutes: final 1m candles; oi_5m: (ts_ms, OI) one sample per 5 minutes over the last day."""
+def _abs_move_1h(m15: Sequence[Sequence[float]], bars: int = 288) -> Optional[float]:
+    """The coin's usual 1h move: the mean |close / close 4 bars back - 1| over the last `bars` closed 15m candles."""
+    closes = [float(c[4]) for c in list(m15)[-bars:] if c[4]]
+    moves = [abs(closes[k] / closes[k - 4] - 1) for k in range(4, len(closes))]
+    return sum(moves) / len(moves) if len(moves) >= 92 else None
+
+
+def oi_build(minutes: Sequence[Sequence[float]], oi_5m: Sequence, now_ms: int, oi_samples: Sequence = (),
+             m15: Sequence = (), btc_minutes: Optional[Sequence] = None, btc_m15: Optional[Sequence] = None) -> Optional[Dict]:
+    """minutes: final 1m candles; oi_5m: (ts_ms, OI) one sample per 5 minutes over the last day; oi_samples: the live
+    OI samples (the journal's oi_chg_60m reads the same series); m15: closed 15m candles; btc_*: BTC's, None for BTC.
+
+    eng-169i: Pring's "faster than its average" as a material move, not any tick above the mean (26.10: entries on OI
+    +0.11% at a mean of +0.11%, price +0.04%; 18 longs in 2h, 15 stopped, all on BTC's +0.87% hour):
+    - OI: the 1h change >= 2 robust sigmas above the day's 1h changes (median + 2 x 1.4826 MAD), and > 0;
+    - price: the 1h move >= the coin's usual 1h move (mean |1h change| over 3 days of 15m candles);
+    - the coin's own move: its 1h move in units of its usual move beats BTC's in BTC's units by >= 1 (a beta 2 alt
+      on a BTC hour moves 2x BTC in % but not in its own units)."""
     oi = [(int(t), float(v)) for t, v in oi_5m if v]
     if len(oi) < 13 * 2 or len(minutes) < 61:
         return None
     if now_ms - oi[-1][0] > 10 * MINUTE_MS:
         return None                            # the OI feed stalled: no reading
-    changes = [oi[k][1] / oi[k - 12][1] - 1 for k in range(12, len(oi))
+    changes = [oi[k][1] / oi[k - 12][1] - 1 for k in range(12, len(oi) - 12)
                if 55 * MINUTE_MS <= oi[k][0] - oi[k - 12][0] <= 65 * MINUTE_MS]
     if len(changes) < 12:
         return None
-    now_chg, mean = changes[-1], sum(changes) / len(changes)
-    if not (now_chg > 0 and now_chg > mean):
+    now_chg = _oi_change(list(oi_samples), now_ms, 60) if oi_samples else None
+    if now_chg is None:
         return None
+    srt = sorted(changes)
+    med = srt[len(srt) // 2]
+    mad = sorted(abs(x - med) for x in changes)[len(changes) // 2]
+    sigma = 1.4826 * mad
+    if not (now_chg > 0 and sigma > 0 and (now_chg - med) / sigma >= 2.0):
+        return None
+    mean = med
     last = minutes[-1]
     t0 = int(last[0])
     c60 = _close_at(minutes, t0 - 60 * MINUTE_MS)
@@ -64,14 +87,29 @@ def oi_build(minutes: Sequence[Sequence[float]], oi_5m: Sequence, now_ms: int) -
     if p60 == 0:
         return None
     d = 1 if p60 > 0 else -1
+    usual = _abs_move_1h(m15)
+    if not usual or abs(p60) < usual:
+        return None
+    rel = None
+    if btc_minutes is not None:
+        b_last = btc_minutes[-1] if btc_minutes else None
+        b60 = _close_at(btc_minutes, int(b_last[0]) - 60 * MINUTE_MS) if b_last else None
+        b_usual = _abs_move_1h(btc_m15 or ())
+        if b60 is None or not b_usual:
+            return None                        # BTC unknown: the coin's own move cannot be told from the market's
+        rel = p60 / usual - (b_last[4] / b60 - 1) / b_usual
+        if d * rel < 1.0:
+            return None
     hour = [c for c in minutes if c[0] > t0 - 60 * MINUTE_MS]
     extreme = min(c[3] for c in hour) if d > 0 else max(c[2] for c in hour)
+    z = (now_chg - med) / sigma
     return {'setup': 'OI BUILD LONG' if d > 0 else 'OI BUILD SHORT', 'direction': d,
-            'setup_note': f"price 1h {p60:+.2%} with OI 1h {now_chg:+.2%} above its 24h average {mean:+.2%} "
-                          f"(Pring: open interest rising faster than its average), shadow",
+            'setup_note': f"price 1h {p60:+.2%} ({abs(p60) / usual:.1f}x its usual 1h move"
+                          + (f", {d * rel:+.1f} vs BTC in own units" if rel is not None else '')
+                          + f") with OI 1h {now_chg:+.2%}, {z:.1f} robust sigma above the day's median {med:+.2%} (Pring)",
             'anchor_level': last[4], 'anchor_extreme': extreme, 'anchor_label': 'OI build (Pring)',
             'anchor_ts': t0, 'anchor_close': last[4], 'oi_build_oi60': now_chg, 'oi_build_mean': mean,
-            'oi_build_p60': p60, 'event_ts': t0 + MINUTE_MS}
+            'oi_build_p60': p60, 'oi_build_z': z, 'oi_build_rel_btc': rel, 'event_ts': t0 + MINUTE_MS}
 
 
 class OiBuildStrategy(Strategy):

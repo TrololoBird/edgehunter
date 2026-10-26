@@ -1257,3 +1257,9 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 
 ## eng-169h (2026-10-26)
 - Liquidity raids need the volume behind them (the owner: long / short is where the volume and liquidity are): SWEEP, PO3, Wyckoff spring / UTAD and PUMP TOP enter only if after the raid the taker delta is on the trade's side OR absorption / CVD divergence backs it; neither -> blocking veto `no_flow_absorb` (journaled). No flow data never vetoes. Journal before: neither -0.18R/card (21 cards), delta +0.21R (39), delta against but absorbed +0.36R (19).
+
+## eng-169i (2026-10-26)
+- OI BUILD fired on noise (26.10: 1476 detections; 18 longs in 2h on BTC's +0.87% hour, 15 stopped, ~-16R; entries on OI +0.11% at a mean of +0.11%, price +0.04%). Now: OI 1h change >= median + 2 x 1.4826 MAD of the day's 1h changes (robust: one spike does not blind it) and > 0; |price 1h| >= the coin's usual 1h move (mean |1h change| over 3 days of 15m); the coin's move in its own units beats BTC's in BTC's units by >= 1 (beta is not the coin's own move); BTC unknown -> no signal.
+- OI series: the detector's current 1h change now reads the live samples (the journal's oi_chg_60m), not the first sample of each 5m bucket (up to 5 min stale: AIGENSYN +1.45% vs -0.34%).
+- Every strategy: a TP1 whose R:R net of costs is <= 0 is low_rr (HYPE -0.02R, ONDO 0.01R entered: no own min_rr, the blended rule passed them).
+- Not done: a hard cap on simultaneous entries (the owner: no limits on the demo).

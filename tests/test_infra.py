@@ -236,13 +236,10 @@ def test_parabolic_sar_trails_and_stops():
 
 
 def test_oi_build_pring_rule():
+    from tests.test_eng169i import build_case
     from strategies.oi_build import oi_build
-    t0 = 1_800_000_000_000 // 300_000 * 300_000
-    oi = [(t0 - (287 - k) * 300_000, 1000.0 + k * 0.1) for k in range(288)]
-    oi[-1] = (oi[-1][0], oi[-13][1] * 1.05)            # the last hour +5%, far above the day's average hour
-    minutes = [[t0 - (120 - k) * 60_000, 100, 100.5 + k * 0.01, 99.5 + k * 0.01, 100 + k * 0.01, 1e5, 6e4]
-               for k in range(121)]
-    sig = oi_build(minutes, oi, t0 + 60_000)
-    assert sig and sig['setup'] == 'OI BUILD LONG' and sig['oi_build_oi60'] > sig['oi_build_mean']
-    flat = [(t, 1000.0) for t, _ in oi]
-    assert oi_build(minutes, flat, t0 + 60_000) is None
+    args = build_case()
+    sig = oi_build(*args)
+    assert sig and sig['setup'] == 'OI BUILD LONG' and sig['oi_build_z'] >= 2
+    flat = [(t, 1000.0) for t, _ in args[1]]
+    assert oi_build(args[0], flat, args[2], [(t, 1000.0) for t, _ in args[3]], *args[4:]) is None

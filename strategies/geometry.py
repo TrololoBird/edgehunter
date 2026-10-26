@@ -361,6 +361,10 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     if reason is None and real[0] and _min_rr(plan) > 0 and rrs[0] is not None and \
             CONFIG.levels.min_rr_tp1_floor > 0 and rrs[0] < CONFIG.levels.min_rr_tp1_floor:
         reason = f"R:R to TP1 {rrs[0]:.2f} < {CONFIG.levels.min_rr_tp1_floor:g}"
+    if reason is None and real[0] and rrs[0] is not None and rrs[0] <= 0:
+        # eng-169i: a TP1 that does not pay the round trip's costs (26.10 OI BUILD: HYPE -0.02R, ONDO 0.01R entered -
+        # min_rr_tp1_floor is 0 and the blended rule let them through behind far TP2 / TP3)
+        reason = f"R:R to TP1 {rrs[0]:.2f} <= 0 (TP1 does not pay the costs)"
     if reason is None and plan.get('min_rr_on_tp1') and (rrs[0] is None or rrs[0] < _min_rr(plan)):
         # audit S05, Seiden: the profit zone up to the FIRST opposing zone must pay min_rr itself (the blend let a
         # TP1 of 0.26R through behind a far TP2)
