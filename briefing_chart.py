@@ -86,7 +86,7 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         lvl = z['hi'] + z.get('tol', 0.0) if side > 0 else z['lo'] - z.get('tol', 0.0)
         rng = f"зона {_fmt(z['lo'])}–{_fmt(z['hi'])}"
         if side * (price - lvl) <= 0:
-            return f"цена уже у зоны ({rng}, допуск до {_fmt(lvl)})"
+            return f"цена уже у зоны {_fmt(z['lo'])}–{_fmt(z['hi'])} (допуск до {_fmt(lvl)})"
         return f"касание {_fmt(lvl)} ({rng} с допуском)"
 
     def targets(side, entry, first=None):
@@ -277,7 +277,7 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
         fig.text(x, 0.877, tf, fontsize=12.5, color='#333' if tf == tf_label.replace('h', 'ч') else GREY, va='center')
     if bias_text:
         import textwrap
-        fig.text(0.42, 0.877, '\n'.join(textwrap.wrap(bias_text, 82)[:2]), fontsize=9, color='#555', va='center',
+        fig.text(0.42, 0.877, '\n'.join(textwrap.wrap(bias_text, 64)[:2]), fontsize=9, color='#555', va='center',
                  linespacing=1.15)
 
     # ---- chart
@@ -422,10 +422,10 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
         b = _fmt(p['up'][0]['lo']) if p['up'] else '—'
         msg = f"ЦЕНА МЕЖДУ ЗОНАМИ {a} И {b}. ЖДЁМ РЕТЕСТА ОДНОЙ ИЗ НИХ."
     msg_sub = context_text or 'Входить в середине диапазона не рекомендуется.'
-    fig.patches.append(FancyBboxPatch((0.02, 0.018), 0.96, 0.05, transform=fig.transFigure,
+    fig.patches.append(FancyBboxPatch((0.02, 0.024), 0.96, 0.046, transform=fig.transFigure,
                                       boxstyle='round,pad=0.006', fc='#fdeeee', ec=RED, lw=1.2))
     fig.text(0.04, 0.058, '⚠  ' + msg, fontsize=11.5, weight='bold', color=RED, va='top')
-    fig.text(0.075, 0.036, msg_sub, fontsize=9.5, color=RED, va='top')
+    fig.text(0.075, 0.040, msg_sub, fontsize=9.5, color=RED, va='top')
     fig.text(0.5, 0.004, '*доля сделок с TP1, при которой сценарий в ноль (с комиссией и проскальзыванием); это не прогноз\n'
              'зоны — прошлые развороты цены, реакция не гарантирована · не совет', fontsize=7, color=GREY, ha='center',
              va='bottom', linespacing=1.1)
