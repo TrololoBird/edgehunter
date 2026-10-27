@@ -1130,6 +1130,9 @@ class ExecutorConfig:
     tpsl_cap: int = 200
     tpsl_reserve: int = 3
     tpsl_warn: int = 170
+    # eng-171 (the owner): only the stop + one target rest on BingX (tp0, or TP1 without it); the later targets are
+    # market reduceOnly exits on the card's TP1 / TP2 events - a position holds 2 TP / SL orders, then 1
+    virtual_tps: bool = True
     api_key: str = ""
     api_secret: str = ""
     risk_pct: float = 1.0           # the stop costs this share of account_usd

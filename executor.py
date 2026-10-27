@@ -151,7 +151,7 @@ class DemoExecutor:
                               ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER'),
                               ('slip_bps', 'REAL'), ('latency_ms', 'INTEGER'), ('leverage', 'INTEGER'),
                               ('logic_version', 'TEXT'), ('partial_done', 'INTEGER'), ('n_units', 'INTEGER'), ('r_unit', 'REAL'),
-                              ('exit_via', 'TEXT')):
+                              ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
@@ -430,11 +430,23 @@ class DemoExecutor:
             except Exception as e:
                 errors.report('executor._cancel_orders', e, f"Demo cancel {symbol} {o.get('id')}")
 
-    async def _place_tps(self, trade: Dict, parts, min_qty: float = 0.0) -> None:
+    async def _place_tps(self, trade: Dict, parts, min_qty: float = 0.0, on_exchange: int = 1) -> None:
         """The take-profits; a failure leaves the trade tracked with its stop (eng-85: an exception here used to drop
-        a stopped position out of self.open, and close_untracked then dumped it at market as UNTRACKED)."""
+        a stopped position out of self.open, and close_untracked then dumped it at market as UNTRACKED).
+        eng-171 (virtual_tps): only the first `on_exchange` parts rest on BingX (tp0 - or TP1 when the trade has no
+        tp0; none after the partial), so a position holds its stop + one target (200 TP / SL orders cap, 110206); the
+        rest are market reduceOnly exits on the card's TP1 / TP2 events (on_target, `_left_fraction`)."""
         ex = await self._exchange()
         symbol, d = trade['symbol'], trade['direction']
+        parts = list(parts)
+        if CONFIG.executor.virtual_tps and (parts or on_exchange == 0):
+            trade['virt'] = 2 if (parts and parts[0][0] == 0) or trade.get('partial_done') else 1
+            trade['tp_done'] = int(trade.get('tp_done') or 0)       # a re-protect keeps the targets already taken
+            if trade.get('id'):
+                with sqlite3.connect(self.db_path) as c:
+                    c.execute("UPDATE demo_trades SET virt = ?, tp_done = ? WHERE id = ?",
+                              (trade['virt'], trade['tp_done'], trade['id']))
+            parts = parts[:on_exchange]
         for k, amount in parts:
             if amount <= 0 or amount < min_qty or not trade.get(f'tp{k}'):
                 continue
@@ -1131,7 +1143,8 @@ class DemoExecutor:
                     await self._restore_stop(trade)
                     min_qty = ((ex.markets[trade['symbol']].get('limits') or {}).get('amount') or {}).get('min') or 0
                     await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(trade.get('trail')),
-                                                                 bool(trade.get('no_tp'))), min_qty)
+                                                                 bool(trade.get('no_tp'))), min_qty,
+                                          on_exchange=0 if trade.get('virt') else 1)
                 except Exception as e:
                     errors.report('executor.close_untracked', e, f"Demo re-protect {trade['symbol']}")
                 continue
@@ -1224,6 +1237,70 @@ class DemoExecutor:
                     logger.warning(f"Demo {trade['symbol']}: extra stop {px(o):.6g} cancelled (kept {px(keep):.6g})")
                 except Exception as e:
                     errors.report('executor._dedupe_stops', e, f"Demo extra stop {trade['symbol']}")
+
+    def _left_fraction(self, trade: Dict, k: int) -> float:
+        """eng-171: the share of the trade's size that stays open once target k is done (thirds of what is left after
+        the partial; half at TP1 for the trailing plans). The quantity is derived from the position itself, so a
+        repeated or late call (restart, lost event, an exchange tp0 that fired) never closes more than planned."""
+        base = 1 - CONFIG.executor.partial_share if trade.get('virt') == 2 else 1.0
+        if trade.get('trail'):
+            return base / 2
+        return base * (3 - k) / 3
+
+    async def _cancel_targets(self, symbol: str) -> None:
+        """Every resting order of the coin except its stops (a virtual exit subsumes the exchange tp0 / TP1)."""
+        ex = await self._exchange()
+        for o in await ex.fetch_open_orders(symbol):
+            if not self._is_stop(o):
+                try:
+                    await ex.cancel_order(o['id'], symbol)
+                except Exception as e:
+                    errors.report('executor._cancel_targets', e, f"Demo cancel {symbol} {o.get('id')}")
+
+    async def on_target(self, s, k: int) -> None:
+        """eng-171: the card reached TP1 / TP2 (Binance prices, signal_book): the virtual take-profits of a trade
+        (virt) are market reduceOnly exits down to `_left_fraction`. Idempotent per target (tp_done, in the db)."""
+        if not self.enabled or not s.entered_at or k not in (1, 2):
+            return
+        card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
+        trade = self.open.get(card_id) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
+        if trade is None or not trade.get('virt') or int(trade.get('tp_done') or 0) >= k or not trade.get('qty'):
+            return
+        async with self._lock:
+            if all(t is not trade for t in self.open.values()) or int(trade.get('tp_done') or 0) >= k:
+                return
+            try:
+                ex = await self._exchange()
+                symbol, d = trade['symbol'], trade['direction']
+                # reviewer: the resting tp0 / TP1 goes FIRST and the position is read after it (a cached snapshot lives a
+                # few seconds): otherwise a target that filled on BingX meanwhile is taken a second time
+                await self._cancel_targets(symbol)
+                await asyncio.sleep(2)
+                left = await self._position_qty(symbol)
+                if left <= 0:
+                    return
+                want = float(trade['qty']) * self._left_fraction(trade, k)
+                min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
+                excess = float(ex.amount_to_precision(symbol, left - want)) if left > want else 0.0
+                if excess > 0 and excess >= min_qty:
+                    await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', excess, None,
+                                          {'reduceOnly': True})
+                else:
+                    excess = 0.0
+                trade['tp_done'] = k
+                with sqlite3.connect(self.db_path) as c:
+                    c.execute("UPDATE demo_trades SET tp_done = ? WHERE id = ?", (k, trade['id']))
+                logger.info(f"Demo TP{k} {symbol}: {excess} closed at market (virtual target), "
+                            f"{'rest' if excess else 'already out'} {max(left - excess, 0):.6g}")
+            except Exception as e:
+                errors.report('executor.on_target', e, f"Demo TP{k} {s.symbol}: retried on the next sync")
+
+    async def sync_targets(self, cards) -> None:
+        """eng-171: cards that passed TP1 / TP2 while the bot was down (restart) or whose event was lost: the missed
+        virtual exit is made now, not at the next target. No REST call unless a trade really lags."""
+        for s in cards:
+            if s.entered_at and not s.finished and s.best_target in (1, 2):
+                await self.on_target(s, int(s.best_target))
 
     async def on_restop(self, s) -> None:
         """eng-58: the card trailed its stop (after TP1: the entry, then the EMA20): the remaining position's stop is
@@ -1323,8 +1400,9 @@ class DemoExecutor:
                         done = f"{half} closed at market"
                     rest = await self._position_qty(symbol)
                     if rest > 0:
+                        trade['partial_done'] = 1
                         await self._place_tps(trade, self.tp_parts(ex, symbol, rest, bool(trade.get('trail')),
-                                                                   bool(trade.get('no_tp'))))
+                                                                   bool(trade.get('no_tp'))), on_exchange=0)
                 else:
                     return
                 trade['partial_done'] = 1

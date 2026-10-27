@@ -859,6 +859,9 @@ class Scanner:
                 waiting = [s for s in self.book.signals.values() if not s.finished and not s.entered_at
                            and s.status in ('WATCH', 'ZONE') and self.demo.is_limit_plan(s)]
                 self._background_task(self.demo.sync_limits(waiting))
+                # eng-171: virtual TP1 / TP2 exits missed while the bot was down
+                self._background_task(self.demo.sync_targets(
+                    [s for s in self.book.signals.values() if s.entered_at and not s.finished and s.best_target]))
             for tracked, event in self.book.events:
                 if event == 'ADD':
                     self._background_task(self.demo.on_add(tracked))
@@ -866,6 +869,8 @@ class Scanner:
                     self._background_task(self.demo.on_restop(tracked))
                 elif event == 'PARTIAL':
                     self._background_task(self.demo.on_partial(tracked))
+                elif event in ('TP1', 'TP2'):
+                    self._background_task(self.demo.on_target(tracked, int(event[2])))
             for tracked in self.book.finished_now:
                 self._background_task(self.demo.on_finish(tracked))
 
