@@ -109,6 +109,7 @@ class DemoExecutor:
         self.ex = None
         self.open: Dict[str, Dict] = {}          # card id -> trade
         self._tpsl_warned = 0.0
+        self._tpsl_est = (0.0, 0)  # (read at, estimated TP / SL orders on BingX)
         self._lock = asyncio.Lock()
         # audit N02: cards whose finish already came (an entry still waiting for the lock must not open them)
         self._finished_cards: set = set()
@@ -390,6 +391,12 @@ class DemoExecutor:
         A WARNING (10 min apart) from tpsl_warn orders. An unreadable order list lets the entry through: _place_stop
         still frees a slot on 110206."""
         cfg = CONFIG.executor
+        at, est = self._tpsl_est
+        if time.time() - at < 8 and est < cfg.tpsl_cap - 30:
+            # a burst of signals: the count read <8 s ago is trusted while far from the cap, +5 orders per entry
+            # (stop + up to 4 targets) kept locally, so 15 entries do not make 15 fetch_open_orders under the lock
+            self._tpsl_est = (at, est + 5)
+            return None
         ex = await self._exchange()
         try:
             n = sum(1 for o in await ex.fetch_open_orders()
@@ -398,6 +405,7 @@ class DemoExecutor:
         except Exception as e:
             logger.debug(f"Demo TP/SL count {symbol}: {e!r}")
             return None
+        self._tpsl_est = (time.time(), n + 5)
         if n >= cfg.tpsl_warn and time.time() - self._tpsl_warned > 600:
             self._tpsl_warned = time.time()
             logger.warning(f"Demo: {n} of {cfg.tpsl_cap} TP / SL orders on BingX (warning from {cfg.tpsl_warn})")
@@ -407,6 +415,7 @@ class DemoExecutor:
             if not await self._free_tp_slot(symbol):
                 return f"{n} of {cfg.tpsl_cap} TP / SL orders on BingX: no slot left for the stop"
             n -= 1
+            self._tpsl_est = (time.time(), n + 5)
         return None
 
     async def _cancel_orders(self, symbol: str, keep: str = None, stops_only: bool = False) -> None:
