@@ -1124,6 +1124,12 @@ class ExecutorConfig:
     # caps drift away from the market: LAB +14%, PONS +8.5% at the exit). Measured on the demo: |basis| >= 0.6% at the
     # entry lost 0.55R a trade to its card (12 trades) against 0.06R below it. 0 = off
     max_entry_basis: float = 0.006
+    # eng-170 (the owner): no cap on open positions, but a stop always has its slot. BingX holds 200 TP / SL orders per
+    # account (110206); an entry that would leave fewer than tpsl_reserve free (after cancelling far TP3s) is not
+    # opened, and the count is logged as a WARNING from tpsl_warn
+    tpsl_cap: int = 200
+    tpsl_reserve: int = 3
+    tpsl_warn: int = 170
     api_key: str = ""
     api_secret: str = ""
     risk_pct: float = 1.0           # the stop costs this share of account_usd

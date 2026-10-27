@@ -108,6 +108,7 @@ class DemoExecutor:
         self._quotes_seen: Dict[str, tuple] = {}   # symbol -> (BingX last, since): a VST quote that stopped moving
         self.ex = None
         self.open: Dict[str, Dict] = {}          # card id -> trade
+        self._tpsl_warned = 0.0
         self._lock = asyncio.Lock()
         # audit N02: cards whose finish already came (an entry still waiting for the lock must not open them)
         self._finished_cards: set = set()
@@ -148,7 +149,8 @@ class DemoExecutor:
                               ('close_pending_reason', 'TEXT'), ('close_pending_r', 'REAL'),
                               ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER'),
                               ('slip_bps', 'REAL'), ('latency_ms', 'INTEGER'), ('leverage', 'INTEGER'),
-                              ('logic_version', 'TEXT'), ('partial_done', 'INTEGER')):
+                              ('logic_version', 'TEXT'), ('partial_done', 'INTEGER'), ('n_units', 'INTEGER'), ('r_unit', 'REAL'),
+                              ('exit_via', 'TEXT')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
@@ -342,7 +344,7 @@ class DemoExecutor:
     async def _place_stop(self, symbol: str, d: int, qty: float, price: float) -> Dict:
         """eng-169j: BingX caps an account at 200 TP / SL orders (110206; 26.10: 69 stops + 131 targets, 30 new trades
         closed at market without a stop). A stop outranks a far target: one TP3 order of a trade still holding all
-        three is cancelled and the stop retried once - that trade's card closes the last third at market on its TP3
+        three is cancelled and the stop retried (up to twice) - that trade's card closes the last third at market on its TP3
         (on_finish), the same exit."""
         ex = await self._exchange()
 
@@ -350,12 +352,12 @@ class DemoExecutor:
             return await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', qty, None,
                                          {'stopLossPrice': float(ex.price_to_precision(symbol, price)),
                                           'reduceOnly': True, 'workingType': 'MARK_PRICE'})
-        try:
-            return await place()
-        except Exception as e:
-            if '110206' not in str(e) or not await self._free_tp_slot(symbol):
-                raise
-            return await place()
+        for attempt in range(3):
+            try:
+                return await place()
+            except Exception as e:
+                if '110206' not in str(e) or attempt == 2 or not await self._free_tp_slot(symbol):
+                    raise
 
     async def _free_tp_slot(self, for_symbol: str) -> bool:
         """Cancel the farthest take-profit of one coin that has three resting (= its TP3); True if one was cancelled."""
@@ -380,6 +382,32 @@ class DemoExecutor:
                         f"(its card closes that third at market on TP3)")
             return True
         return False
+
+    async def _ensure_sl_slot(self, symbol: str) -> Optional[str]:
+        """eng-170 (the owner): a stop always has its slot. Before an entry: with fewer than tpsl_reserve free TP / SL
+        slots, far TP3s are cancelled one by one (_free_tp_slot); nothing left to cancel -> the reason the coin is not
+        opened (was: the entry filled, the stop failed with 110206, the position was closed at market - NO_STOP).
+        A WARNING (10 min apart) from tpsl_warn orders. An unreadable order list lets the entry through: _place_stop
+        still frees a slot on 110206."""
+        cfg = CONFIG.executor
+        ex = await self._exchange()
+        try:
+            n = sum(1 for o in await ex.fetch_open_orders()
+                    if 'STOP' in (t := str((o.get('info') or {}).get('type') or o.get('type') or '').upper())
+                    or 'TAKE_PROFIT' in t)
+        except Exception as e:
+            logger.debug(f"Demo TP/SL count {symbol}: {e!r}")
+            return None
+        if n >= cfg.tpsl_warn and time.time() - self._tpsl_warned > 600:
+            self._tpsl_warned = time.time()
+            logger.warning(f"Demo: {n} of {cfg.tpsl_cap} TP / SL orders on BingX (warning from {cfg.tpsl_warn})")
+        for _ in range(cfg.tpsl_reserve + 2):
+            if n <= cfg.tpsl_cap - cfg.tpsl_reserve:
+                return None
+            if not await self._free_tp_slot(symbol):
+                return f"{n} of {cfg.tpsl_cap} TP / SL orders on BingX: no slot left for the stop"
+            n -= 1
+        return None
 
     async def _cancel_orders(self, symbol: str, keep: str = None, stops_only: bool = False) -> None:
         """eng-85: cancel a coin's resting orders one by one (all but `keep`; only the stops with stops_only), never the
@@ -602,6 +630,13 @@ class DemoExecutor:
             return
         scale = ratio                      # every later conversion (pyramid / averaging stops) uses the same ratio
         ex = await self._exchange()
+        no_slot = await self._ensure_sl_slot(symbol)
+        if no_slot:
+            logger.warning(f"Demo: {s.symbol} {s.group_key} skipped: {no_slot}")
+            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                          'direction': d, 'opened_ms': int(time.time() * 1000), 'error': no_slot,
+                          'closed_ms': int(time.time() * 1000), 'close_reason': 'NO_SLOT'})
+            return
         balance = min(await self._balance(), cfg.account_usd)
         # sized from BingX's own bid / ask: the plan's entry understated the risk by the spread (WLD 2026-10-02: -1.45R)
         stop_dist = abs(fill_est - lv['sl'])
@@ -715,7 +750,7 @@ class DemoExecutor:
                  'slip_bps': (d * (fill - fill_est) / fill_est * 1e4) if fill_est else None,
                  'latency_ms': int(time.time() * 1000 - float(getattr(s, 'entered_at', 0) or 0) * 1000)
                  if getattr(s, 'entered_at', None) else None,
-                 'leverage': leverage,
+                 'leverage': leverage, 'n_units': 1,
                  'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed),
                  'trail': int(bool((getattr(s, 'plan', None) or {}).get('trail_after_tp1'))),
                  'no_tp': int(bool((getattr(s, 'plan', None) or {}).get('no_tp')))}
@@ -1385,8 +1420,9 @@ class DemoExecutor:
                     await self._place_tps(trade, zip((1, 2, 3), (third, third,
                                                                  float(ex.amount_to_precision(symbol, total - 2 * third)))))
                 with sqlite3.connect(self.db_path) as c:
-                    c.execute("UPDATE demo_trades SET qty = ?, entry_fill = ?, sl = ? WHERE id = ?",
-                              (total, trade['entry_fill'], s.levels['sl'] * scale, trade['id']))
+                    c.execute("UPDATE demo_trades SET qty = ?, entry_fill = ?, sl = ?, n_units = ? WHERE id = ?",
+                              (total, trade['entry_fill'], s.levels['sl'] * scale, len(s.units), trade['id']))
+                trade['n_units'] = len(s.units)
                 logger.info(f"Demo ADD {symbol} unit {len(s.units)}: +{added} @ {fill:.6g}, position {total}, "
                             f"stop {s.levels['sl'] * scale:.6g}")
             except Exception as e:
@@ -1621,6 +1657,26 @@ class DemoExecutor:
             errors.report('executor._close', e, f"Demo cancel {symbol}")
         await self._finalize(trade, reason, journal_r)
 
+    async def _exit_kind(self, trade: Dict) -> Optional[str]:
+        """eng-170: 'SL' / 'TP' by the type of the last reduce-only order BingX filled on the coin since the entry
+        (STOP_MARKET / TAKE_PROFIT_MARKET); None for a plain market close or an unreadable list."""
+        try:
+            orders = await self._call('fetch_closed_orders', trade['symbol'], since=int(trade['opened_ms']) - 5_000)
+        except Exception as e:
+            logger.debug(f"Demo exit kind {trade['symbol']}: {e!r}")
+            return None
+        mine = [o for o in orders or [] if o.get('status') == 'closed'
+                and str((o.get('info') or {}).get('reduceOnly')).lower() == 'true'
+                and float(o.get('timestamp') or 0) >= float(trade['opened_ms']) - 1_000]
+        if not mine:
+            return None
+        # the FILLED time, not the creation time (a stop is created before the targets, a partial after them)
+        done = lambda o: float(o.get('lastTradeTimestamp') or (o.get('info') or {}).get('updateTime') or o.get('timestamp') or 0)  # noqa: E731
+        t = str((max(mine, key=done).get('info') or {}).get('type') or '').upper()
+        if 'TAKE_PROFIT' in t:
+            return 'TP'
+        return 'SL' if 'STOP' in t else None
+
     async def _finalize(self, trade: Dict, reason: str, journal_r: Optional[float]) -> None:
         """
         Realized result: OUR quantity x (the exit price - the entry fill), minus taker fees on both sides. The fills'
@@ -1630,6 +1686,13 @@ class DemoExecutor:
         """
         d = trade['direction']
         exit_side = 'sell' if d > 0 else 'buy'
+        exit_via = None
+        if reason == 'EXCHANGE':
+            # eng-170: BingX's own order closed the coin before the card saw it - its type says which (SL / TP);
+            # EXCHANGE stays only when the order list cannot tell
+            kind = await self._exit_kind(trade)
+            if kind:
+                reason, exit_via = kind, 'exchange'
         # one attempt: this runs under the executor's lock, and the old 4 x 5s retries held every entry / restop up
         # to 20s per close; a fill not listed yet is FILL_PENDING and _refinalize picks it up within 5 minutes
         try:
@@ -1664,9 +1727,11 @@ class DemoExecutor:
             logger.warning(f"Demo {reason} {trade['symbol']}: risk_usd is 0 - R left empty")
         with sqlite3.connect(self.db_path) as c:
             c.execute("UPDATE demo_trades SET closed_ms = ?, close_reason = ?, exit_avg = ?, fees_usd = ?, pnl_usd = ?, "
-                      "r = ?, journal_r = ?, funding_usd = ? WHERE id = ?",
+                      "r = ?, journal_r = ?, funding_usd = ?, r_unit = ?, exit_via = ? WHERE id = ?",
                       (int(time.time() * 1000), reason, exit_avg, fees, pnl,
-                       pnl / risk if risk and pnl is not None else None, journal_r, funding, trade['id']))
+                       pnl / risk if risk and pnl is not None else None, journal_r, funding,
+                       pnl / risk / max(1, int(trade.get('n_units') or 1)) if risk and pnl is not None else None,
+                       exit_via, trade['id']))
             if pnl is None and qty and entry:
                 c.execute("UPDATE demo_trades SET error = ? WHERE id = ?", (self.FILL_PENDING, trade['id']))
             elif pnl is not None and trade.get('fill_confirmed') == 0:
@@ -1806,8 +1871,10 @@ class DemoExecutor:
                 pnl += funding
             with sqlite3.connect(self.db_path) as c:
                 c.execute("UPDATE demo_trades SET exit_avg = ?, fees_usd = ?, pnl_usd = ?, r = ?, funding_usd = ?, "
+                          "r_unit = ? / COALESCE(n_units, 1), "
                           "error = CASE WHEN fill_confirmed = 0 THEN ? ELSE NULL END WHERE id = ?",
-                          (exit_avg, fees, pnl, pnl / risk if risk else None, funding, self.ENTRY_ESTIMATE, tid))
+                          (exit_avg, fees, pnl, pnl / risk if risk else None, funding,
+                           pnl / risk if risk else None, self.ENTRY_ESTIMATE, tid))
             logger.info(f"Demo result recovered {symbol}: {pnl:+.2f} USD ({pnl / risk if risk else 0:+.2f}R)")
 
     async def reconcile_loop(self, running) -> None:
