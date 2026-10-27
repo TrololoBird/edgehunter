@@ -761,8 +761,11 @@ class Scanner:
             futures_all, rows = await asyncio.to_thread(self._heavy_pass, spot_frames, futures_frames, funding,
                                                         tier0, closed_until, self._agg_extras())
             self._futures_closed, self._rows, self._heavy_signature = futures_all, rows, signature
-            self._frame_parts = await asyncio.to_thread(self._split_frame, futures_all)
-            self._m15_cache.clear()
+            parts = await asyncio.to_thread(self._split_frame, futures_all)
+            # the loop-side detectors' candle lists are built here, off the loop (the first detector to ask after a 15m
+            # close rebuilt them on the loop: a 2.2 s stall at 14:30 on 2026-10-27), and swapped in together with the frames
+            cache = await asyncio.to_thread(lambda: {sym: (part, part_candles(part)[0]) for sym, part in parts.items()})
+            self._frame_parts, self._m15_cache = parts, cache
             self.last_heavy_sec = time.time() - started
             if self._context_task is None or self._context_task.done():
                 self._context_task = asyncio.create_task(self._refresh_contexts())
