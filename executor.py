@@ -360,8 +360,23 @@ class DemoExecutor:
                 if '110206' not in str(e) or attempt == 2 or not await self._free_tp_slot(symbol):
                     raise
 
+    def _is_plain_tp3(self, exchange_symbol: str, price: float) -> bool:
+        """eng-172: a coin with only TWO resting targets gives up the farther one only when it is the TRADE'S OWN TP3 of
+        a thirds plan that this module does not close virtually (no virt: on_target never sees it, so no target is
+        taken twice) - the card's TP3 closes that third at market (on_finish), as for the three-target coins. A
+        trailing plan's TP1 half, a tp0 + TP1 pair or a virtual trade is never cancelled here."""
+        for t in self.open.values():
+            if t.get('symbol') != exchange_symbol:
+                continue
+            tp3 = float(t.get('tp3') or 0)
+            return bool(tp3 and price and not t.get('virt') and not t.get('trail') and not t.get('no_tp')
+                        and int(t.get('n_units') or 1) <= 1 and not t.get('orphan_seen')
+                        and not t.get('close_pending') and abs(price - tp3) / tp3 < 0.002)
+        return False
+
     async def _free_tp_slot(self, for_symbol: str) -> bool:
-        """Cancel the farthest take-profit of one coin that has three resting (= its TP3); True if one was cancelled."""
+        """Cancel the farthest take-profit of one coin that has three (eng-172: or two, see _is_plain_tp3) resting - its
+        TP3; True if one was cancelled."""
         ex = await self._exchange()
         by: Dict[str, List[Dict]] = {}
         for o in await ex.fetch_open_orders():
@@ -369,11 +384,13 @@ class DemoExecutor:
             if 'TAKE_PROFIT' in t and o.get('symbol') != for_symbol:
                 by.setdefault(o['symbol'], []).append(o)
         for sym, orders in sorted(by.items(), key=lambda kv: -len(kv[1])):
-            if len(orders) < 3:
+            if len(orders) < 2:
                 break
             px = lambda o: float(o.get('triggerPrice') or o.get('stopPrice') or (o.get('info') or {}).get('stopPrice') or 0)  # noqa: E731
             sells = all(o.get('side') == 'sell' for o in orders)       # a long's targets
             far = max(orders, key=px) if sells else min(orders, key=px)
+            if len(orders) == 2 and not self._is_plain_tp3(sym, px(far)):
+                continue
             try:
                 await ex.cancel_order(far['id'], sym)
             except Exception as e:
