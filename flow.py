@@ -752,6 +752,7 @@ class RushBook:
         self._open: Dict[str, list] = {}           # symbol -> [T, side, levels, usd, last price, raw fills]
         self.fill_counts: Dict[str, np.ndarray] = {}   # eng-163: same-ms taker groups with >= 2 raw fills (l - f + 1)
         self.fill_secs: Dict[str, np.ndarray] = {}
+        self._last_rush: Dict[str, int] = {}       # symbol -> the newest second written to counts (the quiet-coin shortcut)
         self.started = time.time()                 # the z-score needs a full hour of history (0 before: no RUSH rows)
 
     def on_trade(self, symbol: str, ts_ms: int, side: int, usd: float, price: float, fills: int = 1):
@@ -792,6 +793,7 @@ class RushBook:
             self.usd[symbol][k] = 0
             self.secs[symbol][k] = sec
         j = 0 if g[1] > 0 else 1
+        self._last_rush[symbol] = max(sec, self._last_rush.get(symbol, 0))
         self.counts[symbol][k, j] += 1
         self.usd[symbol][k, j] += g[3]
 
@@ -808,6 +810,11 @@ class RushBook:
         fills30 = float(fc[((now - self.fill_secs[symbol]) >= 0) & ((now - self.fill_secs[symbol]) < 30)].sum()) \
             if fc is not None else 0.0
         if counts is None:
+            return {'rush_n_10s': 0.0, 'rush_n_30s': 0.0, 'rush_net_30s': 0.0, 'rush_usd_30s': 0.0, 'rush_z_30s': 0.0,
+                    'rush_fill_n_30s': fills30}
+        if now - self._last_rush.get(symbol, 0) >= self.RING:
+            # no rush order within the ring: every window is empty, the z-score is (0 - 0) / 0.5 = 0 (the same numbers
+            # the arrays give; ~600 coins x 10 numpy passes held the loop for a second on every Tier-0 pass)
             return {'rush_n_10s': 0.0, 'rush_n_30s': 0.0, 'rush_net_30s': 0.0, 'rush_usd_30s': 0.0, 'rush_z_30s': 0.0,
                     'rush_fill_n_30s': fills30}
         age = now - self.secs[symbol]

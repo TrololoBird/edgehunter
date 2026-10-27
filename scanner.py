@@ -165,6 +165,7 @@ class Scanner:
         self._cb_median: Optional[float] = None        # the universe's median Coinbase premium (the USDT basis)
         self._futures_closed = pl.DataFrame()
         self._frame_parts: Dict[str, pl.DataFrame] = {}
+        self._m15_cache: Dict[str, tuple] = {}     # symbol -> (frame object, its candles): see _loopside_m15
         self._heavy_signature = None
         self.last_heavy_sec = 0.0
         self.last_scan_sec = 0.0
@@ -224,10 +225,21 @@ class Scanner:
         self._blind_at: Dict[Tuple[str, str], float] = {}   # (symbol, strategy) -> when a history gate last stopped it
         from strategies.loopside import LoopDetectors
         # eng-59: the loop-side detectors live in strategies/loopside.py (the archive replay runs the same code)
-        self.loopside = LoopDetectors(self._minute_candles,
-                                      lambda symbol: part_candles(self._frame_parts.get(symbol))[0])
+        self.loopside = LoopDetectors(self._minute_candles, self._loopside_m15)
         self.loopside.volume_rank = self._volume_rank
         self._rank_cache: tuple = (0.0, {})
+
+    def _loopside_m15(self, symbol: str) -> List[List[float]]:
+        """The closed 15m candles of a symbol for the loop-side detectors (read-only for them). Every detector of every
+        coin asked part_candles() to rebuild the whole list from the Polars frame (watchdog: 1-2 s loop stalls in
+        part_candles): kept per frame object, a 15m close replaces the frame and with it the entry."""
+        part = self._frame_parts.get(symbol)
+        hit = self._m15_cache.get(symbol)
+        if hit is not None and hit[0] is part:
+            return hit[1]
+        candles = part_candles(part)[0]
+        self._m15_cache[symbol] = (part, candles)
+        return candles
 
     def _volume_rank(self, symbol: str) -> Optional[int]:
         """The coin's rank by 24h quote volume among the scanned markets (1 = largest), refreshed once a minute."""
@@ -750,6 +762,7 @@ class Scanner:
                                                         tier0, closed_until, self._agg_extras())
             self._futures_closed, self._rows, self._heavy_signature = futures_all, rows, signature
             self._frame_parts = await asyncio.to_thread(self._split_frame, futures_all)
+            self._m15_cache.clear()
             self.last_heavy_sec = time.time() - started
             if self._context_task is None or self._context_task.done():
                 self._context_task = asyncio.create_task(self._refresh_contexts())
@@ -1938,8 +1951,9 @@ class Scanner:
                         f"{RESAMPLE_QUALITY['dropped']} (main process), streams " + ", ".join(rates)
                         + (f"; {gc_line}" if gc_line else '') + (f"; {failed}" if failed else '')
                         + (f"; {self.smallcap.health()}" if self.smallcap is not None else ''))
-            if time.time() - last_memory >= 600:
-                # where the memory sits (process classes + the bot's own structures), every 10 minutes
+            if time.time() - last_memory >= 1800:
+                # where the memory sits (process classes + the bot's own structures), every 30 minutes (the walk holds
+                # the GIL for 1-2 s: it showed in the watchdog's thread stacks every 10 minutes)
                 last_memory = time.time()
                 try:
                     import memreport

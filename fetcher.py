@@ -531,6 +531,7 @@ class DataFetcher:
         self.venue_derivs: Dict[str, Dict[str, VenueDeriv]] = {}
         self._zone_atr: Dict[str, float] = {}
         self._iceberg_fed: Dict[str, float] = {}
+        self._no_oi_logged: Dict[str, float] = {}     # symbol -> when "no OI history" was last logged (_warn_no_oi)
         # (epoch seconds, BTC dominance %, USDT dominance %) every 5 min, a day kept (CoinGecko /global)
         self.dominance: deque = deque(maxlen=300)
 
@@ -2388,6 +2389,22 @@ class DataFetcher:
             return 'finished_auction'
         return None
 
+    def _warn_no_oi(self, symbol: str, md: MarketData, derivs: Dict, until_ms: int):
+        """No OI reading for a confirmation: once per coin per 30 minutes (it was logged on every 10 s evaluation of an
+        open card), with what the samples looked like - oi_change() needs two samples >= 5 minutes apart inside the
+        hour and the newest one <= 3 minutes old."""
+        now = time.time()
+        if now - self._no_oi_logged.get(symbol, 0.0) < 1800:
+            return
+        self._no_oi_logged[symbol] = now
+        window = [t for t, v in md.oi_samples if until_ms - confirm.HOUR_MS <= t <= until_ms and v]
+        newest = md.oi_samples[-1][0] if md.oi_samples else 0
+        logger.warning(
+            f"Confirmations: no OI history for {symbol}: {len(md.oi_samples)} samples, {len(window)} in the last hour "
+            f"spanning {(window[-1] - window[0]) / 60_000 if window else 0:.1f} min, newest "
+            f"{(until_ms - newest) / 1000 if newest else float('nan'):.0f}s old, last REST poll "
+            f"{now - self.oi_last_updated.get(symbol, 0.0):.0f}s ago, venues with OI {derivs['oi_venues']}")
+
     def confirmations(self, symbol: str, strategy: str, direction: int, since_ms: int, until_ms: int,
                       extreme_ms: Optional[int] = None) -> Dict:
         """Entry confirmations (strategies.confirm): flow, spot, OI, order flow at the extreme."""
@@ -2406,7 +2423,7 @@ class DataFetcher:
         else:
             oi = confirm.oi_change(list(md.oi_samples), until_ms - confirm.HOUR_MS, until_ms)
         if oi is None and confirm.OI_EXPECT.get(strategy):
-            logger.warning(f"Confirmations: no OI history for {symbol} ({len(md.oi_samples)} samples)")
+            self._warn_no_oi(symbol, md, derivs, until_ms)
         # Multi-venue deltas over the evaluate() window (since the extreme, at most the last hour): Binance's candles
         # alone called a move "against" while Bybit / OKX bought more than Binance sold
         from flow import BUY, FUTURES_VENUES, SELL

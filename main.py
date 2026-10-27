@@ -17,6 +17,10 @@ import os
 # polars' bundled mimalloc kept freed memory committed: 579 MB of large private blocks against ~290 MB of live
 # structures (memreport, 2026-10-05). Purge freed pages at once; set before polars loads (the workers inherit it).
 os.environ.setdefault('MIMALLOC_PURGE_DELAY', '0')
+# On Linux polars ships jemalloc, not mimalloc (the line above only applies to Windows): the VPS held ~1.9 GB of large
+# private blocks against ~0.7 GB of live structures (Memory line, 2026-10-27). Decay freed pages after 2 s and let a
+# background thread do it (without one jemalloc purges only when the process allocates again).
+os.environ.setdefault('_RJEM_MALLOC_CONF', 'background_thread:true,dirty_decay_ms:2000,muzzy_decay_ms:2000')
 
 import argparse
 import asyncio
