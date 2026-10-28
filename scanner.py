@@ -309,6 +309,7 @@ class Scanner:
             loops.append(self.journal.evaluate_loop(self.fetcher))
             # P(edge) model state = the journal itself: replay the labelled rows, then the regime Edge table
             self._background_thread(self.journal.warm_start)
+            self._background_thread(self.journal.warm_start_trades)
             self._background_thread(self.journal.refresh_regime_stats)
             self._background_thread(self.journal.refresh_confirm_stats)
             self._background_thread(self.journal.refresh_hit_rates)
@@ -2172,6 +2173,8 @@ class Scanner:
             'p_mature': bool(success and success.mature),
             'p_accuracy': success.accuracy if success else None,
             'p_drifts': success.drifts if success else 0,
+            'pt_n': self.journal.trade.n if self.journal and self.journal.trade else 0,
+            'pt_drifts': self.journal.trade.drifts if self.journal and self.journal.trade else 0,
         }
 
     CONFIRM_RU = {'flow': 'поток', 'spot': 'спот', 'oi': 'OI', 'orderflow': 'ордерфлоу', 'vsa': 'VSA',

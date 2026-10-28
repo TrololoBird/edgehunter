@@ -376,6 +376,16 @@ class MLConfig:
     # P(edge): shown on cards once trained on this many labelled rows; shadow mode (never filters)
     success_enabled: bool = True
     success_min_trained: int = 300
+    # eng-174 P(trade): the same online model on the ENTRY row's features (frozen at the entry), label = the trade's
+    # own result after costs (card_r_low > 0), learned only once the card has closed. Shadow mode (never filters).
+    # ~40 closed trades a day: an ADWIN drift is acted on only after trade_drift_min_rows trades since the last reset,
+    # and the reset refits on the last trade_refit_rows trades instead of starting empty (no archive prior for trades)
+    trade_enabled: bool = True
+    trade_min_trained: int = 150
+    trade_drift_min_rows: int = 100
+    trade_refit_rows: int = 200
+    # the warm start replays closed trades of this many days (all logic versions: one version lives a day or two)
+    trade_history_days: int = 30
 
 
 @dataclass(frozen=True)

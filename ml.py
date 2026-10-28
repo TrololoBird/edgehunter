@@ -526,6 +526,57 @@ class SuccessModel:
         return self.hits / self.seen if self.seen else None
 
 
+class TradeModel(SuccessModel):
+    """
+    eng-174 P(trade): meta-label of the trades actually taken. Features of the ENTRY row (journaled at the entry, so
+    nothing of the trade's life leaks in; the 'card' row's snapshot is refreshed while the card lives), label = the
+    trade's result after costs (trade_label), learned when the card closes (its real exit, not entry + 4h).
+    Few rows (~40 trades a day): a drift is acted on only after trade_drift_min_rows trades since the last reset, and
+    the reset refits on the last trade_refit_rows trades (no archive prior to return to).
+    """
+
+    def __init__(self):
+        self.recent: deque = deque(maxlen=CONFIG.ml.trade_refit_rows)
+        self.since_reset = 0
+        super().__init__()
+
+    def learn(self, row, label: bool):
+        x = self.features(row)
+        with self.lock:
+            if self.n:
+                p = self.model.predict_proba_one(x).get(True, 0.5)
+                error = int((p >= 0.5) != label)
+                self.correct += 1 - error
+                self.seen += 1
+                self.hits += 1 - error
+                self.detector.update(error)
+                if self.detector.drift_detected and self.since_reset >= CONFIG.ml.trade_drift_min_rows:
+                    self.drifts += 1
+                    logger.info(f"ML P(trade): error drift after {self.since_reset} trades, refit on the last "
+                                f"{len(self.recent)}")
+                    recent = list(self.recent)
+                    self._new()
+                    for rx, ry in recent:
+                        self.model.learn_one(rx, ry)
+                    self.n = len(recent)
+                    self.since_reset = 0
+            self.model.learn_one(x, label)
+            self.recent.append((x, label))
+            self.n += 1
+            self.since_reset += 1
+
+    @property
+    def mature(self) -> bool:
+        return self.n >= CONFIG.ml.trade_min_trained
+
+
+def trade_label(row) -> Optional[bool]:
+    """Positive = the trade made money after costs, by the pessimistic R (card_r_low; card_r on rows before it)."""
+    keys = row.keys() if hasattr(row, 'keys') else row
+    r = row['card_r_low'] if 'card_r_low' in keys and row['card_r_low'] is not None else row['card_r']
+    return None if r is None else r > 0
+
+
 def label_of(row, baseline: Optional[float]) -> Optional[bool]:
     """Positive = the 4h return in the signal's direction beat the universe median over the same window."""
     ret = row['ret_4h']

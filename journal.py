@@ -300,6 +300,8 @@ EXTRA_COLUMNS = {
     'sec_into_candle': 'INTEGER',
     # ml.py: IsolationForest score, market regime, P(4h edge > 0) of the online model (shadow)
     'ml_score': 'REAL', 'regime': 'TEXT', 'p_edge': 'REAL',
+    # eng-174: P(trade) of the entry (shadow) and the trade's exit time on its ENTRY row (real label interval)
+    'p_trade': 'REAL', 'exit_ts_ms': 'INTEGER',
     # mtf-5: level-map sources of the entry zone / targets / stop, card outcomes (kind='card') with their reason
     'zone_src': 'TEXT', 'tp1_stepped': 'INTEGER', 'trade_mfe_r': 'REAL', 'trade_mae_r': 'REAL', 'tp1_src': 'TEXT', 'tp2_src': 'TEXT', 'tp3_src': 'TEXT', 'sl_src': 'TEXT', 'reason': 'TEXT',
     'setup_ts_ms': 'INTEGER',
@@ -684,6 +686,14 @@ class SignalJournal:
         self._snapshot_times_at = 0.0
         self._symbol_index: Dict[str, int] = {}
         self.success = None
+        self.trade = None
+        self._trade_learned: set = set()      # entry row ids the P(trade) model has learned (warm start vs live close)
+        if CONFIG.ml.trade_enabled:
+            try:
+                from ml import TradeModel
+                self.trade = TradeModel()
+            except Exception as e:
+                logger.warning(f"P(trade) model unavailable: {e}")
         if CONFIG.ml.success_enabled:
             try:
                 from ml import SuccessModel
@@ -818,6 +828,8 @@ class SignalJournal:
         shadow = "(COALESCE(vetoed, '') LIKE 'variant_%' OR COALESCE(vetoed, '') IN ('flow_entry', 'reclaim_entry', 'weak_mss'))"
         is_shadow = row['vetoed'] is not None and (row['vetoed'].startswith('variant_')
                                                    or row['vetoed'] in ('flow_entry', 'reclaim_entry', 'weak_mss'))
+        if self.trade is not None:
+            row['p_trade'] = self.trade.predict(row)
         with self._lock:
             if row['vetoed'] and self.conn.execute(
                     "SELECT 1 FROM signals WHERE kind = 'entry' AND symbol = ? AND group_key = ? AND setup_ts_ms = ? "
@@ -893,12 +905,16 @@ class SignalJournal:
                 # the trade's result and the veto studies read a later trade as the vetoed one's
                 # eng-169l: trade_mfe_r / trade_mae_r - the excursion over the card's own life (entry .. its exit);
                 # mfe_r (4h after the signal) and mfe_life_r (to the ORIGINAL stop) ignore the actual exit
-                self.conn.execute("UPDATE signals SET card_r = ?, best_tp = ?, trade_mfe_r = ?, trade_mae_r = ? WHERE "
+                # eng-174: card_r_low (the P(trade) label) and the exit time (its label interval) on the entry row too
+                self.conn.execute("UPDATE signals SET card_r = ?, best_tp = ?, trade_mfe_r = ?, trade_mae_r = ?, "
+                                  "card_r_low = ?, exit_ts_ms = ? WHERE "
                                   "kind = 'entry' AND symbol = ? AND group_key = ? AND setup_ts_ms = ? AND vetoed IS NULL",
                                   (tracked.final_r, row['best_tp'], getattr(tracked, 'trade_mfe_r', None),
-                                   getattr(tracked, 'trade_mae_r', None), tracked.symbol, f"ENTRY {tracked.group_key}",
-                                   int(tracked.created * 1000)))
+                                   getattr(tracked, 'trade_mae_r', None), row['card_r_low'], row['ts_ms'],
+                                   tracked.symbol, f"ENTRY {tracked.group_key}", int(tracked.created * 1000)))
             self.conn.commit()
+        if tracked.entered_at and tracked.final_r is not None:
+            self._learn_trade(tracked.symbol, f"ENTRY {tracked.group_key}", int(tracked.created * 1000))
 
     def record_rush(self, symbol: str, direction: int, price: float, sig: Dict) -> None:
         """eng-89: a RUSH BUY / RUSH SELL row (kind 'rush'): data collection, evaluated by the ret_* horizons."""
@@ -1036,6 +1052,60 @@ class SignalJournal:
                 learned += 1
         if learned:
             logger.info(f"P(edge) model warmed up on {learned} journal rows ({self.success.drifts} drift resets)")
+        return learned
+
+    def _trade_rows(self, where: str, args: tuple) -> List[sqlite3.Row]:
+        with self._lock:
+            self.conn.row_factory = sqlite3.Row
+            try:
+                return self.conn.execute(
+                    "SELECT * FROM signals WHERE kind = 'entry' AND vetoed IS NULL AND card_r IS NOT NULL AND "
+                    + where, args).fetchall()
+            finally:
+                self.conn.row_factory = None
+
+    def _learn_trade_row(self, row) -> bool:
+        from ml import trade_label
+        label = trade_label(row)
+        with self._lock:
+            if label is None or row['id'] in self._trade_learned:
+                return False
+            self._trade_learned.add(row['id'])
+        try:
+            self.trade.learn(row, label)
+        except Exception:
+            with self._lock:
+                self._trade_learned.discard(row['id'])
+            raise
+        return True
+
+    def _learn_trade(self, symbol: str, group_key: str, setup_ts_ms: int):
+        """eng-174: a closed trade teaches P(trade) now - at its real exit, never before (the label is its result)."""
+        if self.trade is None:
+            return
+        try:
+            for row in self._trade_rows("symbol = ? AND group_key = ? AND setup_ts_ms = ?", (symbol, group_key, setup_ts_ms)):
+                self._learn_trade_row(row)
+        except Exception as e:
+            logger.warning(f"P(trade) learn {symbol}: {e!r}")
+
+    def warm_start_trades(self) -> int:
+        """Replay the closed trades of trade_history_days in exit order (rows before eng-174: the card row's time)."""
+        if self.trade is None:
+            return 0
+        since = int((time.time() - CONFIG.ml.trade_history_days * 86_400) * 1000)
+        rows = self._trade_rows("ts_ms >= ?", (since,))
+        if any(r['exit_ts_ms'] is None for r in rows):
+            with self._lock:
+                exits = dict(((s, g, t), e) for s, g, t, e in self.conn.execute(
+                    "SELECT symbol, 'ENTRY ' || substr(group_key, instr(group_key, ' ') + 1), setup_ts_ms, ts_ms "
+                    "FROM signals WHERE kind = 'card' AND card_r IS NOT NULL AND ts_ms >= ?", (since,)))
+        else:
+            exits = {}
+        def exit_of(r):
+            return r['exit_ts_ms'] or exits.get((r['symbol'], r['group_key'], r['setup_ts_ms'])) or r['ts_ms']
+        learned = sum(self._learn_trade_row(r) for r in sorted(rows, key=exit_of))
+        logger.info(f"P(trade) model warmed up on {learned} closed trades ({self.trade.drifts} drift resets)")
         return learned
 
     def refresh_anomaly_effects(self, days: float = 14.0) -> int:

@@ -532,6 +532,7 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
     ('confirmations positive', lambda r: None if _col(r, 'conf_n') is None else f"{_col(r, 'conf_n')} of 4"),
     ('market regime', lambda r: _col(r, 'regime')),
     ('P(edge) model', lambda r: None if _col(r, 'p_edge') is None else ('p >= 0.5' if _col(r, 'p_edge') >= 0.5 else 'p < 0.5')),
+    ('P(trade) model (eng-174)', lambda r: None if _col(r, 'p_trade') is None else ('p >= 0.5' if _col(r, 'p_trade') >= 0.5 else 'p < 0.5')),
     ('crowd (Binance L/S accounts)', lambda r: None if _col(r, 'ls_global') is None else
         ('crowd long >= 2' if _col(r, 'ls_global') >= 2 else 'crowd short <= 1' if _col(r, 'ls_global') <= 1 else 'mixed')),
     ('HL large accounts', lambda r: None if not _col(r, 'hl_net_usd') or not _col(r, 'direction') else
