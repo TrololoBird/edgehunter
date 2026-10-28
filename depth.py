@@ -48,7 +48,7 @@ class BookState:
 
     __slots__ = ('bids', 'asks', 'last_u', 'synced', 'buffer', 'ts_ms', 'recv', 'resyncs', 'executed', 'flow',
                  'heat', 'heat_step', 'heat_ts', 'walls', 'bands', 'bands_ts', 'deep_bids', 'deep_asks', 'deep_ts',
-                 'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts', 'wall_info', 'wall_log', 'unexplained')
+                 'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts', 'wall_info', 'wall_log', 'wall_ended', 'unexplained')
 
     def __init__(self):
         self.bids: Dict[float, float] = {}
@@ -87,6 +87,9 @@ class BookState:
         # pulled USD]; walls that ended: (ended, side, price, peak USD, multiple, life s, filled USD, pulled USD, why)
         self.wall_info: Dict[Tuple[int, float], List[float]] = {}
         self.wall_log: Deque[Tuple] = deque(maxlen=200)
+        # eng-170: EVERY ended wall, young ones too, for the recorder (spoofing study): (ended, first seen, side, price,
+        # peak USD, multiple, filled USD, pulled USD, why, mid)
+        self.wall_ended: Deque[Tuple] = deque(maxlen=2000)
 
     # best prices are recomputed on demand: dict sizes are a few thousand levels
     def best(self) -> Tuple[Optional[float], Optional[float]]:
@@ -341,6 +344,7 @@ class DepthBook:
             # only shrank under the threshold / left the window
             why = ('broken' if crossed else 'eaten' if filled >= 0.5 * peak else
                    'pulled' if pulled >= 0.5 * peak else 'faded')
+            book.wall_ended.append((now, first, side, price, peak, mult, filled, pulled, why, mid))
             if now - first >= cfg.wall_min_age_sec:
                 book.wall_log.append((now, side, price, peak, mult, now - first, filled, pulled, why))
         book.walls = {w: book.walls.get(w, now) for w in current}

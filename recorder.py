@@ -5,9 +5,12 @@ tested offline later (as filters for 1h-4h trades, never as tick strategies: a m
 - flow:  per second x venue x coin, taker buy / sell USD, long / short liquidation USD, trade count (all six venues;
          the FlowStore ring buffers, so nothing new is streamed). Every Binance / Bybit / OKX liquidation event is
          already kept one by one in the journal's `liquidations` table.
-- depth: each 500-level REST book of the hot coins (~40, every 60s): best bid / ask, and USD resting in 0.1% bands
-         from the mid out to 5% per side (flat columns bid_00..bid_49 / ask_00..ask_49), plus the live top-20
-         metrics (spread, band depth / imbalance, persistent walls).
+- depth: once a minute, the latest 30s snapshot (CONFIG.depth.heat_snapshot_sec) of each hot coin's local book (kept
+         from the diff stream; REST only on (re)sync, so Binance weight does not limit this): best bid / ask, and USD
+         resting in 0.1% bands from the mid out to 5% per side (flat columns bid_00..bid_49 / ask_00..ask_49), plus
+         the live metrics (spread, band depth / imbalance, persistent walls).
+- walls: eng-170, every wall that ended (young ones too, unlike the dashboard's >= 30s list): first seen / ended
+         (30s snapshot resolution), side, price, peak USD, multiple of the median level, filled / pulled USD, why.
 - deriv: per minute x venue x coin, OI (coins and USD), mark, 8h funding (Bybit / OKX / Bitget / Hyperliquid OI is
          not in any public archive).
 
@@ -77,6 +80,16 @@ def depth_rows(depth_book, since_ts: float) -> List[Dict]:
     return out
 
 
+def wall_rows(depth_book, since_ts: float) -> List[tuple]:
+    """eng-170: the walls that ended after since_ts on every hot book."""
+    out = []
+    for symbol, book in list(depth_book.books.items()):
+        for e in list(book.wall_ended):
+            if e[0] > since_ts:
+                out.append((symbol,) + tuple(e))
+    return out
+
+
 def deriv_rows(venue_derivs: Dict, now_ms: float) -> List[tuple]:
     out = []
     for symbol, states in list(venue_derivs.items()):
@@ -107,7 +120,7 @@ def _bands(levels, mid: float, side: int) -> List[float]:
 
 
 def write_minute(root: str, minute_start_sec: int, flow: Optional[Dict], depth: List[Dict], deriv: List[tuple],
-                 deriv_ts_ms: Optional[int] = None) -> int:
+                 deriv_ts_ms: Optional[int] = None, walls: Optional[List[tuple]] = None) -> int:
     """Worker process: one minute of each kind to its own file. Returns the rows written. `deriv_ts_ms`: when the
     derivatives were sampled (eng-102: they were stamped with the minute's START, ~90 s before the sample - an analysis
     joining marks / OI to signals by time saw 1.5 min of the future)."""
@@ -144,6 +157,17 @@ def write_minute(root: str, minute_start_sec: int, flow: Optional[Dict], depth: 
         df = pl.DataFrame(rows, infer_schema_length=None).with_columns(
             pl.col('ts').cast(pl.Datetime('ms', 'UTC')), pl.col('symbol').cast(pl.Categorical))
         df.write_parquet(_path(root, 'depth', minute_start_sec), compression='zstd')
+        written += df.height
+    if walls:
+        df = pl.DataFrame(walls, schema=[('symbol', pl.Utf8), ('ended', pl.Float64), ('first', pl.Float64),
+                                         ('side', pl.Int8), ('price', pl.Float64), ('peak_usd', pl.Float64),
+                                         ('multiple', pl.Float64), ('filled_usd', pl.Float64),
+                                         ('pulled_usd', pl.Float64), ('why', pl.Utf8), ('mid', pl.Float64)],
+                          orient='row').with_columns(
+            (pl.col('ended') * 1000).cast(pl.Int64).cast(pl.Datetime('ms', 'UTC')).alias('ts'),
+            (pl.col('first') * 1000).cast(pl.Int64).cast(pl.Datetime('ms', 'UTC')),
+            pl.col('symbol').cast(pl.Categorical), pl.col('why').cast(pl.Categorical)).drop('ended')
+        df.write_parquet(_path(root, 'walls', minute_start_sec), compression='zstd')
         written += df.height
     if deriv:
         df = pl.DataFrame(deriv, schema=[('symbol', pl.Utf8), ('venue', pl.Utf8), ('oi_usd', pl.Float64),
@@ -250,6 +274,7 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
             flows = [(m, flow_minute(fetcher.flow, m * 60)) for m in range(max(last_minute + 1, minute - 10), minute + 1)]
             now = time.time()
             depth = depth_rows(fetcher.depth, last_depth)
+            walls = wall_rows(fetcher.depth, last_depth)
             last_depth = now
             deriv = deriv_rows(fetcher.venue_derivs, now * 1000)
             last_minute = minute
@@ -258,7 +283,7 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
                 last = i == len(flows) - 1
                 pending = loop.run_in_executor(pool, write_minute, root, m * 60, flow,
                                                depth if last else [], deriv if last else [],
-                                               int(now * 1000) if last else None)
+                                               int(now * 1000) if last else None, walls if last else None)
                 pending.add_done_callback(_log_failure)
             if now - last_compact > 600:
                 last_compact = now
