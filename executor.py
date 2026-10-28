@@ -1298,7 +1298,14 @@ class DemoExecutor:
                     return
                 want = float(trade['qty']) * self._left_fraction(trade, k)
                 min_qty = ((ex.markets[symbol].get('limits') or {}).get('amount') or {}).get('min') or 0
-                excess = float(ex.amount_to_precision(symbol, left - want)) if left > want else 0.0
+                # eng-173: a remainder below one lot (the exchange tp0 already filled; 0.03 left with a 0.1 step) is
+                # "already at the target" - ccxt raises InvalidOrder on it, and the retry loop cancelled the targets
+                # and slept 2 s under the lock on every sync for hours (CAP 47x, ZEC 24x on 28.10)
+                import ccxt
+                try:
+                    excess = float(ex.amount_to_precision(symbol, left - want)) if left > want else 0.0
+                except ccxt.InvalidOrder:
+                    excess = 0.0
                 if excess > 0 and excess >= min_qty:
                     await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', excess, None,
                                           {'reduceOnly': True})
