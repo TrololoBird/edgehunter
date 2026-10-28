@@ -1177,7 +1177,9 @@ class ExecutorConfig:
     # or down alike); their cards are still journaled
     # eng-145, the owner (live journal eng-82..144): market_profile 12 of 13 stopped, bollinger 18 of 20 without TP1
     # stopped, breakout (the Turtles' ~16% 2N stop, MFE 0.3R; BB1) -1.25R - journaled, no demo trades
-    demo_off_setups: tuple = ()      # eng-148, the owner: every strategy back on the demo
+    # eng-173, the owner 2026-10-27: OI BUILD LONG (63 cards -26.1R, every version negative) and SHORT (85 cards -15.5R)
+    # leave the demo; cards stay in signal_book (card_r / trade_mfe_r keep accumulating), the demo row is SETUP_OFF
+    demo_off_setups: tuple = ('OI BUILD LONG', 'OI BUILD SHORT')
     daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 
