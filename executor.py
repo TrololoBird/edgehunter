@@ -1410,7 +1410,13 @@ class DemoExecutor:
                             try:
                                 await ex.cancel_order(o['id'], symbol)
                             except Exception as e:
-                                errors.report('executor.on_partial', e, f"Demo partial {symbol}: cancel {o.get('id')}")
+                                # eng-175: 109400 'order not exist' = the target filled between the fetch and the
+                                # cancel (live 1000BONK 28.10: 'out by its tp0 meanwhile' a second later) - the
+                                # position re-read below handles it; not a component error
+                                if '109400' in str(e):
+                                    logger.info(f"Demo partial {symbol}: order {o.get('id')} already gone (filled)")
+                                else:
+                                    errors.report('executor.on_partial', e, f"Demo partial {symbol}: cancel {o.get('id')}")
                     left = await self._position_qty(symbol)
                     if left <= qty * (rest_share + 0.05):
                         done = 'out by its tp0 meanwhile'

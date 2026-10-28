@@ -1667,10 +1667,13 @@ class Briefing:
         failed = errors.alert_text()      # its own accumulator: the Health line drains health_text() every minute
         if failed:
             self._post(f"🛠 Бот: ошибки компонентов за 15 мин — {failed}", key='health|errors', every_sec=3600, topic='service')
-        blind = self.sc.blind_text()
+        # eng-175: after a restart the daily / 1h histories load in ~7-10 min and blind_text keeps a 15 min window:
+        # every restart posted this as a fault (live 28.10: 18:57 and 20:39 UTC, clear by +20 min). Only a gate
+        # still stopping strategies after 30 min of uptime is reported
+        blind = self.sc.blind_text() if time.time() - getattr(self.sc, '_started_at', 0) >= 1800 else ''
         if blind:
-            self._post(f"🛠 Бот: стратегии без истории, сигналов от них нет — {blind}. После рестарта история "
-                       f"грузится около часа", key='health|blind', every_sec=3600, topic='service')
+            self._post(f"🛠 Бот: стратегии без истории дольше 30 мин после старта, сигналов от них нет — {blind}",
+                       key='health|blind', every_sec=3600, topic='service')
         rss = (getattr(self.sc, 'health', None) or {}).get('rss_mb')
         try:
             import psutil
