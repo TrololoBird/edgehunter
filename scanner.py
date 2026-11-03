@@ -419,6 +419,8 @@ class Scanner:
         await self.demo.close()
         await self.ext.close()
         await self.positioning.close()
+        if self.smallcap is not None:
+            await self.smallcap.close()
         await self.fetcher.stop()
         logger.info("Scanner stopped gracefully")
 

@@ -488,6 +488,7 @@ class WebUI:
         self._runner: Optional[web.AppRunner] = None
         self._last_state: bytes = b'{}'
         self._sending: set = set()
+        self._analysis_tasks: set = set()
 
     @property
     def url(self) -> str:
@@ -520,6 +521,13 @@ class WebUI:
                 errors.report('webui.start', e, "Could not open the browser")
 
     async def stop(self):
+        tasks = list(self._sending) + list(self._analysis_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.wait(tasks, timeout=2)
+        self._sending.clear()
+        self._analysis_tasks.clear()
         for ws in list(self.clients):
             await ws.close()
         if self._runner is not None:
@@ -736,6 +744,8 @@ class WebUI:
         if symbol in inflight:
             return await asyncio.shield(inflight[symbol])         # one computation per coin, however many clients
         task = asyncio.ensure_future(self._analysis_compute(b, symbol, cache))
+        self._analysis_tasks.add(task)
+        task.add_done_callback(self._analysis_tasks.discard)
         inflight[symbol] = task
         try:
             return await asyncio.shield(task)

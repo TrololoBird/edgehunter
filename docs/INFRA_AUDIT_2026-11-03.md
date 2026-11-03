@@ -22,9 +22,9 @@
 
 В `main.py` сохранился комментарий о том, что история `gc.freeze()`d fetcher'ом, хотя вызовы были удалены из `fetcher.py`. Это создавало ложную модель эксплуатации. Комментарий заменён и теперь явно фиксирует отсутствие `gc.freeze()` в fetcher.
 
-### INF-05 — background tasks не имеют единого владельца
+### INF-05 — background tasks не имеют единого владельца (**частично исправлено**)
 
-`Scanner` хранит собственные `_tasks` и `_background`, `DataFetcher` — `_tasks` и `_background_tasks`, `Notifier` — собственные fire-and-forget tasks, `smallcap` и `webui` создают задачи напрямую. Shutdown закрывает только известные реестры. Нужна инвентаризация всех задач и проверка, что каждая задача либо зарегистрирована, либо явно допускает независимый lifetime.
+`Scanner` хранит собственные `_tasks` и `_background`, `DataFetcher` — `_tasks` и `_background_tasks`, `Notifier` — собственные fire-and-forget tasks. Ранее `smallcap` и `webui` создавали задачи напрямую. Теперь их задачи зарегистрированы у владельцев и отменяются при shutdown; общий реестр для всех компонентов и единая политика ошибок остаются отдельной задачей.
 
 ## Гипотезы, требующие измерения
 
@@ -104,6 +104,6 @@ Health за последний период показывает повторя�
 
 ## Проверка инфраструктурного исправления
 
-Изменения ограничены `deploy/precheck.sh`, `main.py`, `scanner.py` и этой документацией; production unit и runtime не изменялись. Проверки: `sh -n deploy/precheck.sh`, Ruff gate по production-коду, импорт стартового пути, проверка неизвестных стратегий, Pylint E0601/E0602/E0606 и `357 passed` (`pytest tests -q`; часть старых audit-заготовок была удалена удалённым cleanup-коммитом).
+Изменения ограничены `deploy/precheck.sh`, `main.py`, `scanner.py`, `smallcap.py`, `webui.py` и этой документацией; production unit и runtime не изменялись. Проверки: `sh -n deploy/precheck.sh`, Ruff gate по production-коду, импорт стартового пути, проверка неизвестных стратегий, Pylint E0601/E0602/E0606 и `357 passed` (`pytest tests -q`; часть старых audit-заготовок была удалена удалённым cleanup-коммитом).
 
 Read-only snapshot текущего процесса после проверки: `MainPID=2497`, `NRestarts=0`, `MemoryHigh=3G`, `MemoryCurrent=2,208,137,216`, RSS `1,330,632 kB`, swap `280,208 kB`, `memory.events.high=0`, `oom_kill=0`, 34 threads. Для `signals.db` видны 3 основных FD (`db`, `-wal`, `-shm`) и 3 read-only FD; read-only ownership требует отдельного сопоставления с callers и не считается утечкой по одному числу.

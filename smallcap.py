@@ -55,9 +55,16 @@ class SmallCapWatch:
         self._activation = ActivationLog()          # eng-159: lead time (base: the 24h mean minute - no 15m history here)
         self._stream = None
         self._seeding: set = set()
+        self._tasks: set = set()
         self._seed_sem = asyncio.Semaphore(8)       # eng-167: at most 8 REST seeds at once (audit F-04)
         self.detections = 0
         self.checks = 0
+
+    def _background_task(self, coro):
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     # ------------------------------------------------------------------ feed
 
@@ -106,7 +113,7 @@ class SmallCapWatch:
         vols = sorted(c[5] for c in ring)
         self._activation.update(sym, ring, vols[len(vols) // 2] if vols else None)
         if len(ring) >= 120:
-            asyncio.get_event_loop().create_task(self._check(sym))
+            self._background_task(self._check(sym))
 
     # ------------------------------------------------------------------ the coin list (from the wide watch)
 
@@ -158,7 +165,16 @@ class SmallCapWatch:
         for sym, bid, _ in wanted:
             if sym not in self.rings and sym not in self._seeding:
                 self._seeding.add(sym)
-                asyncio.get_event_loop().create_task(self._seed(sym, bid))
+                self._background_task(self._seed(sym, bid))
+
+    async def close(self) -> None:
+        if self._stream is not None:
+            await self._stream.stop()
+            self._stream = None
+        for task in list(self._tasks):
+            task.cancel()
+        if self._tasks:
+            await asyncio.wait(self._tasks, timeout=2)
 
     async def _seed(self, sym: str, bid: str) -> None:
         try:
