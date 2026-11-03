@@ -235,12 +235,15 @@ def rules(ind: dict, d: int) -> dict:
 
 
 
-_IND_CACHE: dict = {}          # (key, last candle ts, count, direction) -> panel(): one computation per closed candle
+from collections import OrderedDict
+import threading
+_IND_LOCK = threading.Lock()
+_IND_CACHE = OrderedDict()
 
 
 def content_digest(rows) -> int:
     """A cheap fingerprint of candles' OHLCV (cache keys: a revised candle keeps its timestamp and the count)."""
-    return hash(tuple(tuple(r[1:6]) for r in rows))
+    return hash(tuple(tuple(r[1:8]) for r in rows))
 
 
 def panel(candles, direction: int, key=None) -> dict:
@@ -249,21 +252,25 @@ def panel(candles, direction: int, key=None) -> dict:
     until the next candle closes: every card of a coin asked for them again (watchdog: 2s loop stalls in rolling_min)."""
     if len(candles) < 250:
         return {}
+    if direction not in (1, -1):
+        return {}
     # the whole answer per (coin, timeframe, last candle, direction): rules() runs rolling windows too (a second
     # watchdog stall in rolling_min once indicators() was cached)
     # audit F04: the candles' content too - a REST revision of a candle keeps its timestamp and the count
-    ck = (key, candles[-1][0], len(candles), direction, content_digest(candles)) if key is not None else None
-    hit = _IND_CACHE.get(ck) if ck is not None else None
+    ck = (key, candles[-1][0], len(candles), content_digest(candles)) if key is not None else None
+    with _IND_LOCK:
+        hit = _IND_CACHE.get(ck) if ck is not None else None
+        if hit is not None: _IND_CACHE.move_to_end(ck)
     if hit is not None:
-        return dict(hit)
+        return dict(hit[0] if direction == 1 else hit[1])
     k = np.asarray([list(row[:8]) + [np.nan] * (8 - len(row[:8])) for row in candles], dtype=np.float64)
     ind = indicators(k)
-    out = {}
-    for name, arr in rules(ind, direction).items():
-        value = np.asarray(arr)[-1]
-        out[name] = bool(value) if value == value else None       # NaN -> None
+    def scalar(d):
+        return {name: (bool(np.asarray(arr)[-1]) if np.asarray(arr)[-1] == np.asarray(arr)[-1] else None)
+                for name, arr in rules(ind, d).items()}
+    pair = (scalar(1), scalar(-1))
     if ck is not None:
-        if len(_IND_CACHE) > 1200:                      # ~150 coins x 2 timeframes x 2 directions x 2 candles
-            _IND_CACHE.clear()
-        _IND_CACHE[ck] = out
-    return dict(out)
+        with _IND_LOCK:
+            _IND_CACHE[ck] = pair; _IND_CACHE.move_to_end(ck)
+            while len(_IND_CACHE) > 1200: _IND_CACHE.popitem(last=False)
+    return dict(pair[0] if direction == 1 else pair[1])

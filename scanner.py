@@ -8,6 +8,8 @@ import platform
 import statistics
 import time
 import zlib
+import copy
+from types import SimpleNamespace
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -69,6 +71,19 @@ def _orb_shadow_row(found: Dict):
                            created=found['anchor_ts'] / 1000, vetoed='variant_orb_open', confirms={},
                            of_confirm=None, limit_variant=False)
 
+
+def make_entry_intent(s):
+    """Freeze the small mutable card fields before scheduling executor work."""
+    return SimpleNamespace(
+        symbol=s.symbol, group_key=s.group_key, mode=s.mode, direction=s.direction,
+        created=getattr(s, 'created', None), entered_at=getattr(s, 'entered_at', None),
+        last_price=getattr(s, 'last_price', None), vetoed=bool(getattr(s, 'vetoed', False)),
+        finished=bool(getattr(s, 'finished', False)),
+        levels=copy.deepcopy(getattr(s, 'levels', None)),
+        plan=copy.deepcopy(getattr(s, 'plan', None)),
+        sig=dict(getattr(s, 'sig', None) or {}),
+        units=list(getattr(s, 'units', None) or []),
+    )
 
 class _FrameLookup:
     """
@@ -347,7 +362,7 @@ class Scanner:
                 now_ms = time.time() * 1000
                 mds = [self.market_data[x] for x in syms if x in self.market_data]
                 if mds:
-                    await asyncio.to_thread(lambda: [self.fetcher.indicator_panel(md, d, now_ms) for md in mds for d in (1, -1)])
+                    await asyncio.to_thread(lambda: [self.fetcher.indicator_panel(md, 1, now_ms) for md in mds])
             except Exception as e:
                 errors.report('scanner.panel_prewarm', e)
 
@@ -438,13 +453,18 @@ class Scanner:
             m = calculate_tier0_metrics(md.ticker_samples, md.oi_samples, md.minute_klines, now_ms,
                                         ret_std=md.ret_std * ret_scale if md.ret_std else md.ret_std, oi_std=md.oi_std,
                                         avg_minute_usd=md.avg_minute_usd * vol_scale if md.avg_minute_usd else md.avg_minute_usd)
-            flow = snapshot.get(symbol, {})
+            flow = snapshot.get(symbol) or {}
+            has_flow = len(flow) > 0
+            m['data_quality_ok'] = has_flow
             m['whale_net_5m'] = whales.net_units(symbol, CONFIG.tier0.window_sec, now_ms)
             m['cluster'] = float(whales.cluster(symbol, now_ms))
             for key in ('liq_long_5m', 'liq_short_5m', 'agg_cvd_5m', 'top_venue_share', 'top_venue_net', 'venues_active'):
-                m[key] = float(flow.get(key, 0.0) or 0.0)
-            m['futures_cvd_5m'] = float(flow.get('cvd_5m', 0.0))
-            m['spot_cvd_5m'] = minute_delta(md.spot_minute_klines, now_ms) + float(flow.get('agg_spot_cvd_5m', 0.0))
+                val = flow.get(key) if has_flow else None
+                m[key] = float('nan') if val is None else float(val)
+            m['futures_cvd_5m'] = float('nan') if not has_flow or flow.get('cvd_5m') is None else float(flow.get('cvd_5m'))
+            spot_delta = minute_delta(md.spot_minute_klines, now_ms)
+            spot_flow = flow.get('agg_spot_cvd_5m') if has_flow else None
+            m['spot_cvd_5m'] = float('nan') if (not has_flow and spot_delta == 0.0) else (spot_delta + (float(spot_flow) if spot_flow is not None else 0.0))
             m['agg_oi_change_5m'] = self.fetcher.deriv_snapshot(symbol, now_ms)['agg_oi_change_5m']
             # eng-88: OI over 15 / 60 minutes beside the 5m one (an OI build is a fast 5m step or a running hour)
             from strategies.oi_build import _oi_change
@@ -853,7 +873,7 @@ class Scanner:
             # Demo orders off the scan: each call is a few REST round trips
             for tracked in entries:
                 if not tracked.vetoed and warmed_up:
-                    self._background_task(self.demo.on_entry(tracked))
+                    self._background_task(self.demo.on_entry(make_entry_intent(tracked)))
             if warmed_up and time.time() - self._limits_synced >= 30:
                 # resting BingX limits for the waiting touch cards (Seiden's line, the Silver Bullet's CE)
                 self._limits_synced = time.time()
@@ -1361,7 +1381,8 @@ class Scanner:
 
     def _enrich(self, symbol: str, md: MarketData, sig: Dict):
         """Live context that is not part of the scored row."""
-        sig['small_cap'] = symbol in self.fetcher.small_caps      # eng-99: the demo risks less on them
+        sig['small_cap'] = symbol in self.fetcher.small_caps
+        sig['smallcap'] = sig['small_cap']      # eng-99: the demo risks less on them
         sig['btc_mom_7d'] = self._btc_momentum()                  # eng-100: the market regime (executor risk)
         sig.update(self.market_state)
         sig.update(self._shadow_coin(md))                         # eng-149: NR4 / NR7 / volatility regime (journal)
@@ -1968,7 +1989,7 @@ class Scanner:
                     import memreport
                     # off the loop: walking the containers took 1.2s (2026-10-05); a container changing size while
                     # it is read raises, reported and retried in 10 minutes
-                    logger.info(await asyncio.to_thread(memreport.report, self.fetcher, self))
+                    logger.info("memory report: %s", await asyncio.to_thread(memreport.linux_memory_status))
                 except Exception as e:
                     errors.report('scanner.memreport', e)
 

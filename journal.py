@@ -287,6 +287,7 @@ EXTRA_COLUMNS = {
     'stop_pierce': 'TEXT',
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
+    'data_quality_ok': 'INTEGER',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
     'entry': 'REAL', 'sl': 'REAL', 'tp1': 'REAL', 'tp2': 'REAL', 'tp3': 'REAL',
     'filled': 'INTEGER', 'outcome': 'TEXT', 'r_tp1': 'REAL', 'r_tp2': 'REAL',
@@ -737,6 +738,7 @@ class SignalJournal:
             'delta_ratio': sig.get('delta_ratio', 0.0), 'funding_8h': sig.get('funding_rate', 0.0),
             'funding_hours': sig.get('funding_interval_h'),           # review V09: the contract's funding interval
             'whale_net_5m': sig.get('whale_net_5m', 0.0), 'logic_version': CONFIG.journal.logic_version,
+            'data_quality_ok': int(bool(sig.get('data_quality_ok', True))),
         }
         row.update(_features(sig))
         return row

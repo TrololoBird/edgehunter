@@ -21,6 +21,7 @@ import errors
 import math
 import os
 import sqlite3
+import contextlib
 import time
 from typing import Dict, List, Optional
 
@@ -42,6 +43,8 @@ CHASE_MAX_R = float('inf')       # eng-113: removed (the size follows the price)
 # the day's risk rules at or above this are 'off' (config.local.toml set them to 1e6 to switch them off: risk_limit then
 # read the whole table on every entry - LIMIT 1000000)
 LIMIT_OFF_AT = 100_000
+UNIT_SETUPS = frozenset({'BREAKOUT UP', 'BREAKOUT DOWN'})
+_OPERATIONAL_KEYS = frozenset({'id', 'unit_qty', 'tp0', 'close_pending', 'add_unknown'})
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS demo_trades (
@@ -137,7 +140,7 @@ class DemoExecutor:
         except (OSError, ValueError):
             pass
         self._markets_ready = False
-        with sqlite3.connect(db_path) as c:
+        with self._db() as c:
             c.execute(SCHEMA)
             c.execute("CREATE INDEX IF NOT EXISTS idx_demo_pending ON demo_trades(error, closed_ms)")
             # columns added after the first schema: migrated once here (was an ALTER TABLE on every trade)
@@ -151,9 +154,16 @@ class DemoExecutor:
                               ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER'),
                               ('slip_bps', 'REAL'), ('latency_ms', 'INTEGER'), ('leverage', 'INTEGER'),
                               ('logic_version', 'TEXT'), ('partial_done', 'INTEGER'), ('n_units', 'INTEGER'), ('r_unit', 'REAL'),
-                              ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER')):
+                              ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
+            placeholders = ', '.join('?' for _ in UNIT_SETUPS)
+            c.execute(
+                f"UPDATE demo_trades SET units = 1 WHERE units IS NULL "
+                f"AND (n_units > 1 OR setup IN ({placeholders}))",
+                tuple(UNIT_SETUPS),
+            )
+            self._schema_cols = {r[1] for r in c.execute("PRAGMA table_info(demo_trades)")}
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
             # without it a restored trade's new stop went out at scale 1); rows from before the column: entry_plan
             c.row_factory = sqlite3.Row
@@ -263,7 +273,7 @@ class DemoExecutor:
                     trade = self.open.pop(key)
                     trade['card_id'] = card_id
                     self.open[card_id] = trade
-                    with sqlite3.connect(self.db_path) as c:
+                    with self._db() as c:
                         c.execute("UPDATE demo_trades SET card_id = ? WHERE id = ?", (card_id, trade['id']))
                     return
                 if p is not None and not p.get('skip'):
@@ -460,7 +470,7 @@ class DemoExecutor:
             trade['virt'] = 2 if (parts and parts[0][0] == 0) or trade.get('partial_done') else 1
             trade['tp_done'] = int(trade.get('tp_done') or 0)       # a re-protect keeps the targets already taken
             if trade.get('id'):
-                with sqlite3.connect(self.db_path) as c:
+                with self._db() as c:
                     c.execute("UPDATE demo_trades SET virt = ?, tp_done = ? WHERE id = ?",
                               (trade['virt'], trade['tp_done'], trade['id']))
             parts = parts[:on_exchange]
@@ -506,7 +516,7 @@ class DemoExecutor:
         tp_parts when the plan's TP1 is already nearer than that (TP1 is the partial then)."""
         cfg = CONFIG.executor
         d, fill, sl = trade['direction'], trade.get('entry_fill'), trade.get('sl')
-        if not cfg.partial_share or not fill or not sl or trade.get('units'):
+        if not cfg.partial_share or not fill or not sl or self._is_unit_trade(trade):
             return self.tp_parts(ex, trade['symbol'], qty, trail, no_tp)
         p1r = fill + d * cfg.partial_r * abs(fill - sl)
         tp1 = trade.get('tp1')
@@ -533,7 +543,7 @@ class DemoExecutor:
         if not (loss_r or max_trades or pause_n):
             return None                              # all off: no three queries per entry
         try:
-            with sqlite3.connect(self.db_path) as c:
+            with self._db() as c:
                 closed = c.execute("SELECT r FROM demo_trades WHERE closed_ms >= ? AND r IS NOT NULL", (day0,)).fetchall()
                 opened = c.execute("SELECT COUNT(*) FROM demo_trades WHERE opened_ms >= ? AND entry_fill IS NOT NULL",
                                    (day0,)).fetchone()[0]
@@ -574,7 +584,7 @@ class DemoExecutor:
             return None
         since = int((time.time() - window) * 1000)
         try:
-            with sqlite3.connect(self.db_path) as c:
+            with self._db() as c:
                 row = c.execute("SELECT symbol FROM demo_trades WHERE direction = ? AND opened_ms >= ? "
                                 "AND entry_fill IS NOT NULL ORDER BY opened_ms DESC LIMIT 1", (d, since)).fetchone()
         except sqlite3.Error:
@@ -681,7 +691,7 @@ class DemoExecutor:
         if balance <= 0 or stop_dist <= 0:
             return
         risk_usd = balance * cfg.risk_pct / 100
-        if (s.sig or {}).get('small_cap'):
+        if (s.sig or {}).get('small_cap') or (s.sig or {}).get('smallcap'):
             # eng-99: a small cap ($1-10M a day): wider spread and slippage, the demo's thin book (1000PEPE's stop
             # filled 1.6% beyond its price) - a fraction of the usual risk
             risk_usd *= CONFIG.exchange.smallcap_risk_mult
@@ -788,7 +798,7 @@ class DemoExecutor:
                  'slip_bps': (d * (fill - fill_est) / fill_est * 1e4) if fill_est else None,
                  'latency_ms': int(time.time() * 1000 - float(getattr(s, 'entered_at', 0) or 0) * 1000)
                  if getattr(s, 'entered_at', None) else None,
-                 'leverage': leverage, 'n_units': 1,
+                 'leverage': leverage, 'n_units': 1, 'units': int(self._is_unit_card(s)),
                  'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed),
                  'trail': int(bool((getattr(s, 'plan', None) or {}).get('trail_after_tp1'))),
                  'no_tp': int(bool((getattr(s, 'plan', None) or {}).get('no_tp')))}
@@ -920,7 +930,7 @@ class DemoExecutor:
             self.pending[key] = {'skip': True, 'reason': 'no balance / stop'}
             return
         risk_usd = balance * cfg.risk_pct / 100 / float(levels.get('risk_units') or 1.0)
-        if (s.sig or {}).get('small_cap'):
+        if (s.sig or {}).get('small_cap') or (s.sig or {}).get('smallcap'):
             risk_usd *= CONFIG.exchange.smallcap_risk_mult          # eng-99
         risk_usd *= self.regime_mult(s)                             # eng-100
         from strategies.geometry import cost_of
@@ -1040,7 +1050,7 @@ class DemoExecutor:
         # Callers verify the exchange order is terminal before reaching this point.
         order_id = str(p.get('order_id') or '') or None
         if order_id is not None:
-            with sqlite3.connect(self.db_path) as c:
+            with self._db() as c:
                 c.row_factory = sqlite3.Row
                 recorded = c.execute("SELECT * FROM demo_trades WHERE symbol = ? AND entry_order = ? ORDER BY id DESC LIMIT 1",
                                      (p['symbol'], order_id)).fetchone()
@@ -1147,7 +1157,7 @@ class DemoExecutor:
                 await asyncio.sleep(5)                   # a cached position snapshot lives a few seconds: read again
                 if await self._position_qty(pos['symbol']) <= 0:
                     continue
-                with sqlite3.connect(self.db_path) as c:
+                with self._db() as c:
                     c.execute("UPDATE demo_trades SET closed_ms = NULL, close_reason = NULL, exit_avg = NULL, "
                               "fees_usd = NULL, pnl_usd = NULL, r = NULL, journal_r = NULL, error = NULL WHERE id = ?",
                               (trade['id'],))
@@ -1222,7 +1232,7 @@ class DemoExecutor:
                     logger.warning(f"Demo {trade['symbol']}: position {left} after an unknown add (booked "
                                    f"{trade.get('qty')}): booked as is")
                     trade['qty'] = left
-                    with sqlite3.connect(self.db_path) as c:
+                    with self._db() as c:
                         c.execute("UPDATE demo_trades SET qty = ? WHERE id = ?", (left, trade['id']))
                 ref0 = float(trade.get('sl') or 0)
                 spx = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice')  # noqa: E731
@@ -1312,7 +1322,7 @@ class DemoExecutor:
                 else:
                     excess = 0.0
                 trade['tp_done'] = k
-                with sqlite3.connect(self.db_path) as c:
+                with self._db() as c:
                     c.execute("UPDATE demo_trades SET tp_done = ? WHERE id = ?", (k, trade['id']))
                 logger.info(f"Demo TP{k} {symbol}: {excess} closed at market (virtual target), "
                             f"{'rest' if excess else 'already out'} {max(left - excess, 0):.6g}")
@@ -1355,7 +1365,7 @@ class DemoExecutor:
                 new = await self._place_stop(symbol, d, left, s.levels['sl'] * scale)
                 await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
                 trade['sl'] = s.levels['sl'] * scale
-                with sqlite3.connect(self.db_path) as c:     # the stop guard restores THIS stop after a restart
+                with self._db() as c:     # the stop guard restores THIS stop after a restart
                     c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
                 logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
             except Exception as e:
@@ -1371,11 +1381,14 @@ class DemoExecutor:
             scale = float(trade.get('scale') or 1.0)
             new_sl = float(s.levels['sl']) * scale
             ex = await self._exchange()
-            last = float((await ex.fetch_ticker(symbol)).get('last') or 0)
+            ticker = await ex.fetch_ticker(symbol) or {}
+            mark = _positive(ticker.get('markPrice') or (ticker.get('info') or {}).get('markPrice') or (ticker.get('info') or {}).get('mark') or ticker.get('mark'))
+            last = _positive(ticker.get('last'))
+            price = mark if mark is not None else last
             left = await self._position_qty(symbol)
-            if last and left > 0 and d * (last - new_sl) <= 0:
+            if price and left > 0 and d * (price - new_sl) <= 0:
                 await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
-                logger.info(f"Demo RESTOP {symbol}: price {last} already beyond the new stop {new_sl:.6g}, "
+                logger.info(f"Demo RESTOP {symbol}: price {price} already beyond the new stop {new_sl:.6g}, "
                             f"{left} closed at market")
                 return
         except Exception as e2:
@@ -1436,7 +1449,7 @@ class DemoExecutor:
                 else:
                     return
                 trade['partial_done'] = 1
-                with sqlite3.connect(self.db_path) as c:
+                with self._db() as c:
                     c.execute("UPDATE demo_trades SET partial_done = 1 WHERE id = ?", (trade['id'],))
                 logger.info(f"Demo PARTIAL {symbol}: {done}")
             except Exception as e:
@@ -1536,10 +1549,11 @@ class DemoExecutor:
                     third = float(ex.amount_to_precision(symbol, total / 3))
                     await self._place_tps(trade, zip((1, 2, 3), (third, third,
                                                                  float(ex.amount_to_precision(symbol, total - 2 * third)))))
-                with sqlite3.connect(self.db_path) as c:
-                    c.execute("UPDATE demo_trades SET qty = ?, entry_fill = ?, sl = ?, n_units = ? WHERE id = ?",
+                with self._db() as c:
+                    c.execute("UPDATE demo_trades SET qty = ?, entry_fill = ?, sl = ?, n_units = ?, units = 1 WHERE id = ?",
                               (total, trade['entry_fill'], s.levels['sl'] * scale, len(s.units), trade['id']))
                 trade['n_units'] = len(s.units)
+                trade['units'] = 1
                 logger.info(f"Demo ADD {symbol} unit {len(s.units)}: +{added} @ {fill:.6g}, position {total}, "
                             f"stop {s.levels['sl'] * scale:.6g}")
             except Exception as e:
@@ -1566,7 +1580,7 @@ class DemoExecutor:
                 # the exchange closed it first (stop / last target, reconciled as EXCHANGE): the card's own result
                 # still belongs next to it - the demo exists to compare the two
                 if s.final_r is not None:
-                    with sqlite3.connect(self.db_path) as c:
+                    with self._db() as c:
                         c.execute("UPDATE demo_trades SET journal_r = ? WHERE card_id = ? AND journal_r IS NULL",
                                   (s.final_r, card_id))
                 return
@@ -1583,7 +1597,7 @@ class DemoExecutor:
         if cfg.strategy_kill_r <= 0 or not strategy:
             return None
         try:
-            with sqlite3.connect(self.db_path) as c:
+            with self._db() as c:
                 rows = c.execute("SELECT r FROM demo_trades WHERE strategy = ? AND r IS NOT NULL ORDER BY closed_ms DESC "
                                  "LIMIT ?", (strategy, cfg.strategy_kill_n)).fetchall()
         except sqlite3.Error:
@@ -1595,7 +1609,7 @@ class DemoExecutor:
 
     def day_summary(self, day0_ms: int) -> List[tuple]:
         """(strategy, trades, wins, sum R, avg slippage bps) of the trades closed in [day0, day0 + 1 day)."""
-        with sqlite3.connect(self.db_path) as c:
+        with self._db() as c:
             return c.execute(
                 "SELECT COALESCE(strategy, '?'), COUNT(*), SUM(r > 0), SUM(r), "
                 "AVG(CASE WHEN entry_plan > 0 AND entry_fill > 0 THEN direction * (entry_fill - entry_plan) / entry_plan * 1e4 END) "
@@ -1605,7 +1619,7 @@ class DemoExecutor:
     def usd_without_r(self, day0_ms: int) -> tuple:
         """(trades, USD) closed in the day with a dollar result but no R (UNTRACKED: no planned stop) - they fell out
         of every R sum (11 rows, -12.54 USD by 15.10)."""
-        with sqlite3.connect(self.db_path) as c:
+        with self._db() as c:
             return c.execute("SELECT COUNT(*), COALESCE(SUM(pnl_usd), 0) FROM demo_trades WHERE r IS NULL AND "
                              "pnl_usd IS NOT NULL AND closed_ms >= ? AND closed_ms < ? "
                              "AND COALESCE(error, '') NOT LIKE 'duplicate of%'",
@@ -1669,7 +1683,7 @@ class DemoExecutor:
     def _set_exit_ref(self, trade_id: int, price: Optional[float]) -> None:
         """The card's own exit price (Binance) next to the demo's fill: the demo lost ~0.15R a trade to the journal,
         almost all on the card-driven market closes (eng-74) - measured, not guessed."""
-        with sqlite3.connect(self.db_path) as c:
+        with self._db() as c:
             c.execute("UPDATE demo_trades SET exit_ref = ? WHERE id = ?", (price, trade_id))
 
     async def _close(self, trade: Dict, reason: str, journal_r: Optional[float], passive: bool = False) -> None:
@@ -1682,7 +1696,7 @@ class DemoExecutor:
         self.open.setdefault(trade['card_id'], trade)
         trade['close_pending'] = [reason, journal_r]
         try:
-            with sqlite3.connect(self.db_path) as c:
+            with self._db() as c:
                 c.execute("UPDATE demo_trades SET close_pending_reason = ?, close_pending_r = ? "
                           "WHERE id = ? AND closed_ms IS NULL", (reason, journal_r, trade['id']))
         except sqlite3.Error as e:
@@ -1842,7 +1856,7 @@ class DemoExecutor:
         risk = trade.get('risk_usd') or 0
         if not risk:
             logger.warning(f"Demo {reason} {trade['symbol']}: risk_usd is 0 - R left empty")
-        with sqlite3.connect(self.db_path) as c:
+        with self._db() as c:
             c.execute("UPDATE demo_trades SET closed_ms = ?, close_reason = ?, exit_avg = ?, fees_usd = ?, pnl_usd = ?, "
                       "r = ?, journal_r = ?, funding_usd = ?, r_unit = ?, exit_via = ? WHERE id = ?",
                       (int(time.time() * 1000), reason, exit_avg, fees, pnl,
@@ -1946,7 +1960,7 @@ class DemoExecutor:
     async def _refinalize(self) -> None:
         """Closed trades whose exit fill was not listed at the close (1000PEPE 2026-10-06 11:07, the link failing):
         their result from BingX's fills, retried for 3 days."""
-        with sqlite3.connect(self.db_path) as c:
+        with self._db() as c:
             rows = c.execute("SELECT id, symbol, direction, opened_ms, closed_ms, qty, entry_fill, risk_usd FROM demo_trades "
                              "WHERE error = ? AND pnl_usd IS NULL AND closed_ms > ?",
                              (self.FILL_PENDING, int(time.time() * 1000) - 3 * 86_400_000)).fetchall()
@@ -1963,7 +1977,7 @@ class DemoExecutor:
                 except Exception as e:
                     logger.warning(f"Demo result recovery {symbol}: {e!r}")
                     cache[symbol] = []
-            with sqlite3.connect(self.db_path) as c:
+            with self._db() as c:
                 nxt = c.execute("SELECT opened_ms, entry_order FROM demo_trades WHERE symbol = ? AND opened_ms > ? "
                                 "AND entry_fill IS NOT NULL ORDER BY opened_ms LIMIT 1", (symbol, closed)).fetchone()
                 others = {o for (o,) in c.execute("SELECT entry_order FROM demo_trades WHERE symbol = ? AND id != ? "
@@ -1986,7 +2000,7 @@ class DemoExecutor:
             funding = await self._funding_paid(symbol, opened, closed)          # audit C12
             if funding is not None:
                 pnl += funding
-            with sqlite3.connect(self.db_path) as c:
+            with self._db() as c:
                 c.execute("UPDATE demo_trades SET exit_avg = ?, fees_usd = ?, pnl_usd = ?, r = ?, funding_usd = ?, "
                           "r_unit = ? / COALESCE(n_units, 1), "
                           "error = CASE WHEN fill_confirmed = 0 THEN ? ELSE NULL END WHERE id = ?",
@@ -2077,19 +2091,47 @@ class DemoExecutor:
                         transient = isinstance(e, (ccxt.NetworkError, ccxt.ExchangeNotAvailable)) or '109400' in str(e)
                         logger.warning(f"Demo reconcile {trade['symbol']}: {e!r}", exc_info=not transient)
 
+    @contextlib.contextmanager
+    def _db(self):
+        c = sqlite3.connect(self.db_path)
+        try:
+            with c:
+                yield c
+        finally:
+            c.close()
+
+    @classmethod
+    def _is_unit_card(cls, s) -> bool:
+        plan = getattr(s, 'plan', None) or {}
+        return bool(getattr(s, 'units', None) or plan.get('units') or plan.get('turtle_n') or
+                    getattr(s, 'group_key', None) in UNIT_SETUPS)
+
+    @classmethod
+    def _is_unit_trade(cls, trade: Dict) -> bool:
+        value = trade.get('units')
+        if value is not None:
+            return bool(value)
+        if (trade.get('n_units') or 0) > 1:
+            return True
+        return trade.get('setup') in UNIT_SETUPS
+
     def _set_scale(self, trade_id: int, scale: Optional[float]) -> None:
-        with sqlite3.connect(self.db_path) as c:
+        with self._db() as c:
             c.execute("UPDATE demo_trades SET scale = ? WHERE id = ?", (scale, trade_id))
 
     def _set_basis(self, trade_id: int, basis: float) -> None:
         """BingX vs Binance at the entry (journaled: the venue gap the demo trades through)."""
-        with sqlite3.connect(self.db_path) as c:
+        with self._db() as c:
             c.execute("UPDATE demo_trades SET basis = ? WHERE id = ?", (basis, trade_id))
 
     def _insert(self, row: Dict) -> int:
         row.setdefault('logic_version', CONFIG.journal.logic_version)   # eng-144: demo statistics per logic version
         cols = [k for k in row if k != 'id']
-        with sqlite3.connect(self.db_path) as c:
+        unexpected = set(cols) - self._schema_cols
+        if unexpected:
+            logger.error("Demo insert received non-schema fields %s", sorted(unexpected))
+            raise ValueError(f"demo_trades insert has non-schema fields: {sorted(unexpected)}")
+        with self._db() as c:
             cur = c.execute(f"INSERT INTO demo_trades ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                             [row[k] for k in cols])
             return cur.lastrowid

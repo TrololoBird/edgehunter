@@ -231,27 +231,28 @@ def load_trades(db: str) -> pl.DataFrame:
     """Closed taken trades: ENTRY row features (frozen at the entry), label, entry time, real exit time."""
     import sqlite3
     from ml import TradeModel, trade_label
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM signals WHERE kind = 'entry' AND vetoed IS NULL AND card_r IS NOT NULL "
+    import contextlib
+    with contextlib.closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM signals WHERE kind = 'entry' AND vetoed IS NULL AND card_r IS NOT NULL "
                         "ORDER BY ts_ms").fetchall()
-    exits = {(s, g, t): e for s, g, t, e in conn.execute(
+        exits = {(s, g, t): e for s, g, t, e in conn.execute(
         "SELECT symbol, 'ENTRY ' || substr(group_key, instr(group_key, ' ') + 1), setup_ts_ms, ts_ms FROM signals "
         "WHERE kind = 'card' AND card_r IS NOT NULL")}
-    recs = []
-    for r in rows:
-        keys = r.keys()
-        exit_ms = (r['exit_ts_ms'] if 'exit_ts_ms' in keys else None) or exits.get((r['symbol'], r['group_key'], r['setup_ts_ms']))
-        label = trade_label(r)
-        if exit_ms is None or label is None:
-            continue
-        rec = {f'f:{k}': v for k, v in TradeModel.features(r).items()}
-        r_low = r['card_r_low'] if 'card_r_low' in keys and r['card_r_low'] is not None else r['card_r']
-        rec.update(ts_ms=r['ts_ms'], exit_ms=int(exit_ms), label=float(label), r=float(r_low),
+        recs = []
+        for r in rows:
+            keys = r.keys()
+            exit_ms = (r['exit_ts_ms'] if 'exit_ts_ms' in keys else None) or exits.get((r['symbol'], r['group_key'], r['setup_ts_ms']))
+            label = trade_label(r)
+            if exit_ms is None or label is None:
+                continue
+            rec = {f'f:{k}': v for k, v in TradeModel.features(r).items()}
+            r_low = r['card_r_low'] if 'card_r_low' in keys and r['card_r_low'] is not None else r['card_r']
+            rec.update(ts_ms=r['ts_ms'], exit_ms=int(exit_ms), label=float(label), r=float(r_low),
                    strategy=r['strategy'] or r['group_key'],
-                   p_before=r['p_trade'] if 'p_trade' in keys else None)
-        recs.append(rec)
-    return pl.from_dicts(recs, infer_schema_length=None) if recs else pl.DataFrame()
+                       p_before=r['p_trade'] if 'p_trade' in keys else None)
+            recs.append(rec)
+        return pl.from_dicts(recs, infer_schema_length=None) if recs else pl.DataFrame()
 
 
 def main_trades(db: str, folds: int):

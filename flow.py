@@ -176,18 +176,33 @@ class FlowStore:
                 row = self._free.pop()
                 for flow in self.venues.values():
                     flow.clear_row(row)
+                if self._hour_cache is not None and self._hour_cache[1].size > 0:
+                    if row < self._hour_cache[1].shape[0]:
+                        if self._hour_cache[1].ndim == 2:
+                            self._hour_cache[1][row, :] = 0.0
+                        else:
+                            self._hour_cache[1][row] = 0.0
+                    self._hour_cache = (0, self._hour_cache[1])
             else:
                 row = len(self.rows) + len(self._free)
                 if row >= self.capacity:
                     self.capacity = max(self.capacity * 2, row + 1)
                     for flow in self.venues.values():
                         flow.grow(self.capacity)
+                    self._hour_cache = (0, np.zeros(0))
             self.rows[symbol] = row
 
     def unregister(self, symbol: str):
         row = self.rows.pop(symbol, None)
         if row is not None:
             self._free.append(row)
+            if self._hour_cache is not None and self._hour_cache[1].size > 0:
+                if row < self._hour_cache[1].shape[0]:
+                    if self._hour_cache[1].ndim == 2:
+                        self._hour_cache[1][row, :] = 0.0
+                    else:
+                        self._hour_cache[1][row] = 0.0
+                self._hour_cache = (0, self._hour_cache[1])
 
     # ------------------------------------------------------------------ writes (hot path)
 
@@ -601,6 +616,13 @@ class WhaleBook:
                 self.hist[symbol] = np.asarray(values, dtype=float)
         self._threshold_cache.clear()
 
+    def forget(self, symbol: str):
+        self.hist.pop(symbol, None)
+        self.whales.pop(symbol, None)
+        self.notable.pop(symbol, None)
+        self.floor_usd.pop(symbol, None)
+        self._threshold_cache.pop(symbol, None)
+
 
 # ---------------------------------------------------------------------- footprint
 
@@ -834,3 +856,14 @@ class RushBook:
         out = {'rush_n_10s': n10, 'rush_n_30s': n30, 'rush_net_30s': net30, 'rush_usd_30s': usd30, 'rush_z_30s': float(z)}
         out['rush_fill_n_30s'] = fills30
         return out
+
+    def forget(self, symbol: str):
+        g = self._open.pop(symbol, None)
+        if g is not None:
+            self._close(symbol, g)
+        self.counts.pop(symbol, None)
+        self.usd.pop(symbol, None)
+        self.secs.pop(symbol, None)
+        self.fill_counts.pop(symbol, None)
+        self.fill_secs.pop(symbol, None)
+        self._last_rush.pop(symbol, None)

@@ -97,8 +97,16 @@ class BookState:
 
 
 class DepthBook:
-    def __init__(self):
+    def __init__(self, on_resync = None):
         self.books: Dict[str, BookState] = {}
+        self.on_resync = on_resync
+
+    def _resync_book(self, book: BookState):
+        self._resync(book)
+        if self.on_resync is not None:
+            sym = next((s for s, b in self.books.items() if b is book), None)
+            if sym is not None:
+                self.on_resync(sym)
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -141,7 +149,7 @@ class DepthBook:
                 self.set_snapshot(symbol, book.pending, now)
             return
         if event.get('pu') != book.last_u:
-            self._resync(book)
+            self._resync_book(book)
             book.buffer.append(event)
             return
         self._apply(book, event, now or time.time())
@@ -173,7 +181,7 @@ class DepthBook:
         now = now or time.time()
         for e in events:
             if int(e.get('pu', -1)) != book.last_u and e is not events[0]:
-                self._resync(book)
+                self._resync_book(book)
                 return
             self._apply(book, e, now, count=e is not events[0])
 
@@ -209,8 +217,7 @@ class DepthBook:
             cell[0] += qty
             cell[1] = ts_ms
 
-    @staticmethod
-    def _resync(book: BookState):
+    def _resync(self, book: BookState):
         book.synced, book.snapshot_wanted, book.buffer, book.pending = False, True, [], None
         book.resyncs += 1
 
@@ -282,7 +289,7 @@ class DepthBook:
         if book.cov_hi > book.cov_lo and not (book.cov_lo <= mid <= book.cov_hi) and now - book.cov_ts >= 300:
             # the price left the range the snapshot covered: a fresh snapshot re-centres it (at most every 5 min:
             # a 1000-level snapshot weighs 20)
-            self._resync(book)
+            self._resync_book(book)
             return
         lo, hi = mid * (1 - cfg.heat_range_pct), mid * (1 + cfg.heat_range_pct)
         if book.cov_hi > book.cov_lo:

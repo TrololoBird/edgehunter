@@ -1,0 +1,56 @@
+{
+  "as_of_utc": "2026-11-02T17:59:37.897000+00:00",
+  "since_utc": "2026-11-01T23:31:47+00:00",
+  "build_sha": "79d08d5",
+  "journal_versions": [
+    [
+      "eng-169l",
+      6062
+    ]
+  ],
+  "demo": {
+    "rows": 162,
+    "filled_rows": 54,
+    "skipped_rows": 108,
+    "filled_closed": 26,
+    "filled_open": 28,
+    "close_reason_counts": {
+      "PRICE_GAP": 6,
+      "SL": 23,
+      "OVERLAP": 21,
+      "None": 28,
+      "NO_MARKET": 14,
+      "SETUP_OFF": 67,
+      "TP3": 2,
+      "CLOSED": 1
+    },
+    "latency_ms": {
+      "n": 54,
+      "median": 33113.0,
+      "p95_nearest_rank": 69667.0,
+      "min": 4208.0,
+      "max": 74048.0
+    },
+    "slip_bps": {
+      "n": 54,
+      "median": 0.0,
+      "p95_nearest_rank": 11.123470522803947,
+      "min": -61.643835616439176,
+      "max": 18.240493896450836
+    }
+  },
+  "entries": {
+    "rows": 594,
+    "non_vetoed": 162,
+    "quality_true": 594,
+    "cost_r_present": 296,
+    "closed_card_label_present": 94
+  },
+  "caveats": [
+    "Rows without entry_fill are attempts/skips, not executed trades.",
+    "latency_ms is end-to-end trigger-to-record, not isolated network latency and not protection latency.",
+    "data_quality_ok defaults to true when absent; this is not proof of full data coverage.",
+    "Non-vetoed cards are not equivalent to executed demo positions.",
+    "Separate read-only database connections; not a cross-database atomic snapshot."
+  ]
+}

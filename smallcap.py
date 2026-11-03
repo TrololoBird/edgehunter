@@ -264,7 +264,7 @@ class SmallCapWatch:
             found['spot_cvd_5m_futures'] = flow5
             sig = dict(found, is_setup=True, is_structured=False, is_tier_0_anomaly=False, active_phases=[],
                        long_score=0, short_score=0, alert_type='LONG' if found['direction'] > 0 else 'SHORT',
-                       atr_15m=atr, volume_24h=self.qv24.get(sym), smallcap=True, flow_src='futures',
+                       atr_15m=atr, volume_24h=self.qv24.get(sym), small_cap=True, smallcap=True, flow_src='futures',
                        strategy='pump')
             self.pending.append((sym, sig))
         except Exception as e:

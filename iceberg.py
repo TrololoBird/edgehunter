@@ -19,8 +19,11 @@ from config import CONFIG
 logger = logging.getLogger(__name__)
 
 
+REPLENISH_TIMEOUT_MS = 400
+
+
 class _Level:
-    __slots__ = ('executed', 'visible', 'first_ms', 'last_ms', 'fired', 'hit', 'refills', 'shown')
+    __slots__ = ('executed', 'visible', 'first_ms', 'last_ms', 'fired', 'hit', 'refills', 'shown', 'absent_since_ms')
 
     def __init__(self, ts: int):
         self.executed = 0.0
@@ -31,6 +34,7 @@ class _Level:
         self.hit = False       # traded against since the last book snapshot
         self.refills = 0       # snapshots that showed the level again after it was traded against
         self.shown = 0.0       # size in the last snapshot
+        self.absent_since_ms = 0
 
 
 class IcebergDetector:
@@ -46,12 +50,19 @@ class IcebergDetector:
         # symbol -> side (+1 bid / -1 ask) -> price -> level
         self.levels: Dict[str, Dict[int, Dict[float, _Level]]] = {}
         self.events: Dict[str, Deque[Tuple[int, int, float, float]]] = {}   # symbol -> (ts, side, price, usd)
+    def invalidate(self, symbol: str):
+        self.levels.pop(symbol, None)
+        self.events.pop(symbol, None)
+
+    def clear_symbol(self, symbol: str):
+        self.invalidate(symbol)
 
     def on_book(self, symbol: str, bids, asks, ts_ms: int):
         """Largest size seen at each price of the live book (USD); a level traded against and shown again = a refill."""
         book = self.levels.setdefault(symbol, {1: {}, -1: {}})
         for side, rows in ((1, bids), (-1, asks)):
             levels = book[side]
+            shown = {float(p) for p, _ in rows}
             for p, q in rows:
                 price, size = float(p), float(q)
                 usd = price * size
@@ -61,15 +72,25 @@ class IcebergDetector:
                         lvl = levels[price] = _Level(ts_ms)
                         lvl.visible = lvl.shown = usd
                     continue
+                lvl.absent_since_ms = 0
                 if lvl.hit and usd > 0:
                     lvl.refills += 1
                 lvl.hit = False
                 lvl.shown = usd
                 lvl.visible = max(lvl.visible, usd)
-            # levels no longer shown that nothing traded against are forgotten: the per-trade scan stays ~depth20 long
-            shown = {float(p) for p, _ in rows}
-            for p in [p for p, l in levels.items() if p not in shown and not l.executed]:
-                del levels[p]
+            # levels no longer shown: check timeout for levels with partial execution, delete immediately if not executed
+            for p in list(levels.keys()):
+                if p not in shown:
+                    l = levels[p]
+                    if not l.executed:
+                        del levels[p]
+                    else:
+                        if l.absent_since_ms == 0:
+                            l.absent_since_ms = ts_ms
+                        elif ts_ms - l.absent_since_ms > REPLENISH_TIMEOUT_MS:
+                            del levels[p]
+                else:
+                    levels[p].absent_since_ms = 0
 
     def on_trade(self, symbol: str, ts_ms: int, price: float, usd: float, taker_side: int):
         """A taker SELL hits the bid side at `price` (and breaks every bid above it), a taker BUY the asks."""

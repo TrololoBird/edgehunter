@@ -1,0 +1,60 @@
+{
+  "started_utc": "2026-11-02T19:14:31.603944+00:00",
+  "finished_utc": "2026-11-02T19:14:31.679677+00:00",
+  "pid": 1435,
+  "children": [
+    1462,
+    1463,
+    1486
+  ],
+  "service": {
+    "MainPID": "1435",
+    "NRestarts": "0",
+    "ControlGroup": "/system.slice/edgehunter-bot.service",
+    "ActiveState": "active",
+    "ActiveEnterTimestamp": "Sun 2026-11-01 23:31:47 UTC"
+  },
+  "processes": {
+    "1435": {
+      "Rss": "2741792 kB",
+      "Pss": "2739234 kB",
+      "Private_Dirty": "2739060 kB",
+      "Swap": "1605768 kB",
+      "SwapPss": "1605760 kB",
+      "AnonHugePages": "606208 kB"
+    },
+    "1462": {
+      "Rss": "2128 kB",
+      "Pss": "76 kB",
+      "Private_Dirty": "0 kB",
+      "Swap": "6324 kB",
+      "SwapPss": "6324 kB",
+      "AnonHugePages": "0 kB"
+    },
+    "1463": {
+      "Rss": "29812 kB",
+      "Pss": "27373 kB",
+      "Private_Dirty": "27216 kB",
+      "Swap": "204020 kB",
+      "SwapPss": "204016 kB",
+      "AnonHugePages": "0 kB"
+    },
+    "1486": {
+      "Rss": "367600 kB",
+      "Pss": "365183 kB",
+      "Private_Dirty": "365068 kB",
+      "Swap": "16540 kB",
+      "SwapPss": "16536 kB",
+      "AnonHugePages": "0 kB"
+    }
+  },
+  "host_mem_available": "MemAvailable:      11296 kB",
+  "cgroup_resident_bytes": 3330240512,
+  "cgroup_swap_bytes": 1876627456,
+  "cgroup_events": "low 0\nhigh 1943220\nmax 0\noom 0\noom_kill 0",
+  "capture_directory": "/root/edgehunter-diagnostics/2026-11-02T191431Z",
+  "notes": [
+    "Sequential read-only observations, not one atomic snapshot.",
+    "No process injection, GC walk, GC collection, restart, network or trading calls performed."
+  ]
+}

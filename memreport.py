@@ -25,6 +25,31 @@ except ImportError:      # pragma: no cover
 SAMPLE = 40
 MAX_DEPTH = 5
 
+def linux_memory_status() -> dict:
+    """Cheap process/host memory snapshot; never walks Python objects."""
+    out = {'status': 'ok'}
+    errors = []
+    try:
+        with open('/proc/self/smaps_rollup', encoding='ascii') as f:
+            for line in f:
+                if line.startswith(('Rss:', 'Pss:', 'Private_Dirty:', 'Swap:', 'SwapPss:')):
+                    k, v = line.split(':', 1)
+                    out['proc_' + k.lower()] = round(int(v.split()[0]) / 1024.0, 2)
+    except OSError as e:
+        errors.append('smaps_rollup:%s' % e.errno)
+    try:
+        with open('/proc/meminfo', encoding='ascii') as f:
+            for line in f:
+                if line.startswith(('MemAvailable:', 'SwapFree:')):
+                    k, v = line.split(':', 1)
+                    out['host_' + k.lower()] = round(int(v.split()[0]) / 1024.0, 2)
+    except OSError as e:
+        errors.append('meminfo:%s' % e.errno)
+    if errors:
+        out['status'] = 'partial' if len(errors) == 1 else 'error'
+        out['error_detail'] = ','.join(errors)
+    return out
+
 
 # ---------------------------------------------------------------------- process (Windows)
 

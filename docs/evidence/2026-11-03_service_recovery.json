@@ -1,0 +1,12 @@
+{
+  "observed_utc": "2026-11-03T14:14:29.791118+00:00",
+  "service": {
+    "MainPID": "14399",
+    "NRestarts": "1",
+    "ActiveState": "active",
+    "ActiveEnterTimestamp": "Mon 2026-11-02 20:12:28 UTC"
+  },
+  "operator_action": "No restart or runtime change performed by Codex",
+  "build": "79d08d5",
+  "cause": "kernel global OOM killed pid 1435; systemd scheduled restart"
+}

@@ -508,9 +508,11 @@ class DataFetcher:
         # 70-coin universe held ~60 MB of empty ring buffers
         self.flow = FlowStore(capacity=CONFIG.exchange.max_pairs + 40)
         self.whales = WhaleBook()
+        self.whale_book = self.whales
         self.small_caps: set = set()               # eng-99: the small-cap tier of the universe (select_universe)
         from flow import RushBook
         self.rush = RushBook()                     # eng-89: rush orders (one taker order eating several levels)
+        self.rush_book = self.rush
         # eng-137 (audit A02): the trades after a card's entry, for the rest of its entry minute (the minute's 1m
         # high / low may have traded BEFORE the entry). symbol -> {entry ms: tracker}; the Binance aggregate trade id
         # 'a' must run on without a gap since the entry, else the tracker is not proof (ok = False)
@@ -518,7 +520,7 @@ class DataFetcher:
         self._last_agg: Dict[str, int] = {}
         self.sweeps = SweepTracker(self._on_sweep)
         self.footprint = Footprint()
-        self.depth = DepthBook()
+        self.depth = DepthBook(on_resync=self._resync)
         from iceberg import IcebergDetector
         self.icebergs = IcebergDetector()
         # Live liquidations of every venue since the scanner last journaled them: (symbol, ts_ms, price, usd, side, venue)
@@ -1437,6 +1439,8 @@ class DataFetcher:
             self.flow.unregister(s)
             self.depth.forget(s)
             self.footprint.disable(s)
+            self.whales.forget(s)
+            self.rush.forget(s)
             self.venue_derivs.pop(s, None)
         self.flow.register(added)
         self.symbol_map.set_universe({s: self.futures_exchange.markets[s] for s in self.markets
@@ -1490,7 +1494,6 @@ class DataFetcher:
             # The histories loaded so far are long-lived: move them out of the cyclic GC's reach. Full (gen 2)
             # collections scanned millions of candle lists and stalled the loop 1-3s (watchdog: 'gc 3.1s (gen 2)');
             # frozen objects are still freed by reference counting when dropped
-            gc.freeze()
             logger.debug(f"gc: {gc.get_freeze_count()} objects frozen")
             # next pass one minute after the next full hour (the new 1h candle is closed then)
             now = time.time()
@@ -1868,7 +1871,6 @@ class DataFetcher:
         # Long-lived start-up objects (frames' Python side, market lists, deques) leave the cyclic GC's scope: a
         # full collection over them paused the event loop for ~1s (watchdog: 'gc 1.1s (gen 2)'). No gc.collect()
         # first: that full collection on the loop was itself the ~1s pause
-        gc.freeze()
 
     BACKFILL_DELAYS_SEC = (0, 5, 15, 45, 120, 300)
 
@@ -2088,6 +2090,9 @@ class DataFetcher:
         px = [p for ts, p in tr['trades'] if since_ms <= ts < until_ms]
         return {'hi': max(px) if px else None, 'lo': min(px) if px else None}
 
+    def _resync(self, symbol: str):
+        self.icebergs.invalidate(symbol)
+
     def untrack(self, symbol: str, since_ms: int) -> None:
         trackers = self.entry_trackers.get(symbol)
         if trackers:
@@ -2160,7 +2165,9 @@ class DataFetcher:
             if key in self.footprint.bucket:
                 self.footprint.add(key, ts, price, usd, side)
             if key in self.icebergs.levels:
-                self.icebergs.on_trade(key, ts, price, usd, side)
+                book = self.depth.books.get(key)
+                if book is not None and book.synced:
+                    self.icebergs.on_trade(key, ts, price, usd, side)
             if key in self.depth.books:
                 self.depth.on_trade(key, ts, price, float(data['q']), side)
         elif event == 'kline':
@@ -2509,20 +2516,21 @@ class DataFetcher:
         """{'15m': {rule: bool}, '1h': {...}} on the candles closed by until_ms: the 499-candle REST histories
         (refreshed hourly) extended by the 1m stream's closed buckets since."""
         from levels import resample
-        from strategies.ind_panel import panel
+        from strategies.ind_panel import panel, content_digest
         # a snapshot: this runs in the prewarm thread while the loop appends to the deque (a bare iteration raised
         # 'deque mutated during iteration'); list() copies it in one C call under the GIL
-        minutes = [c for c in list(md.minute_klines) if c[0] + 60_000 <= until_ms]
+        minutes = [list(c[:8]) for c in list(md.minute_klines) if c[0] + 60_000 <= until_ms]
+        recent_digest = content_digest(minutes[-180:])
         out = {}
         for tf, size, hist in (('15m', 15, md.m15_long), ('1h', 60, md.h1_long)):
+            hist = hist.copy() if hasattr(hist, 'copy') else tuple(hist)
             base = [list(r) for r in hist if r[0] + size * 60_000 <= until_ms] if len(hist) else []
             last = base[-1][0] if base else 0
             # the pure-Python resample of the minute ring was run for each direction and every 20 s by the prewarm
             # thread (the GIL it held stalled the loop 1-3 s): once per (coin, tf, last minute, bucket)
             # audit V07: + the minutes' content - a REST-revised minute (same timestamps, same count) served stale bars
-            from strategies.ind_panel import content_digest
             rkey = (len(minutes), minutes[0][0] if minutes else 0, minutes[-1][0] if minutes else 0,
-                    int(until_ms // (size * 60_000)), content_digest(minutes[-180:]))   # revisions land on the recent minutes; a patched gap changes the count
+                    int(until_ms // (size * 60_000)), recent_digest)
             hit = _RESAMPLE_CACHE.get((md.symbol, size))
             if hit is not None and hit[0] == rkey:
                 bars = hit[1]
