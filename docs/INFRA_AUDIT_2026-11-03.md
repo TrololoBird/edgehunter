@@ -33,6 +33,32 @@
 - ProcessPool ML/maps создаются лениво и используют `spawn`; нужно измерить RSS каждого worker и поведение при `BrokenProcessPool`, а не судить по parent RSS.
 - `Notifier` сохраняет outbox, но порядок и backoff сообщений нужно проверять по фактическим `card/event/seq`, включая закрытие во время 429.
 
+## Подтверждённые проблемы жизненного цикла
+
+### INF-06 — сетевые await выполняются под глобальным executor lock
+
+AST-проверка показывает `await` внутри `async with self._lock` в `on_entry`, `check_limits`, `on_target`, `on_partial`, `on_add`, `on_finish` и `reconcile_loop`. Блокировка действительно охватывает REST, sleeps и обработку закрытия. Снятие блокировки требует резерва состояния, иначе `close_untracked` увидит биржевую позицию до регистрации в `self.open`.
+
+### INF-07 — shutdown не имеет общего deadline для всех задач
+
+`Scanner.stop()` отменяет задачи и ждёт `asyncio.gather(*tasks)` без timeout. Отдельные 10-секундные ожидания `DataFetcher.stop()` достигаются только после завершения этого gather. Зависшая scanner/background-задача может превысить systemd `TimeoutStopSec=90`.
+
+### INF-08 — process pools закрываются до отмены потребителей
+
+`Scanner.stop()` закрывает anomaly/maps pools до отмены задач, которые могут ждать `run_in_executor`. Это создаёт гонку штатного shutdown с `BrokenProcessPool` и отменёнными futures. Безопасный порядок: остановить producers, отменить consumers, дождаться их, затем закрывать pools.
+
+### INF-09 — задача контекста может быть заменена без отмены предыдущей
+
+`_context_task` получает новый `asyncio.create_task()` в нескольких местах. Старый task перед заменой не отменяется и не ожидается. При медленном обновлении возможны параллельные записи общего mutable контекста и лишняя нагрузка.
+
+### INF-10 — fire-and-forget задачи имеют разные политики ошибок
+
+`Scanner._background_task()` регистрирует задачу, но не задаёт единый обработчик результата; `Notifier.send()`, `webui` и `smallcap` создают собственные задачи. Исключения и cancellation не имеют единого owner/name/метрики, поэтому часть отказов может быть замечена только как unhandled-task warning.
+
+### INF-11 — сетевые timeout-контракты не унифицированы
+
+Вызовы используют 15, 20, 30 и 900 секунд, а часть timeout задаётся внешним `wait_for`. Нет единого разделения `connect/read/total`, retry и shutdown timeout. 900-секундный Hyperliquid download особенно плохо согласуется с остановкой systemd за 90 секунд.
+
 ## Приоритет следующего исследования
 
 1. Снять 30–60 минут task/queue/FD/memory telemetry без тяжёлого object-walk.
