@@ -210,7 +210,8 @@ async def main(use_web: bool = True):
     print("Crypto microstructure scanner - loading markets and starting streams (Ctrl+C to stop)")
     # the streams allocate millions of short-lived tuples a minute: the default gen-0 threshold (2000) promoted them
     # into gen 2 and its full collections paused the loop 0.3s+ (watchdog 'gc (gen 2)', 100+ a day); fewer, younger
-    # collections - the long-lived history is gc.freeze()d by the fetcher once loaded
+    # collections - long-lived history is kept in compact arrays; the fetcher no
+    # longer calls gc.freeze(), so this comment must not imply frozen ownership.
     import gc
     gc.set_threshold(*(int(x) for x in (os.environ.get('EDGEHUNTER_GC_THRESHOLD') or os.environ.get('PUMP_GC_THRESHOLD', '50000,20,100')).split(',')))
 
