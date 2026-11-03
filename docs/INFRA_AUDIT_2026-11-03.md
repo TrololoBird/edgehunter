@@ -70,6 +70,24 @@ AST-проверка показывает `await` внутри `async with self.
 
 ## Что не считается доказательством
 
+## Дополнительные findings
+
+### INF-12 — проблема Telegram фактически сохраняется
+
+В `notifier._post()` lock удерживается во время HTTP retry, а `await asyncio.sleep(min(wait, 60.0) + 0.5)` выполняется внутри lock. При 429 с `retry_after > 60` значение обрезается, а приоритетные сообщения ждут `PRIORITY_LOCK_WAIT_SEC` и получают `ConnectionError`.
+
+### INF-13 — wall-clock используется для интервалов
+
+`ratelimit.BanState.wait`, REST-бюджет, TTL неизвестного входа и другие интервалы используют `time.time()`. NTP-коррекция может сократить или продлить ожидание. Для длительностей нужен `time.monotonic()`.
+
+### INF-14 — локальные cache-файлы пишутся неодинаково
+
+`macro.py` пишет JSON напрямую через `open(..., 'w')` и `json.dump`, а `official_calendar.py` использует собственный временный файл вместо общего durable helper. При OOM или kill cache может стать обрезанным.
+
+### INF-15 — broad catches могут скрывать неполноту данных
+
+В `fetcher`, `extdata`, `positioning`, `strategies` и `executor` многочисленные `except Exception` логируют ошибку и продолжают цикл. Без обязательных полей age/coverage/error отказ источника превращается в обычный `None` или stale-значение.
+
 - комментарий в коде без telemetry;
 - число `memory.events.high` без `memory.current`, PSI и временной шкалы;
 - число FD без владельца соединения;
