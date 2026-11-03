@@ -399,10 +399,6 @@ class Scanner:
     async def stop(self):
         self._running = False
         self.watchdog.stop()
-        if self.anomaly_model is not None:
-            self.anomaly_model.close()
-        if self._maps_pool is not None:
-            self._maps_pool.shutdown(wait=False, cancel_futures=True)
         tasks = [t for t in (*self._tasks, self._baseline_task, getattr(self, '_heartbeat_task', None),
                              *getattr(self, '_positioning_tasks', []), self._context_task, *self._background) if t]
         for task in tasks:
@@ -411,6 +407,13 @@ class Scanner:
         for result in await asyncio.gather(*tasks, return_exceptions=True):
             if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                 logger.error(f"Task ended with an error: {result!r}")
+        # Consumers may still be awaiting run_in_executor futures. Close process
+        # pools only after their tasks have observed cancellation; otherwise a
+        # normal shutdown races those futures and turns them into BrokenProcessPool.
+        if self.anomaly_model is not None:
+            self.anomaly_model.close()
+        if self._maps_pool is not None:
+            self._maps_pool.shutdown(wait=False, cancel_futures=True)
         self._save_state()
         await self.notifier.close()
         await self.demo.close()

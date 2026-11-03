@@ -43,9 +43,9 @@ AST-проверка показывает `await` внутри `async with self.
 
 `Scanner.stop()` отменяет задачи и ждёт `asyncio.gather(*tasks)` без timeout. Отдельные 10-секундные ожидания `DataFetcher.stop()` достигаются только после завершения этого gather. Зависшая scanner/background-задача может превысить systemd `TimeoutStopSec=90`.
 
-### INF-08 — process pools закрываются до отмены потребителей
+### INF-08 — process pools закрываются до отмены потребителей (**исправлено**)
 
-`Scanner.stop()` закрывает anomaly/maps pools до отмены задач, которые могут ждать `run_in_executor`. Это создаёт гонку штатного shutdown с `BrokenProcessPool` и отменёнными futures. Безопасный порядок: остановить producers, отменить consumers, дождаться их, затем закрывать pools.
+`Scanner.stop()` ранее закрывал anomaly/maps pools до отмены задач, которые могут ждать `run_in_executor`. Это создавало гонку штатного shutdown с `BrokenProcessPool` и отменёнными futures. Теперь pools закрываются после отмены и ожидания scanner-задач.
 
 ### INF-09 — задача контекста может быть заменена без отмены предыдущей
 
@@ -104,6 +104,6 @@ Health за последний период показывает повторя�
 
 ## Проверка инфраструктурного исправления
 
-Изменение ограничено `deploy/precheck.sh`, `main.py` и этой документацией; production unit и runtime не изменялись. Проверки: `sh -n deploy/precheck.sh`, Ruff gate по production-коду, импорт стартового пути, проверка неизвестных стратегий и `369 passed` (`pytest tests -q`).
+Изменения ограничены `deploy/precheck.sh`, `main.py`, `scanner.py` и этой документацией; production unit и runtime не изменялись. Проверки: `sh -n deploy/precheck.sh`, Ruff gate по production-коду, импорт стартового пути, проверка неизвестных стратегий, Pylint E0601/E0602/E0606 и `357 passed` (`pytest tests -q`; часть старых audit-заготовок была удалена удалённым cleanup-коммитом).
 
 Read-only snapshot текущего процесса после проверки: `MainPID=2497`, `NRestarts=0`, `MemoryHigh=3G`, `MemoryCurrent=2,208,137,216`, RSS `1,330,632 kB`, swap `280,208 kB`, `memory.events.high=0`, `oom_kill=0`, 34 threads. Для `signals.db` видны 3 основных FD (`db`, `-wal`, `-shm`) и 3 read-only FD; read-only ownership требует отдельного сопоставления с callers и не считается утечкой по одному числу.

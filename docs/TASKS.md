@@ -12,7 +12,7 @@
 - [ ] Этап 1B: безопасная переработка конкурентности executor.
 - [ ] Инфраструктурный аудит: проверить расхождения Git, effective systemd и runtime.
 - [ ] Инфраструктурный аудит: внедрить supervisor задач и общий shutdown deadline.
-- [ ] Инфраструктурный аудит: закрывать process pools после завершения потребителей.
+- [x] Инфраструктурный аудит: закрывать process pools после завершения потребителей.
 - [ ] Инфраструктурный аудит: single-flight для `_context_task`.
 - [ ] Инфраструктурный аудит: унифицировать connect/read/total/shutdown timeouts.
 - [ ] Проверить wall-clock/monotonic для всех TTL, rate-limit и длительностей.
