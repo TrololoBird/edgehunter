@@ -39,9 +39,9 @@
 
 AST-проверка показывает `await` внутри `async with self._lock` в `on_entry`, `check_limits`, `on_target`, `on_partial`, `on_add`, `on_finish` и `reconcile_loop`. Блокировка действительно охватывает REST, sleeps и обработку закрытия. Снятие блокировки требует резерва состояния, иначе `close_untracked` увидит биржевую позицию до регистрации в `self.open`.
 
-### INF-07 — shutdown не имеет общего deadline для всех задач
+### INF-07 — shutdown не имеет общего deadline для всех задач (**исправлено**)
 
-`Scanner.stop()` отменяет задачи и ждёт `asyncio.gather(*tasks)` без timeout. Отдельные 10-секундные ожидания `DataFetcher.stop()` достигаются только после завершения этого gather. Зависшая scanner/background-задача может превысить systemd `TimeoutStopSec=90`.
+`Scanner.stop()` ранее отменял задачи и ждал `asyncio.gather(*tasks)` без timeout. Теперь внешний cleanup-контур в `main.py` ограничен 75 секундами, что оставляет запас до systemd `TimeoutStopSec=90`; локальные таймауты `DataFetcher.stop()` сохраняются.
 
 ### INF-08 — process pools закрываются до отмены потребителей (**исправлено**)
 

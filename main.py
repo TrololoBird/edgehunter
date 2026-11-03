@@ -79,6 +79,7 @@ def fast_loop_factory():
         return None, None
 
 FORCE_EXIT_AFTER_SEC = 3.0
+SHUTDOWN_DEADLINE_SEC = 75.0  # keep a margin below systemd TimeoutStopSec=90s
 LOG_LISTENER = None   # the logging thread (setup_logging), stopped last so the shutdown lines are written
 
 
@@ -275,9 +276,18 @@ async def main(use_web: bool = True):
         raise
     finally:
         logger.info("Stopping: closing streams and exchange connections (a few seconds)...")
-        if web is not None:
-            await web.stop()
-        await scanner.stop()
+        async def close_components():
+            if web is not None:
+                await web.stop()
+            await scanner.stop()
+
+        try:
+            await asyncio.wait_for(close_components(), timeout=SHUTDOWN_DEADLINE_SEC)
+        except asyncio.TimeoutError:
+            # systemd will terminate the service shortly after TimeoutStopSec;
+            # keep the deadline explicit so a stuck cleanup cannot hide why it
+            # was interrupted.
+            logger.error(f"Shutdown cleanup exceeded {SHUTDOWN_DEADLINE_SEC:.0f}s deadline")
         quick_edit.restore()
         keep_awake(False)
         journal.close()
