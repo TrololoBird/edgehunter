@@ -15,6 +15,15 @@
 - [ ] Инфраструктурный аудит: закрывать process pools после завершения потребителей.
 - [ ] Инфраструктурный аудит: single-flight для `_context_task`.
 - [ ] Инфраструктурный аудит: унифицировать connect/read/total/shutdown timeouts.
+- [ ] Проверить wall-clock/monotonic для всех TTL, rate-limit и длительностей.
+- [ ] Проверить атомарность всех JSON/JSONL/cache-записей.
+- [ ] Проверить quality/age/error-контракты после broad `except Exception`.
+- [ ] Проверить event-loop stalls по live Health и watchdog stack samples.
+- [ ] Проверить реальное владение SQLite FD и WAL readers.
+- [ ] Проверить process-pool RSS, BrokenProcessPool и порядок shutdown.
+- [ ] Проверить websocket reconnect, backoff, ping и cancellation.
+- [ ] Проверить retry/idempotency для внешних REST операций.
+- [ ] Проверить разницу dev/effective production конфигурации.
 
 ## Этап 1B — executor и исполнение
 

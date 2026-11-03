@@ -72,6 +72,14 @@ AST-проверка показывает `await` внутри `async with self.
 
 ## Дополнительные findings
 
+## Production-срез после рестарта
+
+На текущем PID 2497: `NRestarts=0`, `MemoryHigh=3G` (effective drop-in), RSS около 1.5 GiB, `memory.current` около 2.44 GiB, swap около 8 KiB, `memory.events.high=0`, `oom_kill=0`. Это подтверждает отсутствие текущего OOM, но не доказывает отсутствие долгосрочного наклона.
+
+Health за последний период показывает повторяющиеся event-loop stalls до 1.5 секунды. Стеки указывают на `signal_book._input/_card_gate`, `levels.resample`, `strategies.loopside` и `ind_panel.rolling_min`. Значит, после исправления кэша остаётся синхронная CPU-нагрузка в основном loop; утверждение, что все задержки устранены кэшированием, неверно.
+
+В том же периоде `scan` обычно 0.2–0.5 секунды, но отдельные проходы достигают 1–2.3 секунды. `memory.current` заметно выше Health RSS, поэтому для оценки утечки нужно отдельно учитывать native/cache/cgroup working set.
+
 ### INF-12 — проблема Telegram фактически сохраняется
 
 В `notifier._post()` lock удерживается во время HTTP retry, а `await asyncio.sleep(min(wait, 60.0) + 0.5)` выполняется внутри lock. При 429 с `retry_after > 60` значение обрезается, а приоритетные сообщения ждут `PRIORITY_LOCK_WAIT_SEC` и получают `ConnectionError`.
