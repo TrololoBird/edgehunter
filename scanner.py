@@ -801,8 +801,7 @@ class Scanner:
             cache = await asyncio.to_thread(lambda: {sym: (part, part_candles(part)[0]) for sym, part in parts.items()})
             self._frame_parts, self._m15_cache = parts, cache
             self.last_heavy_sec = time.time() - started
-            if self._context_task is None or self._context_task.done():
-                self._context_task = asyncio.create_task(self._refresh_contexts())
+            await self._schedule_context_refresh()
             self._update_volatility(futures_all)
             self._update_market_state(futures_all)
             # Regimes only once every symbol's history is in: during the cold start each heavy pass saw a
@@ -816,12 +815,11 @@ class Scanner:
                 except Exception as e:
                     logger.warning(f"Regime model failed: {e}")
             logger.debug(f"Heavy pass: {len(rows)} symbols in {self.last_heavy_sec:.2f}s")
-        elif self._frame_parts and time.time() - self._context_poll > 60 and (
-                self._context_task is None or self._context_task.done()):
+        elif self._frame_parts and time.time() - self._context_poll > 60:
             # between candle closes: rebuild the quick maps whose higher-timeframe histories arrived (the signature
             # carries their sizes; unchanged coins are skipped)
             self._context_poll = time.time()
-            self._context_task = asyncio.create_task(self._refresh_contexts())
+            await self._schedule_context_refresh()
 
         signals = signals_from_rows(self._rows, tier0)
         premiums = [p for md in self.market_data.values() if (p := self._coinbase_premium(md)) is not None]
@@ -1130,6 +1128,19 @@ class Scanner:
         except BrokenProcessPool:
             logger.warning(f"Maps worker died during a pass of {len(jobs)} maps: retried on the next pass")
             return {}
+
+    async def _schedule_context_refresh(self) -> None:
+        """Replace a context refresh only after the previous writer has stopped."""
+        previous = self._context_task
+        if previous is not None and not previous.done():
+            previous.cancel()
+            try:
+                await previous
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning("Previous context refresh failed while replacing it: %r", exc)
+        self._context_task = asyncio.create_task(self._refresh_contexts(), name="scanner-context-refresh")
 
     async def _refresh_contexts(self):
         """Quick level maps / sweep pools of every coin whose closed 15m candles changed (worker process)."""

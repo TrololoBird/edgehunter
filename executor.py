@@ -45,6 +45,7 @@ CHASE_MAX_R = float('inf')       # eng-113: removed (the size follows the price)
 LIMIT_OFF_AT = 100_000
 UNIT_SETUPS = frozenset({'BREAKOUT UP', 'BREAKOUT DOWN'})
 _OPERATIONAL_KEYS = frozenset({'id', 'unit_qty', 'tp0', 'close_pending', 'add_unknown'})
+_INFLIGHT_PHASES = frozenset({'RESERVED', 'ORDER_SENT', 'FILLED', 'STOP_PENDING', 'PROTECTED', 'REGISTERED', 'UNKNOWN'})
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS demo_trades (
@@ -114,6 +115,10 @@ class DemoExecutor:
         self._tpsl_warned = 0.0
         self._tpsl_est = (0.0, 0)  # (read at, estimated TP / SL orders on BingX)
         self._lock = asyncio.Lock()
+        # Entries reserve a coin before the first exchange await.  Reconcile and
+        # close_untracked must treat these reservations as owned until the outcome
+        # is known, including a lost create-order reply.
+        self._inflight: Dict[str, Dict] = {}
         # audit N02: cards whose finish already came (an entry still waiting for the lock must not open them)
         self._finished_cards: set = set()
         # set by the scanner: is this card (symbol|setup|entered_at) still an open trade in the book? A card that
@@ -257,6 +262,18 @@ class DemoExecutor:
 
     # ------------------------------------------------------------------ card events
 
+    def _set_inflight(self, card_id: str, phase: str, **fields) -> None:
+        if phase not in _INFLIGHT_PHASES:
+            raise ValueError(f"unknown inflight phase: {phase}")
+        entry = getattr(self, '_inflight', {}).get(card_id)
+        if entry is None:
+            return
+        entry.update(fields)
+        entry['phase'] = phase
+
+    def _drop_inflight(self, card_id: str) -> None:
+        getattr(self, '_inflight', {}).pop(card_id, None)
+
     async def on_entry(self, s) -> None:
         if not self.enabled or s.levels is None:
             return
@@ -264,8 +281,10 @@ class DemoExecutor:
         # scheduled as background tasks both passed 'coin free' before either took the lock
         async with self._lock:
             card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}"
-            if card_id in self.open or card_id in self._finished_cards:
+            if card_id in self.open or card_id in self._finished_cards or card_id in getattr(self, '_inflight', {}):
                 return
+            if not hasattr(self, '_inflight'):
+                self._inflight = {}
             if self.is_limit_plan(s):
                 key = self.wait_key(s)
                 p = self.pending.get(key)
@@ -311,6 +330,8 @@ class DemoExecutor:
             busy = next((t for t in self.open.values() if _coin(t['symbol']) == coin), None) or \
                 next((p for p in self.pending.values() if not p.get('skip')
                       and _coin(p.get('symbol', '')) == coin), None)
+            if busy is None:
+                busy = next((item for item in self._inflight.values() if item.get('coin') == coin), None)
             if busy is None and coin in self._unknown_coins:
                 busy = {'setup': 'an entry with an unknown outcome'}   # audit C02: its order may stand on BingX
             if busy is not None:
@@ -323,19 +344,45 @@ class DemoExecutor:
                               'error': f"coin held by {busy.get('setup') or busy.get('card_id')}", 'closed_ms': int(time.time() * 1000),
                               'close_reason': 'OVERLAP'})
                 return
+            self._inflight[card_id] = {'card_id': card_id, 'symbol': s.symbol,
+                                       'coin': coin, 'direction': s.direction,
+                                       'setup': s.group_key, 'phase': 'RESERVED',
+                                       'started_ms': int(time.time() * 1000)}
             try:
                 await self._open(card_id, s)
+            except asyncio.CancelledError:
+                item = self._inflight.get(card_id)
+                if item is not None and item.get('phase') != 'RESERVED':
+                    self._set_inflight(card_id, 'UNKNOWN')
+                    self._unknown_coins[coin] = time.time()
+                    self._save_unknown()
+                    self.alert(f"⚠️ Демо {s.symbol}: вход отменён после обращения к бирже, проверьте позицию")
+                else:
+                    self._drop_inflight(card_id)
+                raise
             except Exception as e:
                 unknown = isinstance(e, EntryUnknown)
                 logger.warning(f"Demo entry {'UNKNOWN' if unknown else 'failed'} for {s.symbol} {s.group_key}: {e!r}")
                 if unknown:
+                    self._set_inflight(card_id, 'UNKNOWN')
                     self._unknown_coins[coin] = time.time()
                     self._save_unknown()
                     # not 'not filled': a position that turns up is closed by close_untracked (no card owns it)
                     self.alert(f"⚠️ Демо {s.symbol}: исход входа неизвестен (биржа недоступна), проверьте позицию")
-                self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
-                              'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': repr(e)[:300],
-                              'closed_ms': int(time.time() * 1000), 'close_reason': 'UNKNOWN' if unknown else 'ERROR'})
+                existing = self.open.get(card_id)
+                if existing and existing.get('id'):
+                    with self._db() as c:
+                        c.execute("UPDATE demo_trades SET error = ? WHERE id = ? AND closed_ms IS NULL",
+                                  (repr(e)[:300], existing['id']))
+                else:
+                    self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
+                                  'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': repr(e)[:300],
+                                  'closed_ms': int(time.time() * 1000), 'close_reason': 'UNKNOWN' if unknown else 'ERROR'})
+                if not unknown:
+                    self._drop_inflight(card_id)
+            else:
+                self._set_inflight(card_id, 'REGISTERED')
+                self._drop_inflight(card_id)
 
     @staticmethod
     def regime_mult(s) -> float:
@@ -741,6 +788,7 @@ class DemoExecutor:
         # audit N03: a client order id, so a request whose reply was lost can be found; a timeout is an UNKNOWN outcome
         # (the exchange may have filled it), never 'not filled'
         cid = f"pb{uuid.uuid4().hex[:24]}"
+        self._set_inflight(card_id, 'ORDER_SENT', client_order_id=cid, exchange_symbol=symbol)
         try:
             try:
                 order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
@@ -757,6 +805,7 @@ class DemoExecutor:
                 if qty <= 0 or qty < min_qty:
                     raise
                 cid = f"pb{uuid.uuid4().hex[:24]}"
+                self._set_inflight(card_id, 'ORDER_SENT', client_order_id=cid, exchange_symbol=symbol)
                 order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
         except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
             order = await self._resolve_unknown_entry(symbol, d, cid, e)
@@ -787,6 +836,7 @@ class DemoExecutor:
         # the exits use what was FILLED: a stop for the ordered size failed on a partial fill (live INJ 2026-10-03:
         # 'order size must be less than the available amount of 529', the position sat without a stop)
         qty = float(filled or 0) or qty
+        self._set_inflight(card_id, 'FILLED', fill=fill, qty=qty)
         trade = {'card_id': card_id, 'symbol': symbol, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
                  'opened_ms': int(time.time() * 1000), 'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty,
                  'sl': lv['sl'], **{k: (None if (getattr(s, 'plan', None) or {}).get('no_tp') else lv[k])
@@ -802,7 +852,16 @@ class DemoExecutor:
                  'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed),
                  'trail': int(bool((getattr(s, 'plan', None) or {}).get('trail_after_tp1'))),
                  'no_tp': int(bool((getattr(s, 'plan', None) or {}).get('no_tp')))}
+        # Persist and register the filled entry before placing protection.  A
+        # cancellation or process failure during stop placement must leave a
+        # recoverable trade row instead of an exchange position with no owner.
+        trade['id'] = self._insert(trade)
+        trade['unit_qty'], trade['scale'] = qty, scale
+        self._set_scale(trade['id'], scale)
+        self._set_basis(trade['id'], basis)
+        self.open[card_id] = trade
         try:
+            self._set_inflight(card_id, 'STOP_PENDING')
             if not no_stop:
                 await self._place_stop(symbol, d, qty, lv['sl'])
             elif lv.get('sl'):
@@ -813,17 +872,14 @@ class DemoExecutor:
                     await self._place_stop(symbol, d, qty, far)
         except Exception as e:
             # never an unprotected position: recorded and closed at market
-            trade['id'] = self._insert(trade)
             logger.warning(f"Demo ENTRY {symbol}: stop not placed ({e!r}): closed at market")
             self.alert(f"⛔ Демо {symbol}: стоп не поставлен ({str(e)[:120]}), позиция закрыта рынком")
             await self._close(trade, 'NO_STOP', None)
             return
         plan = getattr(s, 'plan', None) or {}
-        trade['id'] = self._insert(trade)
-        trade['unit_qty'], trade['scale'] = qty, scale          # the pyramid's unit (memory), BingX's price scale (+ db)
-        self._set_scale(trade['id'], scale)
-        self._set_basis(trade['id'], basis)
-        self.open[card_id] = trade
+        # The entry row and in-memory ownership already exist; only exchange
+        # targets remain to be installed.
+        self._set_inflight(card_id, 'PROTECTED', trade_id=trade['id'])
         await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(plan.get('trail_after_tp1')),
                                                      bool(plan.get('no_tp'))), min_qty)
         logger.info(f"Demo ENTRY {symbol} {s.group_key} {'long' if d > 0 else 'short'} {qty} @ {fill:.6g}, "
@@ -894,8 +950,9 @@ class DemoExecutor:
         coin = _coin(s.symbol)
         if coin in self._unknown_coins:
             return                                   # audit C02: an entry on the coin of unknown outcome (retried later)
-        if any(_coin(t['symbol']) == coin for t in self.open.values()) or                 any(_coin(p.get('symbol', '')) == coin for p in self.pending.values()
-                    if not p.get('skip')):
+        if any(_coin(t['symbol']) == coin for t in self.open.values()) or \
+                any(_coin(p.get('symbol', '')) == coin for p in self.pending.values() if not p.get('skip')) or \
+                any(p.get('coin') == coin for p in getattr(self, '_inflight', {}).values()):
             # BingX nets a coin's orders into one position: one trade or resting limit per coin
             self.pending[key] = {'skip': True, 'reason': 'the coin is held / has a resting limit'}
             return
@@ -1131,6 +1188,9 @@ class DemoExecutor:
         released = [c for c in due if c not in held]
         for c in released:
             self._unknown_coins.pop(c, None)
+            for card_id, item in list(getattr(self, '_inflight', {}).items()):
+                if item.get('coin') == c and item.get('phase') == 'UNKNOWN':
+                    self._inflight.pop(card_id, None)
             logger.info(f"Demo: {c} released - the unknown entry left no position and no order")
         if released:
             self._save_unknown()
@@ -1138,13 +1198,17 @@ class DemoExecutor:
     async def close_untracked(self) -> None:
         """Safety net: a BingX position no trade or resting limit of ours owns (a lost fill) is closed at market."""
         ex = await self._exchange()
-        mine = {t['symbol'] for t in self.open.values()} | {p.get('symbol') for p in self.pending.values()
-                                                             if not p.get('skip')}
+        async with self._lock:
+            mine = {t['symbol'] for t in self.open.values()} | {p.get('symbol') for p in self.pending.values()
+                                                                 if not p.get('skip')}
+            mine_coins = {_coin(symbol) for symbol in mine if symbol} | {
+                item.get('coin') for item in getattr(self, '_inflight', {}).values() if item.get('coin')
+            }
         positions = await ex.fetch_positions()
         await self._release_unknown(ex, positions)
         for pos in positions:
             qty = float(pos.get('contracts') or 0)
-            if not qty or pos['symbol'] in mine:
+            if not qty or pos['symbol'] in mine or _coin(pos.get('symbol', '')) in mine_coins:
                 continue
             last = self._finalized.get(pos['symbol'])
             if (last and time.time() - last[1] < 900 and last[0].get('id')
@@ -2026,11 +2090,11 @@ class DemoExecutor:
                 continue
             if time.time() - getattr(self, '_untracked_at', 0) > 300:
                 self._untracked_at = time.time()
+                try:
+                    await self.close_untracked()
+                except Exception as e:
+                    logger.warning(f"Demo untracked check: {e!r}")
                 async with self._lock:
-                    try:
-                        await self.close_untracked()
-                    except Exception as e:
-                        logger.warning(f"Demo untracked check: {e!r}")
                     try:
                         await self._refinalize()
                     except Exception as e:

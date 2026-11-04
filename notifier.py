@@ -162,28 +162,32 @@ class Notifier:
         return text.replace(token, '<token>') if token else text
 
     async def _post(self, method: str, timeout: float, priority: bool = False, **kw):
-        """POST to the Bot API under the send lock; a 429 waits its retry_after (<= 60 s) and retries twice.
-        Returns (status, body text)."""
+        """POST to the Bot API; a 429 waits its retry_after and retries twice.
+
+        The send lock protects one HTTP request at a time.  It is deliberately
+        released before the retry delay so a rate-limited message cannot block
+        priority alerts (or shutdown) for up to a minute.
+        """
         token, _ = self._creds()
         if self._session is None:
             self._session = aiohttp.ClientSession()
-        if priority:
-            self._prio_waiting += 1
+        for attempt in range(3):
+            if priority:
+                self._prio_waiting += 1
+                try:
+                    await asyncio.wait_for(self._lock().acquire(), self.PRIORITY_LOCK_WAIT_SEC)
+                except asyncio.TimeoutError:
+                    raise ConnectionError(f"send lock busy for {self.PRIORITY_LOCK_WAIT_SEC:.0f}s")
+                finally:
+                    self._prio_waiting -= 1
+            else:
+                # a briefing / photo lets waiting trading instructions go first (bounded, so it is never starved forever)
+                waited = 0.0
+                while self._prio_waiting and waited < 30.0:
+                    await asyncio.sleep(0.2)
+                    waited += 0.2
+                await self._lock().acquire()
             try:
-                await asyncio.wait_for(self._lock().acquire(), self.PRIORITY_LOCK_WAIT_SEC)
-            except asyncio.TimeoutError:
-                raise ConnectionError(f"send lock busy for {self.PRIORITY_LOCK_WAIT_SEC:.0f}s")
-            finally:
-                self._prio_waiting -= 1
-        else:
-            # a briefing / photo lets waiting trading instructions go first (bounded, so it is never starved forever)
-            waited = 0.0
-            while self._prio_waiting and waited < 30.0:
-                await asyncio.sleep(0.2)
-                waited += 0.2
-            await self._lock().acquire()
-        try:
-            for attempt in range(3):
                 data = kw.get('data')
                 if callable(data):
                     kw = dict(kw, data=data())          # a FormData is single-use: rebuilt per attempt
@@ -198,12 +202,12 @@ class Notifier:
                         wait = float(json.loads(body).get('parameters', {}).get('retry_after', 5))
                     except (ValueError, AttributeError):
                         wait = 5.0
-                    await asyncio.sleep(min(wait, 60.0) + 0.5)
-                if callable(data):
-                    kw = dict(kw, data=data)
-            return 429, ''
-        finally:
-            self._lock().release()
+            finally:
+                self._lock().release()
+            await asyncio.sleep(min(wait, 60.0) + 0.5)
+            if callable(data):
+                kw = dict(kw, data=data)
+        return 429, ''
 
     @property
     def enabled(self) -> bool:

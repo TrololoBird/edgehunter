@@ -13,7 +13,7 @@
 - [ ] Инфраструктурный аудит: проверить расхождения Git, effective systemd и runtime.
 - [ ] Инфраструктурный аудит: внедрить supervisor задач и общий shutdown deadline.
 - [x] Инфраструктурный аудит: закрывать process pools после завершения потребителей.
-- [ ] Инфраструктурный аудит: single-flight для `_context_task`.
+- [x] Инфраструктурный аудит: single-flight для `_context_task`.
 - [ ] Инфраструктурный аудит: унифицировать connect/read/total/shutdown timeouts.
 - [ ] Проверить wall-clock/monotonic для всех TTL, rate-limit и длительностей.
 - [ ] Проверить атомарность всех JSON/JSONL/cache-записей.
@@ -35,11 +35,11 @@
 
 ### Состояние входа
 
-- [ ] Добавить реестр `_inflight` с символом, карточкой, направлением, clientOrderId и фазой.
-- [ ] Ввести фазы `RESERVED`, `ORDER_SENT`, `FILLED`, `STOP_PENDING`, `PROTECTED`, `REGISTERED`, `UNKNOWN`.
-- [ ] Сохранять минимальную запись сделки после подтверждения fill до дальнейшего сопровождения.
-- [ ] Обработать `asyncio.CancelledError` во время create order и постановки стопа.
-- [ ] Блокировать монету до завершения reconcile для неизвестного результата.
+- [x] Добавить реестр `_inflight` с символом, карточкой, направлением, clientOrderId и фазой.
+- [x] Ввести фазы `RESERVED`, `ORDER_SENT`, `FILLED`, `STOP_PENDING`, `PROTECTED`, `REGISTERED`, `UNKNOWN`.
+- [x] Сохранять минимальную запись сделки после подтверждения fill до дальнейшего сопровождения.
+- [x] Обработать `asyncio.CancelledError` во время create order и постановки стопа.
+- [x] Блокировать монету до завершения reconcile для неизвестного результата.
 
 ### Блокировки
 
