@@ -1889,8 +1889,17 @@ class DataFetcher:
     def _spawn(self, coro):
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._background_done)
         return task
+
+    def _background_done(self, task):
+        self._background_tasks.discard(task)
+        self._book_snapshot_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("DataFetcher background task failed: %r", exc, exc_info=exc)
 
     async def _backfill(self, symbol: str, market: str, need_ts: int = 0):
         key = (symbol, market)
@@ -2359,7 +2368,7 @@ class DataFetcher:
                 if book is not None and book.buffer and time.time() * 1000 - int(book.buffer[0].get('E') or 0) >= 1000:
                     task = asyncio.create_task(one(symbol))
                     self._book_snapshot_tasks.add(task)
-                    task.add_done_callback(self._book_snapshot_tasks.discard)
+                    task.add_done_callback(self._background_done)
 
     def set_footprint(self, zone: Dict[str, float]):
         """

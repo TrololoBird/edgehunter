@@ -342,13 +342,21 @@ class Scanner:
     def _background_task(self, coro):
         task = asyncio.create_task(coro)
         self._background.add(task)
-        task.add_done_callback(self._background.discard)
+        task.add_done_callback(self._background_done)
         return task
+
+    def _background_done(self, task):
+        self._background.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Scanner background task failed: %r", exc, exc_info=exc)
 
     def _background_thread(self, fn, *args):
         task = asyncio.create_task(asyncio.to_thread(fn, *args))
         self._background.add(task)
-        task.add_done_callback(self._background.discard)
+        task.add_done_callback(self._background_done)
         return task
 
     async def _panel_prewarm_loop(self):
@@ -439,7 +447,7 @@ class Scanner:
                     model.fitting = True
                     task = asyncio.create_task(model.afit())
                     self._background.add(task)
-                    task.add_done_callback(self._background.discard)
+                    task.add_done_callback(self._background_done)
                 await self._update_hot()
                 self.fetcher.set_footprint(self.book.zone_symbols())
             except Exception as e:
