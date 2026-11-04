@@ -1,0 +1,128 @@
+[
+  {
+    "file": "executor.py",
+    "line": 282,
+    "lock": "self._lock",
+    "await_lines": [
+      352
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 920,
+    "lock": "self._lock",
+    "await_lines": [
+      932,
+      927
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 1201,
+    "lock": "self._lock",
+    "await_lines": []
+  },
+  {
+    "file": "executor.py",
+    "line": 1360,
+    "lock": "self._lock",
+    "await_lines": [
+      1364,
+      1368,
+      1369,
+      1370,
+      1384
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 1413,
+    "lock": "self._lock",
+    "await_lines": [
+      1419,
+      1429,
+      1430,
+      1440
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 1474,
+    "lock": "self._lock",
+    "await_lines": [
+      1478,
+      1481,
+      1485,
+      1497,
+      1508,
+      1511,
+      1505,
+      1488
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 1529,
+    "lock": "self._lock",
+    "await_lines": [
+      1536,
+      1544,
+      1607,
+      1547,
+      1555,
+      1601,
+      1614,
+      1552,
+      1557,
+      1572,
+      1573,
+      1605
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 1638,
+    "lock": "self._lock",
+    "await_lines": [
+      1653
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 1630,
+    "lock": "self._lock",
+    "await_lines": [
+      1631
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 2108,
+    "lock": "self._lock",
+    "await_lines": [
+      2114,
+      2135,
+      2144,
+      2149,
+      2146,
+      2133
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 2097,
+    "lock": "self._lock",
+    "await_lines": [
+      2099,
+      2103
+    ]
+  },
+  {
+    "file": "executor.py",
+    "line": 2082,
+    "lock": "self._lock",
+    "await_lines": [
+      2084
+    ]
+  }
+]

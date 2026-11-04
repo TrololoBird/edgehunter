@@ -1,0 +1,8 @@
+TimeoutStopUSec=1min 30s
+ExecStart={ path=/opt/edgehunter/.venv/bin/python ; argv[]=/opt/edgehunter/.venv/bin/python main.py ; ignore_errors=no ; start_time=[Wed 2026-11-04 22:30:20 UTC] ; stop_time=[n/a] ; pid=56668 ; code=(null) ; status=0/0 }
+MemoryHigh=3221225472
+LimitNOFILE=524288
+WorkingDirectory=/opt/edgehunter
+User=edgehunter
+FragmentPath=/etc/systemd/system/edgehunter-bot.service
+DropInPaths=/etc/systemd/system/edgehunter-bot.service.d/alert.conf /etc/systemd/system/edgehunter-bot.service.d/env.conf /etc/systemd/system/edgehunter-bot.service.d/memory.conf

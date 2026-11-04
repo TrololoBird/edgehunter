@@ -1,0 +1,5 @@
+Process pool inventory (static):
+- scanner._maps_pool: ProcessPoolExecutor(max_workers=1, spawn), closed after scanner consumers.
+- ml.AnomalyModel._pool: ProcessPoolExecutor(max_workers=1, spawn), closed by AnomalyModel.close after scanner consumers.
+- pretrain subprocess: external process launched by scanner pretrain loop; separate shutdown/retry path requires live measurement.
+- No new process pools introduced.
