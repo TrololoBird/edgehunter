@@ -1,0 +1,303 @@
+{
+  "logic_version": "eng-169l",
+  "rows": 643,
+  "groups": [
+    {
+      "strategy": "bollinger",
+      "setup": "CLOSED BB M-TOP",
+      "direction": -1,
+      "n": 2,
+      "card_sum_r": 1.125195232350717,
+      "card_mean_r": 0.5625976161753585,
+      "demo_sum_r": 0.5688818697612368,
+      "clusters": 1,
+      "wins": 2
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "CLOSED BB W-BOTTOM",
+      "direction": 1,
+      "n": 10,
+      "card_sum_r": 6.058476569996161,
+      "card_mean_r": 0.6058476569996161,
+      "demo_sum_r": 1.2611225036197664,
+      "clusters": 8,
+      "wins": 9
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "CLOSED BB3 BUY",
+      "direction": 1,
+      "n": 2,
+      "card_sum_r": -0.024768940691331343,
+      "card_mean_r": -0.012384470345665671,
+      "demo_sum_r": -0.16316782339303224,
+      "clusters": 2,
+      "wins": 1
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "CLOSED BB3 SELL",
+      "direction": -1,
+      "n": 7,
+      "card_sum_r": 7.697576668461089,
+      "card_mean_r": 1.0996538097801556,
+      "demo_sum_r": 4.124016381268937,
+      "clusters": 4,
+      "wins": 7
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "SL BB M-TOP",
+      "direction": -1,
+      "n": 4,
+      "card_sum_r": 1.7270408382120022,
+      "card_mean_r": 0.43176020955300054,
+      "demo_sum_r": 1.603845733693794,
+      "clusters": 3,
+      "wins": 4
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "SL BB W-BOTTOM",
+      "direction": 1,
+      "n": 41,
+      "card_sum_r": -36.47662350061593,
+      "card_mean_r": -0.8896737439174617,
+      "demo_sum_r": -20.083550788074383,
+      "clusters": 11,
+      "wins": 5
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "SL BB3 BUY",
+      "direction": 1,
+      "n": 11,
+      "card_sum_r": -10.50058268435313,
+      "card_mean_r": -0.9545984258502845,
+      "demo_sum_r": -3.9689610794641315,
+      "clusters": 8,
+      "wins": 1
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "SL BB3 SELL",
+      "direction": -1,
+      "n": 5,
+      "card_sum_r": -2.3262457339874625,
+      "card_mean_r": -0.4652491467974925,
+      "demo_sum_r": -2.924999620451052,
+      "clusters": 5,
+      "wins": 2
+    },
+    {
+      "strategy": "breakout",
+      "setup": "CLOSED BREAKOUT DOWN",
+      "direction": -1,
+      "n": 1,
+      "card_sum_r": -0.7976292752363707,
+      "card_mean_r": -0.7976292752363707,
+      "demo_sum_r": 0.0,
+      "clusters": 1,
+      "wins": 0
+    },
+    {
+      "strategy": "breakout",
+      "setup": "CLOSED BREAKOUT UP",
+      "direction": 1,
+      "n": 1,
+      "card_sum_r": -0.7703196068247432,
+      "card_mean_r": -0.7703196068247432,
+      "demo_sum_r": 0.0,
+      "clusters": 1,
+      "wins": 0
+    },
+    {
+      "strategy": "breakout",
+      "setup": "SL BB1 DOWN",
+      "direction": -1,
+      "n": 21,
+      "card_sum_r": -4.786939487847185,
+      "card_mean_r": -0.22794949942129453,
+      "demo_sum_r": -3.6663656733193415,
+      "clusters": 11,
+      "wins": 8
+    },
+    {
+      "strategy": "breakout",
+      "setup": "SL BB1 UP",
+      "direction": 1,
+      "n": 10,
+      "card_sum_r": -9.860051799235492,
+      "card_mean_r": -0.9860051799235492,
+      "demo_sum_r": -7.268070788130229,
+      "clusters": 3,
+      "wins": 0
+    },
+    {
+      "strategy": "breakout",
+      "setup": "SL BREAKOUT UP",
+      "direction": 1,
+      "n": 3,
+      "card_sum_r": -2.596810037413835,
+      "card_mean_r": -0.8656033458046117,
+      "demo_sum_r": -1.898699360149992,
+      "clusters": 3,
+      "wins": 0
+    },
+    {
+      "strategy": "continuation",
+      "setup": "CLOSED IMPULSE DOWN",
+      "direction": -1,
+      "n": 1,
+      "card_sum_r": -0.14842460536883106,
+      "card_mean_r": -0.14842460536883106,
+      "demo_sum_r": -0.18376632654020655,
+      "clusters": 1,
+      "wins": 0
+    },
+    {
+      "strategy": "continuation",
+      "setup": "SL IMPULSE DOWN",
+      "direction": -1,
+      "n": 1,
+      "card_sum_r": -1.0556353721511782,
+      "card_mean_r": -1.0556353721511782,
+      "demo_sum_r": -0.7586424920932469,
+      "clusters": 1,
+      "wins": 0
+    },
+    {
+      "strategy": "continuation",
+      "setup": "SL IMPULSE UP",
+      "direction": 1,
+      "n": 1,
+      "card_sum_r": -1.0599341211851754,
+      "card_mean_r": -1.0599341211851754,
+      "demo_sum_r": 0.0,
+      "clusters": 1,
+      "wins": 0
+    },
+    {
+      "strategy": "pump",
+      "setup": "CLOSED DUMP START",
+      "direction": -1,
+      "n": 4,
+      "card_sum_r": -0.30975446328557543,
+      "card_mean_r": -0.07743861582139386,
+      "demo_sum_r": -0.32641640407234235,
+      "clusters": 4,
+      "wins": 1
+    },
+    {
+      "strategy": "pump",
+      "setup": "SL DUMP BOUNCE SHORT",
+      "direction": -1,
+      "n": 10,
+      "card_sum_r": -8.439682323914024,
+      "card_mean_r": -0.8439682323914024,
+      "demo_sum_r": -6.036296805262426,
+      "clusters": 4,
+      "wins": 2
+    },
+    {
+      "strategy": "pump",
+      "setup": "SL DUMP START",
+      "direction": -1,
+      "n": 174,
+      "card_sum_r": -73.62601095300246,
+      "card_mean_r": -0.4231379939827728,
+      "demo_sum_r": -73.03207205001677,
+      "clusters": 28,
+      "wins": 73
+    },
+    {
+      "strategy": "pump",
+      "setup": "SL PUMP START",
+      "direction": 1,
+      "n": 44,
+      "card_sum_r": -24.281433101642477,
+      "card_mean_r": -0.5518507523100563,
+      "demo_sum_r": -16.80409630985825,
+      "clusters": 22,
+      "wins": 15
+    },
+    {
+      "strategy": "pump",
+      "setup": "SL PUMP TOP",
+      "direction": -1,
+      "n": 1,
+      "card_sum_r": -1.0888705696871601,
+      "card_mean_r": -1.0888705696871601,
+      "demo_sum_r": -0.745003257410192,
+      "clusters": 1,
+      "wins": 0
+    },
+    {
+      "strategy": "pump",
+      "setup": "TP3 DUMP START",
+      "direction": -1,
+      "n": 42,
+      "card_sum_r": 51.061976138423766,
+      "card_mean_r": 1.2157613366291373,
+      "demo_sum_r": 15.849875564698435,
+      "clusters": 14,
+      "wins": 42
+    },
+    {
+      "strategy": "pump",
+      "setup": "TP3 PUMP START",
+      "direction": 1,
+      "n": 14,
+      "card_sum_r": 17.48340195501391,
+      "card_mean_r": 1.2488144253581364,
+      "demo_sum_r": 11.915748813267621,
+      "clusters": 11,
+      "wins": 14
+    },
+    {
+      "strategy": "trendline",
+      "setup": "SL TL TOUCH DOWN",
+      "direction": -1,
+      "n": 127,
+      "card_sum_r": -78.12871357978678,
+      "card_mean_r": -0.6151867211006833,
+      "demo_sum_r": -49.596000066585255,
+      "clusters": 32,
+      "wins": 37
+    },
+    {
+      "strategy": "trendline",
+      "setup": "SL TL TOUCH UP",
+      "direction": 1,
+      "n": 75,
+      "card_sum_r": -62.88380193987166,
+      "card_mean_r": -0.8384506925316221,
+      "demo_sum_r": -32.22805908400192,
+      "clusters": 21,
+      "wins": 14
+    },
+    {
+      "strategy": "trendline",
+      "setup": "TP3 TL TOUCH DOWN",
+      "direction": -1,
+      "n": 27,
+      "card_sum_r": 40.94779666034989,
+      "card_mean_r": 1.5165850614944403,
+      "demo_sum_r": 20.392833364624334,
+      "clusters": 13,
+      "wins": 27
+    },
+    {
+      "strategy": "trendline",
+      "setup": "TP3 TL TOUCH UP",
+      "direction": 1,
+      "n": 4,
+      "card_sum_r": 5.579765028396035,
+      "card_mean_r": 1.3949412570990087,
+      "demo_sum_r": 1.156242412070509,
+      "clusters": 3,
+      "wins": 4
+    }
+  ]
+}
