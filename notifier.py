@@ -229,11 +229,20 @@ class Notifier:
         loop = asyncio.get_running_loop()
         import re
         plain = re.sub(r'</?[a-zA-Z][^>]*>', '', text)
-        for coro in (self._toast(title, plain), self._telegram(f"<b>{title}</b>\n{text}", html=True, topic='signals', priority=True,
-                                                                     meta=meta)):
-            task = loop.create_task(coro)
+        for name, coro in (('toast', self._toast(title, plain)),
+                           ('telegram-signal', self._telegram(f"<b>{title}</b>\n{text}", html=True, topic='signals',
+                                                               priority=True, meta=meta))):
+            task = loop.create_task(coro, name=f'notifier-{name}')
             self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+            task.add_done_callback(self._task_done)
+
+    def _task_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Notifier task %s failed: %r", task.get_name(), exc, exc_info=exc)
 
     async def _toast(self, title: str, text: str):
         if not self.cfg.toast or platform.system() != 'Windows':
@@ -284,17 +293,18 @@ class Notifier:
             cur = f"{cur}\n\n{part}" if cur else part
         if cur:
             chunks.append(cur)
-        task = loop.create_task(self._send_chunks(chunks, topic))
+        task = loop.create_task(self._send_chunks(chunks, topic), name=f'notifier-chunks-{topic}')
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._task_done)
 
     def post_photo(self, png: bytes, caption: str = '', topic: str = 'briefing'):
         """A briefing card (PNG) with an HTML caption (<= 1024 characters), Telegram only."""
         if not self.enabled or not png:
             return
-        task = asyncio.get_running_loop().create_task(self._photo(png, caption[:1024], topic))
+        task = asyncio.get_running_loop().create_task(self._photo(png, caption[:1024], topic),
+                                                      name=f'notifier-photo-{topic}')
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._task_done)
 
     async def _photo(self, png: bytes, caption: str, topic: str = 'briefing'):
         token, _ = self._creds()
