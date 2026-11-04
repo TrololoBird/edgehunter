@@ -14,7 +14,7 @@
 - [ ] Инфраструктурный аудит: внедрить supervisor задач и общий shutdown deadline; общий supervisor остаётся открытым.
 - [x] Инфраструктурный аудит: закрывать process pools после завершения потребителей.
 - [x] Инфраструктурный аудит: single-flight для `_context_task`.
-- [ ] Инфраструктурный аудит: унифицировать connect/read/total/shutdown timeouts; базовые настройки подключены, все пути не переведены.
+- [ ] Инфраструктурный аудит: унифицировать connect/read/total/shutdown timeouts; aiohttp, WebSocket, macro/calendar, venue loading и executor reads переведены, оставшиеся urllib/archive paths открыты.
 - [ ] Проверить wall-clock/monotonic для всех TTL, rate-limit и длительностей; rate-limit закрыт, остальные интервалы открыты.
 - [x] Проверить атомарность runtime JSON/cache-записей; append-only JSONL остаются отдельным исследованием.
 - [ ] Проверить quality/age/error-контракты после broad `except Exception`.

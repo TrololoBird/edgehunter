@@ -21,6 +21,7 @@ import urllib.request
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from storage import atomic_write
+from config import CONFIG
 
 SERIES = {'us10y': 'DGS10', 'dxy': 'DTWEXBGS', 'brent': 'DCOILBRENTEU'}
 URL = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id={}'
@@ -43,9 +44,9 @@ def available_ms(name: str, obs_day_ms: float) -> float:
 MACRO_FEATURES = ('us10y_5d_bp', 'dxy_5d', 'brent_5d')
 
 
-def fetch(series_id: str, timeout: float = 20) -> List[Tuple[int, float]]:
+def fetch(series_id: str, timeout: Optional[float] = None) -> List[Tuple[int, float]]:
     """[(day start ms, value)] of a FRED series; '.' (holidays) skipped."""
-    with urllib.request.urlopen(URL.format(series_id), timeout=timeout) as resp:
+    with urllib.request.urlopen(URL.format(series_id), timeout=timeout or CONFIG.rest.total_timeout_sec) as resp:
         text = resp.read().decode('utf-8')
     out = []
     for row in csv.reader(io.StringIO(text)):

@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 from storage import atomic_write
+from config import CONFIG
 
 NY = ZoneInfo('America/New_York')
 UA = {'User-Agent': 'edgehunter-bot/1.0'}
@@ -116,7 +117,7 @@ PARSERS = {'BLS': parse_bls, 'ISM': parse_ism, 'FED': parse_fed}
 
 def _fetch(url: str) -> str:
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as r:
         return r.read().decode('utf-8', errors='replace')
 
 
