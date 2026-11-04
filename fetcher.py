@@ -1598,7 +1598,7 @@ class DataFetcher:
             try:
                 def fetch():
                     req = urllib.request.Request(url, headers={'User-Agent': 'edgehunter'})
-                    with urllib.request.urlopen(req, timeout=20) as resp:
+                    with urllib.request.urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as resp:
                         return json.load(resp)
                 data = (await asyncio.to_thread(fetch)).get('data') or {}
                 pct = data.get('market_cap_percentage') or {}
@@ -1622,7 +1622,7 @@ class DataFetcher:
 
         def get(url):
             req = urllib.request.Request(url, headers={'User-Agent': 'edgehunter'})
-            with urllib.request.urlopen(req, timeout=25) as resp:
+            with urllib.request.urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as resp:
                 return json.load(resp)
         last = {'cal': 0.0, 'strikes': 0.0, 'official': 0.0}
         while self._running:

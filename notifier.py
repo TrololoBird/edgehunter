@@ -256,7 +256,7 @@ class Notifier:
                 'powershell', '-NoProfile', '-NonInteractive', '-Command', _TOAST_PS, env=env,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
             )
-            await asyncio.wait_for(proc.wait(), timeout=20)
+            await asyncio.wait_for(proc.wait(), timeout=CONFIG.rest.total_timeout_sec)
         except Exception as e:
             errors.report('notifier._toast', e, "Toast failed")
 
