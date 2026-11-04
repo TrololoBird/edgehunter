@@ -95,3 +95,14 @@
 5. Для breakout проверить close-through-level, volume confirmation, retest и distance to opposing zone.
 6. Сравнить изменённые правила с placebo, затем только подготовить code patch.
 
+## Реализованный кандидат `eng-170a`
+
+В dev добавлено симметричное подтверждение reversal-входа:
+
+- trendline third touch требует directional close тела touch-candle;
+- Bollinger W/M и BB3 требуют reclaim средней полосы в сторону сделки;
+- прежняя логика остаётся доступной в старых journal rows для holdout-сравнения.
+
+Это candidate patch, а не окончательный verdict: перед дальнейшим rollout нужны
+replay/holdout и сравнение cluster-weighted R с `eng-169l`.
+

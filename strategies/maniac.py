@@ -394,7 +394,7 @@ def trendline_touch_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600
     n = len(window)
     if n < cfg.tl_min_span + 10:
         return None
-    h, l, c = _arr(window, 2), _arr(window, 3), _arr(window, 4)
+    o, h, l, c = _arr(window, 1), _arr(window, 2), _arr(window, 3), _arr(window, 4)
     atr = float(wilder(true_range(h, l, c), 14)[-1])
     if not atr > 0:
         return None
@@ -411,6 +411,10 @@ def trendline_touch_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600
         # after the second point and come back now for the first time
         left = next((j for j in range(line['i2'] + 1, i) if not touched(j)), None)
         if not touched(i) or left is None or any(touched(j) for j in range(left, i)):
+            continue
+        # A touch is only actionable after a directional close; wick-only
+        # contacts do not become immediate entries.
+        if d * (c[i] - o[i]) <= 0:
             continue
         return {'setup': 'TL TOUCH UP' if d > 0 else 'TL TOUCH DOWN', 'direction': d,
                 'setup_note': f"{tf} third touch of {'a rising support' if d > 0 else 'a falling resistance'} through"
@@ -544,6 +548,10 @@ def bb_method3_event(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_M
                 ((c[j] - l[j]) / r >= 2 / 3 if d > 0 else (h[j] - c[j]) / r >= 2 / 3)
         if not strong(i) or any(strong(j) for j in range(k + 1, i)):
             continue
+        # The alert needs confirmation: reclaim the middle band in the trade
+        # direction before entering, filtering wick-only reversals.
+        if d * (c[i] - ma[i]) <= 0:
+            continue
         stop = float(l[k:i + 1].min() if d > 0 else h[k:i + 1].max())
         target = float(upper[i] if d > 0 else lower[i])
         return {'setup': 'BB3 BUY' if d > 0 else 'BB3 SELL', 'direction': d,
@@ -617,6 +625,10 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_
         broke_now = c[i] > level if d > 0 else c[i] < level
         broke_before = any((c[k] > level) if d > 0 else (c[k] < level) for k in range(b_ + 1, i))
         if not broke_now or broke_before:
+            continue
+        # Require the confirmation close to reclaim the Bollinger middle band;
+        # breaking only the local peak/trough leaves weak reversals exposed.
+        if (c[i] <= ma[i]) if d > 0 else (c[i] >= ma[i]):
             continue
         stop = l[b_] if d > 0 else h[b_]
         # eng-51: the target is the OPPOSITE BAND (Bollinger: after the bounce crosses the middle band, the other band
