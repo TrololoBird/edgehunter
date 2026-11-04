@@ -16,7 +16,7 @@
 - [x] Инфраструктурный аудит: single-flight для `_context_task`.
 - [ ] Инфраструктурный аудит: унифицировать connect/read/total/shutdown timeouts.
 - [ ] Проверить wall-clock/monotonic для всех TTL, rate-limit и длительностей.
-- [ ] Проверить атомарность всех JSON/JSONL/cache-записей.
+- [x] Проверить атомарность runtime JSON/cache-записей; append-only JSONL остаются отдельным исследованием.
 - [ ] Проверить quality/age/error-контракты после broad `except Exception`.
 - [ ] Проверить event-loop stalls по live Health и watchdog stack samples.
 - [ ] Проверить реальное владение SQLite FD и WAL readers.

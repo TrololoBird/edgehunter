@@ -88,9 +88,9 @@ Health за последний период показывает повторя�
 
 `ratelimit.BanState.wait`, REST-бюджет, TTL неизвестного входа и другие интервалы используют `time.time()`. Для длительностей `BanState.wait/pause` теперь используется `time.monotonic()`. Календарное окно REST-бюджета и persisted TTL неизвестного входа намеренно остаются на wall-clock: первое привязано к минуте биржи, второе должно переживать рестарт.
 
-### INF-14 — локальные cache-файлы пишутся неодинаково
+### INF-14 — локальные cache-файлы пишутся неодинаково (**исправлено для runtime cache**) 
 
-`macro.py` пишет JSON напрямую через `open(..., 'w')` и `json.dump`, а `official_calendar.py` использует собственный временный файл вместо общего durable helper. При OOM или kill cache может стать обрезанным.
+`macro.py`, `official_calendar.py`, `fetcher.py` calendar cache, `history.py` и `sectors.py` ранее писали JSON напрямую. Теперь runtime cache-записи используют общий `storage.atomic_write`; append-only JSONL остаются отдельным форматом и требуют отдельной проверки восстановления после частичной строки.
 
 ### INF-15 — broad catches могут скрывать неполноту данных
 

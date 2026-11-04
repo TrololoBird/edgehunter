@@ -1646,8 +1646,8 @@ class DataFetcher:
                             rows = json.load(fh)
                     else:
                         rows = await asyncio.to_thread(get, 'https://nfs.faireconomy.media/ff_calendar_thisweek.json')
-                        with open(cache, 'w', encoding='utf-8') as fh:
-                            json.dump(rows, fh)
+                        from storage import atomic_write
+                        atomic_write(cache, json.dumps(rows).encode('utf-8'))
                     macro_calendar.set_live(rows, os.path.getmtime(cache) if os.path.exists(cache) else None)
                 except Exception as e:
                     errors.report('fetcher.calendar', e)

@@ -28,6 +28,7 @@ import urllib.request
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
+from storage import atomic_write
 
 NY = ZoneInfo('America/New_York')
 UA = {'User-Agent': 'edgehunter-bot/1.0'}
@@ -148,10 +149,7 @@ def refresh(now: Optional[float] = None, fetch=_fetch) -> Dict:
     STATE.update(events=events, sources=sources)
     try:
         os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-        tmp = CACHE + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(STATE, f)
-        os.replace(tmp, CACHE)
+        atomic_write(CACHE, json.dumps(STATE).encode('utf-8'))
     except OSError:
         pass
     return STATE

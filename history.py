@@ -19,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from storage import atomic_write
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -306,8 +307,7 @@ class Archive:
             marker = nxt.group(1)
         symbols = sorted(set(symbols))
         os.makedirs(self.cache_dir, exist_ok=True)
-        with open(cache, 'w') as fh:
-            json.dump(symbols, fh)
+        atomic_write(cache, json.dumps(symbols).encode('utf-8'))
         return symbols
 
 

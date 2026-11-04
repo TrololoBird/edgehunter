@@ -20,6 +20,7 @@ import time
 import urllib.request
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
+from storage import atomic_write
 
 SERIES = {'us10y': 'DGS10', 'dxy': 'DTWEXBGS', 'brent': 'DCOILBRENTEU'}
 URL = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id={}'
@@ -73,8 +74,7 @@ class Macro:
             else:
                 self.data = {name: fetch(sid) for name, sid in SERIES.items()}
                 os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-                with open(CACHE, 'w', encoding='utf-8') as fh:
-                    json.dump(self.data, fh)
+                atomic_write(CACHE, json.dumps(self.data).encode('utf-8'))
             self.loaded_at = time.time()
             self._ts = {}
         except Exception as e:

@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from typing import Dict, Optional
+from storage import atomic_write
 
 CATEGORIES = {
     'layer-1': 'L1', 'layer-2': 'L2', 'meme-token': 'meme', 'decentralized-finance-defi': 'DeFi',
@@ -77,8 +78,7 @@ def load(max_age_sec: float = 86400) -> Dict[str, str]:
         return {}
     out = {k: v[0] for k, v in best.items()}
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-    with open(CACHE, 'w', encoding='utf-8') as fh:
-        json.dump(out, fh)
+    atomic_write(CACHE, json.dumps(out).encode('utf-8'))
     return out
 
 
