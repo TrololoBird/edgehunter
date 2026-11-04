@@ -375,7 +375,10 @@ class Notifier:
 
     async def close(self):
         if self._retry_task is not None:
-            self._retry_task.cancel()
+            retry_task = self._retry_task
+            retry_task.cancel()
+            await asyncio.wait([retry_task], timeout=2)
+            self._retry_task = None
         self._save_outbox()
         for task in list(self._tasks):
             task.cancel()

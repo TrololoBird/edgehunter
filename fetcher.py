@@ -471,6 +471,7 @@ class DataFetcher:
         self._running = False
         self._tasks: List[asyncio.Task] = []
         self._background_tasks: set = set()
+        self._book_snapshot_tasks: set = set()
         self._binance_streams: List[BinanceStream] = []
         # Order books of the hot symbols, spread over several sockets (one depth20 stream is ~1.5 KB every 500ms:
         # twenty on one socket reached its ~60 KB/s limit and Binance dropped it)
@@ -2351,15 +2352,14 @@ class DataFetcher:
                         return
                     errors.report('fetcher.book_snapshot', e, f"{symbol} 1000-level snapshot")
 
-        running: set = set()
         while self._running:
             await asyncio.sleep(1.0)
             for symbol in self.depth.wanting_snapshot():
                 book = self.depth.books.get(symbol)
                 if book is not None and book.buffer and time.time() * 1000 - int(book.buffer[0].get('E') or 0) >= 1000:
                     task = asyncio.create_task(one(symbol))
-                    running.add(task)
-                    task.add_done_callback(running.discard)
+                    self._book_snapshot_tasks.add(task)
+                    task.add_done_callback(self._book_snapshot_tasks.discard)
 
     def set_footprint(self, zone: Dict[str, float]):
         """
