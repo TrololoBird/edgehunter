@@ -1,6 +1,6 @@
 # Edge Hunter — список задач
 
-Обновлено: 2026-11-03
+Обновлено: 2026-11-05
 
 ## Статус
 
@@ -10,18 +10,18 @@
 - [x] Production-сервис активен, crash-loop после выкладки не обнаружен.
 - [ ] Длительное наблюдение памяти и SQLite FD в течение 6–12 часов.
 - [ ] Этап 1B: безопасная переработка конкурентности executor.
-- [ ] Инфраструктурный аудит: проверить расхождения Git, effective systemd и runtime.
-- [ ] Инфраструктурный аудит: внедрить supervisor задач и общий shutdown deadline.
+- [x] Инфраструктурный аудит: проверить расхождения Git, effective systemd и runtime; длительное наблюдение остаётся открытым.
+- [ ] Инфраструктурный аудит: внедрить supervisor задач и общий shutdown deadline; общий supervisor остаётся открытым.
 - [x] Инфраструктурный аудит: закрывать process pools после завершения потребителей.
 - [x] Инфраструктурный аудит: single-flight для `_context_task`.
-- [ ] Инфраструктурный аудит: унифицировать connect/read/total/shutdown timeouts.
-- [ ] Проверить wall-clock/monotonic для всех TTL, rate-limit и длительностей.
+- [ ] Инфраструктурный аудит: унифицировать connect/read/total/shutdown timeouts; базовые настройки подключены, все пути не переведены.
+- [ ] Проверить wall-clock/monotonic для всех TTL, rate-limit и длительностей; rate-limit закрыт, остальные интервалы открыты.
 - [x] Проверить атомарность runtime JSON/cache-записей; append-only JSONL остаются отдельным исследованием.
 - [ ] Проверить quality/age/error-контракты после broad `except Exception`.
 - [ ] Проверить event-loop stalls по live Health и watchdog stack samples.
 - [ ] Проверить реальное владение SQLite FD и WAL readers.
-- [ ] Проверить process-pool RSS, BrokenProcessPool и порядок shutdown.
-- [ ] Проверить websocket reconnect, backoff, ping и cancellation.
+- [ ] Проверить process-pool RSS, BrokenProcessPool и порядок shutdown; порядок закрытия исправлен, live RSS/BrokenProcessPool измерения открыты.
+- [ ] Проверить websocket reconnect, backoff, ping и cancellation; cancellation/deadline исправлены, live reconnect evidence открыто.
 - [ ] Проверить retry/idempotency для внешних REST операций.
 - [ ] Проверить разницу dev/effective production конфигурации.
 
@@ -29,7 +29,7 @@
 
 ### Подготовка
 
-- [ ] Зафиксировать baseline: RSS, Private_Dirty, SwapPss, `memory.events`, SQLite FD, Health.
+- [x] Зафиксировать baseline: RSS, Private_Dirty, SwapPss, `memory.events`, SQLite FD, Health; evidence сохранён, длительная серия открыта.
 - [ ] Проверить все пути чтения/изменения `self.open`, `self.pending`, `_unknown_coins` и `_finalized`.
 - [ ] Проверить все сетевые пути `_place_stop`, `_place_tps`, `_cancel_orders`, `_cancel_targets`, `_close`, `_finalize`.
 
