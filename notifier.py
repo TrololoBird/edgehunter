@@ -170,7 +170,9 @@ class Notifier:
         """
         token, _ = self._creds()
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(
+                total=CONFIG.rest.total_timeout_sec, connect=CONFIG.rest.connect_timeout_sec,
+                sock_read=CONFIG.rest.read_timeout_sec))
         for attempt in range(3):
             if priority:
                 self._prio_waiting += 1

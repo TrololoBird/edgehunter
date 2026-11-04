@@ -953,6 +953,7 @@ class RestConfig:
     total_timeout_sec: float = 45.0
     retry_timeout_sec: float = 5.0
     shutdown_timeout_sec: float = 10.0
+    venue_load_timeout_sec: float = 90.0
     # Proactive budget: stay below this share of the weight limit (read from X-MBX-USED-WEIGHT-1M); lower priorities
     # get a smaller share (priority 0 = candles/backfill, 1 = OI polling, 2 = journal outcomes / positioning ratios)
     budget_share: float = 0.7

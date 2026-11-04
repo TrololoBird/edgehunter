@@ -270,7 +270,7 @@ class Scanner:
     async def initialize(self):
         logger.info("Initializing scanner...")
         # The watchdog covers the start-up too (market lists, symbol checks run on this loop)
-        self._heartbeat_task = asyncio.create_task(self.watchdog.heartbeat())
+        self._heartbeat_task = asyncio.create_task(self.watchdog.heartbeat(), name='scanner-watchdog-heartbeat')
         self.watchdog.start()
         await self.fetcher.initialize()
         # The venues' instrument lists first: the universe is the candidates' data-complete subset, and their
@@ -295,7 +295,7 @@ class Scanner:
         await self.fetcher.start_websockets(symbols)
         self.watchdog.arm()
         self._started_at = time.time()
-        self._baseline_task = asyncio.create_task(self.fetcher.fetch_rest_baselines(symbols))
+        self._baseline_task = asyncio.create_task(self.fetcher.fetch_rest_baselines(symbols), name='fetcher-rest-baselines')
         self._positioning_tasks = await self.positioning.start()
         logger.info(f"Scanner initialized for {len(self.market_data)} symbols (history loading in background)")
 

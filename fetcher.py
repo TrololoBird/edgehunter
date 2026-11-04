@@ -604,7 +604,8 @@ class DataFetcher:
         async def load(venue: str):
             for attempt in range(1, 4):
                 try:
-                    rows, prices = await asyncio.wait_for(asyncio.to_thread(fetch, venue), timeout=90)
+                    rows, prices = await asyncio.wait_for(
+                        asyncio.to_thread(fetch, venue), timeout=CONFIG.rest.venue_load_timeout_sec)
                     break
                 except Exception as e:
                     if attempt == 3:
@@ -1887,7 +1888,7 @@ class DataFetcher:
         self._spawn(self._backfill(symbol, market, need_ts))
 
     def _spawn(self, coro):
-        task = asyncio.create_task(coro)
+        task = asyncio.create_task(coro, name='fetcher-background')
         self._background_tasks.add(task)
         task.add_done_callback(self._background_done)
         return task
