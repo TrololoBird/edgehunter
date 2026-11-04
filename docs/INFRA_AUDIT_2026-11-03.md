@@ -47,9 +47,9 @@ AST-проверка показывает `await` внутри `async with self.
 
 `Scanner.stop()` ранее закрывал anomaly/maps pools до отмены задач, которые могут ждать `run_in_executor`. Это создавало гонку штатного shutdown с `BrokenProcessPool` и отменёнными futures. Теперь pools закрываются после отмены и ожидания scanner-задач.
 
-### INF-09 — задача контекста может быть заменена без отмены предыдущей
+### INF-09 — задача контекста может быть заменена без отмены предыдущей (**исправлено**)
 
-`_context_task` получает новый `asyncio.create_task()` в нескольких местах. Старый task перед заменой не отменяется и не ожидается. При медленном обновлении возможны параллельные записи общего mutable контекста и лишняя нагрузка.
+`_context_task` получает новый `asyncio.create_task()` в нескольких местах. Исправлено: `_schedule_context_refresh()` отменяет и дожидается предыдущей задачи перед заменой, поэтому обновление общих карт и контекста остаётся single-flight.
 
 ### INF-10 — fire-and-forget задачи имеют разные политики ошибок
 
@@ -80,13 +80,13 @@ Health за последний период показывает повторя�
 
 В том же периоде `scan` обычно 0.2–0.5 секунды, но отдельные проходы достигают 1–2.3 секунды. `memory.current` заметно выше Health RSS, поэтому для оценки утечки нужно отдельно учитывать native/cache/cgroup working set.
 
-### INF-12 — проблема Telegram фактически сохраняется
+### INF-12 — проблема Telegram фактически сохраняется (**исправлено**)
 
-В `notifier._post()` lock удерживается во время HTTP retry, а `await asyncio.sleep(min(wait, 60.0) + 0.5)` выполняется внутри lock. При 429 с `retry_after > 60` значение обрезается, а приоритетные сообщения ждут `PRIORITY_LOCK_WAIT_SEC` и получают `ConnectionError`.
+Ранее в `notifier._post()` lock удерживался во время HTTP retry и сна. Исправлено: lock защищает только отдельный HTTP-запрос и освобождается перед retry delay, поэтому rate-limited сообщение не блокирует приоритетные события и shutdown.
 
-### INF-13 — wall-clock используется для интервалов
+### INF-13 — wall-clock используется для интервалов (**частично исправлено**)
 
-`ratelimit.BanState.wait`, REST-бюджет, TTL неизвестного входа и другие интервалы используют `time.time()`. NTP-коррекция может сократить или продлить ожидание. Для длительностей нужен `time.monotonic()`.
+`ratelimit.BanState.wait`, REST-бюджет, TTL неизвестного входа и другие интервалы используют `time.time()`. Для длительностей `BanState.wait/pause` теперь используется `time.monotonic()`. Календарное окно REST-бюджета и persisted TTL неизвестного входа намеренно остаются на wall-clock: первое привязано к минуте биржи, второе должно переживать рестарт.
 
 ### INF-14 — локальные cache-файлы пишутся неодинаково
 
@@ -104,6 +104,6 @@ Health за последний период показывает повторя�
 
 ## Проверка инфраструктурного исправления
 
-Изменения ограничены `deploy/precheck.sh`, `main.py`, `scanner.py`, `smallcap.py`, `webui.py`, `fetcher.py`, `notifier.py` и этой документацией; production unit и runtime не изменялись. Проверки: `sh -n deploy/precheck.sh`, Ruff gate по production-коду, импорт стартового пути, проверка неизвестных стратегий, Pylint E0601/E0602/E0606 и `357 passed` (`pytest tests -q`; часть старых audit-заготовок была удалена удалённым cleanup-коммитом).
+Изменения ограничены `deploy/precheck.sh`, `main.py`, `scanner.py`, `smallcap.py`, `webui.py`, `fetcher.py`, `notifier.py`, `ratelimit.py` и этой документацией; production unit и runtime не изменялись. Проверки: `sh -n deploy/precheck.sh`, Ruff gate по production-коду, импорт стартового пути, проверка неизвестных стратегий, Pylint E0601/E0602/E0606 и `357 passed` (`pytest tests -q`; часть старых audit-заготовок была удалена удалённым cleanup-коммитом).
 
 Read-only snapshot текущего процесса после проверки: `MainPID=2497`, `NRestarts=0`, `MemoryHigh=3G`, `MemoryCurrent=2,208,137,216`, RSS `1,330,632 kB`, swap `280,208 kB`, `memory.events.high=0`, `oom_kill=0`, 34 threads. Для `signals.db` видны 3 основных FD (`db`, `-wal`, `-shm`) и 3 read-only FD; read-only ownership требует отдельного сопоставления с callers и не считается утечкой по одному числу.

@@ -35,11 +35,11 @@ class BanState:
         self.backoff = 1.0
 
     async def wait(self):
-        while (delay := self.resume_at - time.time()) > 0:
+        while (delay := self.resume_at - time.monotonic()) > 0:
             await asyncio.sleep(delay)
 
     def pause(self, seconds: float, reason: str, name: str):
-        resume_at = time.time() + seconds
+        resume_at = time.monotonic() + seconds
         if resume_at > self.resume_at:
             self.resume_at = resume_at
             logger.warning(f"REST {name} rate limited, pausing for {seconds:.0f}s: {reason[:200]}")
