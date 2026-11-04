@@ -803,7 +803,7 @@ class DemoExecutor:
         try:
             try:
                 order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
-            except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
+            except (ccxt.NetworkError, ccxt.ExchangeNotAvailable, asyncio.TimeoutError):
                 raise
             except Exception as e:
                 # BingX caps the position per coin (1000 USDT on small caps, live HUMA 2026-10-01) and names the cap
@@ -1701,16 +1701,22 @@ class DemoExecutor:
                              (day0_ms, day0_ms + 86_400_000)).fetchone()
 
     async def _call(self, method: str, *args, tries: int = 3, **kw):
-        """A ccxt call with backoff on network / exchange-unavailable errors (the VST API hiccups for seconds)."""
+        """Read-only ccxt call with bounded total timeout and exponential retry.
+
+        Mutating order calls stay outside this helper so a lost response is
+        resolved by clientOrderId/position reconciliation instead of replaying
+        an order blindly.
+        """
         import ccxt
         ex = await self._exchange()
         for attempt in range(tries):
             try:
-                return await getattr(ex, method)(*args, **kw)
+                return await asyncio.wait_for(getattr(ex, method)(*args, **kw),
+                                              timeout=CONFIG.rest.total_timeout_sec)
             except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
                 if attempt == tries - 1:
                     raise
-                await asyncio.sleep(1.5 * 2 ** attempt)
+                await asyncio.sleep(CONFIG.rest.retry_timeout_sec * 2 ** attempt)
 
     async def _position_of(self, symbol: str, d: int, strict: bool = False) -> tuple:
         """(size, average entry price) of the coin's position on the side d, (0, None) when there is none / unreadable.
