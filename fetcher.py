@@ -2579,11 +2579,16 @@ class DataFetcher:
             task.cancel()
         # Bounded waits: a hung socket must not keep the process from exiting
         if tasks:
-            await asyncio.wait(tasks, timeout=10)
+            done, pending = await asyncio.wait(tasks, timeout=CONFIG.rest.shutdown_timeout_sec)
+            for task in pending:
+                task.cancel()
+            for task in done:
+                if not task.cancelled():
+                    task.exception()
         exchanges = [self.spot_exchange, self.futures_exchange, *self.venue_exchanges.values()]
         closes = [asyncio.ensure_future(ex.close()) for ex in exchanges if ex]
         if closes:
-            done, pending = await asyncio.wait(closes, timeout=10)
+            done, pending = await asyncio.wait(closes, timeout=CONFIG.rest.shutdown_timeout_sec)
             for task in pending:
                 task.cancel()
             for task in done:

@@ -201,7 +201,12 @@ class VenueStream:
         for task in self._tasks:
             task.cancel()
         if self._tasks:
-            await asyncio.wait(self._tasks, timeout=5)
+            done, pending = await asyncio.wait(self._tasks, timeout=5)
+            for task in pending:
+                task.cancel()
+            for task in done:
+                if not task.cancelled():
+                    task.exception()
         self._tasks.clear()
 
     def supports_unsubscribe(self) -> bool:

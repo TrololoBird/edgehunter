@@ -24,7 +24,7 @@
 
 ### INF-05 — background tasks не имеют единого владельца (**частично исправлено**)
 
-`Scanner` хранит собственные `_tasks` и `_background`, `DataFetcher` — `_tasks` и `_background_tasks`, `Notifier` — собственные fire-and-forget tasks. Ранее `smallcap`, `webui` и book snapshots в `fetcher` создавали задачи вне shutdown-реестров. Теперь эти задачи зарегистрированы у владельцев; retry task `Notifier` также дожидается отмены. Scanner и DataFetcher извлекают исключения завершившихся background tasks и пишут owner-контекст. Общий реестр для всех компонентов остаётся отдельной задачей.
+`Scanner` хранит собственные `_tasks` и `_background`, `DataFetcher` — `_tasks` и `_background_tasks`, `Notifier` — собственные fire-and-forget tasks. Ранее `smallcap`, `webui` и book snapshots в `fetcher` создавали задачи вне shutdown-реестров. Теперь эти задачи зарегистрированы у владельцев; retry task `Notifier` также дожидается отмены. Scanner и DataFetcher извлекают исключения завершившихся background tasks и пишут owner-контекст. WebSocket и fetcher shutdown теперь также отменяют pending tasks после локального deadline. Общий реестр для всех компонентов остаётся отдельной задачей.
 
 ## Гипотезы, требующие измерения
 
