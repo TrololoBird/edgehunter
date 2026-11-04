@@ -1,0 +1,55 @@
+{
+  "captured_at_unix": 1793833955.9928405,
+  "pid": 58582,
+  "systemd": {
+    "ActiveState": "active",
+    "SubState": "running",
+    "NRestarts": "0",
+    "MemoryCurrent": "2129104896",
+    "MemoryHigh": "3221225472",
+    "TasksCurrent": "53",
+    "LimitNOFILE": "524288"
+  },
+  "proc_status": {
+    "VmRSS": "1648380 kB",
+    "RssAnon": "1543208 kB",
+    "RssFile": "105164 kB",
+    "RssShmem": "8 kB",
+    "VmSwap": "0 kB",
+    "Threads": "31"
+  },
+  "signals_db_fds": [
+    {
+      "fd": 15,
+      "target": "/opt/edgehunter/signals.db"
+    },
+    {
+      "fd": 16,
+      "target": "/opt/edgehunter/signals.db-wal"
+    },
+    {
+      "fd": 17,
+      "target": "/opt/edgehunter/signals.db-shm"
+    },
+    {
+      "fd": 26,
+      "target": "/opt/edgehunter/signals.db"
+    },
+    {
+      "fd": 27,
+      "target": "/opt/edgehunter/signals.db-wal"
+    },
+    {
+      "fd": 105,
+      "target": "/opt/edgehunter/signals.db"
+    },
+    {
+      "fd": 106,
+      "target": "/opt/edgehunter/signals.db-wal"
+    }
+  ],
+  "notes": [
+    "Post-deploy snapshot; health stream needs longer observation.",
+    "Observed prior 1.3s stall in flow.stats/stats.report before restart."
+  ]
+}
