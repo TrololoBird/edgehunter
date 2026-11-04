@@ -39,6 +39,8 @@
 
 AST-проверка показывает `await` внутри `async with self._lock` в `on_entry`, `check_limits`, `on_target`, `on_partial`, `on_add`, `on_finish` и `reconcile_loop`. Блокировка действительно охватывает REST, sleeps и обработку закрытия. Снятие блокировки требует резерва состояния, иначе `close_untracked` увидит биржевую позицию до регистрации в `self.open`.
 
+Для card entry/target/restop/partial/add/finish добавлен per-coin lock; сетевые операции разных coins больше не сериализуются одной asyncio-блокировкой. `check_limits`, reconcile и state reservations требуют следующего этапа разделения.
+
 ### INF-07 — shutdown не имеет общего deadline для всех задач (**исправлено**)
 
 `Scanner.stop()` ранее отменял задачи и ждал `asyncio.gather(*tasks)` без timeout. Теперь внешний cleanup-контур в `main.py` ограничен 75 секундами, что оставляет запас до systemd `TimeoutStopSec=90`; локальные таймауты `DataFetcher.stop()` сохраняются.

@@ -115,6 +115,7 @@ class DemoExecutor:
         self._tpsl_warned = 0.0
         self._tpsl_est = (0.0, 0)  # (read at, estimated TP / SL orders on BingX)
         self._lock = asyncio.Lock()
+        self._coin_locks: Dict[str, asyncio.Lock] = {}
         # Entries reserve a coin before the first exchange await.  Reconcile and
         # close_untracked must treat these reservations as owned until the outcome
         # is known, including a lost create-order reply.
@@ -262,6 +263,16 @@ class DemoExecutor:
 
     # ------------------------------------------------------------------ card events
 
+    def _coin_lock(self, symbol: str) -> asyncio.Lock:
+        """Serialize exchange mutations for one netted exchange coin."""
+        locks = getattr(self, '_coin_locks', None)
+        if locks is None:
+            locks = self._coin_locks = {}
+        lock = locks.get(symbol)
+        if lock is None:
+            lock = self._coin_locks[symbol] = asyncio.Lock()
+        return lock
+
     def _set_inflight(self, card_id: str, phase: str, **fields) -> None:
         if phase not in _INFLIGHT_PHASES:
             raise ValueError(f"unknown inflight phase: {phase}")
@@ -279,7 +290,7 @@ class DemoExecutor:
             return
         # eng-85: every check below reads the shared state (open trades, resting limits, the day's rows): two entries
         # scheduled as background tasks both passed 'coin free' before either took the lock
-        async with self._lock:
+        async with self._coin_lock(s.symbol):
             card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at or 0)}"
             if card_id in self.open or card_id in self._finished_cards or card_id in getattr(self, '_inflight', {}):
                 return
@@ -1357,7 +1368,7 @@ class DemoExecutor:
         trade = self.open.get(card_id) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
         if trade is None or not trade.get('virt') or int(trade.get('tp_done') or 0) >= k or not trade.get('qty'):
             return
-        async with self._lock:
+        async with self._coin_lock(trade['symbol']):
             if all(t is not trade for t in self.open.values()) or int(trade.get('tp_done') or 0) >= k:
                 return
             try:
@@ -1410,7 +1421,7 @@ class DemoExecutor:
         trade = self.open.get(card_id) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
         if trade is None or (getattr(s, 'plan', None) or {}).get('no_stop'):
             return
-        async with self._lock:
+        async with self._coin_lock(trade['symbol']):
             # audit C01: the trade may have been closed while this task waited for the lock
             if all(t is not trade for t in self.open.values()):
                 return
@@ -1471,7 +1482,7 @@ class DemoExecutor:
         trade = self.open.get(card_id) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
         if trade is None or trade.get('partial_done') or trade.get('units') or not trade.get('qty'):
             return
-        async with self._lock:
+        async with self._coin_lock(trade['symbol']):
             if all(t is not trade for t in self.open.values()):
                 return
             try:
@@ -1526,7 +1537,7 @@ class DemoExecutor:
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
         if self.open.get(card_id) is None:
             return
-        async with self._lock:
+        async with self._coin_lock(s.symbol):
             # audit C01: re-read under the lock - a close that ran while this task waited removed the trade, and an
             # add on the stale object opened a new, unowned position
             trade = self.open.get(card_id)
@@ -1635,7 +1646,7 @@ class DemoExecutor:
         card_id = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
         # audit N02: the open trade is read under the lock - an entry still opening (on_entry holds the lock through
         # _open) is waited for instead of the finish being dropped with the position left on BingX
-        async with self._lock:
+        async with self._coin_lock(s.symbol):
             self._finished_cards.add(card_id)
             if len(self._finished_cards) > 5000:
                 self._finished_cards = {card_id}
