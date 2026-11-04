@@ -893,18 +893,19 @@ class Briefing:
         Telegram, so nothing could be scored afterwards (2026-10-07 review)."""
         import json
         os.makedirs('data', exist_ok=True)
-        with open(os.path.join('data', 'briefings.jsonl'), 'a', encoding='utf-8') as f:
-            for symbol in self.watched():
-                bias, st = self._bias_of(symbol)
-                f.write(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'rules_v': self.RULES_V,
+        from storage import append_jsonl
+        rows = []
+        for symbol in self.watched():
+            bias, st = self._bias_of(symbol)
+            rows.append(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'rules_v': self.RULES_V,
                                     'price': self.sc._price_of(symbol), 'bias': bias,
                                     'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
                                     'zones': self.zones.get(symbol) or [], 'scenario': self.scenario.get(symbol)},
-                                   ensure_ascii=False, default=str) + '\n')
-            # the other pinned coins: the same forecast kept silently (no post) so their scenarios are scored too
-            import briefing_chart
-            watched = set(self.watched())
-            for base in CONFIG.exchange.pinned_bases:
+                                   ensure_ascii=False, default=str))
+        # the other pinned coins: the same forecast kept silently (no post) so their scenarios are scored too
+        import briefing_chart
+        watched = set(self.watched())
+        for base in CONFIG.exchange.pinned_bases:
                 symbol = f"{base}/USDT:USDT"
                 md = self.sc.market_data.get(symbol)
                 if symbol in watched or md is None:
@@ -920,12 +921,13 @@ class Briefing:
                 except Exception as e:
                     errors.report('briefing._save', e, f"Silent briefing record failed for {symbol}")
                     continue
-                f.write(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'silent': True, 'rules_v': self.RULES_V,
+                rows.append(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'silent': True, 'rules_v': self.RULES_V,
                                     'price': price, 'bias': bias,
                                     'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
                                     'zones': zones, 'scenario': {'long': p['long'], 'short': p['short'], 'price': price,
                                                                  'ts': time.time()}},
-                                   ensure_ascii=False, default=str) + '\n')
+                                   ensure_ascii=False, default=str))
+        append_jsonl(os.path.join('data', 'briefings.jsonl'), rows)
 
     def outcomes_total(self, days: int = 14) -> Dict:
         """The tally over every pinned coin (long / short x outcome class) for the analysis page's header."""
@@ -950,8 +952,9 @@ class Briefing:
         if not coins:
             return
         os.makedirs('data', exist_ok=True)
-        with open(os.path.join('data', 'briefing_outcomes.jsonl'), 'a', encoding='utf-8') as f:
-            f.write(json.dumps({'day': f"{datetime.now(MSK):%Y-%m-%d}", 'days': 14, 'coins': coins}, ensure_ascii=False) + '\n')
+        from storage import append_jsonl
+        append_jsonl(os.path.join('data', 'briefing_outcomes.jsonl'),
+                     [json.dumps({'day': f"{datetime.now(MSK):%Y-%m-%d}", 'days': 14, 'coins': coins}, ensure_ascii=False)])
 
     @staticmethod
     def reaction(sc: Dict, side: int, c) -> bool:

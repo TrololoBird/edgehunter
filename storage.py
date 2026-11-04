@@ -45,3 +45,14 @@ def atomic_write(path: str, data: bytes):
             os.unlink(tmp)
         except FileNotFoundError:
             pass
+
+
+def append_jsonl(path: str, rows) -> None:
+    """Append complete JSONL records with one flush/fsync per batch."""
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    with open(path, 'a', encoding='utf-8') as fh:
+        for row in rows:
+            fh.write(row if row.endswith('\n') else row + '\n')
+        fh.flush()
+        os.fsync(fh.fileno())
