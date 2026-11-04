@@ -61,7 +61,7 @@ class SmallCapWatch:
         self.checks = 0
 
     def _background_task(self, coro):
-        task = asyncio.create_task(coro)
+        task = asyncio.create_task(coro, name='smallcap-background')
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task

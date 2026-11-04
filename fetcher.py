@@ -1982,20 +1982,14 @@ class DataFetcher:
         self._running = True
         await self._start_binance_streams(symbols)
         await self._start_venue_streams()
-        self._tasks.append(asyncio.create_task(self._oi_loop()))
-        self._tasks.append(asyncio.create_task(self._funding_info_loop()))
-        self._tasks.append(asyncio.create_task(self._bulk_deriv_loop()))
-        self._tasks.append(asyncio.create_task(self._coinbase_prices_loop()))
-        self._tasks.append(asyncio.create_task(self._book_sync_loop()))
-        self._tasks.append(asyncio.create_task(self._binance_rest_tickers_loop()))
-        self._tasks.append(asyncio.create_task(self._hourly_candles_loop()))
-        self._tasks.append(asyncio.create_task(self._seasonal_loop()))
-        self._tasks.append(asyncio.create_task(self._weekly_candles_loop()))
-        self._tasks.append(asyncio.create_task(self._daily_candles_loop()))
-        self._tasks.append(asyncio.create_task(self._day_pocs_loop()))
-        self._tasks.append(asyncio.create_task(self._dominance_loop()))
-        self._tasks.append(asyncio.create_task(self._external_loop()))
-        self._tasks.append(asyncio.create_task(self._h4_candles_loop()))
+        for name, loop in (('oi', self._oi_loop), ('funding-info', self._funding_info_loop),
+                           ('bulk-deriv', self._bulk_deriv_loop), ('coinbase-prices', self._coinbase_prices_loop),
+                           ('book-sync', self._book_sync_loop), ('binance-tickers', self._binance_rest_tickers_loop),
+                           ('hourly-candles', self._hourly_candles_loop), ('seasonal', self._seasonal_loop),
+                           ('weekly-candles', self._weekly_candles_loop), ('daily-candles', self._daily_candles_loop),
+                           ('day-pocs', self._day_pocs_loop), ('dominance', self._dominance_loop),
+                           ('external', self._external_loop), ('h4-candles', self._h4_candles_loop)):
+            self._tasks.append(asyncio.create_task(loop(), name=f'fetcher-{name}'))
 
     def _binance_plans(self, symbols: List[str]) -> List[Tuple[str, str, List[str], int]]:
         """(market, name, raw stream names, streams per socket) of the static Binance groups; fills _binance_keys."""

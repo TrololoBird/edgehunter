@@ -186,10 +186,12 @@ class VenueStream:
         self._conn_subs = {i: list(chunk) for i, chunk in enumerate(chunks)}
         self._conn_transport = {}
         for i, chunk in enumerate(chunks):
-            self._tasks.append(asyncio.create_task(self._connection(chunk, i * self.connect_stagger, i)))
+            self._tasks.append(asyncio.create_task(self._connection(chunk, i * self.connect_stagger, i),
+                                                    name=f'ws-{self.name}-{i}'))
         if dynamic:
             self._tasks.append(asyncio.create_task(
-                self._connection([], len(chunks) * self.connect_stagger, -1, dynamic=True)))
+                self._connection([], len(chunks) * self.connect_stagger, -1, dynamic=True),
+                name=f'ws-{self.name}-dynamic'))
         if chunks or dynamic:
             logger.info(f"{self.name} WS: {len(subs)} subscriptions on {len(chunks)} connection(s)"
                         f"{' + dynamic' if dynamic else ''}")

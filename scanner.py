@@ -329,7 +329,7 @@ class Scanner:
             self._background_thread(self.journal.refresh_confirm_stats)
             self._background_thread(self.journal.refresh_hit_rates)
             self._background_thread(self.journal.refresh_anomaly_effects)
-        self._tasks = [asyncio.create_task(c) for c in loops]
+        self._tasks = [asyncio.create_task(c, name=f'scanner-loop-{i}') for i, c in enumerate(loops)]
         if self.smallcap is not None:
             # eng-161: the small caps on their 1m stream from the start (the wide watch refreshes the list hourly)
             self._tasks.append(asyncio.create_task(self.smallcap.restore(set(self.market_data))))

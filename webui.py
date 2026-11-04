@@ -546,7 +546,7 @@ class WebUI:
         for ws in list(self.clients):
             if ws in self._sending or ws.closed:
                 continue
-            task = asyncio.create_task(self._send(ws, text))
+            task = asyncio.create_task(self._send(ws, text), name='webui-ws-send')
             self._sending.add(ws)
             task.add_done_callback(lambda _t, w=ws: self._sending.discard(w))
 
@@ -743,7 +743,7 @@ class WebUI:
         inflight = self.__dict__.setdefault('_analysis_inflight', {})
         if symbol in inflight:
             return await asyncio.shield(inflight[symbol])         # one computation per coin, however many clients
-        task = asyncio.ensure_future(self._analysis_compute(b, symbol, cache))
+        task = asyncio.ensure_future(self._analysis_compute(b, symbol, cache), name=f'webui-analysis-{symbol}')
         self._analysis_tasks.add(task)
         task.add_done_callback(self._analysis_tasks.discard)
         inflight[symbol] = task
