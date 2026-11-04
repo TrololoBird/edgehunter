@@ -1,0 +1,206 @@
+{
+  "cards": 51,
+  "entries": 90,
+  "card_status": [
+    {
+      "status": "EXPIRED",
+      "n": 36
+    },
+    {
+      "status": "INVALID",
+      "n": 11
+    },
+    {
+      "status": "MISSED",
+      "n": 4
+    }
+  ],
+  "cards_by_strategy": [
+    {
+      "strategy": "breakout",
+      "n": 2
+    },
+    {
+      "strategy": "connors",
+      "n": 2
+    },
+    {
+      "strategy": "oi_build",
+      "n": 11
+    },
+    {
+      "strategy": "orb",
+      "n": 13
+    },
+    {
+      "strategy": "po3",
+      "n": 1
+    },
+    {
+      "strategy": "pump",
+      "n": 1
+    },
+    {
+      "strategy": "supply_demand",
+      "n": 1
+    },
+    {
+      "strategy": "sweep",
+      "n": 16
+    },
+    {
+      "strategy": "trendline",
+      "n": 4
+    }
+  ],
+  "entries_by_strategy": [
+    {
+      "strategy": null,
+      "n": 31
+    },
+    {
+      "strategy": "breakout",
+      "n": 2
+    },
+    {
+      "strategy": "connors",
+      "n": 2
+    },
+    {
+      "strategy": "oi_build",
+      "n": 11
+    },
+    {
+      "strategy": "orb",
+      "n": 13
+    },
+    {
+      "strategy": "po3",
+      "n": 1
+    },
+    {
+      "strategy": "pump",
+      "n": 1
+    },
+    {
+      "strategy": "sweep",
+      "n": 25
+    },
+    {
+      "strategy": "trendline",
+      "n": 4
+    }
+  ],
+  "entries_by_setup": [
+    {
+      "strategy": null,
+      "setup": "BB M-TOP",
+      "n": 3
+    },
+    {
+      "strategy": null,
+      "setup": "BB W-BOTTOM",
+      "n": 1
+    },
+    {
+      "strategy": null,
+      "setup": "BB3 BUY",
+      "n": 2
+    },
+    {
+      "strategy": null,
+      "setup": "IMPULSE DOWN",
+      "n": 3
+    },
+    {
+      "strategy": null,
+      "setup": "IMPULSE UP",
+      "n": 3
+    },
+    {
+      "strategy": null,
+      "setup": "SD DEMAND",
+      "n": 3
+    },
+    {
+      "strategy": null,
+      "setup": "SD SUPPLY",
+      "n": 4
+    },
+    {
+      "strategy": null,
+      "setup": "SWEEP HIGH",
+      "n": 7
+    },
+    {
+      "strategy": null,
+      "setup": "SWEEP LOW",
+      "n": 5
+    },
+    {
+      "strategy": "breakout",
+      "setup": "BREAKOUT DOWN",
+      "n": 2
+    },
+    {
+      "strategy": "connors",
+      "setup": "RSI2 LONG",
+      "n": 1
+    },
+    {
+      "strategy": "connors",
+      "setup": "RSI2X LONG",
+      "n": 1
+    },
+    {
+      "strategy": "oi_build",
+      "setup": "OI BUILD LONG",
+      "n": 2
+    },
+    {
+      "strategy": "oi_build",
+      "setup": "OI BUILD SHORT",
+      "n": 9
+    },
+    {
+      "strategy": "orb",
+      "setup": "ORB DOWN",
+      "n": 7
+    },
+    {
+      "strategy": "orb",
+      "setup": "ORB UP",
+      "n": 6
+    },
+    {
+      "strategy": "po3",
+      "setup": "PO3 SHORT",
+      "n": 1
+    },
+    {
+      "strategy": "pump",
+      "setup": "DUMP START",
+      "n": 1
+    },
+    {
+      "strategy": "sweep",
+      "setup": "SWEEP HIGH",
+      "n": 22
+    },
+    {
+      "strategy": "sweep",
+      "setup": "SWEEP LOW",
+      "n": 3
+    },
+    {
+      "strategy": "trendline",
+      "setup": "TL TOUCH DOWN",
+      "n": 1
+    },
+    {
+      "strategy": "trendline",
+      "setup": "TL TOUCH UP",
+      "n": 3
+    }
+  ]
+}
