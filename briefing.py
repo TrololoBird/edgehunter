@@ -59,6 +59,27 @@ H4_MS = 4 * 3_600_000
 HIGHER_LABELS = ('PDH', 'PDL', 'PWH', 'PWL', 'PMH', 'PML', 'POC', 'VAH', 'VAL', 'd high', 'd low', '52w')
 
 
+def _read_jsonl(path: str) -> List[Dict]:
+    """Read valid JSONL records while tolerating a truncated final write."""
+    import json
+    rows = []
+    try:
+        with open(path, encoding='utf-8') as fh:
+            for line_no, line in enumerate(fh, 1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    logger.warning("Skipping invalid JSONL record %s:%s (%s)", path, line_no, exc)
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except OSError:
+        return []
+    return rows
+
+
 def to_4h(bars: List) -> List:
     """eng-168y: closed 1h bars [ts, o, h, l, c] -> the complete 4h bars (UTC 4h boundaries) they make."""
     out, grp = [], {}
@@ -1035,15 +1056,10 @@ class Briefing:
 
     def _score_today(self, symbol: str, md) -> List[str]:
         """Today's saved briefings of the coin (data/briefings.jsonl), each scenario scored on the closed 1h candles."""
-        import json
         path = os.path.join('data', 'briefings.jsonl')
         today = f"{datetime.now(MSK):%Y-%m-%d}"
         out = []
-        try:
-            with open(path, encoding='utf-8') as f:
-                recs = [json.loads(x) for x in f if x.strip()]
-        except OSError:
-            return out
+        recs = _read_jsonl(path)
         now = time.time() * 1000
         closed = [c for c in md.h1 if c[0] + HOUR_MS <= now]
         minutes = [c for c in md.minute_klines if c[0] + 60_000 <= now]
@@ -1061,12 +1077,7 @@ class Briefing:
         """eng-168m (audit #3): the published scenarios of the previous days (within OUTCOME_HOURS) whose outcome came
         TODAY (MSK): TP1 / stop / cancelled / missed on a candle closed today, or the horizon ended today with the trade
         still open (marked to market). The recap scored only today's posts."""
-        import json
-        try:
-            with open(os.path.join('data', 'briefings.jsonl'), encoding='utf-8') as f:
-                recs = [json.loads(x) for x in f if x.strip()]
-        except (OSError, ValueError):
-            return []
+        recs = _read_jsonl(os.path.join('data', 'briefings.jsonl'))
         now = time.time() * 1000
         today = f"{datetime.now(MSK):%Y-%m-%d}"
         closed = [c for c in md.h1 if c[0] + HOUR_MS <= now]
@@ -1318,12 +1329,7 @@ class Briefing:
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):
         counts by scenario side and outcome class. A tally of what the plan rules did, not a verdict on them."""
-        import json
-        try:
-            with open(os.path.join('data', 'briefings.jsonl'), encoding='utf-8') as f:
-                recs = [json.loads(x) for x in f if x.strip()]
-        except (OSError, ValueError):
-            return {}
+        recs = _read_jsonl(os.path.join('data', 'briefings.jsonl'))
         since = time.time() - days * 86400
         now = time.time() * 1000
         tally: Dict[str, Dict[str, int]] = {}
