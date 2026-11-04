@@ -1,0 +1,64 @@
+{
+  "captured_at_unix": 1793832270.9984891,
+  "pid": 56668,
+  "systemd": {
+    "NRestarts": "1",
+    "MemoryHigh": "3221225472",
+    "MemoryCurrent": "3212320768",
+    "MemoryMax": "infinity",
+    "TasksCurrent": "58",
+    "LimitNOFILE": "524288",
+    "TimeoutStopUSec": "1min 30s",
+    "ControlGroup": "/system.slice/edgehunter-bot.service"
+  },
+  "proc_status": {
+    "Name": "python",
+    "State": "R (running)",
+    "VmRSS": "2612668 kB",
+    "RssAnon": "2591392 kB",
+    "RssFile": "21268 kB",
+    "RssShmem": "8 kB",
+    "VmSwap": "1529024 kB",
+    "Threads": "36"
+  },
+  "signals_db_fds": [
+    {
+      "fd": 15,
+      "target": "/opt/edgehunter/signals.db"
+    },
+    {
+      "fd": 16,
+      "target": "/opt/edgehunter/signals.db-wal"
+    },
+    {
+      "fd": 17,
+      "target": "/opt/edgehunter/signals.db-shm"
+    },
+    {
+      "fd": 24,
+      "target": "/opt/edgehunter/signals.db"
+    },
+    {
+      "fd": 30,
+      "target": "/opt/edgehunter/signals.db"
+    },
+    {
+      "fd": 73,
+      "target": "/opt/edgehunter/signals.db-wal"
+    },
+    {
+      "fd": 89,
+      "target": "/opt/edgehunter/signals.db"
+    },
+    {
+      "fd": 92,
+      "target": "/opt/edgehunter/signals.db-wal"
+    }
+  ],
+  "cgroup": {
+    "memory.current": "3212455936\n",
+    "memory.events": "low 0\nhigh 23972\nmax 0\noom 0\noom_kill 0\n",
+    "memory.stat": "anon 2843197440\nfile 290160640\nkernel_stack 933888\npagetables 11472896\npercpu 0\nsock 1245184\nshmem 32768\nfile_mapped 28602368\nfile_dirty 114688\nfile_writeback 0\nswapcached 51150848\nanon_thp 167772160\nfile_thp 0\nshmem_thp 0\ninactive_anon 1192558592\nactive_anon 1701715968\ninactive_file 102424576\nactive_file 187809792\nunevictable 0\nslab_reclaimable 12414584\nslab_unreclaimable 1715368\nslab 14129952\nworkingset_refault_anon 107173\nworkingset_refault_file 537448\nworkingset_activate_anon 98873\nworkingset_activate_file 451347\nworkingset_restore_anon 39079\nworkingset_restore_file 341009\nworkingset_nodereclaim 0\npgfault 1631825\npgmajfault 62463\npgrefill 1005824\npgscan 3742942\npgsteal 1280180\npgactivate 812010\npgdeactivate 970223\npglazyfree 112896\npglazyfreed 326\nthp_fault_alloc 173\nthp_collapse_alloc 26\n",
+    "memory.pressure": "some avg10=5.12 avg60=4.60 avg300=1.90 total=9831466\nfull avg10=3.17 avg60=3.32 avg300=1.53 total=8360865\n"
+  }
+}

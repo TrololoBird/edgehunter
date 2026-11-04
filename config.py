@@ -948,6 +948,11 @@ class RestConfig:
     baseline_concurrency: int = 40
     baseline_delay_sec: float = 0.05
     max_retries: int = 3
+    connect_timeout_sec: float = 10.0
+    read_timeout_sec: float = 30.0
+    total_timeout_sec: float = 45.0
+    retry_timeout_sec: float = 5.0
+    shutdown_timeout_sec: float = 10.0
     # Proactive budget: stay below this share of the weight limit (read from X-MBX-USED-WEIGHT-1M); lower priorities
     # get a smaller share (priority 0 = candles/backfill, 1 = OI polling, 2 = journal outcomes / positioning ratios)
     budget_share: float = 0.7
@@ -964,6 +969,7 @@ class RestConfig:
 @dataclass(frozen=True)
 class WSConfig:
     ping_interval: int = 20
+    handshake_timeout_sec: float = 15.0
     # eng-81: Binance's whole-market arrays (!markPrice@arr@1s, !miniTicker@arr) as streams - off on a thin link
     market_arrays: bool = True
 

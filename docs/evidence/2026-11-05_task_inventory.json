@@ -1,0 +1,230 @@
+[
+  {
+    "file": "main.py",
+    "line": 260,
+    "call": "create_task",
+    "expr": "scanner.initialize()"
+  },
+  {
+    "file": "main.py",
+    "line": 261,
+    "call": "create_task",
+    "expr": "graceful_exit.shutdown_event.wait()"
+  },
+  {
+    "file": "scanner.py",
+    "line": 273,
+    "call": "create_task",
+    "expr": "self.watchdog.heartbeat()"
+  },
+  {
+    "file": "scanner.py",
+    "line": 298,
+    "call": "create_task",
+    "expr": "self.fetcher.fetch_rest_baselines(symbols)"
+  },
+  {
+    "file": "scanner.py",
+    "line": 343,
+    "call": "create_task",
+    "expr": "coro"
+  },
+  {
+    "file": "scanner.py",
+    "line": 357,
+    "call": "create_task",
+    "expr": "asyncio.to_thread(fn, *args)"
+  },
+  {
+    "file": "scanner.py",
+    "line": 1143,
+    "call": "create_task",
+    "expr": "self._refresh_contexts()"
+  },
+  {
+    "file": "scanner.py",
+    "line": 332,
+    "call": "create_task",
+    "expr": "c"
+  },
+  {
+    "file": "scanner.py",
+    "line": 335,
+    "call": "create_task",
+    "expr": "self.smallcap.restore(set(self.market_data))"
+  },
+  {
+    "file": "scanner.py",
+    "line": 448,
+    "call": "create_task",
+    "expr": "model.afit()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1890,
+    "call": "create_task",
+    "expr": "coro"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1984,
+    "call": "create_task",
+    "expr": "self._oi_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1985,
+    "call": "create_task",
+    "expr": "self._funding_info_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1986,
+    "call": "create_task",
+    "expr": "self._bulk_deriv_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1987,
+    "call": "create_task",
+    "expr": "self._coinbase_prices_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1988,
+    "call": "create_task",
+    "expr": "self._book_sync_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1989,
+    "call": "create_task",
+    "expr": "self._binance_rest_tickers_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1990,
+    "call": "create_task",
+    "expr": "self._hourly_candles_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1991,
+    "call": "create_task",
+    "expr": "self._seasonal_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1992,
+    "call": "create_task",
+    "expr": "self._weekly_candles_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1993,
+    "call": "create_task",
+    "expr": "self._daily_candles_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1994,
+    "call": "create_task",
+    "expr": "self._day_pocs_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1995,
+    "call": "create_task",
+    "expr": "self._dominance_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1996,
+    "call": "create_task",
+    "expr": "self._external_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 1997,
+    "call": "create_task",
+    "expr": "self._h4_candles_loop()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 2583,
+    "call": "ensure_future",
+    "expr": "ex.close()"
+  },
+  {
+    "file": "fetcher.py",
+    "line": 2369,
+    "call": "create_task",
+    "expr": "one(symbol)"
+  },
+  {
+    "file": "notifier.py",
+    "line": 287,
+    "call": "create_task",
+    "expr": "self._send_chunks(chunks, topic)"
+  },
+  {
+    "file": "notifier.py",
+    "line": 295,
+    "call": "create_task",
+    "expr": "self._photo(png, caption[:1024], topic)"
+  },
+  {
+    "file": "notifier.py",
+    "line": 85,
+    "call": "create_task",
+    "expr": "self._retry_loop()"
+  },
+  {
+    "file": "notifier.py",
+    "line": 234,
+    "call": "create_task",
+    "expr": "coro"
+  },
+  {
+    "file": "smallcap.py",
+    "line": 64,
+    "call": "create_task",
+    "expr": "coro"
+  },
+  {
+    "file": "webui.py",
+    "line": 746,
+    "call": "ensure_future",
+    "expr": "self._analysis_compute(b, symbol, cache)"
+  },
+  {
+    "file": "webui.py",
+    "line": 549,
+    "call": "create_task",
+    "expr": "self._send(ws, text)"
+  },
+  {
+    "file": "venues.py",
+    "line": 189,
+    "call": "create_task",
+    "expr": "self._connection(chunk, i * self.connect_stagger, i)"
+  },
+  {
+    "file": "venues.py",
+    "line": 191,
+    "call": "create_task",
+    "expr": "self._connection([], len(chunks) * self.connect_stagger, -1, dynamic=True)"
+  },
+  {
+    "file": "venues.py",
+    "line": 247,
+    "call": "create_task",
+    "expr": "self._connection(subs, k * self.connect_stagger, i)"
+  },
+  {
+    "file": "venues.py",
+    "line": 318,
+    "call": "create_task",
+    "expr": "self._pinger(transport)"
+  }
+]

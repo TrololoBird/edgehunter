@@ -309,7 +309,8 @@ class VenueStream:
                     lambda: listener, self.connection_url(index),
                     enable_auto_ping=True, auto_ping_idle_timeout=self.idle_timeout,
                     auto_ping_reply_timeout=self.idle_timeout, enable_auto_pong=True,
-                    max_frame_size=MAX_FRAME_SIZE, websocket_handshake_timeout=15, use_aiofastnet=False,
+                    max_frame_size=MAX_FRAME_SIZE, websocket_handshake_timeout=CONFIG.ws.handshake_timeout_sec,
+                    use_aiofastnet=False,
                     ssl_context=ssl_context() if self.connection_url(index).startswith('wss') else None,
                 )
                 self._transports.add(transport)

@@ -32,6 +32,7 @@ from typing import Dict, Optional
 from zoneinfo import ZoneInfo
 
 import aiohttp
+from config import CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,9 @@ class ExternalData:
 
     async def _json(self, url: str, payload=None):
         if self._session is None:
-            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(
+                total=CONFIG.rest.total_timeout_sec, connect=CONFIG.rest.connect_timeout_sec,
+                sock_read=CONFIG.rest.read_timeout_sec))
         if payload is None:
             async with self._session.get(url) as r:
                 return await r.json(content_type=None)
@@ -146,7 +149,9 @@ class ExternalData:
     async def _slow_macro(self):
         try:
             if self._session is None:
-                self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
+                self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(
+                    total=CONFIG.rest.total_timeout_sec, connect=CONFIG.rest.connect_timeout_sec,
+                    sock_read=CONFIG.rest.read_timeout_sec))
             async with self._session.get(VIX_CSV) as r:
                 text = await r.text()
             today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
