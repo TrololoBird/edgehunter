@@ -19,6 +19,7 @@ config.local.toml
 models/macro_cache.json
 models/sectors.json
 data/
+raw-events/
 demo_trades.db
 worker.log*
 # research run outputs / backups

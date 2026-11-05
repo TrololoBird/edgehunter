@@ -56,6 +56,7 @@ WSListener, WSMsgType, WSTransport, ws_connect = _picows.WSListener, _picows.WSM
 from config import CONFIG
 from netstate import NETWORK
 from symbols import SymbolMap
+from raw_event_log import RawEventLog
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +98,10 @@ class _Listener(WSListener):
     backlog, which made the heartbeat drop the connection (code 1006) every ~30s.
     """
 
-    def __init__(self, stream: 'VenueStream'):
+    def __init__(self, stream: 'VenueStream', connection_id: str):
         super().__init__()
         self.stream = stream
+        self.connection_id = connection_id
         self.frames = 0
         self._parts: List[bytes] = []
 
@@ -116,6 +118,9 @@ class _Listener(WSListener):
             else:
                 data = frame.get_payload_as_bytes()
             self.frames += 1
+            self.stream.raw_log.append(source='websocket', venue=self.stream.venue,
+                                       channel=self.stream.name, connection_id=self.connection_id,
+                                       payload=data)
             self.stream._on_text(data)
         elif msg_type == WSMsgType.CLOSE:
             self.stream.last_close = f"code {frame.get_close_code()} {frame.get_close_message() or b''!r}"
@@ -139,6 +144,7 @@ class VenueStream:
         self.sink = sink
         self.symbols = symbols
         self.name = name or self.venue
+        self.raw_log = RawEventLog()
         self._running = False
         self._tasks: List[asyncio.Task] = []
         self._transports: Set[WSTransport] = set()
@@ -310,7 +316,7 @@ class VenueStream:
         while self._running:
             transport = ping_task = None
             # our own listener object: its frame count is read after the connection ends, whatever ws_connect returns
-            listener = _Listener(self)
+            listener = _Listener(self, f'{self.name}:{index}')
             try:
                 transport, _ = await ws_connect(
                     lambda: listener, self.connection_url(index),
