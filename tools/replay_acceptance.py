@@ -3,6 +3,14 @@
 import argparse, json, random, statistics
 from collections import defaultdict
 
+def holm_bonferroni(pvalues, alpha=0.05):
+    """Return adjusted p-values in original order (step-down Holm)."""
+    order=sorted(range(len(pvalues)), key=lambda i: pvalues[i]); out=[0.0]*len(pvalues); running=0.0
+    for rank,i in enumerate(order):
+        running=max(running, min(1.0, pvalues[i]*(len(pvalues)-rank)))
+        out[i]=running
+    return out
+
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('csv'); ap.add_argument('--value',default='demo_r'); ap.add_argument('--cluster',default='cluster_4h_id'); ap.add_argument('--bootstrap',type=int,default=2000); a=ap.parse_args()
     import csv
