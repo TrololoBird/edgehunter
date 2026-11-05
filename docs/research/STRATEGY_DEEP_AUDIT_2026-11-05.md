@@ -106,3 +106,24 @@
 Это candidate patch, а не окончательный verdict: перед дальнейшим rollout нужны
 replay/holdout и сравнение cluster-weighted R с `eng-169l`.
 
+## Сравнение replay `eng-169l` vs `eng-170a`
+
+Одинаковый 14-дневный replay (2026-10-18..2026-10-31, BTC/ETH/SOL, один
+portfolio group, один и тот же stop model) дал:
+
+| version | cards | entries/vetoes | expired | invalid | missed |
+|---|---:|---:|---:|---:|---:|
+| eng-169l | 279 | 434 | 190 | 59 | 30 |
+| eng-170a | 243 | 393 | 154 | 59 | 30 |
+
+В candidate trendline cards сократились с 51 до 15 (TL TOUCH DOWN 26 → 6,
+TL TOUCH UP 25 → 9). Это подтверждает, что новая directional-close проверка
+сильно уменьшает поток сигналов, но данный replay не дал достаточного числа
+закрытых entries этих веток для сравнения R. По этому критерию `eng-170a`
+пока не принят: уменьшение количества сигналов само по себе не считается
+улучшением.
+
+Параллельно Bollinger reversal events чаще останавливались на `low_rr`,
+поэтому для них нужен отдельный анализ `filter rate` и альтернативный
+retest/volume candidate, а не дальнейшее ужесточение без измерения.
+
