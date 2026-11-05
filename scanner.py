@@ -40,7 +40,7 @@ from netstate import NETWORK
 from extdata import us_session
 from memory_guard import pressured, snapshot as memory_snapshot
 from task_supervisor import TaskSupervisor
-from signal_priority import SignalBatcher, rank as rank_signals
+from signal_priority import SignalBatcher
 from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
