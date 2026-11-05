@@ -489,6 +489,8 @@ class WebUI:
         self._last_state: bytes = b'{}'
         self._sending: set = set()
         self._analysis_tasks: set = set()
+        self._stats_task: Optional[asyncio.Task] = None
+        self._stats_html_cache: dict = {}
 
     @property
     def url(self) -> str:
@@ -922,5 +924,17 @@ class WebUI:
 
     async def _stats(self, request):
         days = self._hours(request, 'days', None, 90.0)
-        html = await asyncio.to_thread(self.reader.stats_html, days)
+        key = days
+        cached = self._stats_html_cache.get(key)
+        if cached is not None:
+            return web.Response(text=cached, content_type='text/html')
+        if self._stats_task is None or self._stats_task.done():
+            self._stats_task = asyncio.create_task(asyncio.to_thread(self.reader.stats_html, days),
+                                                    name='webui-stats-report')
+        try:
+            html = await asyncio.wait_for(asyncio.shield(self._stats_task), timeout=8.0)
+        except asyncio.TimeoutError:
+            return web.Response(text='<html><body><p>Статистика рассчитывается. Обновите страницу через несколько секунд.</p></body></html>',
+                                content_type='text/html', status=202)
+        self._stats_html_cache[key] = html
         return web.Response(text=html, content_type='text/html')
