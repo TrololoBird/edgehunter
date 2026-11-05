@@ -16,7 +16,7 @@ import numpy as np
 import polars as pl
 
 from config import CONFIG
-from data_quality import DataQuality, quality
+from data_quality import quality
 from depth import DepthBook
 from strategies import confirm
 from flow import SPOT_VENUES, Footprint, FlowStore, Sweep, SweepTracker, WhaleBook, absorption_in, minute_atr_15m
