@@ -1,0 +1,10 @@
+{
+  "period": "2026-10-18..2026-10-31",
+  "symbols": ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
+  "result": "completed_without_exception",
+  "cards": 0,
+  "entries_or_vetoes": 0,
+  "skip_reason": "too_little_history",
+  "acceptance_status": "blocked_until_archive_is_populated",
+  "derived_columns_fallback": ["ret_std", "oi_std", "atr"]
+}
