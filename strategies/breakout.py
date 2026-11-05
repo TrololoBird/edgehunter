@@ -63,6 +63,7 @@ def breakout_at_close(candles_15m: Sequence[Sequence[float]], atr: float,
                           f"{lo:.6g}-{hi:.6g} on {b[5] / avg_volume:.1f}x volume with {'buying' if flow > 0 else 'selling'}, "
                           f"the next close held",
             'range_lo': lo, 'range_hi': hi, 'anchor_ts': int(rng[0][0]), 'break_ts': int(b[0]),
+            'retest_entry': float(hi if direction > 0 else lo), 'retest_ttl_bars': 12,
             'anchor_close': a[4], 'event_ts': int(a[0]) + QUARTER_MS}
 
 
