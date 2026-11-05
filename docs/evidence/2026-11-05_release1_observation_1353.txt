@@ -1,0 +1,5 @@
+Release 1 observation 2026-11-05 13:52:53 UTC
+MainPID=77330, SubState=running, NRestarts=4 (precheck attempts only).
+MemoryCurrent=1,647,661,056; memory.events high=0 oom=0 oom_kill=0.
+PSI some avg60=.12/full avg60=.10; avg10 both 0.00.
+Memory is approximately flat versus 13:52 (~1.64GB), but the observation window is still minutes, not acceptance 6–12h.
