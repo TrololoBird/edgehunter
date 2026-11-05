@@ -1,0 +1,203 @@
+{
+  "source": "demo_trades.db",
+  "rows": [
+    {
+      "strategy": "oi_build",
+      "setup": "OI BUILD SHORT",
+      "n": 1,
+      "mean_r": -0.977633871796202
+    },
+    {
+      "strategy": "market_profile",
+      "setup": "AUCTION LONG",
+      "n": 1,
+      "mean_r": -0.9751107806419016
+    },
+    {
+      "strategy": "po3",
+      "setup": "PO3 LONG",
+      "n": 1,
+      "mean_r": -0.9622150939646776
+    },
+    {
+      "strategy": "breakout",
+      "setup": "BB1 UP",
+      "n": 8,
+      "mean_r": -0.9085088485162787
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "BB3 BUY",
+      "n": 5,
+      "mean_r": -0.826425780571433
+    },
+    {
+      "strategy": "pump",
+      "setup": "PUMP TOP",
+      "n": 1,
+      "mean_r": -0.745003257410192
+    },
+    {
+      "strategy": "market_profile",
+      "setup": "VA80 SHORT",
+      "n": 1,
+      "mean_r": -0.734014308136781
+    },
+    {
+      "strategy": "breakout",
+      "setup": "BREAKOUT UP",
+      "n": 4,
+      "mean_r": -0.7249145751783224
+    },
+    {
+      "strategy": "pump",
+      "setup": "DUMP BOUNCE SHORT",
+      "n": 9,
+      "mean_r": -0.6706996450291585
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "BB W-BOTTOM",
+      "n": 34,
+      "mean_r": -0.5536008318957243
+    },
+    {
+      "strategy": "oi_build",
+      "setup": "OI BUILD LONG",
+      "n": 8,
+      "mean_r": -0.5304547031274589
+    },
+    {
+      "strategy": "trendline",
+      "setup": "TL TOUCH UP",
+      "n": 73,
+      "mean_r": -0.5004840842988935
+    },
+    {
+      "strategy": "continuation",
+      "setup": "IMPULSE DOWN",
+      "n": 2,
+      "mean_r": -0.4712044093167267
+    },
+    {
+      "strategy": "pump",
+      "setup": "DUMP START",
+      "n": 126,
+      "mean_r": -0.46453147139848044
+    },
+    {
+      "strategy": "supply_demand",
+      "setup": "SD DEMAND",
+      "n": 5,
+      "mean_r": -0.38088381772472235
+    },
+    {
+      "strategy": "connors",
+      "setup": "RSI2 LONG",
+      "n": 3,
+      "mean_r": -0.3046984711455773
+    },
+    {
+      "strategy": "supply_demand",
+      "setup": "SD SUPPLY",
+      "n": 2,
+      "mean_r": -0.29227133129779137
+    },
+    {
+      "strategy": "market_profile",
+      "setup": "VA80 LONG",
+      "n": 1,
+      "mean_r": -0.28703735406459896
+    },
+    {
+      "strategy": "trendline",
+      "setup": "TL TOUCH DOWN",
+      "n": 112,
+      "mean_r": -0.2807311948891168
+    },
+    {
+      "strategy": "po3",
+      "setup": "PO3 SHORT",
+      "n": 22,
+      "mean_r": -0.2742911885915312
+    },
+    {
+      "strategy": "breakout",
+      "setup": "BB1 DOWN",
+      "n": 13,
+      "mean_r": -0.24749856591422026
+    },
+    {
+      "strategy": "sweep",
+      "setup": "SWEEP HIGH",
+      "n": 41,
+      "mean_r": -0.2238332875736956
+    },
+    {
+      "strategy": "connors",
+      "setup": "RSI2X LONG",
+      "n": 7,
+      "mean_r": -0.20521198274009142
+    },
+    {
+      "strategy": "sweep",
+      "setup": "SWEEP LOW",
+      "n": 18,
+      "mean_r": -0.18457038484591257
+    },
+    {
+      "strategy": "pump",
+      "setup": "PUMP START",
+      "n": 47,
+      "mean_r": -0.09786592027754146
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "BB3 SELL",
+      "n": 12,
+      "mean_r": 0.05229043338270701
+    },
+    {
+      "strategy": "orb",
+      "setup": "ORB DOWN",
+      "n": 6,
+      "mean_r": 0.097020741148915
+    },
+    {
+      "strategy": "orb",
+      "setup": "ORB UP",
+      "n": 4,
+      "mean_r": 0.13103817005040358
+    },
+    {
+      "strategy": "connors",
+      "setup": "RSI2 SHORT",
+      "n": 1,
+      "mean_r": 0.3168655374291067
+    },
+    {
+      "strategy": "bollinger",
+      "setup": "BB M-TOP",
+      "n": 7,
+      "mean_r": 0.4717030493516417
+    },
+    {
+      "strategy": "market_profile",
+      "setup": "AUCTION SHORT",
+      "n": 1,
+      "mean_r": 0.5500060396667092
+    },
+    {
+      "strategy": "continuation",
+      "setup": "IMPULSE UP",
+      "n": 1,
+      "mean_r": 0.6196696136624296
+    },
+    {
+      "strategy": "connors",
+      "setup": "RSI2X SHORT",
+      "n": 2,
+      "mean_r": 0.8407618039347283
+    }
+  ]
+}
