@@ -1435,6 +1435,20 @@ class DemoExecutor:
                     scale = float(trade['entry_plan']) / float(s.levels['entry'])
                     trade['scale'] = scale
                 scale = scale or 1.0
+                ex = await self._exchange()
+                old_stop = trade.get('stop_order_id') or trade.get('stop_id')
+                # Prefer an atomic exchange edit when available: placing a second
+                # full-size reduce-only stop is rejected by some venues.
+                if old_stop and hasattr(ex, 'edit_order'):
+                    edited = await ex.edit_order(old_stop, symbol, 'STOP_MARKET',
+                                                 'sell' if d > 0 else 'buy', left,
+                                                 s.levels['sl'] * scale,
+                                                 {'reduceOnly': True, 'closePosition': True})
+                    trade['sl'] = s.levels['sl'] * scale
+                    with self._db() as c:
+                        c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
+                    logger.info(f"Demo RESTOP {symbol}: atomically edited stop {edited.get('id', old_stop)}")
+                    return
                 # eng-85: the new stop first, then the old stop(s) by id - the cancel-all first left the position naked
                 # whenever the new stop failed, and took TP2 / TP3 of the thirds plans with it for good
                 new = await self._place_stop(symbol, d, left, s.levels['sl'] * scale)
