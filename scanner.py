@@ -851,6 +851,20 @@ class Scanner:
         warmed_up = time.time() - self._started_at >= CONFIG.tier0.warmup_sec
         if warmed_up:
             signals += self._detect_setups()
+            # Do not open latency-sensitive setups from stale cross-venue data;
+            # exits and position management continue below unchanged.
+            quality_state = getattr(self.fetcher, 'quality_state', {})
+            if quality_state:
+                filtered = []
+                for symbol, sig in signals:
+                    if sig.get('setup') in ('PUMP START', 'DUMP START', 'BREAKOUT'):
+                        states = [q for (kind, key), q in quality_state.items() if key == symbol and kind in ('oi', 'book')]
+                        if states and not all(q.usable_for_entry for q in states):
+                            sig = dict(sig, skip='DATA_QUALITY_VETO')
+                            logger.info('Data quality veto: %s %s', symbol, sig.get('setup'))
+                            continue
+                    filtered.append((symbol, sig))
+                signals = filtered
             if self.smallcap is not None:
                 for symbol, sig in self.smallcap.drain():
                     if symbol in self.market_data:
