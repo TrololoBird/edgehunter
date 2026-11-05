@@ -120,7 +120,9 @@ class ConnorsStrategy(_System):
         if plan and not plan.get('skip'):
             plan['connors_exit'] = True
             plan['no_tp'] = True              # out on the SMA5 close: no take-profit orders
-            plan['no_stop'] = True
+            # The book's no-stop rule is unsafe for crypto liquidation trends. Keep the
+            # SMA5 exit, but place the 1-d ATR structural stop as a hard emergency stop.
+            plan['no_stop'] = False
         return plan
 
 

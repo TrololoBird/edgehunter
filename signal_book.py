@@ -2124,6 +2124,14 @@ class SignalBook:
                 self.events.append((s, 'ADD'))
         if (s.plan or {}).get('connors_exit') and self.daily_of:
             d1 = self.daily_of(s.symbol) or []
+            # Crypto can remain in a one-way liquidation trend after an RSI(2) oversold print.
+            # The entry's SMA200 check is a setup filter, not a permanent hold permission:
+            # invalidate a long once a later daily close loses SMA200 (and mirror for shorts).
+            if len(d1) >= 200 and d1[-1][0] / 1000 >= s.entered_at - 86400:
+                sma200 = sum(c[4] for c in d1[-200:]) / 200
+                if d * (d1[-1][4] - sma200) < 0:
+                    return self._finish(s, 'INVALID', now,
+                                        f"daily close {d1[-1][4]:.6g} crossed SMA200 {sma200:.6g} (Connors trend invalidated)")
             # the daily closes since the entry: out on the first one beyond the SMA5 of the last five closes
             if len(d1) >= 5 and d1[-1][0] / 1000 >= s.entered_at - 86400:
                 sma5 = sum(c[4] for c in d1[-5:]) / 5
