@@ -39,6 +39,7 @@ from strategies.structure import PART_COLUMNS, build_maps, part_candles, trend_w
 from netstate import NETWORK
 from extdata import us_session
 from memory_guard import pressured, snapshot as memory_snapshot
+from task_supervisor import TaskSupervisor
 from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
@@ -341,7 +342,9 @@ class Scanner:
         await self.ext.seed_okx_flow()
 
     def _background_task(self, coro):
-        task = asyncio.create_task(coro)
+        if not hasattr(self, '_task_supervisor'):
+            self._task_supervisor = TaskSupervisor('scanner')
+        task = self._task_supervisor.create(coro, 'background')
         self._background.add(task)
         task.add_done_callback(self._background_done)
         return task
