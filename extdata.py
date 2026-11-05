@@ -20,6 +20,7 @@ stats / P(edge), never a trigger until the journal proves one:
   is not on Upbit, or |premium| > 30% (a ticker shared by two different coins).
 """
 import asyncio
+import time
 import csv
 import io
 import json
@@ -33,6 +34,7 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 from config import CONFIG
+from data_quality import quality
 
 logger = logging.getLogger(__name__)
 
@@ -351,5 +353,13 @@ class ExternalData:
                         self.coin.setdefault(key, {})['bybit_book_imb'] = self._imbalance(r.get('b'), r.get('a'))
                 except Exception as e:
                     errors.report('extdata.books_loop', e, f"books {key}")
+                    self.quality_state = getattr(self, 'quality_state', {})
+                    previous = self.quality_state.get(('book', key))
+                    self.quality_state[('book', key)] = quality(time.time(), previous.fetched_at if previous else None,
+                                                               30, 120, 'cross_venue_books', type(e).__name__)
+                else:
+                    self.quality_state = getattr(self, 'quality_state', {})
+                    now = time.time()
+                    self.quality_state[('book', key)] = quality(now, now, 30, 120, 'cross_venue_books')
                 await asyncio.sleep(0.3)
             await asyncio.sleep(max(5.0, 60 - (time.time() - started)))

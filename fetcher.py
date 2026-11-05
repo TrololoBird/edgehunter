@@ -16,6 +16,7 @@ import numpy as np
 import polars as pl
 
 from config import CONFIG
+from data_quality import DataQuality, quality
 from depth import DepthBook
 from strategies import confirm
 from flow import SPOT_VENUES, Footprint, FlowStore, Sweep, SweepTracker, WhaleBook, absorption_in, minute_atr_15m
@@ -664,14 +665,23 @@ class DataFetcher:
     async def fetch_open_interest(self, symbol: str) -> Optional[float]:
         binance_symbol = self._ccxt_to_binance_symbol(symbol)
         if not binance_symbol:
+            self.quality_state = getattr(self, 'quality_state', {})
+            self.quality_state[('oi', symbol)] = quality(time.time(), None, 300, 900, 'binance', 'invalid_symbol')
             return None
         try:
             res = await self._rest_call(self.futures_exchange, 'fapiPublicGetOpenInterest', {'symbol': binance_symbol},
                                         priority=1)
         except Exception as e:
             errors.report('fetcher.fetch_open_interest', e, f"OI fetch failed for {symbol}")
+            self.quality_state = getattr(self, 'quality_state', {})
+            previous = self.quality_state.get(('oi', symbol))
+            self.quality_state[('oi', symbol)] = quality(time.time(), previous.fetched_at if previous else None,
+                                                        300, 900, 'binance', type(e).__name__)
             return None
-        self.oi_last_updated[symbol] = time.time()
+        now = time.time()
+        self.oi_last_updated[symbol] = now
+        self.quality_state = getattr(self, 'quality_state', {})
+        self.quality_state[('oi', symbol)] = quality(now, now, 300, 900, 'binance')
         return float(res.get('openInterest', 0.0))
 
     async def _oi_loop(self):
