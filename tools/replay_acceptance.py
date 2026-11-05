@@ -15,6 +15,7 @@ def main():
     means=[statistics.fmean(v) for v in groups.values() if v]
     if not means: result={'clusters':0,'mean':None,'ci95':[None,None]}
     else:
+        random.seed(13)
         samples=[statistics.fmean(random.choices(means,k=len(means))) for _ in range(a.bootstrap)]
         samples.sort(); result={'clusters':len(means),'mean':statistics.fmean(means),
             'ci95':[samples[int(.025*len(samples))],samples[int(.975*len(samples))-1]]}
