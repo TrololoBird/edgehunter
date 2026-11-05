@@ -1,0 +1,526 @@
+{
+  "eng170a": {
+    "cards": 243,
+    "entries": 393,
+    "status": [
+      {
+        "status": "EXPIRED",
+        "n": 154
+      },
+      {
+        "status": "INVALID",
+        "n": 59
+      },
+      {
+        "status": "MISSED",
+        "n": 30
+      }
+    ],
+    "strategies": [
+      {
+        "strategy": "breakout",
+        "n": 4
+      },
+      {
+        "strategy": "connors",
+        "n": 5
+      },
+      {
+        "strategy": "continuation",
+        "n": 2
+      },
+      {
+        "strategy": "market_profile",
+        "n": 21
+      },
+      {
+        "strategy": "oi_build",
+        "n": 43
+      },
+      {
+        "strategy": "orb",
+        "n": 51
+      },
+      {
+        "strategy": "po3",
+        "n": 1
+      },
+      {
+        "strategy": "pump",
+        "n": 1
+      },
+      {
+        "strategy": "supply_demand",
+        "n": 1
+      },
+      {
+        "strategy": "sweep",
+        "n": 94
+      },
+      {
+        "strategy": "trendline",
+        "n": 15
+      },
+      {
+        "strategy": "wyckoff",
+        "n": 5
+      }
+    ],
+    "setups": [
+      {
+        "strategy": null,
+        "setup": "AUCTION LONG",
+        "n": 12
+      },
+      {
+        "strategy": null,
+        "setup": "AUCTION SHORT",
+        "n": 7
+      },
+      {
+        "strategy": null,
+        "setup": "BB M-TOP",
+        "n": 5
+      },
+      {
+        "strategy": null,
+        "setup": "BB W-BOTTOM",
+        "n": 3
+      },
+      {
+        "strategy": null,
+        "setup": "BB3 BUY",
+        "n": 5
+      },
+      {
+        "strategy": null,
+        "setup": "BB3 SELL",
+        "n": 1
+      },
+      {
+        "strategy": null,
+        "setup": "IMPULSE DOWN",
+        "n": 7
+      },
+      {
+        "strategy": null,
+        "setup": "IMPULSE UP",
+        "n": 16
+      },
+      {
+        "strategy": null,
+        "setup": "PO3 LONG",
+        "n": 3
+      },
+      {
+        "strategy": null,
+        "setup": "PO3 SHORT",
+        "n": 2
+      },
+      {
+        "strategy": null,
+        "setup": "SD DEMAND",
+        "n": 16
+      },
+      {
+        "strategy": null,
+        "setup": "SD SUPPLY",
+        "n": 24
+      },
+      {
+        "strategy": null,
+        "setup": "SILVER BULLET LONG",
+        "n": 1
+      },
+      {
+        "strategy": null,
+        "setup": "SILVER BULLET SHORT",
+        "n": 3
+      },
+      {
+        "strategy": null,
+        "setup": "SPRING",
+        "n": 1
+      },
+      {
+        "strategy": null,
+        "setup": "SWEEP HIGH",
+        "n": 17
+      },
+      {
+        "strategy": null,
+        "setup": "SWEEP LOW",
+        "n": 39
+      },
+      {
+        "strategy": null,
+        "setup": "VA80 SHORT",
+        "n": 1
+      },
+      {
+        "strategy": "breakout",
+        "setup": "BREAKOUT DOWN",
+        "n": 4
+      },
+      {
+        "strategy": "connors",
+        "setup": "RSI2 LONG",
+        "n": 2
+      },
+      {
+        "strategy": "connors",
+        "setup": "RSI2X LONG",
+        "n": 3
+      },
+      {
+        "strategy": "market_profile",
+        "setup": "AUCTION LONG",
+        "n": 6
+      },
+      {
+        "strategy": "market_profile",
+        "setup": "AUCTION SHORT",
+        "n": 5
+      },
+      {
+        "strategy": "market_profile",
+        "setup": "VA80 LONG",
+        "n": 4
+      },
+      {
+        "strategy": "market_profile",
+        "setup": "VA80 SHORT",
+        "n": 6
+      },
+      {
+        "strategy": "oi_build",
+        "setup": "OI BUILD LONG",
+        "n": 15
+      },
+      {
+        "strategy": "oi_build",
+        "setup": "OI BUILD SHORT",
+        "n": 28
+      },
+      {
+        "strategy": "orb",
+        "setup": "ORB DOWN",
+        "n": 25
+      },
+      {
+        "strategy": "orb",
+        "setup": "ORB UP",
+        "n": 26
+      },
+      {
+        "strategy": "po3",
+        "setup": "PO3 SHORT",
+        "n": 1
+      },
+      {
+        "strategy": "pump",
+        "setup": "DUMP START",
+        "n": 1
+      },
+      {
+        "strategy": "sweep",
+        "setup": "SILVER BULLET SHORT",
+        "n": 2
+      },
+      {
+        "strategy": "sweep",
+        "setup": "SWEEP HIGH",
+        "n": 61
+      },
+      {
+        "strategy": "sweep",
+        "setup": "SWEEP LOW",
+        "n": 25
+      },
+      {
+        "strategy": "trendline",
+        "setup": "TL TOUCH DOWN",
+        "n": 6
+      },
+      {
+        "strategy": "trendline",
+        "setup": "TL TOUCH UP",
+        "n": 9
+      },
+      {
+        "strategy": "wyckoff",
+        "setup": "SPRING",
+        "n": 1
+      }
+    ]
+  },
+  "eng169l": {
+    "cards": 279,
+    "entries": 434,
+    "status": [
+      {
+        "status": "EXPIRED",
+        "n": 190
+      },
+      {
+        "status": "INVALID",
+        "n": 59
+      },
+      {
+        "status": "MISSED",
+        "n": 30
+      }
+    ],
+    "strategies": [
+      {
+        "strategy": "bollinger",
+        "n": 1
+      },
+      {
+        "strategy": "breakout",
+        "n": 4
+      },
+      {
+        "strategy": "connors",
+        "n": 5
+      },
+      {
+        "strategy": "continuation",
+        "n": 2
+      },
+      {
+        "strategy": "market_profile",
+        "n": 20
+      },
+      {
+        "strategy": "oi_build",
+        "n": 43
+      },
+      {
+        "strategy": "orb",
+        "n": 51
+      },
+      {
+        "strategy": "po3",
+        "n": 1
+      },
+      {
+        "strategy": "pump",
+        "n": 1
+      },
+      {
+        "strategy": "supply_demand",
+        "n": 1
+      },
+      {
+        "strategy": "sweep",
+        "n": 94
+      },
+      {
+        "strategy": "trendline",
+        "n": 51
+      },
+      {
+        "strategy": "wyckoff",
+        "n": 5
+      }
+    ],
+    "setups": [
+      {
+        "strategy": null,
+        "setup": "AUCTION LONG",
+        "n": 12
+      },
+      {
+        "strategy": null,
+        "setup": "AUCTION SHORT",
+        "n": 7
+      },
+      {
+        "strategy": null,
+        "setup": "BB M-TOP",
+        "n": 5
+      },
+      {
+        "strategy": null,
+        "setup": "BB W-BOTTOM",
+        "n": 3
+      },
+      {
+        "strategy": null,
+        "setup": "BB3 BUY",
+        "n": 8
+      },
+      {
+        "strategy": null,
+        "setup": "BB3 SELL",
+        "n": 2
+      },
+      {
+        "strategy": null,
+        "setup": "IMPULSE DOWN",
+        "n": 7
+      },
+      {
+        "strategy": null,
+        "setup": "IMPULSE UP",
+        "n": 16
+      },
+      {
+        "strategy": null,
+        "setup": "PO3 LONG",
+        "n": 3
+      },
+      {
+        "strategy": null,
+        "setup": "PO3 SHORT",
+        "n": 2
+      },
+      {
+        "strategy": null,
+        "setup": "SD DEMAND",
+        "n": 16
+      },
+      {
+        "strategy": null,
+        "setup": "SD SUPPLY",
+        "n": 24
+      },
+      {
+        "strategy": null,
+        "setup": "SILVER BULLET LONG",
+        "n": 1
+      },
+      {
+        "strategy": null,
+        "setup": "SILVER BULLET SHORT",
+        "n": 3
+      },
+      {
+        "strategy": null,
+        "setup": "SPRING",
+        "n": 1
+      },
+      {
+        "strategy": null,
+        "setup": "SWEEP HIGH",
+        "n": 17
+      },
+      {
+        "strategy": null,
+        "setup": "SWEEP LOW",
+        "n": 39
+      },
+      {
+        "strategy": null,
+        "setup": "TL TOUCH DOWN",
+        "n": 1
+      },
+      {
+        "strategy": null,
+        "setup": "VA80 SHORT",
+        "n": 1
+      },
+      {
+        "strategy": "bollinger",
+        "setup": "BB3 BUY",
+        "n": 1
+      },
+      {
+        "strategy": "breakout",
+        "setup": "BREAKOUT DOWN",
+        "n": 4
+      },
+      {
+        "strategy": "connors",
+        "setup": "RSI2 LONG",
+        "n": 2
+      },
+      {
+        "strategy": "connors",
+        "setup": "RSI2X LONG",
+        "n": 3
+      },
+      {
+        "strategy": "market_profile",
+        "setup": "AUCTION LONG",
+        "n": 6
+      },
+      {
+        "strategy": "market_profile",
+        "setup": "AUCTION SHORT",
+        "n": 5
+      },
+      {
+        "strategy": "market_profile",
+        "setup": "VA80 LONG",
+        "n": 3
+      },
+      {
+        "strategy": "market_profile",
+        "setup": "VA80 SHORT",
+        "n": 6
+      },
+      {
+        "strategy": "oi_build",
+        "setup": "OI BUILD LONG",
+        "n": 15
+      },
+      {
+        "strategy": "oi_build",
+        "setup": "OI BUILD SHORT",
+        "n": 28
+      },
+      {
+        "strategy": "orb",
+        "setup": "ORB DOWN",
+        "n": 25
+      },
+      {
+        "strategy": "orb",
+        "setup": "ORB UP",
+        "n": 26
+      },
+      {
+        "strategy": "po3",
+        "setup": "PO3 SHORT",
+        "n": 1
+      },
+      {
+        "strategy": "pump",
+        "setup": "DUMP START",
+        "n": 1
+      },
+      {
+        "strategy": "sweep",
+        "setup": "SILVER BULLET SHORT",
+        "n": 2
+      },
+      {
+        "strategy": "sweep",
+        "setup": "SWEEP HIGH",
+        "n": 61
+      },
+      {
+        "strategy": "sweep",
+        "setup": "SWEEP LOW",
+        "n": 25
+      },
+      {
+        "strategy": "trendline",
+        "setup": "TL TOUCH DOWN",
+        "n": 26
+      },
+      {
+        "strategy": "trendline",
+        "setup": "TL TOUCH UP",
+        "n": 25
+      },
+      {
+        "strategy": "wyckoff",
+        "setup": "SPRING",
+        "n": 1
+      }
+    ]
+  }
+}
