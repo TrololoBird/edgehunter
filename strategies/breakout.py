@@ -44,13 +44,13 @@ def breakout_at_close(candles_15m: Sequence[Sequence[float]], atr: float,
     # eng-170b: reject exhaustion spikes; require a causal close-through and
     # a real body on the breakout bar.
     body_ratio = abs(b[4] - b[1]) / max(b[2] - b[3], 1e-12)
-    if body_ratio < 0.60 or abs(b[4] - (hi if b[4] > hi else lo)) < 0.15 * atr:
+    if CONFIG.journal.logic_version == 'eng-170b' and (body_ratio < 0.60 or abs(b[4] - (hi if b[4] > hi else lo)) < 0.15 * atr):
         return None
     if len(candles_15m) >= 22:
         from levels import atr_of
         atr5 = atr_of(candles_15m[-7:-2])
         atr20 = atr_of(candles_15m[-22:-2])
-        if atr5 and atr20 and atr5 / atr20 > 0.85:
+        if CONFIG.journal.logic_version == 'eng-170b' and atr5 and atr20 and atr5 / atr20 > 0.85:
             return None
     if b[4] > hi and flow > 0 and a[4] > hi:
         direction = 1

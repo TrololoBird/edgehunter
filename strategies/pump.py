@@ -43,7 +43,7 @@ def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     move = last[4] / base[4] - 1
     if move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
         return None
-    if abs(move) / max(vol_15m, 1e-12) > 2.5:
+    if CONFIG.journal.logic_version == 'eng-170b' and abs(move) / max(vol_15m, 1e-12) > 2.5:
         return None                         # eng-170b: do not chase an exhausted ignition candle
     # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
     if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
@@ -83,7 +83,7 @@ def dump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     move = last[4] / base[4] - 1
     if -move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
         return None
-    if abs(move) / max(vol_15m, 1e-12) > 2.5:
+    if CONFIG.journal.logic_version == 'eng-170b' and abs(move) / max(vol_15m, 1e-12) > 2.5:
         return None                         # causal overextension guard
     # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
     if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
