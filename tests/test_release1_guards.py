@@ -3,6 +3,7 @@ import asyncio
 from data_quality import QualityState, quality
 from memory_guard import pressured
 from task_supervisor import TaskSupervisor
+from signal_priority import SignalBatcher
 
 
 def test_data_quality_transitions():
@@ -24,3 +25,9 @@ def test_task_supervisor_collects_and_cancels():
         await sup.cancel(timeout=1)
         assert not sup.tasks
     asyncio.run(run())
+
+
+def test_signal_batcher_orders_after_window():
+    b = SignalBatcher(window_ms=0)
+    out = b.add([('slow', {'p_edge': 0.1}), ('strong', {'p_edge': 0.9})])
+    assert [x[0] for x in out] == ['strong', 'slow']
