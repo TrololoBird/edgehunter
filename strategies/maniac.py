@@ -412,9 +412,13 @@ def trendline_touch_event(c1h: Sequence[Sequence[float]], period_ms: int = 3_600
         left = next((j for j in range(line['i2'] + 1, i) if not touched(j)), None)
         if not touched(i) or left is None or any(touched(j) for j in range(left, i)):
             continue
-        # A touch is only actionable after a directional close; wick-only
-        # contacts do not become immediate entries.
-        if d * (c[i] - o[i]) <= 0:
+        rng = h[i] - l[i]
+        body_ok = d * (c[i] - o[i]) > 0
+        wick = (min(o[i], c[i]) - l[i]) if d > 0 else (h[i] - max(o[i], c[i]))
+        rejection_ok = (rng > 0 and wick / rng >= cfg.tl_rejection_wick_ratio and
+                        d * (c[i] - value(i)) >= 0 and abs(c[i] - value(i)) <= cfg.tl_max_rejection_atr * atr)
+        slope_ok = abs(line['slope']) / atr <= cfg.tl_max_slope_atr
+        if not slope_ok or not (body_ok or rejection_ok):
             continue
         return {'setup': 'TL TOUCH UP' if d > 0 else 'TL TOUCH DOWN', 'direction': d,
                 'setup_note': f"{tf} third touch of {'a rising support' if d > 0 else 'a falling resistance'} through"
@@ -548,9 +552,14 @@ def bb_method3_event(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_M
                 ((c[j] - l[j]) / r >= 2 / 3 if d > 0 else (h[j] - c[j]) / r >= 2 / 3)
         if not strong(i) or any(strong(j) for j in range(k + 1, i)):
             continue
-        # The alert needs confirmation: reclaim the middle band in the trade
-        # direction before entering, filtering wick-only reversals.
-        if d * (c[i] - ma[i]) <= 0:
+        # eng-170b: enter on the first causal reclaim of the outer band. The
+        # middle-band reclaim delayed entries and created low-RR starvation.
+        width = upper - lower
+        if not np.isfinite(width[i]) or i < 3 or not np.isfinite(width[i - 3]) or width[i - 3] <= 0:
+            continue
+        if width[i] / width[i - 3] > CONFIG.strategies.bb_expansion_max:
+            continue
+        if not (c[i] > lower[i] if d > 0 else c[i] < upper[i]):
             continue
         stop = float(l[k:i + 1].min() if d > 0 else h[k:i + 1].max())
         target = float(upper[i] if d > 0 else lower[i])
@@ -626,9 +635,11 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_
         broke_before = any((c[k] > level) if d > 0 else (c[k] < level) for k in range(b_ + 1, i))
         if not broke_now or broke_before:
             continue
-        # Require the confirmation close to reclaim the Bollinger middle band;
-        # breaking only the local peak/trough leaves weak reversals exposed.
-        if (c[i] <= ma[i]) if d > 0 else (c[i] >= ma[i]):
+        # eng-170b: retain the W/M pattern's edge entry and block only causal
+        # explosive band expansion; do not require SMA20 reclaim.
+        if i < 3 or not np.isfinite(width[i]) or not np.isfinite(width[i - 3]) or width[i - 3] <= 0:
+            continue
+        if width[i] / width[i - 3] > CONFIG.strategies.bb_expansion_max:
             continue
         stop = l[b_] if d > 0 else h[b_]
         # eng-51: the target is the OPPOSITE BAND (Bollinger: after the bounce crosses the middle band, the other band

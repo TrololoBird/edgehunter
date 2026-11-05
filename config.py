@@ -897,6 +897,12 @@ class StrategiesConfig:
     tl_touch_gap: int = 5
     # eng-150 (plan 4.10, heuristic): the band around a two-swing 1h line whose third touch is the TL TOUCH entry
     tl_band_atr: float = 0.3
+    # eng-170b: causal rejection confirmation and geometry guard for third-touch candidates
+    tl_rejection_wick_ratio: float = 0.45
+    tl_max_rejection_atr: float = 0.25
+    tl_max_slope_atr: float = 0.15
+    # eng-170b: reject reversals while the outer band is still expanding impulsively
+    bb_expansion_max: float = 1.15
     # eng-150 (plan 4.1): a sweep / Silver Bullet with no weekly / daily bias is not traded (no 1h-trend substitute)
     sweep_bias_required: bool = True
     # eng-150 (plan 4.3, heuristic): an untaken pool this close (x the structure timeframe's ATR) beyond the raid's
@@ -1072,7 +1078,7 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-170a"   # directional close + middle-band confirmation for trendline/Bollinger reversals
+    logic_version: str = "eng-170b"   # causal rejection/outer-band confirmations for strategy audit candidate
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
