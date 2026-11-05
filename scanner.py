@@ -40,6 +40,7 @@ from netstate import NETWORK
 from extdata import us_session
 from memory_guard import pressured, snapshot as memory_snapshot
 from task_supervisor import TaskSupervisor
+from signal_priority import rank as rank_signals
 from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
@@ -875,6 +876,7 @@ class Scanner:
                 if sig.get('setup') in ('PUMP START', 'DUMP START'):
                     await self._pd_enrich(symbol, sig)
         current_keys = {(symbol, sig['alert_type']) for symbol, sig in signals if not sig.get('is_setup')}
+        signals = rank_signals(signals)
         persistent = [(symbol, sig) for symbol, sig in signals
                       if sig['is_structured'] or sig.get('is_setup') or (symbol, sig['alert_type']) in self._previous_keys]
         self._previous_keys = current_keys
