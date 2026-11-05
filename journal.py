@@ -667,6 +667,8 @@ class SignalJournal:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
+        self.conn.execute("PRAGMA journal_size_limit=67108864")
         self.conn.executescript(SCHEMA)
         self._migrate()
         # after _migrate: setup_ts_ms is a migrated column on old databases (the entry lookups of finalize / card_r)
@@ -1318,7 +1320,7 @@ class SignalJournal:
         """Daily: fold the WAL back into the database (it grew to 7 MB between automatic checkpoints) and let SQLite
         refresh its planner statistics. No VACUUM: it rewrites the 100 MB file under the lock."""
         with self._lock:
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             self.conn.execute("PRAGMA optimize")
 
     async def evaluate_loop(self, fetcher):
@@ -1328,7 +1330,7 @@ class SignalJournal:
             try:
                 await self._evaluate_pass(fetcher)
                 await self._evaluate_life_pass(fetcher)
-                if time.time() - last_maintenance >= 86_400:
+                if time.time() - last_maintenance >= 900:
                     last_maintenance = time.time()
                     await asyncio.to_thread(self.maintenance)
                 if time.time() - last_regime_stats >= 3600:

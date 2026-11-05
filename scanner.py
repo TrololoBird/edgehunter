@@ -1077,6 +1077,7 @@ class Scanner:
             from concurrent.futures import ProcessPoolExecutor
             from watchdog import exit_with_parent
             self._maps_pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn'),
+                                                  max_tasks_per_child=200,
                                                   initializer=exit_with_parent, initargs=(os.getpid(),))
         return self._maps_pool
 
