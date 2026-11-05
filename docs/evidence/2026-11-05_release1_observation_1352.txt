@@ -1,0 +1,6 @@
+Release 1 observation 2026-11-05 13:52 UTC
+Service running, MainPID=77330, NRestarts=4 (precheck failures only; no restart after 13:50:27).
+MemoryCurrent=1,636,347,904 bytes; MemoryHigh=3,221,225,472; memory.events high=0 oom=0 oom_kill=0.
+PSI some avg10=.05 avg60=.32 avg300=.11; full avg10=.04 avg60=.25 avg300=.09.
+SQLite descriptors unchanged: db, wal, shm, three read-only db descriptors.
+Observation: RSS/cgroup working set rose substantially from ~669MB to ~1.64GB during warmup; continue observation before Release 2.
