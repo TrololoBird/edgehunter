@@ -40,7 +40,7 @@ from netstate import NETWORK
 from extdata import us_session
 from memory_guard import pressured, snapshot as memory_snapshot
 from task_supervisor import TaskSupervisor
-from signal_priority import rank as rank_signals
+from signal_priority import SignalBatcher, rank as rank_signals
 from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
@@ -835,6 +835,8 @@ class Scanner:
             await self._schedule_context_refresh()
 
         signals = signals_from_rows(self._rows, tier0)
+        if not hasattr(self, '_signal_batcher'):
+            self._signal_batcher = SignalBatcher(500)
         premiums = [p for md in self.market_data.values() if (p := self._coinbase_premium(md)) is not None]
         self._cb_median = statistics.median(premiums) if len(premiums) >= 10 else None
         for md in self.market_data.values():
@@ -876,7 +878,7 @@ class Scanner:
                 if sig.get('setup') in ('PUMP START', 'DUMP START'):
                     await self._pd_enrich(symbol, sig)
         current_keys = {(symbol, sig['alert_type']) for symbol, sig in signals if not sig.get('is_setup')}
-        signals = rank_signals(signals)
+        signals = self._signal_batcher.add(signals)
         persistent = [(symbol, sig) for symbol, sig in signals
                       if sig['is_structured'] or sig.get('is_setup') or (symbol, sig['alert_type']) in self._previous_keys]
         self._previous_keys = current_keys

@@ -1,4 +1,21 @@
-"""Deterministic portfolio-slot ordering for signals observed in one scan."""
+"""Deterministic portfolio-slot ordering and a short aggregation window."""
+import time
+
+class SignalBatcher:
+    def __init__(self, window_ms: int = 500):
+        self.window = window_ms / 1000.0
+        self.pending = []
+        self.started = None
+
+    def add(self, signals):
+        if signals:
+            self.pending.extend(signals)
+            self.started = self.started or time.monotonic()
+        if self.started is None or time.monotonic() - self.started < self.window:
+            return []
+        out, self.pending = self.pending, []
+        self.started = None
+        return rank(out)
 
 def score(sig: dict) -> float:
     return (float(sig.get('p_edge') or sig.get('ml_score') or 0.0)
