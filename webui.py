@@ -743,7 +743,7 @@ class WebUI:
         inflight = self.__dict__.setdefault('_analysis_inflight', {})
         if symbol in inflight:
             return await asyncio.shield(inflight[symbol])         # one computation per coin, however many clients
-        task = asyncio.ensure_future(self._analysis_compute(b, symbol, cache), name=f'webui-analysis-{symbol}')
+        task = asyncio.create_task(self._analysis_compute(b, symbol, cache), name=f'webui-analysis-{symbol}')
         self._analysis_tasks.add(task)
         task.add_done_callback(self._analysis_tasks.discard)
         inflight[symbol] = task
