@@ -1,0 +1,12 @@
+Release 1 post-deploy snapshot, 2026-11-05 13:51 UTC
+MainPID=77330
+ActiveEnterTimestamp=Thu Nov 05 13:50:27 UTC
+NRestarts=4 (all four occurred during precheck failures before successful start)
+MemoryCurrent=669118464
+MemoryHigh=3221225472
+MemoryMax=infinity
+LimitNOFILE=524288
+memory.events: low=0 high=0 max=0 oom=0 oom_kill=0
+PSI: some/full avg10=0.00 avg60=0.00 avg300=0.00
+SQLite FDs: signals.db, signals.db-wal, signals.db-shm, three read-only signals.db descriptors
+Service state: active/running after 13:50:27 UTC
