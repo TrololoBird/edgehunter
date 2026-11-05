@@ -9,7 +9,9 @@ def main():
     rows=data.get('coins') or data.get('symbols') or []
     bad=[]
     for row in rows:
-        if isinstance(row, str): continue
+        if isinstance(row, str):
+            bad.append(row)
+            continue
         if (row.get('history_days') or 0) < a.min_days: bad.append(row.get('symbol') or row.get('key'))
     result={'ready': not bad and bool(rows), 'required_days': a.min_days, 'insufficient': bad}
     print(json.dumps(result, ensure_ascii=False, indent=2)); raise SystemExit(0 if result['ready'] else 2)
