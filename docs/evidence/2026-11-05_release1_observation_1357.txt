@@ -1,0 +1,5 @@
+Release 1 observation 2026-11-05 13:57 UTC
+MainPID=77330, running since 13:50:27, no restart after successful start.
+MemoryCurrent=1,708,527,616; MemoryHigh=3,221,225,472; high=0, oom=0, oom_kill=0.
+PSI avg300: some=.02, full=0.00.
+Working set continues a slow upward trend from 1.64GB at 13:52 to 1.71GB; Release 2 remains gated.
