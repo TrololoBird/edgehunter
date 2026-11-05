@@ -1,0 +1,11 @@
+{
+  "source": "funnel_conversion_live_current.csv",
+  "note": "Live demo trade breakdown; SL-prefixed setup labels are executor close labels and must be joined to original card setup before causal strategy attribution.",
+  "largest_samples": {
+    "DUMP START short": {"n": 109, "mean_r": -0.6793983904296754},
+    "TL TOUCH DOWN short": {"n": 95, "mean_r": -0.5456287072863724},
+    "TL TOUCH UP long": {"n": 71, "mean_r": -0.5395723186850494},
+    "PUMP START long": {"n": 35, "mean_r": -0.5032800577915736},
+    "BB W-BOTTOM long": {"n": 29, "mean_r": -0.6925362340715304}
+  }
+}
