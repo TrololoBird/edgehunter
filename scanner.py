@@ -38,6 +38,7 @@ from strategies.detect import LiveDetector
 from strategies.structure import PART_COLUMNS, build_maps, part_candles, trend_w_of
 from netstate import NETWORK
 from extdata import us_session
+from memory_guard import pressured, snapshot as memory_snapshot
 from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
@@ -790,7 +791,10 @@ class Scanner:
         tier0 = {s: md.tier0 for s, md in self.market_data.items()}
 
         # Heavy pass only when a candle closed / history changed: closed-candle scores don't change in between
-        if signature != self._heavy_signature:
+        memory_shed = pressured()
+        if memory_shed:
+            logger.warning("Memory pressure: shedding heavy scanner pass (%s)", memory_snapshot())
+        if signature != self._heavy_signature and not memory_shed:
             started = time.time()
             futures_all, rows = await asyncio.to_thread(self._heavy_pass, spot_frames, futures_frames, funding,
                                                         tier0, closed_until, self._agg_extras())
