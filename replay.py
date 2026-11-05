@@ -93,6 +93,23 @@ class ArchiveCoin:
         scored = PhaseScorer().calculate_scores(spot_all, fut_all, None, None)
         self.scored = scored.sort('timestamp') if not scored.is_empty() else scored
         self.sc_ts = self.scored['timestamp'].to_numpy() if not scored.is_empty() else np.empty(0)
+        # Archive caches from older recorder versions do not contain the
+        # derived columns that live scans receive from the indicator panel.
+        # Reconstruct them causally from closed bars so replay remains
+        # compatible with those archives.
+        missing = [c for c in ('ret_std', 'oi_std', 'atr') if c not in self.fut_all.columns]
+        if missing:
+            exprs = []
+            if 'ret_std' in missing:
+                exprs.append((pl.col('close').pct_change().rolling_std(20)).alias('ret_std'))
+            if 'oi_std' in missing:
+                exprs.append((pl.col('open_interest').pct_change().rolling_std(20)).alias('oi_std'))
+            if 'atr' in missing:
+                tr = pl.max_horizontal(pl.col('high') - pl.col('low'),
+                                       (pl.col('high') - pl.col('close').shift(1)).abs(),
+                                       (pl.col('low') - pl.col('close').shift(1)).abs())
+                exprs.append(tr.rolling_mean(14).alias('atr'))
+            self.fut_all = self.fut_all.with_columns(exprs)
         self.fut_ind = self.fut_all.select('timestamp', 'ret_std', 'oi_std', 'atr').to_numpy()
         self.h1_all = _bucket_list(self.fut, HOUR_MS)
         self.h1_close = np.array([c[0] + HOUR_MS for c in self.h1_all]) if self.h1_all else np.empty(0)
