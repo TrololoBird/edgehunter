@@ -1376,7 +1376,7 @@ class Briefing:
                     w['tp1'] += sw['tp1_hit']; w['tp2'] += sw['tp2_hit']; w['stop'] += sw['stop_hit']
                     w['mfe_r'] = round(w['mfe_r'] + sw['mfe_r'], 2); w['mae_r'] = round(w['mae_r'] + sw['mae_r'], 2)
                     w['ambiguous'] += sw['ambiguous']; w['unresolved'] += not sw['resolved']
-                if det is not None and 'exec_r' in det:
+                if det is not None and det.get('exec_r') is not None:
                     # eng-168r: the forecast's measures and the execution model's R, apart from the TP1-only 'r'
                     e = ex.setdefault(name, {'model': self.EXEC_MODEL, 'n': 0, 'exec_r': 0.0, 'exec_mtm_r': 0.0,
                                              'tp1': 0, 'tp2': 0, 'stop': 0, 'mfe_r': 0.0, 'mae_r': 0.0,
