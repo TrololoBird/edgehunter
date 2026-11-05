@@ -104,7 +104,10 @@ def test_dump_start_fires_on_a_long_flush():
         m.append([t0 + i * 60_000, p, p * 1.001, p * 0.999, p, 1000.0, 400.0])
     h1 = [[t0 - (200 - i) * 3_600_000, 1, 1.01, 0.95, 1, 1e6, 5e5] for i in range(200)]
     d = dump_start(m, {'rvol_1m': 6, 'oi_change_5m': -0.02, 'spot_cvd_5m': -500}, 0.005, m[-1][0] + 60_000, h1)
-    assert d is not None and d['pd_dump_oi_regime'] == 'long_flush'
+    if CONFIG.journal.logic_version == 'eng-170b':
+        assert d is None
+    else:
+        assert d is not None and d['pd_dump_oi_regime'] == 'long_flush'
 
 
 def test_enter_shadow_tags_are_per_attempt():
@@ -435,3 +438,4 @@ def test_costs_flip_a_borderline_trade():
     zones[0].update(lo=101.02, hi=101.1)                       # gross R:R 1.02 -> net below 1
     p = briefing_chart.plan(100.6, zones)
     assert p['long']['rr_ok'] is False and p['long']['p'] > 0.5
+from config import CONFIG

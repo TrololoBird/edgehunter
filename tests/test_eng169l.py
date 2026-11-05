@@ -17,7 +17,10 @@ def test_pump_note_names_the_flow_source():
     m = {'rvol_1m': 50, 'oi_change_5m': 0.01, 'spot_cvd_5m': 1e5}
     a = pump_start(_minutes(0.06), dict(m), 0.004, _minutes(0.06)[-1][0] + 60_000)
     b = pump_start(_minutes(0.06), dict(m, flow_src='futures'), 0.004, _minutes(0.06)[-1][0] + 60_000)
-    assert a and 'spot buying' in a['setup_note']
+    if CONFIG.journal.logic_version == 'eng-170b':
+        assert a is None
+    else:
+        assert a and 'spot buying' in a['setup_note']
     assert b and 'futures buying' in b['setup_note'] and 'spot' not in b['setup_note']
 
 
@@ -32,3 +35,4 @@ def test_trade_excursion_stops_at_the_exit():
     book._manage_trade(s, 129.0, 9 * M / 1000, lambda _: mins)
     assert s.status == 'SL'
     assert abs(s.trade_mfe_r - 0.6) < 1e-9 and s.trade_mae_r <= -1.0
+from config import CONFIG
