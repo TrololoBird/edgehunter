@@ -411,6 +411,11 @@ class Scanner:
     async def stop(self):
         self._running = False
         self.watchdog.stop()
+        supervisor = getattr(self, '_task_supervisor', None)
+        if supervisor is not None:
+            # Cancel owned background work through the same registry used for
+            # creation; the legacy set below still covers startup tasks.
+            await supervisor.cancel(timeout=30.0)
         tasks = [t for t in (*self._tasks, self._baseline_task, getattr(self, '_heartbeat_task', None),
                              *getattr(self, '_positioning_tasks', []), self._context_task, *self._background) if t]
         for task in tasks:
