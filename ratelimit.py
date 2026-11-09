@@ -15,7 +15,7 @@ import re
 import time
 from typing import Any, Dict, Optional
 
-from ccxt import DDoSProtection, RateLimitExceeded
+from ccxt import DDoSProtection, RateLimitExceeded, NetworkError, ExchangeNotAvailable, RequestTimeout
 
 from config import CONFIG
 
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # ccxt maps HTTP 429 / Binance -1003 to RateLimitExceeded and HTTP 418 (IP ban) / 403 to DDoSProtection
 RATE_LIMIT_ERRORS = (RateLimitExceeded, DDoSProtection)
+TRANSIENT_ERRORS = (NetworkError, ExchangeNotAvailable, RequestTimeout, ConnectionResetError, asyncio.TimeoutError)
 # 418 bodies carry the ban end as a ms timestamp: "... IP(1.2.3.4) banned until 1790358356564 ..."
 _BAN_UNTIL_RE = re.compile(r'banned until (\d{12,})')
 
@@ -141,3 +142,8 @@ class RestGate:
                 self.ban.pause(self._ban_seconds(e, exchange), str(e), self.name)
                 if attempt == attempts:
                     raise
+            except TRANSIENT_ERRORS:
+                # Public/read-only calls can be retried safely; avoid turning a short transport flap into stale data.
+                if attempt == attempts:
+                    raise
+                await asyncio.sleep(min(2.0, 0.25 * 2 ** (attempt - 1)))

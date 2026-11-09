@@ -77,6 +77,10 @@ class RawEventLog:
             self._writer_started = True
             threading.Thread(target=self._writer, name='raw-event-writer', daemon=True).start()
 
+    def flush(self) -> None:
+        """Wait for queued records (offline readers / orderly shutdown; never on the event loop)."""
+        self._queue.join()
+
     def _writer(self) -> None:
         while True:
             path, line = self._queue.get()

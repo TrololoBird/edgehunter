@@ -17,7 +17,7 @@ import numpy as np
 import polars as pl
 
 from config import CONFIG
-from ml import AnomalyModel, RegimeModel
+from core.regime import tag as rule_regime
 from levels import RESAMPLE_QUALITY, atr_of, resample
 from positioning import Positioning
 import scenarios
@@ -45,7 +45,6 @@ from signal_book import SignalBook, TrackedSignal
 
 logger = logging.getLogger(__name__)
 
-ML_STATE_PATH = 'ml_state.pkl'
 
 
 def play_alert_sound(level: str = "normal"):
@@ -175,11 +174,6 @@ class Scanner:
         # Heavy-pass cache: closed-candle rows per symbol, the closed futures indicator frame, its signature
         self._rows: Dict[str, Dict] = {}
         self._recent_setup: Dict[str, int] = {}     # symbol -> ms of its last detected setup (hot-set filler)
-        # pretrain.py run by pretrain_loop, the loaded pretrained models' metadata, and the retry pause after a failure
-        self._pretrain_proc = None
-        self._pretrained_meta: Optional[Dict] = None
-        self._pretrain_retry_at = 0.0
-        self._pretrain_checked = (None, False)      # (pretrained.pkl mtime, built by the current logic version)
         self._cb_median: Optional[float] = None        # the universe's median Coinbase premium (the USDT basis)
         self._futures_closed = pl.DataFrame()
         self._frame_parts: Dict[str, pl.DataFrame] = {}
@@ -192,10 +186,8 @@ class Scanner:
         self._agg_hist: Dict[str, deque] = {}
         self._agg_last_ts: Dict[str, int] = {}
         self._hot: List[str] = []
-        # ml.py models
-        self.anomaly_model = AnomalyModel() if CONFIG.ml.anomaly_enabled else None
-        self.regime_model = RegimeModel() if CONFIG.ml.regime_enabled else None
-        self.regime: Optional[str] = None
+        # Deterministic regime is telemetry only; it never vetoes a signal.
+        self.regime: Optional[str] = 'unknown'
         self._background: set = set()
         # Level maps (zones.py) of coins with open cards: symbol -> raw levels, and the inputs they were built from
         self.watchdog = LoopWatchdog()
@@ -240,6 +232,7 @@ class Scanner:
         self._oi_fired: Dict[str, int] = {}
         self._context_task: Optional[asyncio.Task] = None
         self._maps_pool = None          # ProcessPoolExecutor (one worker) for level maps: see _maps_executor
+        self._recorder_pool = None      # isolated from maps: recording must survive a map-worker crash
         self._blind_at: Dict[Tuple[str, str], float] = {}   # (symbol, strategy) -> when a history gate last stopped it
         from strategies.loopside import LoopDetectors
         # eng-59: the loop-side detectors live in strategies/loopside.py (the archive replay runs the same code)
@@ -283,7 +276,6 @@ class Scanner:
                                               if s in self.fetcher.futures_exchange.markets})
         await self.fetcher.load_venues()
         symbols = self.fetcher.select_universe(candidates)
-        await asyncio.to_thread(self._load_ml_state)
         self._load_state()
         # Coins with open cards stay in the universe until their cards finish (as on the hourly refresh); a restored
         # card on a coin that left the top list had no data and broke the hot-symbol update
@@ -305,7 +297,7 @@ class Scanner:
     def start(self):
         self._running = True
         loops = [self.tier0_loop(), self.scan_loop(), self.universe_loop(), self.positioning_loop(), self.state_loop(),
-                 self.levels_loop(), self.pretrain_loop(), self.macro_loop(), self.pools_loop(), self.event_risk_loop(),
+                 self.levels_loop(), self.macro_loop(), self.pools_loop(), self.event_risk_loop(),
                  self.wide_watch_loop()]
         if CONFIG.briefing.enabled:
             from briefing import Briefing
@@ -321,14 +313,11 @@ class Scanner:
                   self._seed_okx_later()]
         if CONFIG.recorder.enabled:
             import recorder
-            loops.append(recorder.record_loop(self.fetcher, self._maps_executor, CONFIG.recorder.root,
+            loops.append(recorder.record_loop(self.fetcher, self._recorder_executor, CONFIG.recorder.root,
                                               lambda: self._running))
         if self.journal:
             loops.append(self.journal.evaluate_loop(self.fetcher))
             # P(edge) model state = the journal itself: replay the labelled rows, then the regime Edge table
-            self._background_thread(self.journal.warm_start)
-            self._background_thread(self.journal.warm_start_trades)
-            self._background_thread(self.journal.refresh_regime_stats)
             self._background_thread(self.journal.refresh_confirm_stats)
             self._background_thread(self.journal.refresh_hit_rates)
             self._background_thread(self.journal.refresh_anomaly_effects)
@@ -428,10 +417,10 @@ class Scanner:
         # Consumers may still be awaiting run_in_executor futures. Close process
         # pools only after their tasks have observed cancellation; otherwise a
         # normal shutdown races those futures and turns them into BrokenProcessPool.
-        if self.anomaly_model is not None:
-            self.anomaly_model.close()
         if self._maps_pool is not None:
             self._maps_pool.shutdown(wait=False, cancel_futures=True)
+        if self._recorder_pool is not None:
+            self._recorder_pool.shutdown(wait=False, cancel_futures=True)
         self._save_state()
         await self.notifier.close()
         await self.demo.close()
@@ -452,12 +441,6 @@ class Scanner:
                 self.fetcher.maintain()
                 await self._check_tier0()
                 self.last_tier0_sec = time.monotonic() - started
-                model = self.anomaly_model
-                if model is not None and model.due(time.time()):
-                    model.fitting = True
-                    task = asyncio.create_task(model.afit())
-                    self._background.add(task)
-                    task.add_done_callback(self._background_done)
                 await self._update_hot()
                 self.fetcher.set_footprint(self.book.zone_symbols())
             except Exception as e:
@@ -573,23 +556,8 @@ class Scanner:
             md.is_tier_0_anomaly = held
 
     async def _score_anomalies(self, symbols: List[str], metrics: Dict[str, Dict[str, float]], now: float):
-        """
-        IsolationForest score of every coin's feature vector (ml.AnomalyModel); also feeds its training window.
-        Scoring runs in the model's worker PROCESS (ml.py): in a thread scikit-learn held the GIL and stalled the loop.
-        """
-        model = self.anomaly_model
-        if model is None or not symbols:
-            return
-        X = np.asarray([AnomalyModel.vector(metrics[s]) for s in symbols], dtype=np.float64)
-        scores = await model.ascore(X) if model.ready else None
-        for i, symbol in enumerate(symbols):
-            m = metrics[symbol]
-            if scores is not None:
-                m['ml_score'] = float(scores[i])
-                m['ml_anomaly'] = 1.0 if scores[i] < model.threshold else 0.0
-                # shadow (journaled ml_score / ml_anomaly): the rules decide unless anomaly_decides
-                m['ml_ready'] = 1.0 if CONFIG.ml.anomaly_decides else 0.0
-        model.observe(X, now, warmed_up=now - self._started_at >= CONFIG.ml.anomaly_skip_first_sec)
+        """Compatibility hook: ML inference was removed from the live loop."""
+        return None
 
     async def _update_hot(self):
         """
@@ -819,14 +787,7 @@ class Scanner:
             self._update_market_state(futures_all)
             # Regimes only once every symbol's history is in: during the cold start each heavy pass saw a
             # different subset of coins and the label flipped every few seconds
-            if self.regime_model is not None and self.fetcher.baselines_loaded() >= len(self.market_data):
-                try:
-                    regime = await asyncio.to_thread(self.regime_model.update, futures_all)
-                    if regime != self.regime:
-                        logger.info(f"Market regime: {self.regime} -> {regime}")
-                    self.regime = regime
-                except Exception as e:
-                    logger.warning(f"Regime model failed: {e}")
+            # Regime is assigned deterministically in _enrich for telemetry only.
             logger.debug(f"Heavy pass: {len(rows)} symbols in {self.last_heavy_sec:.2f}s")
         elif self._frame_parts and time.time() - self._context_poll > 60:
             # between candle closes: rebuild the quick maps whose higher-timeframe histories arrived (the signature
@@ -1090,6 +1051,20 @@ class Scanner:
         after = [v for t, v in md.oi_samples if t <= (start + 900) * 1000]
         sig['oi_change_sweep'] = after[-1] / before[-1] - 1 if before and after and before[-1] else None
 
+    def _recorder_executor(self):
+        """Dedicated process: recorder failures must not poison level-map computation."""
+        if self._recorder_pool is None or getattr(self._recorder_pool, '_broken', False):
+            if self._recorder_pool is not None:
+                self._recorder_pool.shutdown(wait=False, cancel_futures=True)
+            import multiprocessing, os
+            from concurrent.futures import ProcessPoolExecutor
+            from watchdog import exit_with_parent
+            context_name = 'spawn'
+            self._recorder_pool = ProcessPoolExecutor(
+                max_workers=1, mp_context=multiprocessing.get_context(context_name),
+                max_tasks_per_child=200, initializer=exit_with_parent, initargs=(os.getpid(),))
+        return self._recorder_pool
+
     def _maps_executor(self):
         """
         One worker PROCESS for level maps (zones.build_raw + detector contexts, pure Python): in threads they held the
@@ -1106,7 +1081,7 @@ class Scanner:
             import os
             from concurrent.futures import ProcessPoolExecutor
             from watchdog import exit_with_parent
-            context_name = 'forkserver' if 'forkserver' in multiprocessing.get_all_start_methods() else 'spawn'
+            context_name = 'spawn'
             self._maps_pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context(context_name),
                                                   max_tasks_per_child=200,
                                                   initializer=exit_with_parent, initargs=(os.getpid(),))
@@ -1524,6 +1499,9 @@ class Scanner:
         sig['agg_oi_change_1h'] = derivs['agg_oi_change_1h']
         sig['agg_funding_8h'] = derivs['agg_funding_8h']
         sig['oi_venues'] = derivs['oi_venues']
+        trend = sig.get('mkt_1h') or sig.get('btc_1h')
+        vol = sig.get('vol_ratio')
+        self.regime = rule_regime(trend=trend, volatility=vol)
         sig['regime'] = self.regime
         success = self.journal.success if self.journal else None
         sig['p_mature'] = bool(success and success.mature)
@@ -2057,47 +2035,11 @@ class Scanner:
             return
         path = CONFIG.journal.state_path
         try:
-            import pickle
-            ml_state = {'anomaly': self.anomaly_model.state() if self.anomaly_model else None,
-                        'regime': self.regime_model.state() if self.regime_model else None}
-            atomic_write(ML_STATE_PATH, pickle.dumps(ml_state))
-        except Exception as e:
-            logger.warning(f"ML state save failed: {e}")
-        try:
             state = {'saved_at': time.time(), 'book': self.book.state(), 'whales': self.fetcher.whales.state(),
                      'fired_events': self.detector.state()}
             atomic_write(path, json.dumps(state).encode('utf-8'))
         except Exception as e:
             logger.warning(f"State save failed: {e}")
-
-    def _load_ml_state(self):
-        """Blocking (unpickling the models imports scikit-learn, ~1s): run it in a worker thread."""
-        if os.path.exists(ML_STATE_PATH):
-            try:
-                import pickle
-                with open(ML_STATE_PATH, 'rb') as f:
-                    ml_state = pickle.load(f)   # our own file, written by _save_state
-                if self.anomaly_model:
-                    self.anomaly_model.load_state(ml_state.get('anomaly'))
-                if self.regime_model:
-                    self.regime_model.load_state(ml_state.get('regime'))
-                logger.info(f"ML state restored: anomaly model {'ready' if self.anomaly_model and self.anomaly_model.ready else 'not fitted'}, "
-                            f"{len(self.regime_model.history) if self.regime_model else 0} regime candles")
-            except Exception as e:
-                logger.warning(f"ML state restore failed ({e}); models start fresh")
-        # The market regimes of the pretrained months (pretrain.py) under the live candles: the mixture is fitted on
-        # both from the first heavy pass, instead of on the few days since the first start
-        from journal import load_pretrained
-        pretrained = load_pretrained()
-        if pretrained:
-            self._pretrained_meta = {k: pretrained.get(k) for k in ('created', 'start', 'end', 'coins', 'rows')}
-        if self.regime_model is not None and pretrained and pretrained.get('regime_history'):
-            before = len(self.regime_model.history)
-            for ts, values in pretrained['regime_history'].items():
-                if len(values) == len(self.regime_model.FEATURES):
-                    self.regime_model.history.setdefault(int(ts), list(values))
-            logger.info(f"Regimes: {len(self.regime_model.history) - before} pretrained market candles "
-                        f"({pretrained['start']} .. {pretrained['end']}) under {before} live ones")
 
     def _load_state(self):
         path = CONFIG.journal.state_path
@@ -2149,110 +2091,8 @@ class Scanner:
             parts.append(f"warm-up {int(warmup_left // 60)}:{int(warmup_left % 60):02d} (no signals yet)")
         return " | ".join(parts)
 
-    # ------------------------------------------------------------------ pretraining (pretrain.py)
-
-    def _pretrain_running(self) -> bool:
-        """A pretrain.py process holds the lock (started by this loop or by hand)."""
-        if self._pretrain_proc is not None and self._pretrain_proc.poll() is None:
-            return True
-        try:
-            pid = int(open(CONFIG.pretrain.lock_path).read().strip() or 0)
-            import psutil
-            return bool(pid) and psutil.pid_exists(pid)
-        except (OSError, ValueError, ImportError):
-            return False
-
-    def _pretrain_due(self) -> bool:
-        """pretrained.pkl missing, older than auto_refresh_days, or built by an older logic_version."""
-        path = CONFIG.pretrain.path
-        if not os.path.exists(path) or time.time() - os.path.getmtime(path) > CONFIG.pretrain.auto_refresh_days * 86400:
-            return True
-        mtime = os.path.getmtime(path)
-        if self._pretrain_checked[0] != mtime:
-            from journal import load_pretrained, pretrained_current
-            self._pretrain_checked = (mtime, pretrained_current(load_pretrained()))
-        return not self._pretrain_checked[1]
-
-    async def pretrain_loop(self):
-        """
-        Keeps the pretrained models fresh without the user: runs pretrain.py in a background process (below-normal
-        priority, one worker, capped download) when pretrained.pkl is missing or older than auto_refresh_days, then
-        loads the result into the running models (P(edge) restarts from it and replays the live journal on top,
-        the regime history gets the new months). The process survives a bot restart (its lock prevents a second one).
-        """
-        import subprocess
-        import sys
-        cfg = CONFIG.pretrain
-        loaded_mtime = os.path.getmtime(cfg.path) if os.path.exists(cfg.path) else 0.0
-        await asyncio.sleep(600)            # after the start-up burst
-        while self._running:
-            try:
-                if cfg.auto and not self._pretrain_running() and self._pretrain_due() and time.time() >= self._pretrain_retry_at:
-                    flags = 0
-                    if sys.platform == 'win32':
-                        flags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW
-                    log = open(cfg.log_path, 'a', encoding='utf-8')
-                    self._pretrain_proc = subprocess.Popen(
-                        [sys.executable, 'pretrain.py', '--workers', str(cfg.auto_workers), '--rate', str(cfg.auto_bytes_per_sec)],
-                        stdout=log, stderr=subprocess.STDOUT, creationflags=flags, cwd=os.path.dirname(os.path.abspath(__file__)))
-                    logger.info(f"Pretraining started in the background (pid {self._pretrain_proc.pid}, log {cfg.log_path})")
-                if self._pretrain_proc is not None and self._pretrain_proc.poll() is not None:
-                    code, self._pretrain_proc = self._pretrain_proc.returncode, None
-                    if code:
-                        self._pretrain_retry_at = time.time() + 6 * 3600
-                        logger.warning(f"Pretraining failed (exit code {code}, see {cfg.log_path}); retried in 6h")
-                mtime = os.path.getmtime(cfg.path) if os.path.exists(cfg.path) else 0.0
-                if mtime > loaded_mtime and not self._pretrain_running():
-                    loaded_mtime = mtime
-                    await self._reload_pretrained()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.warning(f"Pretraining loop: {type(e).__name__} {e}")
-            await asyncio.sleep(300)
-
-    async def _reload_pretrained(self):
-        from journal import load_pretrained
-        state = await asyncio.to_thread(load_pretrained)
-        if not state:
-            return
-        self._pretrained_meta = {k: state.get(k) for k in ('created', 'start', 'end', 'coins', 'rows')}
-        success = self.journal.success if self.journal else None
-        from journal import pretrained_current
-        if success is not None and state.get('success') and pretrained_current(state):
-            success.load_pretrained(state['success'])
-            await asyncio.to_thread(self.journal.warm_start)
-        if self.regime_model is not None and state.get('regime_history'):
-            for ts, values in state['regime_history'].items():
-                if len(values) == len(self.regime_model.FEATURES):
-                    self.regime_model.history.setdefault(int(ts), list(values))
-            self.regime_model.fitted_at = 0.0         # refit on the new months at the next heavy pass
-        logger.info(f"Pretrained models reloaded: {state.get('rows')} rows of {state.get('coins')} coins "
-                    f"({state.get('start')} .. {state.get('end')})")
-
     def _ml_status(self) -> Dict:
-        model = self.anomaly_model
-        success = self.journal.success if self.journal else None
-        meta = self._pretrained_meta or {}
-        return {
-            'pretrained_rows': meta.get('rows'), 'pretrained_coins': meta.get('coins'),
-            'pretrained_span': f"{meta['start']} .. {meta['end']}" if meta.get('start') else None,
-            'pretrained_age_d': (time.time() - meta['created']) / 86400 if meta.get('created') else None,
-            'pretrain_running': self._pretrain_running(),
-            'regime_candles': len(self.regime_model.history) if self.regime_model else 0,
-            'regime_age_h': (time.time() - self.regime_model.fitted_at) / 3600
-            if self.regime_model and self.regime_model.fitted_at else None,
-            'regime': self.regime,
-            'anomaly_ready': bool(model and model.ready),
-            'anomaly_age_min': (time.time() - model.fitted_at) / 60 if model and model.ready else None,
-            'anomaly_samples': len(model.samples) if model else 0,
-            'p_n': success.n if success else 0,
-            'p_mature': bool(success and success.mature),
-            'p_accuracy': success.accuracy if success else None,
-            'p_drifts': success.drifts if success else 0,
-            'pt_n': self.journal.trade.n if self.journal and self.journal.trade else 0,
-            'pt_drifts': self.journal.trade.drifts if self.journal and self.journal.trade else 0,
-        }
+        return {'ml_runtime': 'removed', 'regime': self.regime}
 
     CONFIRM_RU = {'flow': 'поток', 'spot': 'спот', 'oi': 'OI', 'orderflow': 'ордерфлоу', 'vsa': 'VSA',
                   'htf_zone': 'зона ст.ТФ', 'smt': 'SMT', 'killzone': 'килзона'}

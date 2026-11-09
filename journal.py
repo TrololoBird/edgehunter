@@ -301,6 +301,7 @@ EXTRA_COLUMNS = {
     'sec_into_candle': 'INTEGER',
     # ml.py: IsolationForest score, market regime, P(4h edge > 0) of the online model (shadow)
     'ml_score': 'REAL', 'regime': 'TEXT', 'p_edge': 'REAL',
+    'ml_features_json': 'TEXT', 'feature_schema_version': 'TEXT',
     # eng-174: P(trade) of the entry (shadow) and the trade's exit time on its ENTRY row (real label interval)
     'p_trade': 'REAL', 'exit_ts_ms': 'INTEGER',
     # mtf-5: level-map sources of the entry zone / targets / stop, card outcomes (kind='card') with their reason
@@ -607,9 +608,6 @@ def veto_reason(group_key: str, sig: Dict) -> Optional[str]:
             if led and crowded(sig, direction):
                 return 'perp_led'
     # Proven negative in the current market regime (enough independent 4h blocks, BH-controlled: proven_negative)
-    regime = sig.get('regime')
-    if CONFIG.ml.regime_veto and regime and (group_key, regime) in REGIME_MUTED:
-        return 'regime'
     return None
 
 
@@ -655,6 +653,16 @@ def _features(sig: Dict) -> Dict:
     fut = present(sig.get('agg_cvd_5m'), sig.get('futures_cvd_5m'))
     out['flow_pct_5m'] = float(fut) / vol if vol and fut is not None else None
     out['spot_flow_pct_5m'] = float(sig['spot_cvd_5m']) / vol if vol and sig.get('spot_cvd_5m') is not None else None
+    # Frozen, dependency-free feature snapshot for future offline research.
+    feature_keys = set(FEATURE_KEYS.values()) | {
+        'long_score', 'short_score', 'strategy', 'group_key', 'direction', 'mkt_1h', 'mkt_4h',
+        'btc_1h', 'coin_trend', 'trend_w', 'breadth_w', 'volume_24h', 'confirms', 'market_crowd',
+        'agg_funding_8h', 'ls_global', 'ls_top', 'ls_bybit', 'ls_okx', 'hl_net_usd', 'cb_premium',
+        'sec_into_candle', 'perp_led', 'regime',
+    }
+    snap = {k: sig.get(k) for k in sorted(feature_keys) if sig.get(k) is not None}
+    out['ml_features_json'] = json.dumps(snap, separators=(',', ':'), default=str)
+    out['feature_schema_version'] = 'rules-v1'
     return out
 
 
@@ -688,29 +696,9 @@ class SignalJournal:
         self._snapshot_cache: Dict[int, np.ndarray] = {}
         self._snapshot_times_at = 0.0
         self._symbol_index: Dict[str, int] = {}
+        # ML models are research-only; historical columns remain readable.
         self.success = None
         self.trade = None
-        self._trade_learned: set = set()      # entry row ids the P(trade) model has learned (warm start vs live close)
-        if CONFIG.ml.trade_enabled:
-            try:
-                from ml import TradeModel
-                self.trade = TradeModel()
-            except Exception as e:
-                logger.warning(f"P(trade) model unavailable: {e}")
-        if CONFIG.ml.success_enabled:
-            try:
-                from ml import SuccessModel
-                self.success = SuccessModel()
-            except Exception as e:
-                logger.warning(f"P(edge) model unavailable: {e}")
-            pretrained = load_pretrained()
-            if pretrained and pretrained.get('success') and not pretrained_current(pretrained):
-                logger.warning("Pretrained P(edge) has incompatible logic or event generator: not loaded. "
-                               "Legacy pretrain.py cannot supply live-loopside-v1 events.")
-            elif self.success is not None and pretrained and pretrained.get('success'):
-                self.success.load_pretrained(pretrained['success'])
-                logger.info(f"P(edge) model: pretrained on {pretrained['rows']} historical rows of {pretrained['coins']} "
-                            f"coins ({pretrained['start']} .. {pretrained['end']}); the journal replay continues it")
 
     def _migrate(self):
         existing = {row[1] for row in self.conn.execute("PRAGMA table_info(signals)")}
@@ -772,8 +760,8 @@ class SignalJournal:
                 if kind == 'setup':
                     row['reason'] = sig.get('setup_note')
                 row['perp_led'] = int(bool(sig.get('perp_led_long') if direction > 0 else sig.get('perp_led_short')))
-                row['p_edge'] = self.success.predict(row) if self.success is not None and direction else None
-                sig['p_edge'] = row['p_edge']
+                row['p_edge'] = None
+                sig['p_edge'] = None
                 rows.append(row)
             if rows:
                 self._insert(rows)
@@ -832,8 +820,7 @@ class SignalJournal:
         shadow = "(COALESCE(vetoed, '') LIKE 'variant_%' OR COALESCE(vetoed, '') IN ('flow_entry', 'reclaim_entry', 'weak_mss'))"
         is_shadow = row['vetoed'] is not None and (row['vetoed'].startswith('variant_')
                                                    or row['vetoed'] in ('flow_entry', 'reclaim_entry', 'weak_mss'))
-        if self.trade is not None:
-            row['p_trade'] = self.trade.predict(row)
+        row['p_trade'] = None
         with self._lock:
             if row['vetoed'] and self.conn.execute(
                     "SELECT 1 FROM signals WHERE kind = 'entry' AND symbol = ? AND group_key = ? AND setup_ts_ms = ? "
@@ -1043,75 +1030,6 @@ class SignalJournal:
             finally:
                 self.conn.row_factory = None
 
-    def warm_start(self) -> int:
-        """Replay every labelled directional row into the P(edge) model (state = the journal itself)."""
-        if self.success is None:
-            return 0
-        from ml import label_of
-        learned = 0
-        for row in self._labelled_rows():
-            label = label_of(row, self.universe_return(row['ts_ms'], 240, 'median'))
-            if label is not None:
-                self.success.learn(row, label)
-                learned += 1
-        if learned:
-            logger.info(f"P(edge) model warmed up on {learned} journal rows ({self.success.drifts} drift resets)")
-        return learned
-
-    def _trade_rows(self, where: str, args: tuple) -> List[sqlite3.Row]:
-        with self._lock:
-            self.conn.row_factory = sqlite3.Row
-            try:
-                return self.conn.execute(
-                    "SELECT * FROM signals WHERE kind = 'entry' AND vetoed IS NULL AND card_r IS NOT NULL AND "
-                    + where, args).fetchall()
-            finally:
-                self.conn.row_factory = None
-
-    def _learn_trade_row(self, row) -> bool:
-        from ml import trade_label
-        label = trade_label(row)
-        with self._lock:
-            if label is None or row['id'] in self._trade_learned:
-                return False
-            self._trade_learned.add(row['id'])
-        try:
-            self.trade.learn(row, label)
-        except Exception:
-            with self._lock:
-                self._trade_learned.discard(row['id'])
-            raise
-        return True
-
-    def _learn_trade(self, symbol: str, group_key: str, setup_ts_ms: int):
-        """eng-174: a closed trade teaches P(trade) now - at its real exit, never before (the label is its result)."""
-        if self.trade is None:
-            return
-        try:
-            for row in self._trade_rows("symbol = ? AND group_key = ? AND setup_ts_ms = ?", (symbol, group_key, setup_ts_ms)):
-                self._learn_trade_row(row)
-        except Exception as e:
-            logger.warning(f"P(trade) learn {symbol}: {e!r}")
-
-    def warm_start_trades(self) -> int:
-        """Replay the closed trades of trade_history_days in exit order (rows before eng-174: the card row's time)."""
-        if self.trade is None:
-            return 0
-        since = int((time.time() - CONFIG.ml.trade_history_days * 86_400) * 1000)
-        rows = self._trade_rows("ts_ms >= ?", (since,))
-        if any(r['exit_ts_ms'] is None for r in rows):
-            with self._lock:
-                exits = dict(((s, g, t), e) for s, g, t, e in self.conn.execute(
-                    "SELECT symbol, 'ENTRY ' || substr(group_key, instr(group_key, ' ') + 1), setup_ts_ms, ts_ms "
-                    "FROM signals WHERE kind = 'card' AND card_r IS NOT NULL AND ts_ms >= ?", (since,)))
-        else:
-            exits = {}
-        def exit_of(r):
-            return r['exit_ts_ms'] or exits.get((r['symbol'], r['group_key'], r['setup_ts_ms'])) or r['ts_ms']
-        learned = sum(self._learn_trade_row(r) for r in sorted(rows, key=exit_of))
-        logger.info(f"P(trade) model warmed up on {learned} closed trades ({self.trade.drifts} drift resets)")
-        return learned
-
     def refresh_anomaly_effects(self, days: float = 14.0) -> int:
         """
         Each anomaly label's effect, measured against the coin itself: the median of |4h move after the label| /
@@ -1159,27 +1077,10 @@ class SignalJournal:
         return len(ANOMALY_EFFECT)
 
     def refresh_regime_stats(self) -> int:
-        """
-        4h Edge per (setup, regime) for journal.veto_reason: a (setup, regime) is muted once its Edge is proven
-        negative over >= regime_veto_min_n independent 4h blocks, with the false discovery rate controlled over the
-        whole grid (proven_negative).
-        """
-        groups: Dict[Tuple[str, str], Dict[tuple, List[float]]] = {}
-        for row in self._labelled_rows():
-            if not row['regime']:
-                continue
-            base = self.universe_return(row['ts_ms'], 240)
-            if base is not None:
-                groups.setdefault((row['group_key'], row['regime']), {}).setdefault(
-                    block_of(row['ts_ms'], row['direction']), []).append(row['direction'] * (row['ret_4h'] - base))
-        stats, muted = proven_negative(groups, CONFIG.ml.regime_veto_min_n, CONFIG.ml.rule_fdr, seed=3)
+        """Regime tags are descriptive only; no automatic veto is maintained."""
         REGIME_STATS.clear()
-        REGIME_STATS.update(stats)
-        if muted != REGIME_MUTED:
-            logger.info(f"Regime stats: muted in their regime: {sorted(muted)}")
         REGIME_MUTED.clear()
-        REGIME_MUTED.update(muted)
-        return len(stats)
+        return 0
 
     def refresh_hit_rates(self) -> int:
         """
@@ -1250,7 +1151,7 @@ class SignalJournal:
                 if value is False:
                     groups.setdefault((strategy, name), {}).setdefault(block_of(ts_ms, direction), []).append(
                         direction * (ret - base))
-        _, promoted = proven_negative(groups, CONFIG.orderflow.promote_min_clusters, CONFIG.ml.rule_fdr, seed=5)
+        _, promoted = proven_negative(groups, CONFIG.orderflow.promote_min_clusters, 0.05, seed=5)
         if promoted != confirm.PROMOTED:
             logger.info(f"Confirmations required by the journal: {sorted(promoted)}")
         confirm.PROMOTED.clear()
@@ -1479,19 +1380,8 @@ class SignalJournal:
             self.conn.commit()
 
     def _learn(self, signal_id: int):
-        """Feed a freshly labelled directional row to the online P(edge) model."""
-        from ml import label_of
-        with self._lock:
-            self.conn.row_factory = sqlite3.Row
-            try:
-                row = self.conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
-            finally:
-                self.conn.row_factory = None
-        if row is None or row['kind'] in ('entry', 'card') or row['logic_version'] != CONFIG.journal.logic_version:
-            return
-        label = label_of(row, self.universe_return(row['ts_ms'], 240, 'median'))
-        if label is not None:
-            self.success.learn(row, label)
+        """ML learning was removed from live; retained for old callers."""
+        return
 
     def close(self):
         with self._lock:

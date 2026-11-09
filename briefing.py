@@ -1681,7 +1681,7 @@ class Briefing:
         # still stopping strategies after 30 min of uptime is reported
         blind = self.sc.blind_text() if time.time() - getattr(self.sc, '_started_at', 0) >= 1800 else ''
         if blind:
-            self._post(f"🛠 Бот: стратегии без истории дольше 30 мин после старта, сигналов от них нет — {blind}",
+            self._post(f"🛠 Бот: проверки сетапов ограничены глубиной истории (включая историю до паттерна) — {blind}",
                        key='health|blind', every_sec=3600, topic='service')
         rss = (getattr(self.sc, 'health', None) or {}).get('rss_mb')
         try:

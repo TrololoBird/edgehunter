@@ -22,6 +22,7 @@ import math
 import os
 import sqlite3
 import contextlib
+import ccxt
 import time
 from typing import Dict, List, Optional
 
@@ -187,6 +188,7 @@ class DemoExecutor:
             import ccxt.async_support as ccxt
             key, secret = credentials()
             self.ex = ccxt.bingx({'apiKey': key, 'secret': secret, 'enableRateLimit': True,
+                                  'rateLimit': 550,    # leave headroom for BingX's endpoint frequency limits
                                   'timeout': 30_000,   # the VST contract list (~1200 markets) took > 10s under load
                                   # no recvWindow option: ccxt's bingx.sign never sends it (checked in ccxt 4.5.85: only
                                   # the deposit / withdraw endpoints read it); BingX's window stays 5s; the cause of
@@ -1410,6 +1412,11 @@ class DemoExecutor:
         for s in cards:
             if s.entered_at and not s.finished and s.best_target in (1, 2):
                 await self.on_target(s, int(s.best_target))
+            if s.entered_at and not s.finished:
+                key = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
+                trade = self.open.get(key) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
+                if trade and trade.get('restop_pending'):
+                    await self.on_restop(s)
 
     async def on_restop(self, s) -> None:
         """eng-58: the card trailed its stop (after TP1: the entry, then the EMA20): the remaining position's stop is
@@ -1429,6 +1436,7 @@ class DemoExecutor:
                 symbol, d = trade['symbol'], trade['direction']
                 left = await self._position_qty(symbol)
                 if left <= 0:
+                    trade.pop('restop_pending', None)
                     return
                 scale = float(trade.get('scale') or 0.0)
                 if not scale and trade.get('entry_plan') and s.levels.get('entry'):
@@ -1444,6 +1452,7 @@ class DemoExecutor:
                                                  'sell' if d > 0 else 'buy', left,
                                                  s.levels['sl'] * scale,
                                                  {'reduceOnly': True, 'closePosition': True})
+                    trade.pop('restop_pending', None)
                     trade['sl'] = s.levels['sl'] * scale
                     with self._db() as c:
                         c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
@@ -1453,6 +1462,7 @@ class DemoExecutor:
                 # whenever the new stop failed, and took TP2 / TP3 of the thirds plans with it for good
                 new = await self._place_stop(symbol, d, left, s.levels['sl'] * scale)
                 await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
+                trade.pop('restop_pending', None)
                 trade['sl'] = s.levels['sl'] * scale
                 with self._db() as c:     # the stop guard restores THIS stop after a restart
                     c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
@@ -1462,6 +1472,7 @@ class DemoExecutor:
                 # price): the old stop stays (placed-first order), but a stop the price already passed is a stop hit -
                 # the rest is closed at market as the stop order would have done; any other failure is reported
                 # (was a WARNING only: card and exchange disagreed on the stop silently)
+                trade['restop_pending'] = True
                 await self._restop_failed(trade, s, e)
 
     async def _restop_failed(self, trade: Dict, s, e: Exception) -> None:
@@ -1470,7 +1481,7 @@ class DemoExecutor:
             scale = float(trade.get('scale') or 1.0)
             new_sl = float(s.levels['sl']) * scale
             ex = await self._exchange()
-            ticker = await ex.fetch_ticker(symbol) or {}
+            ticker = await self._call('fetch_ticker', symbol) or {}
             mark = _positive(ticker.get('markPrice') or (ticker.get('info') or {}).get('markPrice') or (ticker.get('info') or {}).get('mark') or ticker.get('mark'))
             last = _positive(ticker.get('last'))
             price = mark if mark is not None else last
@@ -1722,12 +1733,31 @@ class DemoExecutor:
         an order blindly.
         """
         import ccxt
+        # Read-only reconciliation calls are safe to retry after transient transport failures.
+        transient = (ccxt.NetworkError, ccxt.ExchangeNotAvailable, getattr(ccxt, 'RequestTimeout', TimeoutError),
+                     ConnectionResetError, asyncio.TimeoutError)
         ex = await self._exchange()
         for attempt in range(tries):
+            delay = getattr(self, '_read_resume_at', 0.0) - time.monotonic()
+            if delay > 30:
+                raise ccxt.ExchangeNotAvailable('BingX read cooldown is active; retry on next reconciliation')
+            if delay > 0:
+                await asyncio.sleep(delay)
             try:
                 return await asyncio.wait_for(getattr(ex, method)(*args, **kw),
                                               timeout=CONFIG.rest.total_timeout_sec)
-            except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
+            except Exception as e:
+                busy = isinstance(e, ccxt.OperationFailed) and '"code":100410' in str(e).replace(' ', '')
+                if not isinstance(e, transient) and not busy:
+                    raise
+                if busy:
+                    import re
+                    until = re.search(r'unblocked after (\d{12,})', str(e))
+                    pause = max(1.0, int(until[1]) / 1000 - time.time() + 1) if until else 5.0 * 2 ** attempt
+                    self._read_resume_at = max(getattr(self, '_read_resume_at', 0.0), time.monotonic() + pause)
+                    # Do not hold a coin lock for a multi-minute exchange ban. Next reconciliation retries.
+                    if pause > 30:
+                        raise
                 if attempt == tries - 1:
                     raise
                 await asyncio.sleep(CONFIG.rest.retry_timeout_sec * 2 ** attempt)
@@ -1801,12 +1831,15 @@ class DemoExecutor:
         symbol, d = trade['symbol'], trade['direction']
         side = 'sell' if d > 0 else 'buy'
         try:
-            for o in await ex.fetch_open_orders(symbol):
+            for o in await self._call('fetch_open_orders', symbol):
                 if not self._is_stop(o):
                     try:
                         await ex.cancel_order(o['id'], symbol)
                     except Exception as e:
-                        errors.report('executor._close', e, f"Demo cancel TP {symbol}")
+                        if isinstance(e, ccxt.OrderNotFound) or '"code":109400' in str(e).replace(' ', ''):
+                            logger.debug(f"Demo cancel TP {symbol}: already gone ({e})")
+                        else:
+                            errors.report('executor._close', e, f"Demo cancel TP {symbol}")
         except Exception as e:
             errors.report('executor._close', e, f"Demo cancel {symbol}")
         left = await self._position_qty(symbol)

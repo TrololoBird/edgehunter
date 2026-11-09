@@ -51,20 +51,11 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
                 continue
             # eng-118: the rims within 5% and the U-vs-V quarter count were ours (O'Neil gives no numbers): removed - the
             # shape is held by his depth 12-33%, the 30% prior advance and the handle in the upper half <= 12% deep
-            if left < 2 * cup_len:
-                # eng-132: the prior advance is measured over 2x the cup's length before the left rim; a shorter history
-                # measured it on a cut window (a rise looked smaller or bigger than it was): skipped, and said so
-                if skips is not None and not any(s[0] == 'cup_handle' for s in skips):
-                    skips.append(('cup_handle', left, 2 * cup_len))
-                continue
             # audit: the U shape (O'Neil, Bulkowski: rounded, not V). A V with straight sides spends exactly 1/3 of its
             # bars in the lowest third of its depth; a rounded bottom spends more. Our formalization: > 40%
             low_third = bottom + (rim - bottom) / 3
             if sum(1 for i in range(left, r + 1) if l[i] <= low_third) <= 0.4 * (cup_len + 1):
                 continue
-            before = l[left - 2 * cup_len:left]
-            if not before or h[left] / min(before) - 1 < 0.30:
-                continue                             # no prior advance
             if not 7 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks: 7-56 calendar days
                 break
             h_lo = min(l[i] for i in handle)
@@ -78,6 +69,15 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
                 break                                # not this rim's breakout: an older right rim may be
             if c[last] > pivot * 1.05:
                 break                          # O'Neil: 5% past the pivot the buy point is missed - no chase
+            if left < 2 * cup_len:
+                # eng-132: the prior advance is measured over 2x the cup's length before the left rim; a shorter history
+                # measured it on a cut window (a rise looked smaller or bigger than it was): skipped, and said so
+                if skips is not None and not any(s[0] == 'cup_handle' for s in skips):
+                    skips.append(('cup_handle', left, 2 * cup_len))
+                continue
+            before = l[left - 2 * cup_len:left]
+            if not before or h[left] / min(before) - 1 < 0.30:
+                continue                             # no prior advance
             # Bulkowski's measure rule as his site states it now (thepatternsite.com/cup.html, 06/2026): the depth from
             # the RIGHT cup lip to the lowest valley x the share of patterns that met the full target (bullish cups in a
             # bull market: 61%, 913 trades), added to the breakout price - TP1; TP2 the full depth. Was half the

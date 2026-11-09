@@ -113,11 +113,18 @@ class ExternalData:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(
                 total=CONFIG.rest.total_timeout_sec, connect=CONFIG.rest.connect_timeout_sec,
                 sock_read=CONFIG.rest.read_timeout_sec))
-        if payload is None:
-            async with self._session.get(url) as r:
-                return await r.json(content_type=None)
-        async with self._session.post(url, data=json.dumps(payload), headers={'Content-Type': 'application/json'}) as r:
-            return await r.json(content_type=None)
+        import asyncio
+        for attempt in range(3):
+            try:
+                if payload is None:
+                    async with self._session.get(url) as r:
+                        return await r.json(content_type=None)
+                async with self._session.post(url, data=json.dumps(payload), headers={'Content-Type': 'application/json'}) as r:
+                    return await r.json(content_type=None)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError):
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(0.25 * (2 ** attempt))
 
     async def close(self):
         if self._session is not None:

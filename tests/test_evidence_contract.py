@@ -20,6 +20,7 @@ def test_raw_event_log_preserves_payload_and_hash(tmp_path):
                           connection_id='test:0', payload=payload,
                           exchange_event_time=123, sequence_start=42, sequence_end=42)
     assert event_id
+    log.flush()
     files = list(tmp_path.rglob('*.jsonl.gz'))
     assert len(files) == 1
     with gzip.open(files[0], 'rt', encoding='utf-8') as fh:

@@ -99,7 +99,9 @@ class AnomalyModel:
             import os
             from concurrent.futures import ProcessPoolExecutor
             from watchdog import exit_with_parent
-            context_name = 'forkserver' if 'forkserver' in multiprocessing.get_all_start_methods() else 'spawn'
+            # `exit_with_parent` expects the worker's direct parent to be the bot. With forkserver the
+            # direct parent is the forkserver process, so every worker exits immediately and the pool loops forever.
+            context_name = 'spawn'
             self._pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context(context_name),
                                              max_tasks_per_child=200,
                                              initializer=exit_with_parent, initargs=(os.getpid(),))
@@ -109,6 +111,9 @@ class AnomalyModel:
         """Scores computed in the worker process; None before the first fit."""
         import asyncio
         import pickle
+        from memory_guard import pressured
+        if pressured(0.88):
+            return None
         if self.model is None or not len(X):
             return None
         from concurrent.futures.process import BrokenProcessPool
@@ -127,6 +132,12 @@ class AnomalyModel:
         """Fit in the worker process on the sampled window; the old model keeps scoring until the new one is in."""
         import asyncio
         import pickle
+        from memory_guard import pressured
+        if pressured(0.88):
+            self._fit_retry_at = time.time() + 300
+            logger.warning("ML anomalies: fit deferred under cgroup memory pressure")
+            self.fitting = False
+            return
         self.fitting = True
         try:
             X = self.window(time.time())
@@ -184,7 +195,7 @@ class AnomalyModel:
 
     def due(self, now: float) -> bool:
         cfg = CONFIG.ml
-        return (not self.fitting and len(self.samples) >= cfg.anomaly_min_samples
+        return (not self.fitting and now >= getattr(self, '_fit_retry_at', 0.0) and len(self.samples) >= cfg.anomaly_min_samples
                 and (self.model is None or now - self.fitted_at >= cfg.anomaly_fit_every_sec))
 
     def fit(self) -> None:

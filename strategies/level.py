@@ -53,8 +53,8 @@ def pool_rank(label: str) -> int:
 def sweep_tf(label: str) -> str:
     """eng-84: the plan timeframe of a sweep by the swept pool: a 1h swing -> 15m (5m trigger), sessions / equal
     levels / rounds / the day / previous day / week -> 1h (15m trigger)."""
-    # eng-153 (external audit #3): the raid is a 15m candle, so its confirmation is at most 15m - a 60m trigger
-    # (the day / previous day / week -> 4h plan) left 109 of 113 MISSED cards "no 60m trigger" (TP1 in 15-90 min)
+    # The swept-pool plan is 1h for sessions/equal levels/day/week pools; its trigger bars are 15m.
+    # `trigger_minutes` is the bar timeframe used for confirmation, not a 60-minute card expiry.
     rank = pool_rank(label or '')
     return '1h' if rank >= 3 else '15m'
 

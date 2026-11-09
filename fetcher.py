@@ -1564,7 +1564,7 @@ class DataFetcher:
 
     async def _daily_candles_loop(self):
         """
-        210 daily candles of every universe coin (limit 210, weight 2) once per UTC day, a minute after the daily close,
+        Up to 1500 daily candles of every universe coin (weight 10) once per UTC day, a minute after the daily close,
         and for coins that join: Connors' RSI(2) system reads daily closes (~240 weight a day).
         """
         while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
@@ -1584,8 +1584,8 @@ class DataFetcher:
                     try:
                         rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
                                                      # review V13: a 65-week cup needs its prior advance (2x) and
-                                                     # handle: 3 x 455 + 9 days - 1400 (one request, limit <= 1500)
-                                                     {'symbol': binance_symbol, 'interval': '1d', 'limit': 1400},
+                                                     # maximum handle: 3 x 455 + 56 + 2 = 1423 bars (limit <= 1500)
+                                                     {'symbol': binance_symbol, 'interval': '1d', 'limit': 1500},
                                                      priority=2, weight=10)
                     except Exception as e:
                         errors.report('fetcher.candles_1d', e, f"daily candles failed for {symbol}")
@@ -1598,7 +1598,7 @@ class DataFetcher:
                 await asyncio.gather(*(one(s) for s in symbols))
                 logger.info(f"Daily candles: {sum(1 for s in symbols if len(self.markets.get(s).d1 or []) >= 202) if symbols else 0}"
                             f" of {len(symbols)} coins have >= 202 closed days")
-                # review: what the detectors actually get - closed unique days, gaps, the span (limit 1400)
+                # review: what the detectors actually get - closed unique days, gaps, the span (limit 1500)
                 stats = []
                 for s_ in symbols:
                     d1 = (self.markets.get(s_) or MarketData(symbol=s_)).d1 or []
@@ -1609,7 +1609,7 @@ class DataFetcher:
                     lens = sorted(x[0] for x in stats)
                     longest = max(stats, key=lambda x: x[0])
                     logger.info(f"Daily candles: length min {lens[0]} / median {lens[len(lens) // 2]} / max {lens[-1]}, "
-                                f"{sum(1 for x in stats if x[0] >= 1400)} coins with 1400, duplicates in "
+                                f"{sum(1 for x in stats if x[0] >= 1500)} coins with 1500, duplicates in "
                                 f"{sum(1 for x in stats if x[1] != x[0])}, gaps in {sum(1 for x in stats if x[2])}; "
                                 f"longest {time.strftime('%Y-%m-%d', time.gmtime(longest[3] / 1000)) if longest[3] else '-'}"
                                 f" .. {time.strftime('%Y-%m-%d', time.gmtime(longest[4] / 1000)) if longest[4] else '-'}")
@@ -1941,6 +1941,13 @@ class DataFetcher:
                         df, final = await self._load_frame(market, symbol)
                         await asyncio.sleep(CONFIG.rest.baseline_delay_sec)
                 except Exception as e:
+                    # Unsupported/invalid symbols are permanent until the next universe rebuild; retrying them
+                    # six times only wastes REST budget and floods the log.
+                    import ccxt
+                    if isinstance(e, (ccxt.BadSymbol, ccxt.BadRequest, ccxt.InvalidNonce)):
+                        logger.info(f"Backfill skipped permanently for {symbol} ({market}): {type(e).__name__}")
+                        self._backfill_retry_at[key] = time.time() + 3600
+                        return
                     errors.report('fetcher._backfill', e, f"Backfill attempt failed for {symbol} ({market})")
                     continue
                 md = self.markets.get(symbol)

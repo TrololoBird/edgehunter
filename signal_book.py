@@ -1177,8 +1177,8 @@ class SignalBook:
             self._finish(s, 'INVALID', now, self._invalid_reason(s, price, invalid))
             return None
         tp1 = card_tp1(plan)
-        # eng-108: with structural lifetimes EVERY waiting card ends once TP1 traded before an entry (its structural end;
-        # the invented waiting clocks are gone)
+        # TP1-before-entry is a strategy property. `structural_lifetimes` removes generic clocks, but must not turn
+        # plans that explicitly set missable=False (for example continuation / confirm-only systems) into MISSED cards.
         tp_seen = self._tp1_since(s, candles_of, tp1, plan) if version_no(s.logic_version) >= 141 else None
         imp = plan.get('impulse') or {}
         if imp.get('end') is not None and s.status != 'ZONE' and getattr(strategy, 'frozen_in_zone', False) \
@@ -1191,8 +1191,7 @@ class SignalBook:
             tp_seen = None
             if d * (price - tp1) >= 0:
                 return None
-        if (plan.get('missable') or CONFIG.strategies.structural_lifetimes) and (d * (price - tp1) >= 0
-                                                                                  or tp_seen is not None):
+        if plan.get('missable') and (d * (price - tp1) >= 0 or tp_seen is not None):
             reasons = ', '.join(sorted(set(s.veto_log)))
             # two different failures: price never came back to the zone (the zone is too far from where the move
             # turns) vs it did and no trigger fired (the trigger is too strict)
