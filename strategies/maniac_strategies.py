@@ -22,6 +22,18 @@ def _anchor(sig: Dict, tf: str) -> Dict:
 
 def _finish(x: PlanInput, plan: Dict, entry_est: float, extreme: Optional[float]) -> Optional[Dict]:
     """The card's targets as they stand at the estimated entry (the entry recomputes them at its own price)."""
+    explicit = plan.get('contract_targets')
+    if explicit is not None:
+        if not explicit:
+            plan['targets'], plan['target_src'], plan['targets_final'] = [], [], True
+            return plan
+        plan['targets'] = list(explicit[:3])
+        plan['target_src'] = list(plan.get('contract_target_src') or ())[:3]
+        while len(plan['targets']) < 3:
+            plan['targets'].append(plan['targets'][-1] if plan['targets'] else entry_est)
+            plan['target_src'].append(plan['target_src'][-1] if plan['target_src'] else 'method exit')
+        plan['targets_final'] = True
+        return plan
     levels = system_levels(plan, entry_est, extreme, x.direction)
     if levels is None:
         # no target ahead / no valid stop: journaled as such, not as a missing anchor ('no_leg', eng-50)
@@ -46,6 +58,20 @@ def _confirm_plan(x: PlanInput, name: str, tf: str, exit: Dict, zone_src: str, *
     plan = base_plan(x, name, _anchor(sig, tf), tf, entry='confirm', confirm_only=True,
                      zone_lo=close - half, zone_hi=close + half, zone_src=zone_src, missable=False,
                      exit=exit, zones=zones, targets=[], target_src=[], key=(sig['anchor_ts'], name), **fields)
+    # Method-owned level exits are already complete contracts; do not send
+    # them through the shared system-level target selector.
+    level_targets, level_sources = [], []
+    for key in ('tp', 'tp2', 'tp3'):
+        spec = exit.get(key) or ()
+        if len(spec) >= 2 and spec[0] == 'level' and spec[1] is not None:
+            level_targets.append(float(spec[1]))
+            level_sources.append(str(exit.get(f'{key}_src') or spec[0]))
+    if level_targets:
+        plan['contract_targets'] = level_targets
+        plan['contract_target_src'] = level_sources
+    elif (exit.get('tp') or [None])[0] == 'trail':
+        plan['contract_targets'] = []
+        plan['contract_target_src'] = []
     return _finish(x, plan, close, sig.get('anchor_extreme'))
 
 
