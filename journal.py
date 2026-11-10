@@ -323,7 +323,7 @@ EXTRA_COLUMNS = {
     # eng-1: the strategy and its anchor (JSON), the market / coin context (universe median and BTC moves, the coin's
     # 1h trend, last hour's ATR / ATR14) and the replay with the stop at breakeven after TP1 (exit at TP2)
     'strategy': 'TEXT', 'anchor': 'TEXT', 'mkt_1h': 'REAL', 'mkt_4h': 'REAL', 'btc_1h': 'REAL', 'btc_4h': 'REAL', 'mkt_1d': 'REAL', 'btc_1d': 'REAL', 'coin_trend': 'INTEGER',
-    'contract_id': 'TEXT',
+    'contract_id': 'TEXT', 'contract_source': 'TEXT',
     'vol_ratio': 'REAL', 'r_be': 'REAL', 'outcome_h': 'INTEGER',
     # eng-2: the coin's 24h futures quote volume (liquidity: patterns on thin coins are one order's work)
     'volume_24h': 'REAL',
@@ -837,6 +837,7 @@ class SignalJournal:
                     'sl_src': lv.get('sl_src'), 'stop_pierce': lv.get('stop_pierce'), 'zone_src': lv.get('zone_src') or (tracked.plan or {}).get('zone_src'),
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
                     'contract_id': (tracked.plan or {}).get('contract_id') or tracked.group_key,
+                    'contract_source': (tracked.plan or {}).get('contract_source'),
                     'anchor': _anchor_json(tracked.plan),
                     # eng-48: why it entered (the detector's note + the plan's trigger), was empty on entry rows
                     'reason': ' | '.join(str(x) for x in (tracked.sig.get('setup_note'),
@@ -885,6 +886,7 @@ class SignalJournal:
         notes = getattr(tracked, 'veto_notes', None) or []
         row.update({'reason': tracked.finish_reason + (f" | {notes[-1]}" if notes else ''), 'setup_ts_ms': int(tracked.created * 1000),
                     'strategy': tracked.mode, 'contract_id': plan.get('contract_id') or tracked.group_key,
+                    'contract_source': plan.get('contract_source'),
                     'anchor': _anchor_json(tracked.plan),
                     'zone_src': plan.get('zone_src'), 'perp_led': 0,
                     'entry': lv.get('entry'), 'sl': lv.get('sl'),
