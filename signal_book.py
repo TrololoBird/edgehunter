@@ -76,7 +76,7 @@ from strategies.maniac import in_session
 from strategies.maniac_strategies import MANIAC_STRATEGIES
 
 MANIAC_NAMES = frozenset(s.name for s in MANIAC_STRATEGIES)
-from strategies import PlanInput, Strategy, strategy_of
+from strategies import PlanInput, Strategy, entry_levels_for, strategy_of
 from strategies import bias as htf_bias, confirm, profiles
 
 # eng-84: methods whose exits are their own long-horizon rule (the Turtles' channel, Connors' SMA5, O'Neil's measured
@@ -89,7 +89,6 @@ BE_COST = 0.0015
 # eng-84: the regime each method needs (ADX(14) of 4h): trend-following methods / mean-reversion methods
 REGIME_TREND = ('continuation', 'pump_start', 'dump_start', 'pump_top', 'dump_bounce', 'oi_build')
 REGIME_RANGE = ('bollinger_wm', 'bollinger_method3', 'value_area', 'auction')
-from strategies.geometry import entry_levels
 
 logger = logging.getLogger(__name__)
 
@@ -1317,7 +1316,7 @@ class SignalBook:
             s.zone_since_ms = trigger['time']
             return None
         self._new_attempt(s)
-        levels = entry_levels(s.plan, trigger['entry'], trigger['extreme'], d)
+        levels = entry_levels_for(s.plan, trigger['entry'], trigger['extreme'], d)
         if not levels or d * (price - levels['sl']) <= 0:
             return None
         levels['zone_src'] = s.plan.get('zone_src')
@@ -1450,7 +1449,7 @@ class SignalBook:
         to TP1 allows it, else the card waits in its zone for a trigger.
         """
         self._new_attempt(s)
-        levels = entry_levels(s.plan, price, None, s.direction)
+        levels = entry_levels_for(s.plan, price, None, s.direction)
         if not levels or s.direction * (price - levels['sl']) <= 0:
             return None
         levels['zone_src'] = 'setup confirmation'
@@ -1720,7 +1719,7 @@ class SignalBook:
                 if now_ms - close_ms > FIVE_MS + 2 * MINUTE_MS:
                     s.variants_done.append('variant_retest')      # a stale bar (restart / gap): not journaled
                     return True
-                levels = entry_levels(s.plan, float(b[4]), None, d)
+                levels = entry_levels_for(s.plan, float(b[4]), None, d)
                 if levels and d * (levels['entry'] - levels['sl']) > 0:
                     levels['zone_src'] = f"retest of the 2h range edge {hn:.6g} +- 0.25 ATR(5m) (variant)"
                     self._variant(s, 'variant_retest', levels, close_ms)
@@ -1756,7 +1755,7 @@ class SignalBook:
             # review: the resting limit's stop is known BEFORE the touch (no wick of the touch bar), and the journal
             # window starts at the touch bar's open, so a stop inside that bar counts (conservative: the bar's
             # minutes before the touch count too)
-            levels = entry_levels(s.plan, level, None, d)
+                levels = entry_levels_for(s.plan, level, None, d)
             if levels and d * (levels['entry'] - levels['sl']) > 0:
                 levels['zone_src'] = s.plan.get('zone_src')
                 self._variant(s, name, levels, trig['time'] - interval_ms, limit=True)
@@ -1789,7 +1788,7 @@ class SignalBook:
         if stale and now_ms - trig['time'] > interval_ms + 2 * MINUTE_MS:
             s.variants_done.append('variant_pool2')     # a stale touch (restart / gap)
             return
-        levels = entry_levels(dict(s.plan, stop_ref=level), level, None, s.direction)
+        levels = entry_levels_for(dict(s.plan, stop_ref=level), level, None, s.direction)
         if levels and s.direction * (levels['entry'] - levels['sl']) > 0:
             levels['zone_src'] = f"second raid: {p2['label']} (variant)"
             self._variant(s, 'variant_pool2', levels, trig['time'] - interval_ms, limit=True)
@@ -1840,7 +1839,7 @@ class SignalBook:
         s.shadow_ms = int(trig['time'])
         if not in_session(trig['time'], tuple(CONFIG.strategies.smt_session)):
             return None
-        levels = entry_levels(s.plan, trig['entry'], trig['extreme'], d)
+        levels = entry_levels_for(s.plan, trig['entry'], trig['extreme'], d)
         if not levels or d * (price - levels['sl']) <= 0:
             return None
         levels['zone_src'] = s.plan.get('zone_src')
@@ -1877,7 +1876,7 @@ class SignalBook:
         if not c or not confirm.positive(c.get('orderflow')) or c.get('flow') is not True \
                 or c.get('oi') not in (True, confirm.NA):
             return None
-        levels = entry_levels(s.plan, price, extreme, d)
+        levels = entry_levels_for(s.plan, price, extreme, d)
         if not levels or d * (price - levels['sl']) <= 0:
             return None
         s.flow_done = True
@@ -1908,7 +1907,7 @@ class SignalBook:
         # run away from the level by more than half the sweep's depth (ETH 2026-10-14: 2522.06 vs the level 2521.89)
         if d * (price - extreme) <= 0 or d * (price - level) > 0.5 * abs(level - extreme) + 1e-12 * price:
             return None
-        levels = entry_levels(s.plan, price, extreme, d)
+        levels = entry_levels_for(s.plan, price, extreme, d)
         if not levels or d * (price - levels['sl']) <= 0 or d * (levels['tp1'] - price) <= 0:
             return None
         levels['zone_src'] = 'reclaim of the swept level'

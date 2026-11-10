@@ -68,6 +68,16 @@ def strategy_of(group_key: str) -> Optional[Strategy]:
     return _OBJ.get(group_key)
 
 
+def entry_levels_for(plan: dict, entry: float, extreme, direction: int):
+    """Dispatch level decisions through the owning playbook contract."""
+    strategy = strategy_of(str(plan.get('setup') or plan.get('group_key') or ''))
+    if strategy is None:
+        strategy = STRATEGIES.get(str(plan.get('strategy') or ''))
+    if strategy is None:
+        raise ValueError(f"unregistered playbook: {plan.get('setup') or plan.get('strategy')}")
+    return strategy.entry_levels(plan, entry, extreme, direction)
+
+
 __all__ = ["PlanInput", "Strategy", "STRATEGIES", "SETUPS", "strategy_of"]
 
 
