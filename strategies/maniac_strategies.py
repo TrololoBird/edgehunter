@@ -169,7 +169,7 @@ class SupplyDemandStrategy(_System):
                          zone_lo=lo, zone_hi=hi,
                          zone_src=f"{sig.get('anchor_label', 'zone')}: odds {score}/10 (strength "
                                   # R:R 2: granted here, ENFORCED by min_rr = 3 to TP1 (the nearest opposing zone,
-                                  # geometry.finish_levels, audit C07) - a plan below it is rejected, not scored
+                                  # the playbook contract - a plan below it is rejected, not scored
                                   f"{sig.get('sd_strength')}, time {sig.get('sd_time')}, fresh 2, R:R 2, big picture "
                                   f"{big}, arrival {arrival})",
                          invalid=far, fix_invalid=True, missable=False, stop_ref=far,

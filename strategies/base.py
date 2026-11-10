@@ -17,7 +17,8 @@ The strategy interface. A strategy turns a setup (a detected event or a scored p
     key                          the anchor's identity: a finished card blocks a new one on the same anchor
     impulse                      the leg (leg anchors) for the retracement read of the zone
 
-Lifecycle, stop floor, R:R and the journal are shared (signal_book.py, geometry.py).
+Lifecycle and journal transport are shared; trade decisions belong to each
+playbook contract and are dispatched by the owning Strategy instance.
 """
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypedDict
@@ -29,8 +30,7 @@ from levels import TRIGGER_MINUTES, TTL_FACTOR  # noqa: F401  (TRIGGER_MINUTES r
 
 
 class CardLevels(TypedDict, total=False):
-    """audit-80: the card's trade geometry (geometry.entry_levels / system_levels -> TrackedSignal.levels), one place
-    that names every key the lifecycle, the executor and the page read."""
+    """The executable level payload shared by lifecycle, executor and journal."""
     entry: float
     sl: float
     tp1: float
@@ -122,8 +122,8 @@ class Strategy:
         """Return this playbook's executable trade contract.
 
         Every registered playbook must implement this method.  There is no
-        shared geometry fallback: an incomplete migration fails closed and is
-        journaled as an unexecutable plan.
+        An incomplete migration fails closed and is journaled as an
+        unexecutable plan.
         """
         raise NotImplementedError(f"{self.__class__.__name__} has no playbook contract")
 
@@ -166,7 +166,7 @@ def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> D
         'stop_ref': None, 'stop_mid': None, 'retarget': False, 'intent': 'extension', 'fillers': (),
         'fill_label': 'fib', 'impulse': None, 'reached': x.reached,
         # the ported systems (strategies/maniac.py): their own entry trigger ('shift' = our 5m structure shift,
-        # 'pinbar', 'ifvg'), their own exit rules (geometry.system_levels), an entry only at the signal's close
+        # 'pinbar', 'ifvg'), their own exit rules, an entry only at the signal's close
         # (confirm_only: a vetoed confirmation ends the card), entries only in a session (tz, 'HH:MM', 'HH:MM'),
         # the pierce time the inversion FVG is searched from, and INVALID on a CLOSE of this many minutes beyond
         # the invalid price (a wick through is allowed)
