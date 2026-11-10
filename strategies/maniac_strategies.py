@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from config import CONFIG
 from levels import MINUTE_MS, resample
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.geometry import system_levels
@@ -18,6 +19,22 @@ from zones import merge
 def _anchor(sig: Dict, tf: str) -> Dict:
     return {'type': 'level', 'tf': tf, 'level': sig['anchor_level'], 'label': sig.get('anchor_label', ''),
             'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
+
+
+def _maniac_map_targets(raw_levels, ref: float, direction: int, atr: float):
+    """Local map target selection for the trendline playbooks."""
+    gap = CONFIG.zones.min_target_atr * atr
+    zones = merge(list(raw_levels or []), atr)
+    out, src = [], []
+    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
+        price = zone.lo if direction > 0 else zone.hi
+        if direction * (price - (out[-1] if out else ref)) >= gap:
+            out.append(price); src.append(zone.label)
+        if len(out) >= 3: break
+    while len(out) < 3:
+        last = out[-1] if out else ref
+        out.append(last + direction * gap); src.append('trendline ATR discovery')
+    return out, src
 
 
 def _finish(x: PlanInput, plan: Dict, entry_est: float, extreme: Optional[float]) -> Optional[Dict]:
@@ -291,7 +308,9 @@ class TrendlineStrategy(_System):
             stop = min(edge, sig['anchor_extreme']) - pad if d > 0 else max(edge, sig['anchor_extreme']) + pad
             exit = {'stop': ['price', stop], 'stop_src': 'beyond the trendline band + measured pierce',
                     'tp': ['map', 1.0], 'atr': x.atr, 'no_atr_steps': True}
-            return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch')
+            ct, cs = _maniac_map_targets(x.raw_levels, sig['line_value'], d, x.atr or 0.0)
+            return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch', contract_targets=ct,
+                                 contract_target_src=cs)
         if sig.get('target_price') is None or not x.minutes:
             return None
         # eng-79: the stop beyond the last confirmed 1h pivot (the line's own timeframe), 0.1 x ATR(1h) beyond it
@@ -316,7 +335,9 @@ class TrendlineStrategy(_System):
         # the line's first anchor (his robot's target, kept in the setup note)
         exit = {'stop': ['price', stop], 'stop_src': '1h structure beyond the line + measured pierce', 'tp': ['map', 1.0],
                 'atr': x.atr, 'no_atr_steps': True}
-        plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)')
+        ct, cs = _maniac_map_targets(x.raw_levels, line, d, x.atr or 0.0)
+        plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)', contract_targets=ct,
+                             contract_target_src=cs)
         if plan and not plan.get('skip'):
             # eng-84 (breakout-retest write-ups: retest + a confirming candle, not a resting limit; the owner's review):
             # the retest area is the line to half an hour-ATR beyond it on the broken side; the entry is a 15m
