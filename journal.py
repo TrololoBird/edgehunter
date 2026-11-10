@@ -884,7 +884,8 @@ class SignalJournal:
         sources = plan.get('target_src') or []
         notes = getattr(tracked, 'veto_notes', None) or []
         row.update({'reason': tracked.finish_reason + (f" | {notes[-1]}" if notes else ''), 'setup_ts_ms': int(tracked.created * 1000),
-                    'strategy': tracked.mode, 'anchor': _anchor_json(tracked.plan),
+                    'strategy': tracked.mode, 'contract_id': plan.get('contract_id') or tracked.group_key,
+                    'anchor': _anchor_json(tracked.plan),
                     'zone_src': plan.get('zone_src'), 'perp_led': 0,
                     'entry': lv.get('entry'), 'sl': lv.get('sl'),
                     # eng-168c: an unentered card journals the TP1 the trade would take (the system's level target)
