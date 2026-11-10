@@ -113,6 +113,11 @@ class Strategy:
     # 'session' = out at the end of the method's session (session_end)
     time_exit = 'bars'
 
+    @staticmethod
+    def contract_id(setup: str) -> str:
+        """Stable playbook identifier used to keep directions and variants separate."""
+        return str(setup or '').strip().lower().replace(' ', '_')
+
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
         """Return this playbook's executable trade contract.
 
@@ -170,6 +175,7 @@ def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> D
         # the invalid price (a wick through is allowed)
         'trigger': 'shift', 'exit': None, 'confirm_only': False, 'session': None, 'trigger_from_ms': None,
         'invalid_close_min': None,
+        'contract_id': Strategy.contract_id(x.setup),
     }
     from strategies.ict import dealing_range, protected_swing
     if x.df is not None and not x.df.is_empty():
