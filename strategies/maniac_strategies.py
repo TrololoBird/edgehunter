@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from levels import MINUTE_MS, resample
-from strategies.base import PlanInput, Strategy, base_plan
+from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.geometry import system_levels
 from strategies.maniac import find_pivots
 from zones import merge
@@ -347,6 +347,23 @@ class BollingerSqueezeStrategy(_System):
     min_rr = 0.0
     ttl_key = 'bollinger_ttl'
     time_exit = 'fixed'
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Bollinger Method I contract: SAR protective stop, no fixed target."""
+        ex = plan.get('exit') or {}; stop = ex.get('stop') or []
+        if len(stop) < 2 or not entry:
+            return None
+        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        if sl <= 0 or risk <= 0:
+            return None
+        plan['contract_source'] = 'bollinger_method1'
+        src = ex.get('stop_src') or 'Parabolic SAR'
+        return {'entry': float(entry), 'sl': sl, 'tp1': None, 'tp2': None, 'tp3': None,
+                'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None, 'sl_src': src,
+                'tp1_src': 'none: Parabolic SAR trail', 'tp2_src': 'none: Parabolic SAR trail',
+                'tp3_src': 'none: Parabolic SAR trail', 'zone_src': plan.get('zone_src'),
+                'range_pos': None, 'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig = x.sig
