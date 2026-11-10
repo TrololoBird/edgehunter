@@ -17,6 +17,8 @@ Detected loop-side on the final 1m candles built into 5m bars (strategies.loopsi
 """
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Sequence
+
+from config import CONFIG
 from zoneinfo import ZoneInfo
 
 NY = ZoneInfo('America/New_York')
@@ -105,8 +107,28 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
 
 
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan          # noqa: E402
-from strategies.geometry import select_targets                      # noqa: E402
 from zones import merge                                              # noqa: E402
+
+
+def _po3_targets(zones, anchor, direction, atr, first, fillers):
+    """PO3-owned draw selection: Asian range target, then its own draw/fillers."""
+    gap = CONFIG.zones.min_target_atr * atr
+    targets, sources = [first[0]], [first[1]]
+    for price in fillers:
+        if len(targets) >= 3:
+            break
+        if direction * (price - targets[-1]) >= gap:
+            targets.append(price); sources.append("day's draw (PDH / PDL)")
+    candidates = sorted((direction * ((z.lo if direction > 0 else z.hi) - targets[-1]),
+                         z.lo if direction > 0 else z.hi, z.label)
+                        for z in zones if direction * ((z.lo if direction > 0 else z.hi) - targets[-1]) >= gap)
+    for _, price, label in candidates:
+        if len(targets) >= 3:
+            break
+        targets.append(price); sources.append(label)
+    while len(targets) < 3:
+        targets.append(targets[-1] + direction * gap); sources.append('PO3 ATR discovery')
+    return targets, sources
 
 
 class Po3Strategy(Strategy):
@@ -163,8 +185,7 @@ class Po3Strategy(Strategy):
             # the source's target is the Asian range's other side; without it (behind the entry) there is no PO3
             # trade - was the map's nearest liquidity, a target no source names
             return {'skip': "no Asian-range target ahead"}
-        targets, sources = select_targets(zones, ce, d, atr, 'draw_liquidity', fillers, "the day's draw (PDH / PDL)",
-                                          first=first)
+        targets, sources = _po3_targets(zones, ce, d, atr, first, fillers)
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'PO3 FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
