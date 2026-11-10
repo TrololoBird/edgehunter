@@ -20,7 +20,7 @@ from typing import Dict, Optional, Sequence
 
 from config import CONFIG
 from levels import MINUTE_MS, resample
-from strategies.base import PlanInput, Strategy, base_plan
+from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.geometry import htf_zones, select_targets
 from zones import merge
 
@@ -278,6 +278,30 @@ class PumpStartStrategy(Strategy):
     uses_minutes = True
     default_tf = '15m'
 
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Pump ignition contract: stop below ignition and measured/map targets."""
+        atr = float(plan.get('atr') or 0)
+        ref = plan.get('stop_ref')
+        targets = list(plan.get('targets') or ())[:3]
+        if direction != 1 or not entry or not atr or ref is None or len(targets) < 1:
+            return None
+        stop = float(ref) - 0.25 * atr
+        risk = entry - stop
+        if risk <= 0 or stop <= 0:
+            return None
+        targets += [targets[-1]] * (3 - len(targets))
+        rr = [(t - entry) / risk for t in targets]
+        plan['contract_source'] = 'pump_start_ignition'
+        return {'entry': float(entry), 'sl': stop, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr) / 3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
+                'sl_src': 'below pump ignition low + 0.25 ATR',
+                'tp1_src': (plan.get('target_src') or ['measured/map'])[0],
+                'tp2_src': (plan.get('target_src') or ['measured/map'] * 2)[1] if len(plan.get('target_src') or ()) > 1 else 'measured/map',
+                'tp3_src': (plan.get('target_src') or ['measured/map'] * 3)[2] if len(plan.get('target_src') or ()) > 2 else 'measured/map',
+                'zone_src': plan.get('zone_src'), 'range_pos': None, 'limit_entry': None,
+                'volume_24h': plan.get('volume_24h')}
+
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
         # eng-159: the detector's phases (strategies.pd_features) - shadow vetoes, journaled, judged live
         from signal_book import shadow_veto
@@ -326,6 +350,29 @@ class DumpStartStrategy(Strategy):
     ttl_key = 'pump_ttl'
     uses_minutes = True
     default_tf = '15m'
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Dump ignition contract: stop above ignition and measured/map targets."""
+        atr = float(plan.get('atr') or 0)
+        ref = plan.get('stop_ref')
+        targets = list(plan.get('targets') or ())[:3]
+        if direction != -1 or not entry or not atr or ref is None or len(targets) < 1:
+            return None
+        stop = float(ref) + 0.25 * atr
+        risk = stop - entry
+        if risk <= 0 or stop <= 0:
+            return None
+        targets += [targets[-1]] * (3 - len(targets))
+        rr = [(entry - t) / risk for t in targets]
+        plan['contract_source'] = 'dump_start_ignition'
+        src = list(plan.get('target_src') or ())
+        src += ['measured/map'] * (3 - len(src))
+        return {'entry': float(entry), 'sl': stop, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr) / 3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
+                'sl_src': 'above dump ignition high + 0.25 ATR', 'tp1_src': src[0], 'tp2_src': src[1], 'tp3_src': src[2],
+                'zone_src': plan.get('zone_src'), 'range_pos': None, 'limit_entry': None,
+                'volume_24h': plan.get('volume_24h')}
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
         # eng-159: the detector's phases (strategies.pd_features) - shadow vetoes, journaled, judged live
