@@ -13,7 +13,7 @@ an edge. Replaces the OI robots of eng-56 / eng-88 (cryptomillion's OI [15m] ale
 """
 from typing import Dict, Optional, Sequence
 
-from strategies.base import PlanInput, Strategy
+from strategies.base import CardLevels, PlanInput, Strategy
 
 MINUTE_MS = 60_000
 
@@ -119,6 +119,27 @@ class OiBuildStrategy(Strategy):
     ttl_key = 'oi_build_ttl'
     time_exit = 'fixed'
     default_tf = '15m'
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Pring OI-build contract: hour extreme stop and opposite-liquidity targets."""
+        atr, ref = float(plan.get('atr') or 0), plan.get('stop_ref')
+        targets = list(plan.get('targets') or ())[:3]
+        if direction not in (-1, 1) or not atr or ref is None or not targets or not entry:
+            return None
+        sl = float(ref) - direction * 0.25 * atr
+        risk = direction * (entry - sl)
+        if risk <= 0 or sl <= 0:
+            return None
+        targets += [targets[-1]] * (3 - len(targets))
+        rr = [direction * (t - entry) / risk for t in targets]
+        plan['contract_source'] = 'oi_build_pring'
+        src = list(plan.get('target_src') or ()) + ['opposite liquidity'] * 3
+        return {'entry': float(entry), 'sl': sl, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr) / 3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
+                'sl_src': "beyond hour's extreme + 0.25 ATR", 'tp1_src': src[0], 'tp2_src': src[1], 'tp3_src': src[2],
+                'zone_src': plan.get('zone_src'), 'range_pos': None, 'limit_entry': None,
+                'volume_24h': plan.get('volume_24h')}
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), 'oi_build') if x.sig.get('oi_build_oi60') is not None else None
