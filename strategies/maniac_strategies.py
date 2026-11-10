@@ -333,10 +333,44 @@ class BollingerWMStrategy(BollingerStrategy):
     name = 'bollinger_wm'
     setups = {'BB W-BOTTOM': 1, 'BB M-TOP': -1}
 
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        ex, stop = plan.get('exit') or {}, (plan.get('exit') or {}).get('stop') or []
+        target = (plan.get('exit') or {}).get('tp1_price')
+        if len(stop) < 2 or target is None or not entry:
+            return None
+        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        if sl <= 0 or risk <= 0 or direction * (float(target) - entry) <= 0:
+            return None
+        rr = direction * (float(target) - entry) / risk
+        plan['contract_source'] = 'bollinger_wm'
+        return {'entry': float(entry), 'sl': sl, 'tp1': float(target), 'tp2': float(target), 'tp3': float(target),
+                'rr_tp1': rr, 'rr_tp2': rr, 'rr_blend': rr, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
+                'sl_src': ex.get('stop_src') or 'W/M retest', 'tp1_src': 'opposite Bollinger band',
+                'tp2_src': 'live band trail', 'tp3_src': 'live band trail', 'zone_src': plan.get('zone_src'),
+                'range_pos': None, 'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
+
 
 class BollingerMethod3Strategy(BollingerStrategy):
     name = 'bollinger_method3'
     setups = {'BB3 BUY': 1, 'BB3 SELL': -1}
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        ex, stop = plan.get('exit') or {}, (plan.get('exit') or {}).get('stop') or []
+        target = (plan.get('exit') or {}).get('tp1_price')
+        if len(stop) < 2 or target is None or not entry:
+            return None
+        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        if sl <= 0 or risk <= 0 or direction * (float(target) - entry) <= 0:
+            return None
+        rr = direction * (float(target) - entry) / risk
+        plan['contract_source'] = 'bollinger_method3'
+        return {'entry': float(entry), 'sl': sl, 'tp1': float(target), 'tp2': float(target), 'tp3': float(target),
+                'rr_tp1': rr, 'rr_tp2': rr, 'rr_blend': rr, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
+                'sl_src': ex.get('stop_src') or 'Method III retest', 'tp1_src': 'opposite Bollinger band',
+                'tp2_src': 'live band trail', 'tp3_src': 'live band trail', 'zone_src': plan.get('zone_src'),
+                'range_pos': None, 'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
 
 
 class BollingerSqueezeStrategy(_System):
