@@ -124,8 +124,24 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
 
 
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan          # noqa: E402
-from strategies.geometry import select_targets                      # noqa: E402
 from zones import merge                                             # noqa: E402
+
+
+def _silver_bullet_targets(zones, first, direction, atr):
+    """Silver Bullet draw ordering: daily liquidity first, then higher map levels."""
+    gap = CONFIG.zones.min_target_atr * atr
+    targets, sources = [first[0]], [first[1]]
+    while len(targets) < 3:
+        last = targets[-1]
+        candidates = [(direction * ((z.lo if direction > 0 else z.hi) - last),
+                       z.lo if direction > 0 else z.hi, z.label)
+                      for z in zones if direction * ((z.lo if direction > 0 else z.hi) - last) >= gap]
+        if not candidates:
+            targets.append(last + direction * gap); sources.append('Silver Bullet ATR discovery')
+        else:
+            _, price, label = min(candidates)
+            targets.append(price); sources.append(label)
+    return targets, sources
 
 
 class SilverBulletStrategy(Strategy):
@@ -201,7 +217,7 @@ class SilverBulletStrategy(Strategy):
             # the Silver Bullet's target is the day's draw on liquidity; already behind the entry -> no trade (was the
             # map's nearest opposite liquidity, a target no source names)
             return {'skip': "no draw on liquidity ahead"}
-        targets, sources = select_targets(zones, ce, d, atr, 'opposite_liquidity', first=first)
+        targets, sources = _silver_bullet_targets(zones, first, d, atr)
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         plan = base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
