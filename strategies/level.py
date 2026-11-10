@@ -18,7 +18,6 @@ from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
-from strategies.geometry import select_targets
 from strategies.structure import Pool
 from zones import merge, stop_beyond
 
@@ -33,6 +32,27 @@ def _contract_pad(measured: Optional[float], work_atr: Optional[float], moved: b
     if work_atr and cfg.pierce_cap_atr > 0 and measured > cfg.pierce_cap_atr * work_atr:
         return cfg.pierce_cap_atr * work_atr, f"measured pierce capped at {cfg.pierce_cap_atr:g} ATR"
     return measured, 'measured pierce'
+
+
+def _sweep_targets(zones, start: float, direction: int, atr: float):
+    """Sweep-only draw selection: nearest map zones beyond MSS, then ATR discovery steps."""
+    gap = CONFIG.zones.min_target_atr * atr
+    candidates = []
+    for zone in zones:
+        price = zone.lo if direction > 0 else zone.hi
+        if direction * (price - start) >= gap:
+            candidates.append((direction * (price - start), price, zone.label))
+    candidates.sort(key=lambda item: item[0])
+    targets, sources, last = [], [], start
+    for _, price, label in candidates:
+        if len(targets) == 3:
+            break
+        if direction * (price - last) >= gap:
+            targets.append(price); sources.append(label); last = price
+    while len(targets) < 3:
+        last += direction * gap
+        targets.append(last); sources.append('sweep ATR discovery')
+    return targets, sources
 
 MINUTE_MS = 60_000
 QUARTER_MS = 900_000
@@ -250,7 +270,7 @@ class SweepStrategy(Strategy):
             mss = raid_swing(ltf, d, int(sig['anchor_ts']), trig_min * 60_000)
         sig['mss_level'] = mss
         start = reached if mss is None else (max(reached, mss) if d > 0 else min(reached, mss))
-        targets, sources = select_targets(zones, start, d, atr, 'draw_liquidity')
+        targets, sources = _sweep_targets(zones, start, d, atr)
         # ICT: the sweep is only the setup, a wick is not yet a reversal: the entry waits for the displacement's FVG
         # (trigger 'fvg') inside the sweep's area
         close = sig.get('anchor_close', level)
