@@ -14,7 +14,7 @@ Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
-from strategies.base import PlanInput, Strategy
+from strategies.base import CardLevels, PlanInput, Strategy
 from strategies.maniac_strategies import _System, _confirm_plan  # noqa: F401  (_System: the gate key)
 
 
@@ -102,6 +102,24 @@ class CupHandleStrategy(_System):
     ttl_key = 'cup_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)
     min_rr = 1.0                                     # the measured target must pay more than the risk (O'Neil's 3:1 is an exit rule)
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """O'Neil/Bulkowski contract: 8%/handle stop and measured cup targets."""
+        ex, targets = plan.get('exit') or {}, list(plan.get('targets') or ())[:3]
+        stop = ex.get('stop') or []
+        if direction != 1 or len(stop) < 2 or not targets or not entry:
+            return None
+        sl = float(stop[1]); risk = entry - sl
+        if sl <= 0 or risk <= 0:
+            return None
+        targets += [targets[-1]] * (3 - len(targets)); rr = [(t-entry)/risk for t in targets]
+        plan['contract_source'] = 'cup_handle_oneil'
+        src = list(plan.get('target_src') or ()) + ['cup measure rule'] * 3
+        return {'entry': float(entry), 'sl': sl, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr)/3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None, 'sl_src': ex.get('stop_src') or 'below handle',
+                'tp1_src': src[0], 'tp2_src': src[1], 'tp3_src': src[2], 'zone_src': plan.get('zone_src'),
+                'range_pos': None, 'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig = x.sig
