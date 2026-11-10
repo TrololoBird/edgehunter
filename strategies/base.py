@@ -121,14 +121,11 @@ class Strategy:
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
         """Return this playbook's executable trade contract.
 
-        Playbooks must override this method as they are migrated.  The
-        compatibility path is deliberately explicit and tagged on the plan;
-        it keeps existing cards readable without making shared geometry an
-        invisible decision source.
+        Every registered playbook must implement this method.  There is no
+        shared geometry fallback: an incomplete migration fails closed and is
+        journaled as an unexecutable plan.
         """
-        from strategies.geometry import entry_levels as legacy_entry_levels
-        plan.setdefault('contract_source', 'legacy_geometry')
-        return legacy_entry_levels(plan, entry, extreme, direction)
+        raise NotImplementedError(f"{self.__class__.__name__} has no playbook contract")
 
     def session_end(self, entered_at: float) -> Optional[float]:
         """Epoch seconds the method's session ends for a trade entered at entered_at ('session' methods)."""
