@@ -714,8 +714,16 @@ class DataFetcher:
 
         async def poll(symbol: str, delay: float):
             await asyncio.sleep(delay)
-            async with in_flight:
-                oi = await self.fetch_open_interest(symbol)
+            oi = None
+            # A single transient REST/rate-limit failure must not leave a
+            # symbol without an OI point for the whole polling cycle.
+            for attempt in range(3):
+                async with in_flight:
+                    oi = await self.fetch_open_interest(symbol)
+                if oi:
+                    break
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (attempt + 1))
             md = self.markets.get(symbol)
             if oi and md is not None:
                 now_ms = time.time() * 1000
