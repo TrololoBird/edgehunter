@@ -1357,7 +1357,16 @@ def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[
     global _DEMO_VERSION
     _DEMO_VERSION = None if all_versions else CONFIG.journal.logic_version
     since = int((time.time() - days * 86400) * 1000) if days else 0
-    all_rows = conn.execute("SELECT * FROM signals WHERE ts_ms >= ? ORDER BY ts_ms", (since,)).fetchall()
+    raw_rows = conn.execute("SELECT * FROM signals WHERE ts_ms >= ? ORDER BY ts_ms", (since,)).fetchall()
+    # Historical databases predate the long-horizon columns.  Normalize rows
+    # in memory so old evidence remains immutable and reports can still expose
+    # the complete current horizon schema.
+    all_rows = []
+    for raw in raw_rows:
+        row = dict(raw)
+        for label in HORIZONS:
+            row.setdefault(f'ret_{label}', None)
+        all_rows.append(row)
     version = CONFIG.journal.logic_version
     has_version = bool(all_rows) and 'logic_version' in all_rows[0].keys()
     rows = all_rows if all_versions else [r for r in all_rows if has_version and r['logic_version'] == version]
