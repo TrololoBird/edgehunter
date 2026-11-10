@@ -22,7 +22,7 @@ high with no range at all). BULL E, the selling climax, is not bought: Wyckoff r
 """
 from typing import Dict, List, Optional, Sequence
 
-from strategies.base import PlanInput, Strategy, base_plan
+from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.geometry import select_targets
 from zones import RawLevel, merge
 
@@ -203,6 +203,27 @@ class WyckoffRangeStrategy(Strategy):
     name = 'wyckoff'               # eng-35: one Wyckoff strategy (phase C here, the climax's test in cascade.py)
     anchor_type = 'range'
     setups = {'SPRING': 1, 'UTAD': -1}
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Wyckoff test contract: invalidate beyond spring/UTAD, target range effect."""
+        atr, ref = float(plan.get('atr') or 0), plan.get('stop_ref')
+        targets = list(plan.get('targets') or ())[:3]
+        if direction not in (-1, 1) or not atr or ref is None or not targets or not entry:
+            return None
+        sl = float(ref) - direction * 0.25 * atr
+        risk = direction * (entry - sl)
+        if risk <= 0 or sl <= 0:
+            return None
+        targets += [targets[-1]] * (3 - len(targets))
+        rr = [direction * (t - entry) / risk for t in targets]
+        plan['contract_source'] = 'wyckoff_range_test'
+        src = list(plan.get('target_src') or ()) + ['range objective'] * 3
+        return {'entry': float(entry), 'sl': sl, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr) / 3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
+                'sl_src': 'beyond spring/UTAD extreme + 0.25 ATR', 'tp1_src': src[0], 'tp2_src': src[1], 'tp3_src': src[2],
+                'zone_src': plan.get('zone_src'), 'range_pos': None, 'limit_entry': None,
+                'volume_24h': plan.get('volume_24h')}
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), x.sig.get('anchor_level')) if x.sig.get('range_lo') is not None else None
