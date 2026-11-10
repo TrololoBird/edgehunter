@@ -29,6 +29,7 @@ class ValueAreaStrategy(_System):
         # eng-94: the stop beyond the edge price re-entered through (Dalton: back outside value = the rule failed), not
         # beyond the whole excursion outside it - the system stop took the farther of the two (the day's low / high)
         return _confirm_plan(x, self.name, '15m', exit, "back inside yesterday's value area for two 30m periods",
+                             entry_mode='confirmation_close',
                              stop_ref=sig['anchor_level'], stop_ref_only=True)
 
 
@@ -116,7 +117,8 @@ class ConnorsStrategy(_System):
         exit = {'stop': stop, 'tp': ['level', sig['connors_sma5'], 0.0, None], 'atr': x.atr,
                 'stop_src': 'none (Connors): R unit = 1 daily ATR, position at 1x',
                 'tp_src': 'SMA5 (Connors exit)', 'connors_exit': True}
-        plan = _confirm_plan(x, self.name, '1d', exit, 'daily RSI(2) extreme with the SMA200 trend')
+        plan = _confirm_plan(x, self.name, '1d', exit, 'daily RSI(2) extreme with the SMA200 trend',
+                             entry_mode='confirmation_close')
         if plan and not plan.get('skip'):
             plan['connors_exit'] = True
             plan['no_tp'] = True              # out on the SMA5 close: no take-profit orders

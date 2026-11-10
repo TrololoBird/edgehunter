@@ -184,6 +184,7 @@ class SilverBulletStrategy(Strategy):
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         plan = base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
+                         entry_mode='limit',
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],

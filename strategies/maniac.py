@@ -618,6 +618,14 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_
         if len(mid) < 3:
             continue
         peak = max(mid, key=lambda k: h[k]) if d > 0 else min(mid, key=lambda k: l[k])
+        # Bollinger's W/M definition requires the intervening reaction to
+        # reach the middle band before the retest.  Without this check a small
+        # bounce entirely inside the lower/upper half was mislabeled as a
+        # confirmed W/M and traded as a reversal.
+        if d > 0 and h[peak] < ma[peak]:
+            continue
+        if d < 0 and l[peak] > ma[peak]:
+            continue
         retest = [k for k in range(peak + 1, i)]
         if not retest:
             continue

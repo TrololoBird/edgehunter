@@ -94,3 +94,12 @@ def test_place_limit_skips_off_setup_and_waits_on_cluster(tmp_path):
     card = SimpleNamespace(group_key='ORB UP', direction=1, plan={}, symbol='Y/USDT:USDT')
     asyncio.run(ex._place_limit('c', card))
     assert 'c' not in ex.pending               # not marked skipped: retried once the window passes
+
+
+def test_explicit_limit_mode_overrides_global_touch_confirmation():
+    import executor
+    ex = DemoExecutor.__new__(DemoExecutor)
+    monkey = SimpleNamespace(mode='supply_demand', group_key='SD DEMAND', plan={'trigger': 'touch', 'entry_mode': 'limit'})
+    assert ex.is_limit_plan(monkey) is True
+    confirmation = SimpleNamespace(mode='supply_demand', group_key='SD DEMAND', plan={'trigger': 'touch', 'entry_mode': 'confirmation_close'})
+    assert ex.is_limit_plan(confirmation) is False

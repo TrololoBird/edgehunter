@@ -1192,7 +1192,11 @@ class ExecutorConfig:
     # stopped, breakout (the Turtles' ~16% 2N stop, MFE 0.3R; BB1) -1.25R - journaled, no demo trades
     # eng-173, the owner 2026-10-27: OI BUILD LONG (63 cards -26.1R, every version negative) and SHORT (85 cards -15.5R)
     # leave the demo; cards stay in signal_book (card_r / trade_mfe_r keep accumulating), the demo row is SETUP_OFF
-    demo_off_setups: tuple = ('OI BUILD LONG', 'OI BUILD SHORT')
+    # Demo is the validation environment: every setup is executed so that its
+    # real fills, exits and failure modes are measurable.  Keep this list empty
+    # and use technical safety gates (invalid levels, duplicate orders, missing
+    # protection) to stop a broken order instead of hiding a weak strategy.
+    demo_off_setups: tuple = ()
     daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 

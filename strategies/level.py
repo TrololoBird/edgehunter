@@ -235,7 +235,8 @@ class SweepStrategy(Strategy):
         # levels -> 5m, 4h / session / daily levels -> 15m, daily / weekly levels -> 1h; below 30m most sweeps are
         # false): the plan's timeframe sets the trigger's (levels.TRIGGER_MINUTES 15m -> 5, 1h -> 15, 4h -> 60)
         zone_src = f"sweep of {sig.get('anchor_label', 'the level')} (5m FVG retrace)"
-        plan = base_plan(x, self.name, _level_anchor(sig, tf), tf, entry='pullback', trigger='fvg', zone_lo=zone[0],
+        plan = base_plan(x, self.name, _level_anchor(sig, tf), tf, entry='pullback', trigger='fvg',
+                         entry_mode='limit', zone_lo=zone[0],
                          zone_hi=zone[1], zone_src=zone_src,
                          invalid=invalid,
                          fix_invalid=True, missable=True, stop_ref=extreme, intent='draw_liquidity',

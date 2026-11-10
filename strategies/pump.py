@@ -43,8 +43,15 @@ def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     move = last[4] / base[4] - 1
     if move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
         return None
-    if CONFIG.journal.logic_version == 'eng-170b' and abs(move) / max(vol_15m, 1e-12) > 2.5:
-        return None                         # eng-170b: do not chase an exhausted ignition candle
+    # Causal exhaustion guard: this is detector logic, not an optional release
+    # label.  The old version gate left the live eng-169m path chasing spent
+    # ignition candles.
+    # The trigger itself requires ``pump_start_z`` (4x by default).  A fixed
+    # 2.5x rejection made every valid trigger impossible.  Reject only a move
+    # materially beyond the configured trigger (1.5x), preserving a causal
+    # exhaustion guard without contradicting the entry threshold.
+    if abs(move) / max(vol_15m, 1e-12) > max(2.5, 1.5 * cfg.pump_start_z):
+        return None
     # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
     if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
         return None
@@ -83,8 +90,8 @@ def dump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     move = last[4] / base[4] - 1
     if -move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
         return None
-    if CONFIG.journal.logic_version == 'eng-170b' and abs(move) / max(vol_15m, 1e-12) > 2.5:
-        return None                         # causal overextension guard
+    if abs(move) / max(vol_15m, 1e-12) > max(2.5, 1.5 * cfg.pump_start_z):
+        return None
     # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
     if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
         return None

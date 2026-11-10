@@ -83,7 +83,13 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
             else:
                 continue
             ce = (lo + hi) / 2
-            extreme = min(b[3] for b in inside[:i + 1]) if d > 0 else max(b[2] for b in inside[:i + 1])
+            # The invalidation is the Judas raid's extreme, not an unrelated
+            # high/low from the start of the London window.  Using
+            # ``inside[:i+1]`` widened PO3 stops with pre-raid noise and changed
+            # both the method and the position sizing.  The source defines the
+            # stop beyond the manipulation leg itself.
+            raid_segment = inside[raid:i + 1]
+            extreme = min(b[3] for b in raid_segment) if d > 0 else max(b[2] for b in raid_segment)
             other = a_hi if d > 0 else a_lo
             if d * (other - ce) <= 0:
                 continue
@@ -146,6 +152,7 @@ class Po3Strategy(Strategy):
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'PO3 FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
+                         entry_mode='limit',
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='PO3 FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],

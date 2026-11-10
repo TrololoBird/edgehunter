@@ -169,7 +169,8 @@ class LegContinuation(Strategy):
         stop_ref, stop_ref_src = impulse['start'], "beyond the impulse's start (the 100% level, ICT OTE)"
         tf = impulse['tf']
         return base_plan(x, self.name, _leg_anchor(impulse), tf, trigger_minutes=TRIGGER_MINUTES.get(tf, 5),
-                         leg_atr=impulse['atr'], entry='pullback', zone_lo=zone[0], zone_hi=zone[1], zone_src=zone_src,
+                         leg_atr=impulse['atr'], entry='pullback', entry_mode='confirmation_close',
+                         zone_lo=zone[0], zone_hi=zone[1], zone_src=zone_src,
                          # ICT: the idea is wrong beyond the impulse's start (the 100% level), not at 0.786 inside
                          # the OTE band
                          trigger='touch', trail_after_tp1=True,

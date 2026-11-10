@@ -120,6 +120,7 @@ class SupplyDemandStrategy(_System):
             targets.append(targets[-1])
             sources.append(sources[-1])
         plan = base_plan(x, self.name, _anchor(sig, '4h'), '4h', entry='pullback', trigger='touch', single_touch=True,
+                         entry_mode='confirmation_close',
                          zone_lo=lo, zone_hi=hi,
                          zone_src=f"{sig.get('anchor_label', 'zone')}: odds {score}/10 (strength "
                                   # R:R 2: granted here, ENFORCED by min_rr = 3 to TP1 (the nearest opposing zone,
@@ -245,7 +246,8 @@ class TrendlineStrategy(_System):
             stop = min(edge, sig['anchor_extreme']) - pad if d > 0 else max(edge, sig['anchor_extreme']) + pad
             exit = {'stop': ['price', stop], 'stop_src': 'beyond the trendline band + measured pierce',
                     'tp': ['map', 1.0], 'atr': x.atr, 'no_atr_steps': True}
-            return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch')
+            return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch',
+                                 entry_mode='confirmation_close')
         if sig.get('target_price') is None or not x.minutes:
             return None
         # eng-79: the stop beyond the last confirmed 1h pivot (the line's own timeframe), 0.1 x ATR(1h) beyond it

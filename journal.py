@@ -11,6 +11,9 @@ the coins that happened to produce signals.
 import asyncio
 import bisect
 import json
+import hashlib
+import subprocess
+import os
 import logging
 import sqlite3
 import threading
@@ -264,6 +267,9 @@ CREATE INDEX IF NOT EXISTS idx_history_skips ON history_skips(ts_ms);
 
 # Columns added after the first release; created on old databases by _migrate()
 EXTRA_COLUMNS = {
+    # Immutable provenance: logic_version alone is insufficient after repeated
+    # AI-generated detector/filter rewrites.
+    'source_commit': 'TEXT', 'implementation_hash': 'TEXT', 'config_logic_version': 'TEXT',
     'whale_net_5m': 'REAL',
     # eng-87: a card that ended WITHOUT an entry (EXPIRED / MISSED): the entry / stop its plan had at the zone's line -
     # MISSED cards had no levels at all, so what was missed could not be measured in R
@@ -375,6 +381,28 @@ EXTRA_COLUMNS = {
     # Fear & Greed, spot-ETF net flow USD m (1 day / 3 days, visible from D+1 08:00 UTC): journal only, never a filter
     'xau_chg_1h': 'REAL', 'xau_chg_24h': 'REAL', 'oil_chg_1h': 'REAL', 'oil_chg_24h': 'REAL', 'spy_chg_1h': 'REAL', 'spy_chg_24h': 'REAL', 'qqq_chg_1h': 'REAL', 'qqq_chg_24h': 'REAL', 'us_session': 'REAL', 'vix_prev': 'REAL', 'fng': 'REAL', 'etf_flow_1d': 'REAL', 'etf_flow_3d': 'REAL',
 }
+
+
+def _provenance() -> tuple:
+    try:
+        root = os.path.dirname(os.path.abspath(__file__))
+        commit = subprocess.check_output(['git', '-C', root, 'rev-parse', 'HEAD'], text=True,
+                                         stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        commit = 'unknown'
+    h = hashlib.sha256(); root = os.path.dirname(os.path.abspath(__file__))
+    for rel in ('config.py', 'executor.py', 'signal_book.py', 'strategies'):
+        path = os.path.join(root, rel)
+        paths = [path] if os.path.isfile(path) else []
+        if os.path.isdir(path):
+            for base, _, names in os.walk(path):
+                paths.extend(os.path.join(base, n) for n in sorted(names) if n.endswith('.py'))
+        for p in sorted(paths):
+            try:
+                h.update(os.path.relpath(p, root).encode())
+                with open(p, 'rb') as f: h.update(f.read())
+            except OSError: pass
+    return commit, h.hexdigest()[:16]
 
 FEATURE_KEYS = {
     # journal column: signal key
@@ -719,6 +747,7 @@ class SignalJournal:
 
     @staticmethod
     def _base_row(ts_ms: int, symbol: str, kind: str, group_key: str, direction: int, price: float, sig: Dict) -> Dict:
+        commit, impl_hash = _provenance()
         row = {
             'ts_ms': ts_ms, 'symbol': symbol, 'kind': kind, 'group_key': group_key, 'direction': direction,
             'price': price, 'long_score': sig.get('long_score', 0), 'short_score': sig.get('short_score', 0),
@@ -728,6 +757,8 @@ class SignalJournal:
             'delta_ratio': sig.get('delta_ratio', 0.0), 'funding_8h': sig.get('funding_rate', 0.0),
             'funding_hours': sig.get('funding_interval_h'),           # review V09: the contract's funding interval
             'whale_net_5m': sig.get('whale_net_5m', 0.0), 'logic_version': CONFIG.journal.logic_version,
+            'source_commit': commit, 'implementation_hash': impl_hash,
+            'config_logic_version': CONFIG.journal.logic_version,
             'data_quality_ok': int(bool(sig.get('data_quality_ok', True))),
         }
         row.update(_features(sig))
@@ -1381,6 +1412,17 @@ class SignalJournal:
 
     def _learn(self, signal_id: int):
         """ML learning was removed from live; retained for old callers."""
+        return
+
+    def _learn_trade(self, symbol: str, group_key: str, setup_ts_ms: int):
+        """Compatibility hook for card finalization.
+
+        The live learner was removed, but record_card still calls this hook
+        after writing the authoritative card result.  Keeping the hook as a
+        no-op preserves finalization and prevents a completed demo card from
+        aborting the scanner loop (the old mixed-generation runtime raised
+        AttributeError here).
+        """
         return
 
     def close(self):

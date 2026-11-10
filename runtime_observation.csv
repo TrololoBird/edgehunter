@@ -1,0 +1,1837 @@
+ts,pid,restarts,memory_current,events,pressure,sqlite_fd_count
+1793887332,77330,4,1729998848,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=542956
+full avg10=0.00 avg60=0.00 avg300=0.00 total=445600",5
+1793887410,77330,4,1729662976,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=542956
+full avg10=0.00 avg60=0.00 avg300=0.00 total=445600",6
+1793887470,77330,4,1729511424,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=543173
+full avg10=0.00 avg60=0.00 avg300=0.00 total=445782",6
+1793887530,77330,4,1729490944,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=543416
+full avg10=0.00 avg60=0.00 avg300=0.00 total=445820",6
+1793887590,77330,4,1729769472,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=543416
+full avg10=0.00 avg60=0.00 avg300=0.00 total=445820",6
+1793887650,77330,4,1729867776,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=543539
+full avg10=0.00 avg60=0.00 avg300=0.00 total=445943",6
+1793887710,77330,4,1729822720,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=543996
+full avg10=0.00 avg60=0.00 avg300=0.00 total=446200",6
+1793887770,77330,4,1729875968,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=543996
+full avg10=0.00 avg60=0.00 avg300=0.00 total=446200",6
+1793887830,77330,4,1729961984,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=544110
+full avg10=0.00 avg60=0.00 avg300=0.00 total=446309",6
+1793887890,77330,4,1730064384,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=544121
+full avg10=0.00 avg60=0.00 avg300=0.00 total=446320",6
+1793887950,77330,4,1730195456,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=545695
+full avg10=0.00 avg60=0.00 avg300=0.00 total=447601",6
+1793888010,77330,4,1730330624,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=546239
+full avg10=0.00 avg60=0.00 avg300=0.00 total=448082",6
+1793888070,77330,4,1730576384,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=555144
+full avg10=0.00 avg60=0.00 avg300=0.00 total=456491",6
+1793888130,77330,4,1731940352,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=555367
+full avg10=0.00 avg60=0.00 avg300=0.00 total=456714",6
+1793888190,77330,4,1730981888,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=555519
+full avg10=0.00 avg60=0.00 avg300=0.00 total=456865",6
+1793888250,77330,4,1731518464,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556045
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457295",6
+1793888311,77330,4,1731395584,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556093
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457343",6
+1793888371,77330,4,1731358720,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556117
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457359",6
+1793888431,77330,4,1731371008,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556235
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457475",6
+1793888491,77330,4,1731293184,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556235
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457475",6
+1793888551,77330,4,1731547136,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556464
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457703",6
+1793888611,77330,4,1740091392,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556464
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457703",6
+1793888671,77330,4,1740165120,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556464
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457703",6
+1793888731,77330,4,1740464128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556847
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457918",6
+1793888791,77330,4,1788960768,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=556847
+full avg10=0.00 avg60=0.00 avg300=0.00 total=457918",6
+1793888851,77330,4,1742716928,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=557182
+full avg10=0.00 avg60=0.00 avg300=0.00 total=458253",6
+1793888911,77330,4,1742606336,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=557182
+full avg10=0.00 avg60=0.00 avg300=0.00 total=458253",6
+1793888971,77330,4,1742581760,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=557351
+full avg10=0.00 avg60=0.00 avg300=0.00 total=458422",6
+1793889031,77330,4,1747439616,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=557351
+full avg10=0.00 avg60=0.00 avg300=0.00 total=458422",6
+1793889091,77330,4,1748860928,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=557996
+full avg10=0.00 avg60=0.00 avg300=0.00 total=458530",6
+1793889151,77330,4,1750978560,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=558241
+full avg10=0.00 avg60=0.00 avg300=0.00 total=458746",6
+1793889211,77330,4,1752858624,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=558241
+full avg10=0.00 avg60=0.00 avg300=0.00 total=458746",6
+1793889272,77330,4,1762918400,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=558362
+full avg10=0.00 avg60=0.00 avg300=0.00 total=458867",6
+1793889332,77330,4,1762992128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=558599
+full avg10=0.00 avg60=0.00 avg300=0.00 total=459104",6
+1793889392,77330,4,1764175872,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=559265
+full avg10=0.00 avg60=0.00 avg300=0.00 total=459173",6
+1793889452,77330,4,1772982272,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=560643
+full avg10=0.00 avg60=0.00 avg300=0.00 total=459861",6
+1793889512,77330,4,1773633536,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=560643
+full avg10=0.00 avg60=0.00 avg300=0.00 total=459861",6
+1793889572,77330,4,1778257920,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=561060
+full avg10=0.00 avg60=0.00 avg300=0.00 total=460230",6
+1793889632,77330,4,1783742464,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=561910
+full avg10=0.00 avg60=0.00 avg300=0.00 total=461080",6
+1793889692,77330,4,1791770624,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=562336
+full avg10=0.00 avg60=0.00 avg300=0.00 total=461446",6
+1793889752,77330,4,1796100096,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793889812,77330,4,1801654272,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793889872,77330,4,1818238976,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793889932,77330,4,1823772672,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793889992,77330,4,1824321536,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793890052,77330,4,1823965184,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793890112,77330,4,1823903744,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793890172,77330,4,1824178176,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793890233,77330,4,1824460800,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563085
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462195",6
+1793890293,77330,4,1833492480,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563240
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462205",6
+1793890353,77330,4,1828237312,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563240
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462205",6
+1793890413,77330,4,1828159488,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563240
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462205",6
+1793890473,77330,4,1828298752,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563240
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462205",6
+1793890533,77330,4,1950167040,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563240
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462205",6
+1793890593,77330,4,2041434112,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563385
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462269",6
+1793890653,77330,4,2064154624,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563464
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462348",6
+1793890713,77330,4,2064089088,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563464
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462348",6
+1793890773,77330,4,2064236544,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563464
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462348",6
+1793890833,77330,4,2069843968,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563547
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462430",6
+1793890893,77330,4,2069876736,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563547
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462430",6
+1793890953,77330,4,2069905408,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563872
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462441",6
+1793891013,77330,4,2069823488,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563872
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462441",6
+1793891073,77330,4,2070122496,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563872
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462441",6
+1793891134,77330,4,2070069248,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563872
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462441",6
+1793891194,77330,4,2070212608,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563996
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462565",6
+1793891254,77330,4,2026672128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563996
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462565",6
+1793891314,77330,4,2067746816,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563996
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462565",6
+1793891374,77330,4,2067546112,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563996
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462565",6
+1793891434,77330,4,2068955136,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=563996
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462565",6
+1793891494,77330,4,2073104384,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564164
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462574",6
+1793891554,77330,4,2080428032,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793891614,77330,4,2081431552,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793891674,77330,4,2081673216,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793891734,77330,4,2075901952,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793891794,77330,4,2077708288,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793891854,77330,4,2076856320,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793891914,77330,4,2076667904,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793891975,77330,4,2077048832,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793892035,77330,4,2030063616,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793892095,77330,4,2069544960,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564443
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462853",6
+1793892155,77330,4,2070241280,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564537
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462945",6
+1793892215,77330,4,2070781952,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564537
+full avg10=0.00 avg60=0.00 avg300=0.00 total=462945",6
+1793892275,77330,4,2070478848,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564639
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463048",6
+1793892335,77330,4,2070519808,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564639
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463048",6
+1793892395,77330,4,2070327296,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564639
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463048",6
+1793892455,77330,4,2070691840,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564639
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463048",6
+1793892515,77330,4,2070720512,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564639
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463048",6
+1793892575,77330,4,2070704128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564639
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463048",6
+1793892635,77330,4,2073268224,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793892695,77330,4,2120404992,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793892755,77330,4,2120794112,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793892815,77330,4,2120790016,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793892876,77330,4,2120716288,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793892936,77330,4,2120359936,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793892996,77330,4,2120499200,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793893056,77330,4,2074206208,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793893116,77330,4,2120531968,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793893176,77330,4,2120740864,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",7
+1793893236,77330,4,2073546752,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",6
+1793893296,77330,4,2120544256,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=564767
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463059",7
+1793893356,77330,4,2073878528,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=565068
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463314",6
+1793893416,77330,4,2121068544,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=565068
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463314",7
+1793893476,77330,4,2073866240,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=565068
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463314",6
+1793893536,77330,4,2124079104,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=565068
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463314",6
+1793893596,77330,4,2076196864,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=565068
+full avg10=0.00 avg60=0.00 avg300=0.00 total=463314",6
+1793893656,77330,4,2075840512,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566446
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464417",6
+1793893716,77330,4,2075947008,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566446
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464417",6
+1793893776,77330,4,2123419648,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566446
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464417",7
+1793893837,77330,4,2076418048,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566446
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464417",6
+1793893897,77330,4,2076905472,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566446
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464417",6
+1793893957,77330,4,2093420544,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566446
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464417",6
+1793894017,77330,4,2077663232,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894077,77330,4,2077331456,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894137,77330,4,2123055104,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894197,77330,4,2269323264,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894257,77330,4,2269863936,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",7
+1793894317,77330,4,2248617984,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894377,77330,4,2248437760,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894437,77330,4,2247413760,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894497,77330,4,2201821184,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894557,77330,4,2247606272,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894617,77330,4,2202558464,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894677,77330,4,2201858048,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894737,77330,4,2201837568,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894798,77330,4,2202312704,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894858,77330,4,2201694208,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894918,77330,4,2201907200,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793894978,77330,4,2202042368,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793895038,77330,4,2203103232,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793895098,77330,4,2202836992,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793895158,77330,4,2203344896,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793895218,77330,4,2203779072,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566449
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464421",6
+1793895278,77330,4,2203967488,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",7
+1793895338,77330,4,2250227712,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",6
+1793895398,77330,4,2154053632,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",6
+1793895458,77330,4,2201440256,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",6
+1793895518,77330,4,2203541504,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",6
+1793895578,77330,4,2204225536,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",6
+1793895638,77330,4,2158841856,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",6
+1793895699,77330,4,2206261248,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",6
+1793895759,77330,4,2206998528,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566718
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464437",6
+1793895819,77330,4,2207571968,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793895879,77330,4,2207387648,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793895939,77330,4,2207440896,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793895999,77330,4,2208305152,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793896059,77330,4,2208206848,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793896119,77330,4,2208505856,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793896179,77330,4,2209918976,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793896239,77330,4,2296471552,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793896299,77330,4,2245615616,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793896359,77330,4,2292449280,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793896419,77330,4,2339344384,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",8
+1793896479,77330,4,2245808128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793896539,77330,4,2246189056,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793896600,77330,4,2246246400,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793896660,77330,4,2292654080,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",8
+1793896720,77330,4,2246070272,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793896780,77330,4,2199785472,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",6
+1793896840,77330,4,2246422528,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793896900,77330,4,2293186560,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",8
+1793896960,77330,4,2340229120,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",9
+1793897020,77330,4,2246307840,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793897080,77330,4,2292830208,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",8
+1793897140,77330,4,2346663936,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793897200,77330,4,2347184128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",8
+1793897260,77330,4,2347274240,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",9
+1793897320,77330,4,2248638464,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",7
+1793897380,77330,4,2295029760,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",8
+1793897440,77330,4,2341965824,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",9
+1793897500,77330,4,2342211584,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",10
+1793897560,77330,4,2389250048,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",11
+1793897621,77330,4,2439413760,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566721
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464440",13
+1793897681,77330,4,2197377024,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=566748
+full avg10=0.00 avg60=0.00 avg300=0.00 total=464467",9
+1793897741,77330,4,2197708800,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=568050
+full avg10=0.00 avg60=0.00 avg300=0.00 total=465752",10
+1793897801,77330,4,2243530752,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=568050
+full avg10=0.00 avg60=0.00 avg300=0.00 total=465752",11
+1793897861,77330,4,2310832128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578495
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474452",9
+1793897921,77330,4,2354049024,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793897981,77330,4,2401083392,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793898041,77330,4,2219053056,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",9
+1793898101,77330,4,2224791552,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",9
+1793898161,77330,4,2264391680,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793898221,77330,4,2264420352,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793898281,77330,4,2218684416,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793898341,77330,4,2265030656,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793898401,77330,4,2218790912,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",9
+1793898461,77330,4,2265116672,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793898522,77330,4,2312355840,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793898582,77330,4,2218897408,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793898642,77330,4,2265264128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793898702,77330,4,2219126784,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",9
+1793898762,77330,4,2218864640,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793898822,77330,4,2218967040,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793898882,77330,4,2265739264,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793898942,77330,4,2320334848,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",13
+1793899002,77330,4,2268872704,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793899062,77330,4,2315399168,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793899122,77330,4,2362630144,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793899182,77330,4,2409246720,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",13
+1793899242,77330,4,2222559232,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793899302,77330,4,2268905472,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793899362,77330,4,2315583488,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793899422,77330,4,2315661312,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",13
+1793899483,77330,4,2362421248,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",14
+1793899543,77330,4,2273480704,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793899603,77330,4,2315870208,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793899663,77330,4,2316427264,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793899723,77330,4,2362544128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",13
+1793899783,77330,4,2223198208,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",9
+1793899843,77330,4,2315841536,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793899903,77330,4,2362548224,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793899963,77330,4,2409660416,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793900023,77330,4,2268065792,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",9
+1793900083,77330,4,2314919936,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793900143,77330,4,2314846208,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793900203,77330,4,2361573376,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793900263,77330,4,2408550400,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",13
+1793900323,77330,4,2455568384,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",14
+1793900384,77330,4,2502975488,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",15
+1793900444,77330,4,2221821952,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793900504,77330,4,2222075904,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793900564,77330,4,2269327360,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793900624,77330,4,2222350336,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793900684,77330,4,2268372992,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793900744,77330,4,2313650176,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793900804,77330,4,2360483840,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793900864,77330,4,2266738688,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793900924,77330,4,2313428992,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793900984,77330,4,2313592832,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793901044,77330,4,2360553472,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",13
+1793901104,77330,4,2361270272,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",0
+1793901164,77330,4,2222804992,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",0
+1793901224,77330,4,2267328512,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793901285,77330,4,2373255168,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793901345,77330,4,2224914432,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",11
+1793901405,77330,4,2270781440,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",12
+1793901465,77330,4,2225709056,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578574
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474531",10
+1793901525,77330,4,2225217536,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578771
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474728",10
+1793901585,77330,4,2271117312,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578771
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474728",11
+1793901645,77330,4,2274062336,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578771
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474728",10
+1793901705,77330,4,2228105216,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578771
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474728",10
+1793901765,77330,4,2228072448,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578771
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474728",11
+1793901825,77330,4,2227965952,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",10
+1793901885,77330,4,2275135488,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",11
+1793901945,77330,4,2322006016,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",12
+1793902005,77330,4,2228101120,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",11
+1793902065,77330,4,2274889728,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",12
+1793902125,77330,4,2322403328,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",13
+1793902186,77330,4,2274910208,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",11
+1793902246,77330,4,2228346880,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",10
+1793902306,77330,4,2228400128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",11
+1793902366,77330,4,2228273152,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",12
+1793902426,77330,4,2274963456,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",13
+1793902486,77330,4,2322702336,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",14
+1793902546,77330,4,2335756288,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",11
+1793902606,77330,4,2226319360,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",11
+1793902666,77330,4,2226253824,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",12
+1793902726,77330,4,2300600320,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",13
+1793902786,77330,4,2347290624,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",14
+1793902846,77330,4,2394570752,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=578775
+full avg10=0.00 avg60=0.00 avg300=0.00 total=474732",15
+1793902906,77330,4,2251255808,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=579317
+full avg10=0.00 avg60=0.00 avg300=0.00 total=475274",10
+1793902966,77330,4,2297679872,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=579317
+full avg10=0.00 avg60=0.00 avg300=0.00 total=475274",11
+1793903026,77330,4,2345091072,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=579317
+full avg10=0.00 avg60=0.00 avg300=0.00 total=475274",12
+1793903086,77330,4,2344943616,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=579317
+full avg10=0.00 avg60=0.00 avg300=0.00 total=475274",13
+1793903146,77330,4,2392244224,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=579317
+full avg10=0.00 avg60=0.00 avg300=0.00 total=475274",14
+1793903206,77330,4,2436227072,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=582617
+full avg10=0.00 avg60=0.00 avg300=0.00 total=478272",15
+1793903267,77330,4,2295029760,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=582617
+full avg10=0.00 avg60=0.00 avg300=0.00 total=478272",11
+1793903327,77330,4,2341957632,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=582617
+full avg10=0.00 avg60=0.00 avg300=0.00 total=478272",12
+1793903387,77330,4,2341228544,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=588614
+full avg10=0.00 avg60=0.00 avg300=0.00 total=484269",13
+1793903447,77330,4,2339057664,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=589397
+full avg10=0.00 avg60=0.00 avg300=0.00 total=485051",11
+1793903507,77330,4,2245574656,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=589793
+full avg10=0.00 avg60=0.00 avg300=0.00 total=485448",10
+1793903567,77330,4,2292363264,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=589846
+full avg10=0.00 avg60=0.00 avg300=0.00 total=485501",11
+1793903627,77330,4,2268930048,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.36 avg60=0.09 avg300=0.01 total=656456
+full avg10=0.24 avg60=0.06 avg300=0.01 total=536189",11
+1793903687,77330,4,2208567296,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.02 avg300=0.00 total=674305
+full avg10=0.00 avg60=0.01 avg300=0.00 total=549737",10
+1793903747,77330,4,2196811776,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=700035
+full avg10=0.00 avg60=0.00 avg300=0.00 total=571472",11
+1793903807,77330,4,2166829056,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.01 avg300=0.00 total=700697
+full avg10=0.00 avg60=0.00 avg300=0.00 total=571925",12
+1793903867,77330,4,2222743552,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.02 avg300=0.00 total=754474
+full avg10=0.00 avg60=0.02 avg300=0.00 total=619815",11
+1793903927,77330,4,2180521984,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.02 avg60=0.02 avg300=0.00 total=777889
+full avg10=0.02 avg60=0.02 avg300=0.00 total=643217",11
+1793903987,77330,4,2227261440,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=777889
+full avg10=0.00 avg60=0.00 avg300=0.00 total=643217",12
+1793904047,77330,4,2227437568,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=777968
+full avg10=0.00 avg60=0.00 avg300=0.00 total=643296",11
+1793904107,77330,4,2180526080,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=778097
+full avg10=0.00 avg60=0.00 avg300=0.00 total=643305",10
+1793904167,77330,4,2227470336,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=778097
+full avg10=0.00 avg60=0.00 avg300=0.00 total=643305",11
+1793904228,77330,4,2227691520,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=782403
+full avg10=0.00 avg60=0.00 avg300=0.00 total=646624",12
+1793904288,77330,4,2227724288,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=782707
+full avg10=0.00 avg60=0.00 avg300=0.00 total=646904",13
+1793904348,77330,4,2229465088,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=785809
+full avg10=0.00 avg60=0.00 avg300=0.00 total=649795",11
+1793904408,77330,4,2276335616,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=785809
+full avg10=0.00 avg60=0.00 avg300=0.00 total=649795",12
+1793904468,77330,4,2182434816,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=785809
+full avg10=0.00 avg60=0.00 avg300=0.00 total=649795",10
+1793904528,77330,4,2182651904,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=787126
+full avg10=0.00 avg60=0.00 avg300=0.00 total=650581",11
+1793904588,77330,4,2229264384,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=787153
+full avg10=0.00 avg60=0.00 avg300=0.00 total=650607",12
+1793904648,77330,4,2182660096,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=787469
+full avg10=0.00 avg60=0.00 avg300=0.00 total=650618",10
+1793904708,77330,4,2182893568,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=787469
+full avg10=0.00 avg60=0.00 avg300=0.00 total=650618",11
+1793904768,77330,4,2229702656,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=787469
+full avg10=0.00 avg60=0.00 avg300=0.00 total=650618",12
+1793904828,77330,4,2276806656,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=790306
+full avg10=0.00 avg60=0.00 avg300=0.00 total=652321",13
+1793904888,77330,4,2230046720,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=790306
+full avg10=0.00 avg60=0.00 avg300=0.00 total=652321",11
+1793904948,77330,4,2232393728,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=790391
+full avg10=0.00 avg60=0.00 avg300=0.00 total=652406",10
+1793905008,77330,4,2232311808,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=790391
+full avg10=0.00 avg60=0.00 avg300=0.00 total=652406",11
+1793905068,77330,4,2186031104,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=790391
+full avg10=0.00 avg60=0.00 avg300=0.00 total=652406",10
+1793905129,77330,4,2235555840,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.25 avg60=0.10 avg300=0.02 total=989326
+full avg10=0.25 avg60=0.10 avg300=0.02 total=835439",10
+1793905189,77330,4,2348040192,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.09 avg300=0.04 total=1029106
+full avg10=0.00 avg60=0.07 avg300=0.03 total=869923",11
+1793905249,77330,4,2397102080,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.03 avg300=0.03 total=1029243
+full avg10=0.00 avg60=0.02 avg300=0.01 total=870060",11
+1793905309,77330,4,2296115200,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.01 total=1029243
+full avg10=0.00 avg60=0.00 avg300=0.00 total=870060",11
+1793905369,77330,4,2296389632,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=1029243
+full avg10=0.00 avg60=0.00 avg300=0.00 total=870060",11
+1793905429,77330,4,2343063552,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=1029972
+full avg10=0.00 avg60=0.00 avg300=0.00 total=870789",12
+1793905489,77330,4,2342359040,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=1029972
+full avg10=0.00 avg60=0.00 avg300=0.00 total=870789",10
+1793905549,77330,4,2342334464,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=1029972
+full avg10=0.00 avg60=0.00 avg300=0.00 total=870789",11
+1793905609,77330,4,2343088128,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=1029972
+full avg10=0.00 avg60=0.00 avg300=0.00 total=870789",12
+1793905669,77330,4,2342461440,"low 0
+high 0
+max 0
+oom 0
+oom_kill 0","some avg10=0.00 avg60=0.00 avg300=0.00 total=1030240
+full avg10=0.00 avg60=0.00 avg300=0.00 total=871056",11

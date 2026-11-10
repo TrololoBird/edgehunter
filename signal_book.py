@@ -1305,7 +1305,18 @@ class SignalBook:
                 s.zone_since_ms = setup['time']
             return shadow
         elif kind == 'touch':
-            touch = touch_confirm if CONFIG.executor.touch_confirm_close else touch_trigger
+            # Entry policy belongs to the strategy plan.  A global switch made
+            # supply/demand, sweep, PO3 and trendline-touch silently share one
+            # execution rule even though their source methods differ.
+            entry_mode = s.plan.get('entry_mode')
+            use_confirm = (entry_mode == 'confirmation_close' or
+                           (entry_mode is None and CONFIG.executor.touch_confirm_close))
+            if entry_mode == 'limit':
+                # The executor owns the resting-limit lifecycle.  Do not also
+                # create a market entry when the trigger candle merely trades
+                # through the planned CE/proximal price.
+                return shadow
+            touch = touch_confirm if use_confirm else touch_trigger
             trigger = touch(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
         else:
             trigger = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms)
@@ -1536,7 +1547,7 @@ class SignalBook:
         # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py). eng-168 (audit):
         # evaluated even after an earlier veto so its shadow tag is journaled on every row (no censoring by order)
         key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
-        bias_reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key))
+        bias_reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key), s.group_key)
         if reason is None:
             reason = shadow_veto(s.sig, bias_reason)
         else:

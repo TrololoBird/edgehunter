@@ -91,11 +91,16 @@ def bias_of(st: Optional[Dict], daily_method: bool = False) -> Optional[str]:
     return 'conflict'
 
 
-def gate(strategy: str, direction: int, coin_bias: Optional[str]) -> Optional[str]:
+def gate(strategy: str, direction: int, coin_bias: Optional[str], setup: Optional[str] = None) -> Optional[str]:
     """The veto reason of an entry against the top-down bias, None when allowed. audit C08: an unknown bias is
     'no_bias' (journaled - in shadow under 'no_*' while the bias's role in each source is unsettled), not a silent
     pass recorded as if the bias agreed."""
-    if strategy in EXEMPT:
+    # Directional playbooks inside one strategy do not necessarily share the
+    # same bias rule.  In particular PUMP/DUMP TOP and DUMP BOUNCE are reversal
+    # plays; applying the continuation gate to the whole ``pump`` class was a
+    # semantic mix-up that silently removed valid reversal cards.
+    reversal = setup in {'PUMP TOP', 'DUMP BOUNCE SHORT', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL', 'UTAD', 'SPRING'}
+    if strategy in EXEMPT or reversal:
         return None
     if coin_bias is None:
         return 'no_bias'

@@ -24,6 +24,8 @@ import sqlite3
 import contextlib
 import ccxt
 import time
+import hashlib
+import subprocess
 from typing import Dict, List, Optional
 
 from config import CONFIG
@@ -47,6 +49,39 @@ LIMIT_OFF_AT = 100_000
 UNIT_SETUPS = frozenset({'BREAKOUT UP', 'BREAKOUT DOWN'})
 _OPERATIONAL_KEYS = frozenset({'id', 'unit_qty', 'tp0', 'close_pending', 'add_unknown'})
 _INFLIGHT_PHASES = frozenset({'RESERVED', 'ORDER_SENT', 'FILLED', 'STOP_PENDING', 'PROTECTED', 'REGISTERED', 'UNKNOWN'})
+
+
+def _provenance() -> tuple:
+    """Return immutable provenance for new demo rows.
+
+    ``logic_version`` alone is not sufficient in this AI-generated project:
+    several detector/filter/executor revisions have shared one version label.
+    New rows therefore carry the deployed commit and a hash of the executable
+    strategy/config surface.  Fail closed to explicit ``unknown`` values when
+    running outside a git checkout.
+    """
+    try:
+        root = os.path.dirname(os.path.abspath(__file__))
+        commit = subprocess.check_output(['git', '-C', root, 'rev-parse', 'HEAD'], text=True,
+                                         stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        commit = 'unknown'
+    h = hashlib.sha256()
+    root = os.path.dirname(os.path.abspath(__file__))
+    for rel in ('config.py', 'executor.py', 'signal_book.py', 'strategies'):
+        path = os.path.join(root, rel)
+        paths = [path] if os.path.isfile(path) else []
+        if os.path.isdir(path):
+            for base, _, names in os.walk(path):
+                paths.extend(os.path.join(base, n) for n in sorted(names) if n.endswith('.py'))
+        for p in sorted(paths):
+            try:
+                h.update(os.path.relpath(p, root).encode())
+                with open(p, 'rb') as f:
+                    h.update(f.read())
+            except OSError:
+                continue
+    return commit, h.hexdigest()[:16]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS demo_trades (
@@ -162,6 +197,10 @@ class DemoExecutor:
                               ('slip_bps', 'REAL'), ('latency_ms', 'INTEGER'), ('leverage', 'INTEGER'),
                               ('logic_version', 'TEXT'), ('partial_done', 'INTEGER'), ('n_units', 'INTEGER'), ('r_unit', 'REAL'),
                               ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER')):
+                if col not in have:
+                    c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
+            for col, kind in (('source_commit', 'TEXT'), ('implementation_hash', 'TEXT'),
+                              ('config_logic_version', 'TEXT')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
             placeholders = ', '.join('?' for _ in UNIT_SETUPS)
@@ -626,7 +665,7 @@ class DemoExecutor:
         return None
 
     def entry_gate(self, s) -> Optional[str]:
-        """Owner 2026-10-18: one demo entry per direction per cluster_entry_sec; demo_off_setups are not traded."""
+        """Apply only execution-safety gates; strategy profitability never blocks demo entries."""
         cfg = CONFIG.executor
         d = s.direction
         if s.group_key in cfg.demo_off_setups:
@@ -634,6 +673,40 @@ class DemoExecutor:
         hit = self.cluster_hit(d)
         if hit is not None:
             return f"cluster: {hit} entered {'long' if d > 0 else 'short'} within {cfg.cluster_entry_sec // 60} min"
+        return None
+
+    @staticmethod
+    def validate_levels(levels: Dict, direction: int, *, no_tp: bool = False) -> Optional[str]:
+        """Reject malformed protection/target levels before an exchange order is sent.
+
+        This is deliberately a technical invariant check, not a profitability
+        filter.  A strategy with poor expectancy must still run on demo; an
+        order with a stop on the wrong side or an inverted target must not.
+        """
+        try:
+            entry, stop = float(levels['entry']), float(levels['sl'])
+        except (KeyError, TypeError, ValueError):
+            return 'DATA_ERROR: missing or non-numeric entry/sl'
+        if not all(map(lambda x: x == x and abs(x) != float('inf'), (entry, stop))):
+            return 'DATA_ERROR: non-finite entry/sl'
+        if direction not in (-1, 1):
+            return 'DATA_ERROR: invalid direction'
+        if direction * (entry - stop) <= 0:
+            return 'DATA_ERROR: stop is not beyond entry'
+        if no_tp:
+            return None
+        prev = entry
+        for name in ('tp1', 'tp2', 'tp3'):
+            value = levels.get(name)
+            if value is None:
+                continue
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return f'DATA_ERROR: non-numeric {name}'
+            if value != value or abs(value) == float('inf') or direction * (value - prev) <= 0:
+                return f'DATA_ERROR: {name} is not in trade direction/order'
+            prev = value
         return None
 
     def cluster_hit(self, d: int) -> Optional[str]:
@@ -693,6 +766,14 @@ class DemoExecutor:
         if n_turtle:
             # review V05: the Turtles' stop is 2N from the position's OWN entry - BingX's price, not Binance's
             lv['sl'] = fill_est - d * 2 * n_turtle * ratio
+        invalid = self.validate_levels(lv, d, no_tp=bool((getattr(s, 'plan', None) or {}).get('no_tp')))
+        if invalid:
+            logger.error(f"Demo: {s.symbol} {s.group_key} rejected: {invalid}")
+            now = int(time.time() * 1000)
+            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key,
+                          'strategy': s.mode, 'direction': d, 'opened_ms': now,
+                          'closed_ms': now, 'close_reason': 'DATA_ERROR', 'error': invalid})
+            return
         reject = None
         if basis_reject(basis):
             reject = basis_reject(basis)
@@ -911,8 +992,11 @@ class DemoExecutor:
         limits (sweep CE, continuation OTE) rest only inside the London / New York kill zones - outside them the card
         would veto the fill ('killzone'), so the limit is cancelled there (the setup lives within its session).
         """
-        if CONFIG.executor.touch_confirm_close:
-            return False                 # eng-105: touch plans enter at a confirming close (market), no resting limit
+        mode = (getattr(s, 'plan', None) or {}).get('entry_mode')
+        if mode == 'confirmation_close':
+            return False
+        if mode != 'limit' and CONFIG.executor.touch_confirm_close:
+            return False                 # legacy fallback for plans without an explicit entry policy
         if not (bool(s.plan) and s.plan.get('trigger') == 'touch'):
             return False
         from signal_book import ict_gated
@@ -2254,6 +2338,10 @@ class DemoExecutor:
 
     def _insert(self, row: Dict) -> int:
         row.setdefault('logic_version', CONFIG.journal.logic_version)   # eng-144: demo statistics per logic version
+        commit, impl_hash = _provenance()
+        row.setdefault('source_commit', commit)
+        row.setdefault('implementation_hash', impl_hash)
+        row.setdefault('config_logic_version', CONFIG.journal.logic_version)
         cols = [k for k in row if k != 'id']
         unexpected = set(cols) - self._schema_cols
         if unexpected:
