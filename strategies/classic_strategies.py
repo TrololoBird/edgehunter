@@ -119,6 +119,26 @@ class ConnorsStrategy(_System):
     ttl_key = 'connors_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)
 
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Connors contract: daily ATR is a sizing unit, SMA5 close is the exit, no stop order."""
+        exit = plan.get('exit') or {}
+        stop = exit.get('stop') or []
+        if len(stop) < 2 or not entry:
+            return None
+        unit_stop = float(stop[1])
+        risk = direction * (entry - unit_stop)
+        if risk <= 0 or unit_stop <= 0:
+            return None
+        plan['contract_source'] = 'connors_rsi2'
+        src = exit.get('stop_src') or 'daily ATR sizing unit (no stop order)'
+        tp_src = exit.get('tp_src') or 'SMA5 close'
+        return {'entry': float(entry), 'sl': unit_stop, 'tp1': None, 'tp2': None, 'tp3': None,
+                'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None, 'sl_src': src,
+                'tp1_src': f'none: {tp_src}', 'tp2_src': f'none: {tp_src}', 'tp3_src': f'none: {tp_src}',
+                'zone_src': plan.get('zone_src') or 'daily RSI(2)', 'range_pos': None,
+                'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
+
     def plan(self, x: PlanInput) -> Optional[Dict]:
         sig = x.sig
         if sig.get('connors_sma5') is None:
