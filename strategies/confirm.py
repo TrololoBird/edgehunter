@@ -89,6 +89,11 @@ def liq_flow_missing(strategy: str, confirms: Dict, setup: str = '') -> bool:
 
 def missing(strategy: str, confirms: Dict, setup: str = '') -> Optional[str]:
     """The veto reason of the first required confirmation that is negative ('no_<name>')."""
+    # An OI-dependent playbook cannot make a valid entry decision without a
+    # fresh OI window.  Missing OI is a data-quality veto, never a neutral
+    # reading that can silently pass when the confirmation is not promoted.
+    if strategy in OI_EXPECT and confirms.get('oi') is None:
+        return 'no_oi_data'
     if confirms and liq_flow_missing(strategy, confirms, setup):
         return 'no_flow_absorb'
     for name in required(strategy):
