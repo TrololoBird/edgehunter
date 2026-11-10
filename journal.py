@@ -72,6 +72,15 @@ def _strategy_of(group_key: str) -> Optional[str]:
     entry = SETUPS.get(key)
     return entry[0] if entry else None
 
+
+def _policy_text(value) -> Optional[str]:
+    """Store lifecycle policy values as SQLite-safe text, including structured exit specs."""
+    if value is None:
+        return None
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, separators=(',', ':'), sort_keys=True, default=str)
+    return str(value)
+
 logger = logging.getLogger(__name__)
 
 # Horizon label -> minutes after the signal
@@ -841,7 +850,7 @@ class SignalJournal:
                     'contract_source': (tracked.plan or {}).get('contract_source'),
                     'planned_r': lv.get('rr_blend'),
                     'time_exit_policy': (tracked.plan or {}).get('time_exit') or tracked.mode,
-                    'trail_policy': (tracked.plan or {}).get('trail') or ((tracked.plan or {}).get('exit') or {}).get('tp'),
+                    'trail_policy': _policy_text((tracked.plan or {}).get('trail') or ((tracked.plan or {}).get('exit') or {}).get('tp')),
                     'partial_policy': (tracked.plan or {}).get('partial') or ('none' if (tracked.plan or {}).get('no_tp') else 'targets'),
                     'risk_units_planned': lv.get('risk_units'),
                     'anchor': _anchor_json(tracked.plan),
@@ -895,7 +904,7 @@ class SignalJournal:
                     'contract_source': plan.get('contract_source'),
                     'planned_r': lv.get('rr_blend'),
                     'time_exit_policy': plan.get('time_exit') or tracked.mode,
-                    'trail_policy': plan.get('trail') or (plan.get('exit') or {}).get('tp'),
+                    'trail_policy': _policy_text(plan.get('trail') or (plan.get('exit') or {}).get('tp')),
                     'partial_policy': plan.get('partial') or ('none' if plan.get('no_tp') else 'targets'),
                     'risk_units_planned': lv.get('risk_units'),
                     'anchor': _anchor_json(tracked.plan),
