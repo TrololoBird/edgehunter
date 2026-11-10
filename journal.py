@@ -77,7 +77,12 @@ logger = logging.getLogger(__name__)
 # Horizon label -> minutes after the signal
 # 8h = a trade's lifetime (levels.trade_ttl_sec): entries are replayed over it (a 4h replay marked every longer trade
 # to its 4h close)
-HORIZONS = {'15m': 15, '1h': 60, '4h': 240, '8h': 480}
+HORIZONS = {'15m': 15, '1h': 60, '3h': 180, '4h': 240, '6h': 360, '8h': 480,
+            '12h': 720, '24h': 1440, '2d': 2880, '3d': 4320, '7d': 10080}
+# Only the short horizons run in the live loop.  The longer windows are
+# evaluated by an explicit backfill/report process so a 7d request cannot
+# increase scanner latency or exchange load.
+LIVE_HORIZONS = {'15m': 15, '1h': 60, '3h': 180, '4h': 240, '6h': 360, '8h': 480}
 # Outcome windows start at the first FULL minute after the signal; a horizon is due once its last 1m candle has
 # closed, i.e. up to one minute + this margin after ts + horizon. Evaluated earlier, the last candle was still
 # running and its "close" was the live price (measured: 41 of 53 rows off by up to 0.2%).
@@ -233,7 +238,9 @@ CREATE TABLE IF NOT EXISTS signals (
     price REAL NOT NULL,           -- futures last price at the signal
     long_score INTEGER, short_score INTEGER, phases TEXT, tier0 INTEGER, tier2 INTEGER,
     rvol_1m REAL, oi_change_5m REAL, price_change_5m REAL, delta_ratio REAL, funding_8h REAL,
-    ret_15m REAL, ret_1h REAL, ret_4h REAL, mfe_4h REAL, mae_4h REAL,
+    ret_15m REAL, ret_1h REAL, ret_3h REAL, ret_4h REAL, ret_6h REAL, ret_8h REAL,
+    ret_12h REAL, ret_24h REAL, ret_2d REAL, ret_3d REAL, ret_7d REAL,
+    mfe_4h REAL, mae_4h REAL,
     eval_failed INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts_ms);
@@ -268,6 +275,7 @@ CREATE INDEX IF NOT EXISTS idx_history_skips ON history_skips(ts_ms);
 
 # Columns added after the first release; created on old databases by _migrate()
 EXTRA_COLUMNS = {
+    **{f'ret_{label}': 'REAL' for label in HORIZONS},
     'whale_net_5m': 'REAL',
     # eng-87: a card that ended WITHOUT an entry (EXPIRED / MISSED): the entry / stop its plan had at the zone's line -
     # MISSED cards had no levels at all, so what was missed could not be measured in R
@@ -1301,13 +1309,14 @@ class SignalJournal:
 
     # ------------------------------------------------------------------ outcomes
 
-    def _pending(self, limit: int) -> List[Dict]:
+    def _pending(self, limit: int, include_long: bool = False) -> List[Dict]:
         """Oldest rows with at least one horizon due and not filled yet."""
         now_ms = int(time.time() * 1000)
         # Conservative SQL bound (a whole extra minute); the exact check is horizon_due_ms in _evaluate_pass
-        due = {label: now_ms - (minutes + 1) * 60_000 - CLOSE_MARGIN_MS for label, minutes in HORIZONS.items()}
+        horizons = HORIZONS if include_long else LIVE_HORIZONS
+        due = {label: now_ms - (minutes + 1) * 60_000 - CLOSE_MARGIN_MS for label, minutes in horizons.items()}
         rets = ', '.join(f"ret_{label}" for label in HORIZONS)
-        pending = ' OR '.join(f"(ret_{label} IS NULL AND ts_ms <= ?)" for label in HORIZONS)
+        pending = ' OR '.join(f"(ret_{label} IS NULL AND ts_ms <= ?)" for label in horizons)
         with self._lock:
             cursor = self.conn.execute(
                 # eng-102: simulate reads limit_entry / volume_24h - without them every resting-limit entry was
@@ -1315,7 +1324,7 @@ class SignalJournal:
                 f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h, "
                 f"funding_hours, limit_entry, volume_24h, anchor, atr_entry, zone_far FROM signals "
                 f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
-                (*[due[label] for label in HORIZONS], limit),
+                (*[due[label] for label in horizons], limit),
             )
             columns = [c[0] for c in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -1350,14 +1359,15 @@ class SignalJournal:
                 logger.warning(f"Journal evaluation error: {e}")
             await asyncio.sleep(CONFIG.journal.eval_interval_sec)
 
-    async def _evaluate_pass(self, fetcher):
+    async def _evaluate_pass(self, fetcher, include_long: bool = False):
         """
         Oldest-first across all horizons (so no horizon starves), one request per row: the 1m klines of the longest
         due horizon also cover the shorter ones.
         """
         now_ms = int(time.time() * 1000)
-        for row in await asyncio.to_thread(self._pending, CONFIG.journal.max_evals_per_pass):
-            due = [(label, minutes) for label, minutes in HORIZONS.items()
+        horizons = HORIZONS if include_long else LIVE_HORIZONS
+        for row in await asyncio.to_thread(self._pending, CONFIG.journal.max_evals_per_pass, include_long):
+            due = [(label, minutes) for label, minutes in horizons.items()
                    if row[f'ret_{label}'] is None and horizon_due_ms(row['ts_ms'], minutes) <= now_ms]
             if not due:
                 continue
@@ -1365,6 +1375,10 @@ class SignalJournal:
             klines = await fetcher.fetch_minute_klines(row['symbol'], row['ts_ms'], longest)
             await asyncio.to_thread(self._store_outcomes, row, due, klines)
             await asyncio.sleep(0.05)
+
+    async def backfill_outcomes_once(self, fetcher):
+        """Evaluate all configured horizons once for an offline backfill job."""
+        await self._evaluate_pass(fetcher, include_long=True)
 
     def _store_outcomes(self, row: Dict, due: List[Tuple[str, int]], klines: Optional[List]):
         for label, minutes in due:
