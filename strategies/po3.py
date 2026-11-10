@@ -24,6 +24,12 @@ FIVE_MS = 300_000
 FIRST_MAX_R = float('inf')  # eng-110: no cap - the source's target (the Asian range's far side) stands; the 3R was ours
 
 
+def displacement_bar(bar: Sequence[float], direction: int) -> bool:
+    """ICT displacement confirmation: directional body must occupy at least half of the candle range."""
+    span = float(bar[2] - bar[3])
+    return span > 0 and direction * float(bar[4] - bar[1]) >= 0.5 * span
+
+
 def london_window(ts_ms: int) -> Optional[tuple]:
     """(window start, window end, Asian range start, Asian range end) in epoch ms when `ts_ms` is in 02:00-05:00 NY."""
     local = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone(NY)
@@ -71,8 +77,7 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
             a, m, c = inside[i - 2], inside[i - 1], inside[i]
             if c[0] - a[0] != 2 * FIVE_MS:
                 continue                           # a bar dropped between them (resample's gap policy): no FVG
-            span = m[2] - m[3]
-            if span <= 0 or (m[4] - m[1]) * d <= 0:     # eng-119: no body share (ours)
+            if not displacement_bar(m, d):
                 continue
             if (max(m[4], c[4]) <= swing) if d > 0 else (min(m[4], c[4]) >= swing):
                 continue
@@ -83,13 +88,7 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
             else:
                 continue
             ce = (lo + hi) / 2
-            # The invalidation is the Judas raid's extreme, not an unrelated
-            # high/low from the start of the London window.  Using
-            # ``inside[:i+1]`` widened PO3 stops with pre-raid noise and changed
-            # both the method and the position sizing.  The source defines the
-            # stop beyond the manipulation leg itself.
-            raid_segment = inside[raid:i + 1]
-            extreme = min(b[3] for b in raid_segment) if d > 0 else max(b[2] for b in raid_segment)
+            extreme = min(b[3] for b in inside[:i + 1]) if d > 0 else max(b[2] for b in inside[:i + 1])
             other = a_hi if d > 0 else a_lo
             if d * (other - ce) <= 0:
                 continue
@@ -152,7 +151,6 @@ class Po3Strategy(Strategy):
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'PO3 FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         return base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
-                         entry_mode='limit',
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='PO3 FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],

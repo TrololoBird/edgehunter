@@ -32,14 +32,16 @@ from config import CONFIG
 
 NAMES = ('flow', 'spot', 'oi', 'orderflow', 'vsa')
 NA = 'n/a'
-OI_EXPECT = {'continuation': 1, 'breakout': 1, 'sweep': -1, 'wyckoff': -1,
+OI_EXPECT = {'continuation': 1, 'breakout': 1, 'sweep': -1, 'silver_bullet': -1, 'wyckoff': -1,
              # eng-169e (audit S4): PO3's Judas swing is a raid-and-reverse like the sweep - positions flushed, not added
              'po3': -1,
              # 2026-10-05: every method gets the reading its type implies (journaled; required only when proven):
              # breaks and momentum need new positions behind them, fades of an extreme need them flushed
-             'orb': 1, 'pump': 1, 'trendline': 1, 'cup_handle': 1,
-             'bollinger': -1, 'market_profile': -1, 'supply_demand': -1, 'connors': -1}
-REVERSALS = ('wyckoff', 'sweep', 'po3')
+             'orb': 1, 'pump_start': 1, 'dump_start': 1, 'pump_top': -1, 'dump_bounce': -1,
+             'trendline_break': 1, 'trendline_touch': 1, 'cup_handle': 1,
+             'bollinger_wm': -1, 'bollinger_method3': -1, 'bollinger_method1': 1,
+             'value_area': -1, 'auction': -1, 'supply_demand': -1, 'connors': -1}
+REVERSALS = ('wyckoff', 'cascade', 'sweep', 'silver_bullet', 'po3')
 MINUTE_MS = 60_000
 HOUR_MS = 3_600_000
 
@@ -74,7 +76,7 @@ def required_names() -> Set[str]:
 # trades only when the volume after the raid backs it - the taker delta on the trade's side OR absorption / CVD
 # divergence for it. Journal before the rule (303 cards): raids with neither -0.18R / card (21), with delta +0.21R
 # (39), delta against but absorbed +0.36R (19). Missing flow data (None) never vetoes.
-LIQ_FLOW = ('sweep', 'po3', 'wyckoff')
+LIQ_FLOW = ('sweep', 'silver_bullet', 'po3', 'wyckoff', 'cascade')
 LIQ_FLOW_SETUPS = ('PUMP TOP',)
 
 

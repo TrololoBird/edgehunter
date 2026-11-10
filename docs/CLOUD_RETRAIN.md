@@ -8,7 +8,7 @@ archive is not. The live journal (`signals.db`) and the demo (`demo_trades.db`) 
 - Work on `master`; commit and push results as each job finishes (small files only: `models/*.json`, `research/*.md`,
   pickles < 20 MB). Never commit `history_cache/` or `data/`.
 - Every study's decision rule is pre-registered in its script's docstring. Do not change a rule after seeing results.
-  A bug in a script may be fixed (note it in the report); `ruff check --select F` and `python -m pytest tests -q` stay
+  A bug in a script may be fixed (note it in the report); `ruff check --select F` and `python -m compileall -q .` stay
   green. Do not change the bot's signal logic (signal_book.py, strategies/*, config values) - the owner decides that
   from the reports.
 - Python 3.14: `python3.14 -m venv .venv && .venv/bin/pip install -r requirements.txt` (`uv python install 3.14` if

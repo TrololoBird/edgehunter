@@ -83,12 +83,12 @@ from strategies import bias as htf_bias, confirm, profiles
 # move): no break-even / partial management
 # eng-169l: oi_build out - it has no own exit beyond the fixed time stop, so its second half kept the full stop after
 # +1R (the EMA trail after TP1 stays off globally: ema_trail_after_tp1)
-MANAGE_EXEMPT = ('breakout', 'connors', 'cup_handle')
+MANAGE_EXEMPT = ('breakout', 'bollinger_method1', 'connors', 'cup_handle')
 # break-even + the round trip's costs (taker 0.05% x 2 + slippage ~0.05%): a break-even stop that fills is ~0, not -costs
 BE_COST = 0.0015
 # eng-84: the regime each method needs (ADX(14) of 4h): trend-following methods / mean-reversion methods
-REGIME_TREND = ('continuation', 'pump', 'oi_build')
-REGIME_RANGE = ('bollinger', 'market_profile')
+REGIME_TREND = ('continuation', 'pump_start', 'dump_start', 'pump_top', 'dump_bounce', 'oi_build')
+REGIME_RANGE = ('bollinger_wm', 'bollinger_method3', 'value_area', 'auction')
 from strategies.geometry import entry_levels
 
 logger = logging.getLogger(__name__)
@@ -1177,8 +1177,8 @@ class SignalBook:
             self._finish(s, 'INVALID', now, self._invalid_reason(s, price, invalid))
             return None
         tp1 = card_tp1(plan)
-        # TP1-before-entry is a strategy property. `structural_lifetimes` removes generic clocks, but must not turn
-        # plans that explicitly set missable=False (for example continuation / confirm-only systems) into MISSED cards.
+        # eng-108: with structural lifetimes EVERY waiting card ends once TP1 traded before an entry (its structural end;
+        # the invented waiting clocks are gone)
         tp_seen = self._tp1_since(s, candles_of, tp1, plan) if version_no(s.logic_version) >= 141 else None
         imp = plan.get('impulse') or {}
         if imp.get('end') is not None and s.status != 'ZONE' and getattr(strategy, 'frozen_in_zone', False) \
@@ -1191,7 +1191,8 @@ class SignalBook:
             tp_seen = None
             if d * (price - tp1) >= 0:
                 return None
-        if plan.get('missable') and (d * (price - tp1) >= 0 or tp_seen is not None):
+        if (plan.get('missable') or CONFIG.strategies.structural_lifetimes) and (d * (price - tp1) >= 0
+                                                                                  or tp_seen is not None):
             reasons = ', '.join(sorted(set(s.veto_log)))
             # two different failures: price never came back to the zone (the zone is too far from where the move
             # turns) vs it did and no trigger fired (the trigger is too strict)
@@ -1305,18 +1306,7 @@ class SignalBook:
                 s.zone_since_ms = setup['time']
             return shadow
         elif kind == 'touch':
-            # Entry policy belongs to the strategy plan.  A global switch made
-            # supply/demand, sweep, PO3 and trendline-touch silently share one
-            # execution rule even though their source methods differ.
-            entry_mode = s.plan.get('entry_mode')
-            use_confirm = (entry_mode == 'confirmation_close' or
-                           (entry_mode is None and CONFIG.executor.touch_confirm_close))
-            if entry_mode == 'limit':
-                # The executor owns the resting-limit lifecycle.  Do not also
-                # create a market entry when the trigger candle merely trades
-                # through the planned CE/proximal price.
-                return shadow
-            touch = touch_confirm if use_confirm else touch_trigger
+            touch = touch_confirm if CONFIG.executor.touch_confirm_close else touch_trigger
             trigger = touch(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
         else:
             trigger = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms)
@@ -1358,7 +1348,7 @@ class SignalBook:
         if confirms is not None and s.plan:
             # ICT / Seiden: an entry whose price sits inside a zone of 4h or higher is the higher-probability one
             confirms['htf_zone'] = htf_zone_at(s.plan.get('zones') or [], levels['entry'])
-        if s.mode == 'sweep' and confirms is not None:
+        if s.mode in ('sweep', 'silver_bullet') and confirms is not None:
             # ICT's own confirmations of a sweep (eng-35): SMT divergence against the correlate, the entry in a kill zone
             if s.sig.get('smt_div') is not None:
                 confirms['smt'] = bool(s.sig['smt_div'])
@@ -1480,7 +1470,8 @@ class SignalBook:
             reason = 'low_rr'
         return self._enter(s, levels, now_ms, reason, confirms)
 
-    OVERSHOOT_EXEMPT = ('orb', 'breakout', 'connors', 'pump')    # stop-order / channel / close entries: no zone edge
+    OVERSHOOT_EXEMPT = ('orb', 'breakout', 'bollinger_method1', 'connors', 'trendline_break', 'trendline_touch',
+                        'pump_start', 'dump_start', 'pump_top', 'dump_bounce')
 
     @staticmethod
     def _overshoot(s: TrackedSignal, entry: float, levels: Dict, block: bool = True) -> Optional[str]:
@@ -1547,7 +1538,7 @@ class SignalBook:
         # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py). eng-168 (audit):
         # evaluated even after an earlier veto so its shadow tag is journaled on every row (no censoring by order)
         key = 'bias_daily' if s.mode in htf_bias.DAILY else 'bias'
-        bias_reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key), s.group_key)
+        bias_reason = htf_bias.gate(s.mode, s.direction, (hb.get('coin') or {}).get(key))
         if reason is None:
             reason = shadow_veto(s.sig, bias_reason)
         else:
@@ -2134,14 +2125,6 @@ class SignalBook:
                 self.events.append((s, 'ADD'))
         if (s.plan or {}).get('connors_exit') and self.daily_of:
             d1 = self.daily_of(s.symbol) or []
-            # Crypto can remain in a one-way liquidation trend after an RSI(2) oversold print.
-            # The entry's SMA200 check is a setup filter, not a permanent hold permission:
-            # invalidate a long once a later daily close loses SMA200 (and mirror for shorts).
-            if len(d1) >= 200 and d1[-1][0] / 1000 >= s.entered_at - 86400:
-                sma200 = sum(c[4] for c in d1[-200:]) / 200
-                if d * (d1[-1][4] - sma200) < 0:
-                    return self._finish(s, 'INVALID', now,
-                                        f"daily close {d1[-1][4]:.6g} crossed SMA200 {sma200:.6g} (Connors trend invalidated)")
             # the daily closes since the entry: out on the first one beyond the SMA5 of the last five closes
             if len(d1) >= 5 and d1[-1][0] / 1000 >= s.entered_at - 86400:
                 sma5 = sum(c[4] for c in d1[-5:]) / 5

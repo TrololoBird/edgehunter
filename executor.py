@@ -1,7 +1,8 @@
 """
-Demo execution on BingX (virtual VST, `open-api-vst`): every card that reaches ENTRY is traded there, so its result is
-seen with real order handling next to the journal's own replay. DEMO ONLY: sandbox mode is forced and cannot be
-switched off from the config. Never an order on a real balance.
+Demo execution on BingX (virtual VST, `open-api-vst`): an eligible card that reaches ENTRY is sent there unless a
+configured demo gate (for example `demo_off_setups`, market/basis checks or an exchange constraint) rejects it. Its
+result is recorded next to the journal's replay. DEMO ONLY: sandbox mode is forced and cannot be switched off from the
+config. Never an order on a real balance.
 
 - ENTRY: a market order sized so the stop costs `risk_pct` of the demo balance (capped by `max_leverage`), then a
   reduce-only stop-market at the card's SL and three reduce-only take-profits (thirds) at TP1 / TP2 / TP3.
@@ -22,10 +23,7 @@ import math
 import os
 import sqlite3
 import contextlib
-import ccxt
 import time
-import hashlib
-import subprocess
 from typing import Dict, List, Optional
 
 from config import CONFIG
@@ -49,39 +47,6 @@ LIMIT_OFF_AT = 100_000
 UNIT_SETUPS = frozenset({'BREAKOUT UP', 'BREAKOUT DOWN'})
 _OPERATIONAL_KEYS = frozenset({'id', 'unit_qty', 'tp0', 'close_pending', 'add_unknown'})
 _INFLIGHT_PHASES = frozenset({'RESERVED', 'ORDER_SENT', 'FILLED', 'STOP_PENDING', 'PROTECTED', 'REGISTERED', 'UNKNOWN'})
-
-
-def _provenance() -> tuple:
-    """Return immutable provenance for new demo rows.
-
-    ``logic_version`` alone is not sufficient in this AI-generated project:
-    several detector/filter/executor revisions have shared one version label.
-    New rows therefore carry the deployed commit and a hash of the executable
-    strategy/config surface.  Fail closed to explicit ``unknown`` values when
-    running outside a git checkout.
-    """
-    try:
-        root = os.path.dirname(os.path.abspath(__file__))
-        commit = subprocess.check_output(['git', '-C', root, 'rev-parse', 'HEAD'], text=True,
-                                         stderr=subprocess.DEVNULL).strip()
-    except Exception:
-        commit = 'unknown'
-    h = hashlib.sha256()
-    root = os.path.dirname(os.path.abspath(__file__))
-    for rel in ('config.py', 'executor.py', 'signal_book.py', 'strategies'):
-        path = os.path.join(root, rel)
-        paths = [path] if os.path.isfile(path) else []
-        if os.path.isdir(path):
-            for base, _, names in os.walk(path):
-                paths.extend(os.path.join(base, n) for n in sorted(names) if n.endswith('.py'))
-        for p in sorted(paths):
-            try:
-                h.update(os.path.relpath(p, root).encode())
-                with open(p, 'rb') as f:
-                    h.update(f.read())
-            except OSError:
-                continue
-    return commit, h.hexdigest()[:16]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS demo_trades (
@@ -199,10 +164,6 @@ class DemoExecutor:
                               ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER')):
                 if col not in have:
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
-            for col, kind in (('source_commit', 'TEXT'), ('implementation_hash', 'TEXT'),
-                              ('config_logic_version', 'TEXT')):
-                if col not in have:
-                    c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
             placeholders = ', '.join('?' for _ in UNIT_SETUPS)
             c.execute(
                 f"UPDATE demo_trades SET units = 1 WHERE units IS NULL "
@@ -227,7 +188,6 @@ class DemoExecutor:
             import ccxt.async_support as ccxt
             key, secret = credentials()
             self.ex = ccxt.bingx({'apiKey': key, 'secret': secret, 'enableRateLimit': True,
-                                  'rateLimit': 550,    # leave headroom for BingX's endpoint frequency limits
                                   'timeout': 30_000,   # the VST contract list (~1200 markets) took > 10s under load
                                   # no recvWindow option: ccxt's bingx.sign never sends it (checked in ccxt 4.5.85: only
                                   # the deposit / withdraw endpoints read it); BingX's window stays 5s; the cause of
@@ -579,14 +539,16 @@ class DemoExecutor:
             try:
                 await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
                                       {'takeProfitPrice': float(ex.price_to_precision(symbol, float(trade[f'tp{k}']))),
-                                       'reduceOnly': True})
+                                       'reduceOnly': True, 'workingType': 'MARK_PRICE'})
             except Exception as err:
                 # eng-169b (ENA 2026-10-26: 14s entry latency, price passed TP1 before it was placed, BingX 110413
                 # rejected it and that part stayed open without a target): a target the price already reached is
                 # taken at market, the rest of the failures keep the stop
                 fail: Exception = err
                 try:
-                    last = float((await ex.fetch_ticker(symbol)).get('last') or 0)
+                    ticker = await ex.fetch_ticker(symbol) or {}
+                    last = float(ticker.get('markPrice') or (ticker.get('info') or {}).get('markPrice') or
+                                 ticker.get('last') or 0)
                 except Exception:
                     last = 0.0
                 if last and d * (last - float(trade[f'tp{k}'])) >= 0:
@@ -665,7 +627,7 @@ class DemoExecutor:
         return None
 
     def entry_gate(self, s) -> Optional[str]:
-        """Apply only execution-safety gates; strategy profitability never blocks demo entries."""
+        """Owner 2026-10-18: one demo entry per direction per cluster_entry_sec; demo_off_setups are not traded."""
         cfg = CONFIG.executor
         d = s.direction
         if s.group_key in cfg.demo_off_setups:
@@ -673,40 +635,6 @@ class DemoExecutor:
         hit = self.cluster_hit(d)
         if hit is not None:
             return f"cluster: {hit} entered {'long' if d > 0 else 'short'} within {cfg.cluster_entry_sec // 60} min"
-        return None
-
-    @staticmethod
-    def validate_levels(levels: Dict, direction: int, *, no_tp: bool = False) -> Optional[str]:
-        """Reject malformed protection/target levels before an exchange order is sent.
-
-        This is deliberately a technical invariant check, not a profitability
-        filter.  A strategy with poor expectancy must still run on demo; an
-        order with a stop on the wrong side or an inverted target must not.
-        """
-        try:
-            entry, stop = float(levels['entry']), float(levels['sl'])
-        except (KeyError, TypeError, ValueError):
-            return 'DATA_ERROR: missing or non-numeric entry/sl'
-        if not all(map(lambda x: x == x and abs(x) != float('inf'), (entry, stop))):
-            return 'DATA_ERROR: non-finite entry/sl'
-        if direction not in (-1, 1):
-            return 'DATA_ERROR: invalid direction'
-        if direction * (entry - stop) <= 0:
-            return 'DATA_ERROR: stop is not beyond entry'
-        if no_tp:
-            return None
-        prev = entry
-        for name in ('tp1', 'tp2', 'tp3'):
-            value = levels.get(name)
-            if value is None:
-                continue
-            try:
-                value = float(value)
-            except (TypeError, ValueError):
-                return f'DATA_ERROR: non-numeric {name}'
-            if value != value or abs(value) == float('inf') or direction * (value - prev) <= 0:
-                return f'DATA_ERROR: {name} is not in trade direction/order'
-            prev = value
         return None
 
     def cluster_hit(self, d: int) -> Optional[str]:
@@ -766,14 +694,6 @@ class DemoExecutor:
         if n_turtle:
             # review V05: the Turtles' stop is 2N from the position's OWN entry - BingX's price, not Binance's
             lv['sl'] = fill_est - d * 2 * n_turtle * ratio
-        invalid = self.validate_levels(lv, d, no_tp=bool((getattr(s, 'plan', None) or {}).get('no_tp')))
-        if invalid:
-            logger.error(f"Demo: {s.symbol} {s.group_key} rejected: {invalid}")
-            now = int(time.time() * 1000)
-            self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key,
-                          'strategy': s.mode, 'direction': d, 'opened_ms': now,
-                          'closed_ms': now, 'close_reason': 'DATA_ERROR', 'error': invalid})
-            return
         reject = None
         if basis_reject(basis):
             reject = basis_reject(basis)
@@ -992,11 +912,8 @@ class DemoExecutor:
         limits (sweep CE, continuation OTE) rest only inside the London / New York kill zones - outside them the card
         would veto the fill ('killzone'), so the limit is cancelled there (the setup lives within its session).
         """
-        mode = (getattr(s, 'plan', None) or {}).get('entry_mode')
-        if mode == 'confirmation_close':
-            return False
-        if mode != 'limit' and CONFIG.executor.touch_confirm_close:
-            return False                 # legacy fallback for plans without an explicit entry policy
+        if CONFIG.executor.touch_confirm_close:
+            return False                 # eng-105: touch plans enter at a confirming close (market), no resting limit
         if not (bool(s.plan) and s.plan.get('trigger') == 'touch'):
             return False
         from signal_book import ict_gated
@@ -1496,11 +1413,6 @@ class DemoExecutor:
         for s in cards:
             if s.entered_at and not s.finished and s.best_target in (1, 2):
                 await self.on_target(s, int(s.best_target))
-            if s.entered_at and not s.finished:
-                key = f"{s.symbol}|{s.group_key}|{int(s.entered_at)}"
-                trade = self.open.get(key) or self.open.get(f"{s.symbol}|{s.group_key}|c{int(s.created)}")
-                if trade and trade.get('restop_pending'):
-                    await self.on_restop(s)
 
     async def on_restop(self, s) -> None:
         """eng-58: the card trailed its stop (after TP1: the entry, then the EMA20): the remaining position's stop is
@@ -1520,7 +1432,6 @@ class DemoExecutor:
                 symbol, d = trade['symbol'], trade['direction']
                 left = await self._position_qty(symbol)
                 if left <= 0:
-                    trade.pop('restop_pending', None)
                     return
                 scale = float(trade.get('scale') or 0.0)
                 if not scale and trade.get('entry_plan') and s.levels.get('entry'):
@@ -1535,8 +1446,8 @@ class DemoExecutor:
                     edited = await ex.edit_order(old_stop, symbol, 'STOP_MARKET',
                                                  'sell' if d > 0 else 'buy', left,
                                                  s.levels['sl'] * scale,
-                                                 {'reduceOnly': True, 'closePosition': True})
-                    trade.pop('restop_pending', None)
+                                                 {'reduceOnly': True, 'closePosition': True,
+                                                  'workingType': 'MARK_PRICE'})
                     trade['sl'] = s.levels['sl'] * scale
                     with self._db() as c:
                         c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
@@ -1546,7 +1457,6 @@ class DemoExecutor:
                 # whenever the new stop failed, and took TP2 / TP3 of the thirds plans with it for good
                 new = await self._place_stop(symbol, d, left, s.levels['sl'] * scale)
                 await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
-                trade.pop('restop_pending', None)
                 trade['sl'] = s.levels['sl'] * scale
                 with self._db() as c:     # the stop guard restores THIS stop after a restart
                     c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
@@ -1556,7 +1466,6 @@ class DemoExecutor:
                 # price): the old stop stays (placed-first order), but a stop the price already passed is a stop hit -
                 # the rest is closed at market as the stop order would have done; any other failure is reported
                 # (was a WARNING only: card and exchange disagreed on the stop silently)
-                trade['restop_pending'] = True
                 await self._restop_failed(trade, s, e)
 
     async def _restop_failed(self, trade: Dict, s, e: Exception) -> None:
@@ -1565,7 +1474,7 @@ class DemoExecutor:
             scale = float(trade.get('scale') or 1.0)
             new_sl = float(s.levels['sl']) * scale
             ex = await self._exchange()
-            ticker = await self._call('fetch_ticker', symbol) or {}
+            ticker = await ex.fetch_ticker(symbol) or {}
             mark = _positive(ticker.get('markPrice') or (ticker.get('info') or {}).get('markPrice') or (ticker.get('info') or {}).get('mark') or ticker.get('mark'))
             last = _positive(ticker.get('last'))
             price = mark if mark is not None else last
@@ -1817,31 +1726,12 @@ class DemoExecutor:
         an order blindly.
         """
         import ccxt
-        # Read-only reconciliation calls are safe to retry after transient transport failures.
-        transient = (ccxt.NetworkError, ccxt.ExchangeNotAvailable, getattr(ccxt, 'RequestTimeout', TimeoutError),
-                     ConnectionResetError, asyncio.TimeoutError)
         ex = await self._exchange()
         for attempt in range(tries):
-            delay = getattr(self, '_read_resume_at', 0.0) - time.monotonic()
-            if delay > 30:
-                raise ccxt.ExchangeNotAvailable('BingX read cooldown is active; retry on next reconciliation')
-            if delay > 0:
-                await asyncio.sleep(delay)
             try:
                 return await asyncio.wait_for(getattr(ex, method)(*args, **kw),
                                               timeout=CONFIG.rest.total_timeout_sec)
-            except Exception as e:
-                busy = isinstance(e, ccxt.OperationFailed) and '"code":100410' in str(e).replace(' ', '')
-                if not isinstance(e, transient) and not busy:
-                    raise
-                if busy:
-                    import re
-                    until = re.search(r'unblocked after (\d{12,})', str(e))
-                    pause = max(1.0, int(until[1]) / 1000 - time.time() + 1) if until else 5.0 * 2 ** attempt
-                    self._read_resume_at = max(getattr(self, '_read_resume_at', 0.0), time.monotonic() + pause)
-                    # Do not hold a coin lock for a multi-minute exchange ban. Next reconciliation retries.
-                    if pause > 30:
-                        raise
+            except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
                 if attempt == tries - 1:
                     raise
                 await asyncio.sleep(CONFIG.rest.retry_timeout_sec * 2 ** attempt)
@@ -1915,15 +1805,12 @@ class DemoExecutor:
         symbol, d = trade['symbol'], trade['direction']
         side = 'sell' if d > 0 else 'buy'
         try:
-            for o in await self._call('fetch_open_orders', symbol):
+            for o in await ex.fetch_open_orders(symbol):
                 if not self._is_stop(o):
                     try:
                         await ex.cancel_order(o['id'], symbol)
                     except Exception as e:
-                        if isinstance(e, ccxt.OrderNotFound) or '"code":109400' in str(e).replace(' ', ''):
-                            logger.debug(f"Demo cancel TP {symbol}: already gone ({e})")
-                        else:
-                            errors.report('executor._close', e, f"Demo cancel TP {symbol}")
+                        errors.report('executor._close', e, f"Demo cancel TP {symbol}")
         except Exception as e:
             errors.report('executor._close', e, f"Demo cancel {symbol}")
         left = await self._position_qty(symbol)
@@ -2338,10 +2225,6 @@ class DemoExecutor:
 
     def _insert(self, row: Dict) -> int:
         row.setdefault('logic_version', CONFIG.journal.logic_version)   # eng-144: demo statistics per logic version
-        commit, impl_hash = _provenance()
-        row.setdefault('source_commit', commit)
-        row.setdefault('implementation_hash', impl_hash)
-        row.setdefault('config_logic_version', CONFIG.journal.logic_version)
         cols = [k for k in row if k != 'id']
         unexpected = set(cols) - self._schema_cols
         if unexpected:

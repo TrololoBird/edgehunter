@@ -29,12 +29,12 @@ import numpy as np
 from strategies.ind_panel import ema
 
 # the method's nature (how the bias gates it); the Turtles are the higher-timeframe rule themselves and stay free
-TREND = ('continuation', 'orb', 'pump', 'cup_handle', 'po3')
-WITH_BIAS = ('sweep', 'connors', 'supply_demand')        # trade a pullback / raid in the higher timeframe's direction
-RANGE = ('market_profile', 'bollinger', 'wyckoff')       # range edges; in a trend only its direction
+TREND = ('continuation', 'orb', 'pump_start', 'dump_start', 'pump_top', 'dump_bounce', 'cup_handle', 'po3')
+WITH_BIAS = ('sweep', 'silver_bullet', 'connors', 'supply_demand')
+RANGE = ('value_area', 'auction', 'bollinger_wm', 'bollinger_method3', 'wyckoff', 'cascade')
 # trendline: a broken trendline signals a CHANGE of trend (Edwards & Magee) - gating it by the old trend contradicts
 # the method (research/bias.md: its blocked trades +0.30R, the allowed -0.90R)
-EXEMPT = ('breakout', 'trendline')
+EXEMPT = ('breakout', 'bollinger_method1', 'trendline_break', 'trendline_touch')
 
 
 def _trend(closes: np.ndarray, slope_n: int) -> int:
@@ -91,16 +91,14 @@ def bias_of(st: Optional[Dict], daily_method: bool = False) -> Optional[str]:
     return 'conflict'
 
 
-def gate(strategy: str, direction: int, coin_bias: Optional[str], setup: Optional[str] = None) -> Optional[str]:
+def gate(strategy: str, direction: int, coin_bias: Optional[str]) -> Optional[str]:
     """The veto reason of an entry against the top-down bias, None when allowed. audit C08: an unknown bias is
     'no_bias' (journaled - in shadow under 'no_*' while the bias's role in each source is unsettled), not a silent
     pass recorded as if the bias agreed."""
-    # Directional playbooks inside one strategy do not necessarily share the
-    # same bias rule.  In particular PUMP/DUMP TOP and DUMP BOUNCE are reversal
-    # plays; applying the continuation gate to the whole ``pump`` class was a
-    # semantic mix-up that silently removed valid reversal cards.
-    reversal = setup in {'PUMP TOP', 'DUMP BOUNCE SHORT', 'FLUSH REVERSAL', 'SQUEEZE REVERSAL', 'UTAD', 'SPRING'}
-    if strategy in EXEMPT or reversal:
+    # Legacy persisted cards used the family alias; route it to the W/M range policy without registering it as a method.
+    strategy = {'bollinger': 'bollinger_wm', 'market_profile': 'value_area', 'trendline': 'trendline_break',
+                'pump': 'pump_start'}.get(strategy, strategy)
+    if strategy in EXEMPT:
         return None
     if coin_bias is None:
         return 'no_bias'

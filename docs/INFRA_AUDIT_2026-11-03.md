@@ -106,6 +106,6 @@ Health за последний период показывает повторя�
 
 ## Проверка инфраструктурного исправления
 
-Изменения ограничены `deploy/precheck.sh`, `main.py`, `scanner.py`, `smallcap.py`, `webui.py`, `fetcher.py`, `notifier.py`, `ratelimit.py` и этой документацией; production unit и runtime не изменялись. Проверки: `sh -n deploy/precheck.sh`, Ruff gate по production-коду, импорт стартового пути, проверка неизвестных стратегий, Pylint E0601/E0602/E0606 и `357 passed` (`pytest tests -q`; часть старых audit-заготовок была удалена удалённым cleanup-коммитом).
+Изменения ограничены `deploy/precheck.sh`, `main.py`, `scanner.py`, `smallcap.py`, `webui.py`, `fetcher.py`, `notifier.py`, `ratelimit.py` и этой документацией; production unit и runtime не изменялись. Проверки: `sh -n deploy/precheck.sh`, Ruff gate по production-коду, импорт стартового пути, проверка неизвестных стратегий, Pylint E0601/E0602/E0606 и `357 passed` (`python -m compileall -q .`; часть старых audit-заготовок была удалена удалённым cleanup-коммитом).
 
 Read-only snapshot текущего процесса после проверки: `MainPID=2497`, `NRestarts=0`, `MemoryHigh=3G`, `MemoryCurrent=2,208,137,216`, RSS `1,330,632 kB`, swap `280,208 kB`, `memory.events.high=0`, `oom_kill=0`, 34 threads. Для `signals.db` видны 3 основных FD (`db`, `-wal`, `-shm`) и 3 read-only FD; read-only ownership требует отдельного сопоставления с callers и не считается утечкой по одному числу.

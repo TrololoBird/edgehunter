@@ -1276,3 +1276,7 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 - Journal: trade_mfe_r / trade_mae_r on entry rows - the excursion over the card's own life (entry minute .. its exit), written with card_r. mfe_r (4h after the signal) and mfe_life_r (to the ORIGINAL stop) ignore the actual exit.
 - PUMP / DUMP START notes name the flow source: the small-cap watch says 'futures buying / selling' (no spot pair there), the universe 'spot'.
 - tests: the trendline 3%-of-the-line check is a behaviour test (was a source-text match).
+# Historical record notice
+
+This document is an append-only history of earlier revisions. File names, strategy aliases, dependency versions and
+test counts inside dated entries describe those revisions and must not be treated as the current project interface.

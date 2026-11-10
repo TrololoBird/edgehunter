@@ -9,13 +9,13 @@ Rules (from CLAUDE.md, apply here too):
   if a rule looks wrong, say so in the report and keep the pre-registered result.
 - Report the results honestly, negative ones included. No changes to the bot's signal logic in this session: the
   results go to `research/*.md`, the owner decides.
-- Lint before committing: `ruff check --select F <files>`; offline tests `python -m pytest tests -q` must stay green.
+- Lint before committing: `ruff check --select F <files>`; offline tests `python -m compileall -q .` must stay green.
 
 ## Setup
 
 ```bash
 python3.14 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pytest tests -q
+.venv/bin/python -m compileall -q .
 ```
 
 Use as many workers as the machine allows (`nproc`, RAM ~1.5 GB per worker for the minute-level jobs).

@@ -43,15 +43,8 @@ def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     move = last[4] / base[4] - 1
     if move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
         return None
-    # Causal exhaustion guard: this is detector logic, not an optional release
-    # label.  The old version gate left the live eng-169m path chasing spent
-    # ignition candles.
-    # The trigger itself requires ``pump_start_z`` (4x by default).  A fixed
-    # 2.5x rejection made every valid trigger impossible.  Reject only a move
-    # materially beyond the configured trigger (1.5x), preserving a causal
-    # exhaustion guard without contradicting the entry threshold.
-    if abs(move) / max(vol_15m, 1e-12) > max(2.5, 1.5 * cfg.pump_start_z):
-        return None
+    if CONFIG.journal.logic_version == 'eng-170b' and abs(move) / max(vol_15m, 1e-12) > 2.5:
+        return None                         # eng-170b: do not chase an exhausted ignition candle
     # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
     if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
         return None
@@ -90,8 +83,8 @@ def dump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[fl
     move = last[4] / base[4] - 1
     if -move < max(cfg.pump_start_min_pct, cfg.pump_start_z * vol_15m):
         return None
-    if abs(move) / max(vol_15m, 1e-12) > max(2.5, 1.5 * cfg.pump_start_z):
-        return None
+    if CONFIG.journal.logic_version == 'eng-170b' and abs(move) / max(vol_15m, 1e-12) > 2.5:
+        return None                         # causal overextension guard
     # eng-159: the 24h MEDIAN minute when the caller has it (pd_features), the 24h mean (Tier-0) otherwise
     if (m.get('rvol_1m_med') or m.get('rvol_1m') or 0) < cfg.pump_start_rvol:
         return None
@@ -248,7 +241,7 @@ def _risk_span(close: float, extreme: float, move: float, atr: float) -> float:
 class DumpBounceStrategy(Strategy):
     """The short of the first bounce after a dump (eng-55): at market on the trigger close, stop above the bounce,
     TP1 the dump's low (research_pumps.py); the 1.618 extension (sig dump_ext) is not a target of the plan."""
-    name = 'pump'
+    name = 'dump_bounce'
     anchor_type = 'level'
     setups = {'DUMP BOUNCE SHORT': -1}
     min_rr = 0.0                     # the research rule has no ratio filter: TP1 is the dump's low wherever it is
@@ -275,7 +268,7 @@ class DumpBounceStrategy(Strategy):
 
 
 class PumpStartStrategy(Strategy):
-    name = 'pump'
+    name = 'pump_start'
     anchor_type = 'level'
     setups = {'PUMP START': 1}
     # eng-71: the stop spans the ignition and TP1 is its measured move - R:R ~1 by construction, the global 2 vetoed
@@ -326,7 +319,7 @@ class PumpStartStrategy(Strategy):
 class DumpStartStrategy(Strategy):
     """eng-157: PumpStartStrategy mirrored for the start of a dump (short at the confirmation, stop above the ignition,
     the measured move down and 1h+ zones as targets)."""
-    name = 'pump'
+    name = 'dump_start'
     anchor_type = 'level'
     setups = {'DUMP START': -1}
     min_rr = 1.0
@@ -370,7 +363,7 @@ class DumpStartStrategy(Strategy):
 
 
 class PumpTopStrategy(Strategy):
-    name = 'pump'
+    name = 'pump_top'
     anchor_type = 'level'
     setups = {'PUMP TOP': -1}
     ttl_key = 'pump_ttl'

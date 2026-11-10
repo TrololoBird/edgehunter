@@ -442,9 +442,13 @@ def _confirm_value(row, name: str) -> Optional[str]:
 
 
 # the nature of each method (its source's own logic): what price must do after the entry
-NATURE = {'continuation': 'trend', 'breakout': 'trend', 'orb': 'trend', 'trendline': 'trend', 'cup_handle': 'trend',
-          'oi_signal': 'trend', 'pump': 'trend', 'connors': 'reversion', 'market_profile': 'reversion',
-          'bollinger': 'reversion', 'supply_demand': 'reversion', 'sweep': 'reversal', 'wyckoff': 'reversal',
+NATURE = {'continuation': 'trend', 'breakout': 'trend', 'orb': 'trend', 'trendline': 'trend',
+          'trendline_break': 'trend', 'trendline_touch': 'reversion', 'cup_handle': 'trend',
+          'oi_signal': 'trend', 'pump_start': 'trend', 'dump_start': 'trend', 'pump_top': 'reversion',
+          'dump_bounce': 'reversion', 'pump': 'trend', 'connors': 'reversion', 'market_profile': 'reversion',
+          'silver_bullet': 'reversal', 'bollinger': 'reversion', 'bollinger_wm': 'reversion', 'bollinger_method3': 'reversion',
+          'bollinger_method1': 'trend', 'value_area': 'reversion', 'auction': 'reversion', 'cascade': 'reversal',
+          'supply_demand': 'reversion', 'sweep': 'reversal', 'wyckoff': 'reversal',
           'po3': 'reversal'}
 
 

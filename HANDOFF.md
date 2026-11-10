@@ -60,7 +60,7 @@
    ```sql
    SELECT vetoed, COUNT(*) FROM signals WHERE group_key = 'ENTRY BULL B' AND logic_version = 'eng-6' GROUP BY vetoed;
    ```
-2. `git pull`, затем `.venv\Scripts\python -m pytest tests -q`.
+2. `git pull`, затем `.venv\Scripts\python -m compileall -q .`.
 3. Мягко остановить бота. Сохранить `signals.db` как `signals.eng6.bak.db` и начать новый журнал; открытые карточки eng-6 убрать из `scanner_state.json`. `ml_state.pkl` не трогать.
 4. **Модель**: `copy models\pretrained.eng-7.pkl pretrained.pkl`. Это избавит от многочасового скачивания архива на 300 КБ/с. Если версии river / scikit-learn у вас другие и файл не загрузится, бот выведет предупреждение и сам пересоберёт модель.
 5. Запуск на 5–10 минут: строка `Health:`, нет ли `Level map of ... failed`, на карточке входа есть строка «позиция», в логе при старте «P(edge) model: pretrained on 433910 historical rows».
@@ -88,3 +88,8 @@ python research_cards.py  --months 6 --holdout 2 --limit 100 --workers <ядер
 Скорость на машине владельца: ~7 минут на монету за 6 месяцев на процесс (детекторы maniac на каждом закрытии 15m).
 Класс РАБОТАЕТ, только если R TP1 > 0 и на dev, и на HOLDOUT, 90%-интервал на HOLDOUT выше 0 и
 «system − placebo» на HOLDOUT выше 0. Закоммитить отчёты и parquet (или положить parquet в artifact, если велик).
+# Historical handoff note
+
+This file records an earlier repository state. The referenced research scripts and test suite are not part of the
+current checkout; the numbers below are historical evidence, not current validation. Use the files that actually exist
+in this checkout and `python -m compileall -q .` for the current syntax check.

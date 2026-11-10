@@ -10,9 +10,9 @@ Machine learning that adapts to the current market instead of fixed thresholds f
    candle (BTC 1h move and volatility, breadth, median funding / OI change / RVOL). Clusters are named from their
    centers ('up·volatile', 'flat·quiet', ...). Every journal row carries the regime; stats.py splits Edge by it
    and journal.veto_reason mutes a setup whose Edge in the current regime is proven negative.
-3. SuccessModel (river, online logistic regression + ADWIN drift detection): P(4h Edge > 0) of a directional
-   signal from the features stored in the journal. It learns from every labelled row as it comes in (and replays
-   the journal after a restart), and starts over when ADWIN detects that its errors drifted (regime change).
+3. SuccessModel (River when available; a small compatibility model on Python 3.10): online logistic regression +
+   drift detection for P(4h Edge > 0) of a directional signal from journal features. It learns from every labelled row
+   as it comes in (and replays the journal after a restart), and starts over when error rates drift.
    Shadow mode: stored in the journal and shown on cards once trained, never used as a filter until stats.py
    proves it separates winners from losers.
 """
@@ -99,9 +99,7 @@ class AnomalyModel:
             import os
             from concurrent.futures import ProcessPoolExecutor
             from watchdog import exit_with_parent
-            # `exit_with_parent` expects the worker's direct parent to be the bot. With forkserver the
-            # direct parent is the forkserver process, so every worker exits immediately and the pool loops forever.
-            context_name = 'spawn'
+            context_name = 'forkserver' if 'forkserver' in multiprocessing.get_all_start_methods() else 'spawn'
             self._pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context(context_name),
                                              max_tasks_per_child=200,
                                              initializer=exit_with_parent, initargs=(os.getpid(),))
@@ -111,9 +109,6 @@ class AnomalyModel:
         """Scores computed in the worker process; None before the first fit."""
         import asyncio
         import pickle
-        from memory_guard import pressured
-        if pressured(0.88):
-            return None
         if self.model is None or not len(X):
             return None
         from concurrent.futures.process import BrokenProcessPool
@@ -132,12 +127,6 @@ class AnomalyModel:
         """Fit in the worker process on the sampled window; the old model keeps scoring until the new one is in."""
         import asyncio
         import pickle
-        from memory_guard import pressured
-        if pressured(0.88):
-            self._fit_retry_at = time.time() + 300
-            logger.warning("ML anomalies: fit deferred under cgroup memory pressure")
-            self.fitting = False
-            return
         self.fitting = True
         try:
             X = self.window(time.time())
@@ -195,7 +184,7 @@ class AnomalyModel:
 
     def due(self, now: float) -> bool:
         cfg = CONFIG.ml
-        return (not self.fitting and now >= getattr(self, '_fit_retry_at', 0.0) and len(self.samples) >= cfg.anomaly_min_samples
+        return (not self.fitting and len(self.samples) >= cfg.anomaly_min_samples
                 and (self.model is None or now - self.fitted_at >= cfg.anomaly_fit_every_sec))
 
     def fit(self) -> None:
@@ -386,6 +375,49 @@ class RegimeModel:
 
 # ====================================================================== 3. P(edge)
 
+
+class _CompatOnlineModel:
+    """Small dependency-free online logistic model for the Python 3.10 fallback."""
+
+    def __init__(self):
+        self.w, self.b = {}, 0.0
+
+    @staticmethod
+    def _sigmoid(z):
+        z = max(-40.0, min(40.0, z))
+        return 1.0 / (1.0 + math.exp(-z))
+
+    def predict_proba_one(self, x):
+        p = self._sigmoid(self.b + sum(self.w.get(k, 0.0) * float(v) for k, v in x.items()))
+        return {True: p, False: 1.0 - p}
+
+    def learn_one(self, x, y):
+        p = self.predict_proba_one(x)[True]
+        err = float(bool(y)) - p
+        rate = 0.02
+        self.b += rate * err
+        for k, v in x.items():
+            self.w[k] = self.w.get(k, 0.0) + rate * err * float(v)
+        return self
+
+
+class _CompatDrift:
+    """ADWIN-shaped bounded error monitor used only when River cannot be imported."""
+
+    def __init__(self):
+        self._errors = deque(maxlen=128)
+        self.drift_detected = False
+
+    def update(self, error):
+        self._errors.append(float(error))
+        self.drift_detected = False
+        if len(self._errors) < 64:
+            return self
+        half = len(self._errors) // 2
+        old, new = list(self._errors)[:half], list(self._errors)[half:]
+        self.drift_detected = sum(new) / len(new) - sum(old) / len(old) > 0.25
+        return self
+
 class SuccessModel:
     """Online logistic regression on journal features, reset on drift (ADWIN over its 0/1 errors)."""
 
@@ -399,10 +431,15 @@ class SuccessModel:
         self._new()
 
     def _new(self):
-        from river import compose, drift, linear_model, optim, preprocessing
-        self.model = compose.Pipeline(preprocessing.StandardScaler(),
-                                      linear_model.LogisticRegression(optimizer=optim.SGD(0.02), l2=1e-3))
-        self.detector = drift.ADWIN()
+        try:
+            from river import compose, drift, linear_model, optim, preprocessing
+            self.model = compose.Pipeline(preprocessing.StandardScaler(),
+                                          linear_model.LogisticRegression(optimizer=optim.SGD(0.02), l2=1e-3))
+            self.detector = drift.ADWIN()
+        except ModuleNotFoundError:
+            # River currently targets Python 3.11+; keep the online path usable on the
+            # project's Python 3.10 maintenance runtime instead of failing at startup.
+            self.model, self.detector = _CompatOnlineModel(), _CompatDrift()
         self.n = 0
         self.correct = 0
         self.seen = self.hits = 0            # predictions scored since this model started / was reset (accuracy)
@@ -522,10 +559,13 @@ class SuccessModel:
 
     def _restore_prior(self):
         import pickle
-        from river import drift
         prior = pickle.loads(self._prior)
         self.model, self.n, self.correct = prior['model'], prior['n'], prior['correct']
-        self.detector = drift.ADWIN()
+        try:
+            from river import drift
+            self.detector = drift.ADWIN()
+        except ModuleNotFoundError:
+            self.detector = _CompatDrift()
         # audit (2nd part): accuracy is measured from here - the prior's n / correct (400k archive rows) made it the
         # archive's accuracy, blind to the live errors that had just triggered the drift reset
         self.seen = self.hits = 0

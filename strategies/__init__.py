@@ -6,20 +6,23 @@ registry as it stands (eng-145; one methodology = one strategy name, several pla
     continuation    IMPULSE UP / DOWN (Tier-0)               leg.py               ICT OTE 0.62-0.79, touch -> close;
                                                                                   targets start + k x leg
     sweep           SWEEP LOW / HIGH                         level.py             raid of an HTF pool, 5m FVG CE
-                    SILVER BULLET LONG / SHORT               silver_bullet.py     NY windows, FVG CE, TP1 PDH / PDL
+    silver_bullet   SILVER BULLET LONG / SHORT               silver_bullet.py     NY windows, FVG CE, TP1 PDH / PDL
     wyckoff         SPRING / UTAD                            wyckoff_range.py     1h range spring / upthrust + test
-                    FLUSH / SQUEEZE REVERSAL                 cascade.py           the climax's secondary test
+    cascade         FLUSH / SQUEEZE REVERSAL                 cascade.py           the climax's secondary test
     breakout        BREAKOUT UP / DOWN                       breakout.py          the Turtles (touch, 2N, channel exit)
                     BB1 UP / DOWN                            maniac_strategies    Bollinger method I (squeeze)
     supply_demand   SD DEMAND / SUPPLY                       maniac_strategies    Seiden 4h zones, 1h touch, R:R 3
-    market_profile  VA80 LONG / SHORT                        classic_strategies   Dalton's 80% rule by session
-                    AUCTION LONG / SHORT                     maniac_strategies    the failed auction (eng-127)
-    trendline       TL EM UP / DOWN, TL TOUCH UP / DOWN      maniac_strategies    Edwards & Magee, retest 'shift' / 3rd touch
-    bollinger       BB W-BOTTOM / M-TOP, BB3 BUY / SELL      maniac_strategies    W / M, method III (BB3 shadow)
+    value_area      VA80 LONG / SHORT                        classic_strategies   Dalton's 80% rule by session
+    auction         AUCTION LONG / SHORT                     maniac_strategies    the failed auction (eng-127)
+    trendline_break TL EM UP / DOWN                          maniac_strategies    Edwards & Magee break/retest
+    trendline_touch TL TOUCH UP / DOWN                       maniac_strategies    Edwards & Magee third-touch reaction
+    bollinger_wm    BB W-BOTTOM / M-TOP                     maniac_strategies    Bollinger/Merrill W/M
+    bollinger_method3 BB3 BUY / SELL                        maniac_strategies    Bollinger Method III alert/confirmation
+    bollinger_method1 BB1 UP / DOWN                         maniac_strategies    Bollinger Method I squeeze breakout
     orb             ORB UP / DOWN                            classic_strategies   Crabel 5-min range +- Stretch, touch;
                                                                                   out on 15m Parabolic SAR (eng-145)
     connors         RSI2 / RSI2X LONG / SHORT                classic_strategies   daily RSI(2), out at the SMA5
-    pump            PUMP / DUMP START, PUMP TOP, DUMP BOUNCE pump.py              the owner's pump playbook
+    pump_start / dump_start / pump_top / dump_bounce         pump.py              separate pump playbooks
     cup_handle      CUP HANDLE                               cup_handle.py        O'Neil, 1h / 4h
     po3             PO3 LONG / SHORT                         po3.py               ICT power of three, Asian range
     oi_build        OI BUILD LONG / SHORT                    oi_build.py          off (CONFIG.strategies.disabled_setups)

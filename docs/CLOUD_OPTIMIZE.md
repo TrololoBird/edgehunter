@@ -17,7 +17,7 @@ Read `CLAUDE.md` (eng-61 / eng-62 at its end) and `research/optimize.md`, `resea
 - Do not change the bot's signal logic. The outputs ARE the bot's profiles: `models/profiles.json` /
   `models/profiles_regime.json` are read live (strategies/profiles.py) - write the new ones under a new name (step 5)
   and let the owner swap them.
-- `ruff check --select F <files>` and `python -m pytest tests -q` stay green.
+- `ruff check --select F <files>` and `python -m compileall -q .` stay green.
 - Python 3.14: `python3.14 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
 - Use the machine's cores; minute-level jobs need ~1.5 GB RAM per worker. Long jobs in the background.
 

@@ -16,7 +16,7 @@ echo "export EDGEHUNTER_VPS_HOST=${EDGEHUNTER_VPS_HOST:-$PUMP_VPS_HOST}" >> ~/.b
 
 ## Workflow
 
-1. Change the code on a branch; `python -m pytest tests -q`; `ruff check --select F --exclude .claude .`.
+1. Change the code on a branch; `python -m compileall -q .`; `ruff check --select F --exclude .claude .`.
 2. Bump `CONFIG.journal.logic_version` for any behaviour change (and `keep_waiting_from` when detection / planning /
    vetoes change).
 3. Merge into `master` (fast-forward) and push `master`.

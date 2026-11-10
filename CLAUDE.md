@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An asyncio crypto market-microstructure scanner ("Microstructure Scanner") for a **manual** trader. Universe: up to 150 Binance USD-M perpetuals with **complete data** (`fetcher.select_universe`: a Binance spot pair, >= 2 other futures venues, listed >= 9 days, spread <= 10 bp, >= $10M 24h volume, most liquid first; the market baseline for Edge still covers every USDT perpetual via REST mark prices); Bybit, OKX, Hyperliquid, Bitget (futures) and Coinbase (spot) enrich it with trades, liquidations, OI and funding. It flags raw Tier-0 anomalies and turns directional events into cards of **strategies, each with its own anchor, entry and targets** (`strategies/`): Wyckoff reversals and trend continuations from six 15m phases (A Accumulation, B Spring, C Distribution, D Breakdown, E Capitulation, F Markup), the Tier-0 momentum impulse, liquidity sweeps of higher-timeframe pools, liquidation-cascade exhaustion, absorption at a level and breakouts with initiative. Zones / stops / targets come from a per-coin level map (support / resistance, liquidity pools, estimated and real liquidations, volume profile, walls, order-book liquidity bands, VWAP, Fibonacci). Everything is journaled in SQLite and shown in a browser dashboard with an order-book heatmap. Levels are mechanical rules measured by the journal (`stats.py`), never advice; phase weights, detector thresholds, level-source weights and Fibonacci ratios are unproven hypotheses, which is why every filter, family and target source is journaled.
+An asyncio crypto market-microstructure scanner ("Microstructure Scanner") for a **manual** trader. The configured complete-data universe is up to 70 Binance USD-M perpetuals (`fetcher.select_universe`: a Binance spot pair, >= 2 other futures venues, listed >= 9 days, spread <= 10 bp, >= $10M 24h volume, most liquid first; the market baseline for Edge still covers every USDT perpetual via REST mark prices); Bybit, OKX, Hyperliquid, Bitget (futures) and Coinbase (spot) enrich it with trades, liquidations, OI and funding. It flags raw Tier-0 anomalies and turns directional events into cards of **strategies, each with its own anchor, entry and targets** (`strategies/`). Everything is journaled in SQLite and shown in a browser dashboard with an order-book heatmap. Levels are mechanical rules measured by the journal (`stats.py`), never advice; phase weights, detector thresholds, level-source weights and Fibonacci ratios are unproven hypotheses, which is why every filter, family and target source is journaled.
 
 ## Commands (on the VPS, Python 3.14 in /opt/edgehunter/.venv; development in /opt/edgehunter-dev)
 
@@ -12,12 +12,12 @@ An asyncio crypto market-microstructure scanner ("Microstructure Scanner") for a
 systemctl status edgehunter-bot ; journalctl -u edgehunter-bot -f      # the live bot (console = log; scanner.log rotated 10 MB x 5)
 .venv/bin/python stats.py --days 7 --last 20               # outcome statistics (current logic version; --all-versions)
 .venv/bin/python pretrain.py --months 6                    # pretraining on the Binance archive (heavy: cloud preferred)
-.venv/bin/python -m pytest tests -q                        # offline checks of formulas / parsers
 .venv/bin/ruff check --select F --exclude .claude .        # lint before every restart (+ pylint E0601,E0602,E0606)
+python -m compileall -q .                                  # syntax/import compilation check
 ```
 
-**Verify behaviour with live runs, not by adding tests.** Offline tests only catch formula / parsing slips; stream
-behaviour (bandwidth, lag, disconnects, exchange quirks) only shows live: read the `Health:` line logged every minute
+**Verify behaviour with live runs and replay evidence.** Stream behaviour (bandwidth, lag, disconnects, exchange quirks)
+only shows live: read the `Health:` line logged every minute
 (Tier-0 / scan / heavy-pass time, cpu, memory, per-venue messages/s and KB/s, lag, DOWN venues) and the WARNING lines.
 Don't add tests unless a live run exposed a concrete bug; ask first.
 
@@ -42,10 +42,10 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
     - `wyckoff` (SPRING / UTAD of a 1h range with the test; FLUSH / SQUEEZE REVERSAL = the climax's secondary test).
     - `breakout` - the Turtles (daily System 1 / 2, 2N stop, units + pyramid, N-day channel exit) + BB1 UP / DOWN.
     - `supply_demand` - Seiden: 4h zones, 1h touch, the curve, R:R 3.
-    - `market_profile` (AUCTION LONG / SHORT failed auction, eng-127; VA80 LONG / SHORT Dalton's 80% rule by session).
-    - `trendline` (1h lines, Edwards & Magee), `bollinger` (W-bottom / M-top, the measured move), `orb` (Crabel, touch entry, out at the session close),
-      `connors` (daily RSI(2)), `cup_handle` (O'Neil, 1d), `pump` (PUMP START / PUMP TOP, the owner's, with 1:1
-      averaging).
+    - `value_area` (VA80 LONG / SHORT Dalton's 80% rule) and `auction` (failed auction).
+    - `trendline_break`, `trendline_touch`, `bollinger_wm`, `bollinger_method3`, `bollinger_method1`, `orb` (Crabel),
+      `connors` (daily RSI(2)), `cup_handle` (O'Neil), and the separate `pump_start`, `dump_start`, `pump_top`,
+      `dump_bounce` playbooks.
     - The 15m phase scores (A-F) are still computed and journaled as structured rows; none feeds a card since eng-127.
     - eng-145: longs blocked while BTC and the market are down over 24h (`market_down`; Turtles / Connors exempt).
     - eng-147: TP1 >= 1R, TP2 / TP3 +1R steps, capped stop pads, `trigger_overshoot`, blocking SWEEP filters, swept
@@ -120,7 +120,7 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
   (https://194-247-182-162.sslip.io, h1/h2 only); `/api/briefing`, `/api/debug`, `/api/briefing_card` answer only
   local requests.
 - Flow: edit + `ruff check --select F --exclude .claude` + `pylint --disable=all --enable=E0601,E0602,E0606 <files>` +
-  `pytest tests -q` in /opt/edgehunter-dev -> the `reviewer` agent for signal logic / geometry / executor / journal /
+  `python -m compileall -q .` in /opt/edgehunter-dev -> the `reviewer` agent for signal logic / geometry / executor / journal /
   research changes -> commit + push -> deploy ONLY after the owner's yes: `cd /opt/edgehunter && git pull --ff-only &&
   .venv/bin/python -m pip install -q -r requirements.txt && chown -R edgehunter:edgehunter . && systemctl restart edgehunter-bot`, then
   check the Health line and WARNINGs for a few minutes. Files the bot rewrites are not in git (.gitignore).
@@ -128,12 +128,12 @@ joins scoring once its history is in; Tier-0 warms up 5 min; open cards and whal
   (Opus, low effort, read-only) for non-trivial changes before editing; `reviewer` (Opus, medium, read-only) on the
   finished diff. Small edits / questions: no agents. Heavy archive work (replays, research over months of the Binance
   archive) goes to a cloud session on GitHub, not this server (2 cores shared with the bot).
-- Autonomous: edits in /opt/edgehunter-dev, tests, review, commits to a branch / master of docs and fixes, reports.
+- Autonomous: edits in /opt/edgehunter-dev, static checks, review, commits to a branch / master of docs and fixes, reports.
   Owner's explicit yes required: deploying to /opt/edgehunter, signal-logic / logic_version changes, any conclusion drawn
   from research (its pass rule is agreed BEFORE the run), server security settings, anything touching the BingX
   account beyond the demo executor, posting to the Telegram channel by hand.
-- Rules carried over from the laptop sessions' memory: implement every change first, then lint / tests / ONE restart;
-  verify live (Health line, journal), add tests only for a bug a live run exposed and ask first; never discuss or
+- Rules carried over from the laptop sessions' memory: implement every change first, then lint / compile / ONE restart;
+  verify live (Health line, journal); never discuss or
   suggest the owner's own trades; trade geometry (stop, buffer, ATR, targets, horizon) on the structure's timeframe,
   analyse trades end to end; pretraining on the archive is wanted but judged out of sample (purged walk-forward);
   research on older logic or a replay with a known bug is void (docs/PLAN_server_eng76.md section 2); the Turtles'

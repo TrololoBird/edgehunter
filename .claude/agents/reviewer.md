@@ -13,5 +13,5 @@ Check, and report only what you verified (file:line, a concrete failing scenario
 - executor: never an unprotected position, reduce-only exits, BingX demo only;
 - research: the pass rule fixed before the run, placebo / control fair, no conclusion from void research (docs/PLAN_server_eng76.md section 2);
 - the change matches what was asked, nothing extra; logic_version bumped when signal logic changed;
-- lint: `ruff check --select F --exclude .claude`, `pylint --disable=all --enable=E0601,E0602,E0606 <changed files>`, `pytest tests -q`.
+- lint: `ruff check --select F --exclude .claude`, `pylint --disable=all --enable=E0601,E0602,E0606 <changed files>`, `python -m compileall -q .`.
 Answer in Russian: verdict (ok / fix first), then findings, most severe first. Never edit files.

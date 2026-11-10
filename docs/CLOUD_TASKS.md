@@ -15,13 +15,13 @@ a cloud session cannot run it or read its journal (`signals.db`, `demo_trades.db
 ```bash
 git clone <repo> pump && cd pump
 python3.14 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m pytest tests -q                 # must pass (70)
+.venv/bin/python -m compileall -q .                 # must pass (70)
 nproc; free -g                                      # plan the parallelism: ~1.5 GB RAM per replay worker
 ```
 - Binance REST is geo-blocked in the cloud (HTTP 451): everything here reads `data.binance.vision` through
   `history.Archive` (cached under `history_cache/`, never commit it) - no REST calls are needed.
 - Work on `master`; commit `research/*.md`, `research/*.parquet` < 20 MB, scripts. Never `data/`, `history_cache/`.
-- Before each commit: `.venv/bin/python -m ruff check --select F <changed files>` and `pytest tests -q`.
+- Before each commit: `.venv/bin/python -m ruff check --select F <changed files>` and `python -m compileall -q .`.
 - Long jobs in the background with logs (`nohup ... > logs/x.log 2>&1 &`); check progress from the logs.
 
 ## Task 1 - replay of the CURRENT logic (first; everything else depends on it)

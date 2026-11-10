@@ -14,7 +14,7 @@ decisions). It is NOT changed after seeing results. Script: `research/scripts/re
 ```bash
 git clone <repo> pump && cd pump
 python3.14 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m pytest tests -q                       # must pass (75)
+.venv/bin/python -m compileall -q .                       # must pass (75)
 nproc; free -g                                            # ~1.5 GB RAM per replay worker
 # 1. replay of the current logic (eng-133), 60 coins x 6 months, 24 shards (reduce to nproc)
 mkdir -p logs

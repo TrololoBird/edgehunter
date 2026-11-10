@@ -66,3 +66,7 @@ No backtests were run. Each card: where, fact, evidence, status, fix / test.
 - Breaker finding of LEVELS_INVENTORY v1 withdrawn: the OB definition already requires a close beyond the swing.
 - Not changed: weights of measured-weak sources and of the higher timeframes (variants A / B need a measurement), pdhl split
   (see LEVELS_INVENTORY 4.5), cluster_entry_sec (owner: not now).
+# Historical audit notice
+
+The test files named in this report were removed from the current checkout. The findings remain historical evidence;
+they are not a claim that those test commands can still be run.

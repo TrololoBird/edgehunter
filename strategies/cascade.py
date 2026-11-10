@@ -110,7 +110,7 @@ class CascadeTracker:
 
 
 class ExhaustionStrategy(Strategy):
-    name = 'wyckoff'               # eng-35: Wyckoff's phase A (climax + secondary test), with SPRING / UTAD (phase C)
+    name = 'cascade'
     own_leg = True                 # its anchor is the cascade, not a leg of the 15m / 1h history
     default_tf = '15m'
     anchor_type = 'leg'

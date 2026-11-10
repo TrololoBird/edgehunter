@@ -30,7 +30,7 @@ class ExchangeConfig:
     # The universe is the set of coins with COMPLETE data, not the top by volume (fetcher.select_universe): every
     # coin has a Binance spot pair (spot vs perp, the spot confirmation), >= min_futures_venues other futures venues
     # (aggregated OI / liquidations / flows), enough history for its higher-timeframe pools (1h candles 8 days), a
-    # tradable spread; the most liquid of them up to max_pairs. The top 300 by volume had no spot on a third of the
+    # tradable spread; the most liquid of them up to max_pairs. An earlier 300-coin trial had no spot on a third of the
     # coins and no book / positioning on most, and saturated the link (Binance ~190 KB/s, stalls). The market
     # baseline for Edge still uses every USDT perpetual (REST mark prices, no streams).
     max_pairs: int = 70           # pinned + the strategies' pools (was 150: the laptop's RAM / CPU / link)
@@ -641,12 +641,18 @@ class PoolsConfig:
     # eng-58: ICT's models (sweep / Silver Bullet, continuation, PO3) on liquid coins only - in crypto they are applied
     # to BTC / ETH and liquid majors; thin books turn every wick into a 'raid'
     rules: tuple = (('continuation', 'major,large,mid', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
-                    ('orb', 'all', '', 0.0, 'volume'), ('trendline', 'all', '', 0.0, 'volatility'),
-                    ('market_profile', 'all', '', 0.0, 'volume'),
+                    ('orb', 'all', '', 0.0, 'volume'), ('trendline_break', 'all', '', 0.0, 'volatility'),
+                    ('trendline_touch', 'all', '', 0.0, 'volatility'),
                     ('connors', 'all', '', 0.0, 'volume'),
-                    ('bollinger', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
-                    ('sweep', 'major,large,mid', '', 0.0, 'volume'), ('supply_demand', 'all', '', 0.0, 'volume'),
-                    ('pump', 'all', '', 0.0, 'volatility'), ('cup_handle', 'all', '', 0.0, 'volume'),
+                    ('bollinger_wm', 'all', '', 0.0, 'volume'), ('bollinger_method3', 'all', '', 0.0, 'volume'),
+                    ('bollinger_method1', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
+                    ('cascade', 'all', '', 0.0, 'volume'), ('oi_build', 'all', '', 0.0, 'volume'),
+                    ('value_area', 'all', '', 0.0, 'volume'), ('auction', 'all', '', 0.0, 'volume'),
+                    ('sweep', 'major,large,mid', '', 0.0, 'volume'), ('silver_bullet', 'major,large,mid', '', 0.0, 'volume'),
+                    ('supply_demand', 'all', '', 0.0, 'volume'),
+                    ('pump_start', 'all', '', 0.0, 'volatility'), ('dump_start', 'all', '', 0.0, 'volatility'),
+                    ('pump_top', 'all', '', 0.0, 'volatility'), ('dump_bounce', 'all', '', 0.0, 'volatility'),
+                    ('cup_handle', 'all', '', 0.0, 'volume'),
                     ('po3', 'major,large,mid', '', 0.0, 'volume'))
 
 
@@ -665,8 +671,9 @@ class StrategiesConfig:
     # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
     # CLAUDE.md ("Live verdict"): kept or deleted from the code.
     # oi_build stays listed but its setups are off through disabled_setups (eng-144)
-    enabled: tuple = ('continuation', 'wyckoff', 'sweep', 'breakout', 'supply_demand', 'market_profile',
-                      'trendline', 'bollinger', 'orb', 'connors', 'pump', 'cup_handle', 'po3', 'oi_build')
+    enabled: tuple = ('continuation', 'wyckoff', 'cascade', 'sweep', 'silver_bullet', 'breakout', 'supply_demand', 'value_area', 'auction',
+                      'trendline_break', 'trendline_touch', 'bollinger_wm', 'bollinger_method3', 'bollinger_method1', 'orb', 'connors', 'pump_start', 'dump_start', 'pump_top',
+                      'dump_bounce', 'cup_handle', 'po3', 'oi_build')
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
@@ -1078,7 +1085,7 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-169m"   # Live/default profile; Release 2 is selected by explicit deploy override after acceptance
+    logic_version: str = "eng-169l"   # Live/default profile; Release 2 is selected by explicit deploy override after acceptance
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
@@ -1174,15 +1181,14 @@ class ExecutorConfig:
     partial_share: float = 0.5       # eng-155 (the owner): half out at +1R, open trades and trailing plans too (eng-162)
     max_leverage: int = 5            # eng-84: 2-5x (the 3-5-7 rule); the risk is set by the stop, cross margin
     # eng-58, the account's day (prop firms: daily loss 1-5%, 2-3 trades a day, a pause after a streak). eng-125: the
-    # numbers were picked inside those ranges, no source -> off (0); the risk per trade (1%, the Turtles' unit) stays
+    # These are opt-in research controls; a demo run remains observable unless a local config enables a limit.
     daily_loss_r: float = 0.0
     max_trades_day: int = 0
     pause_losses: int = 0
     pause_hours: float = 0.0
-    # audit-80: opt-in guards (0 = off, the owner's eng-125 decision stands until set in config.local.toml)
-    strategy_kill_r: float = 0.0      # no new trades of a strategy whose last strategy_kill_n closed trades sum <= -this R
+    strategy_kill_r: float = 0.0
     strategy_kill_n: int = 30
-    day_alert_r: float = 0.0          # a Telegram alert (not a block) once the UTC day's closed trades lost this many R
+    day_alert_r: float = 0.0
     # owner 2026-10-18 (live demo 10-11..10-17: 3 longs in one 15 min all stopped, LDO/ATOM/VIRTUAL, ONDO/FIL/NIGHT,
     # MAGIC/ALGO/APE): at most one demo entry per direction within cluster_entry_sec (0 = off)
     cluster_entry_sec: int = 0       # eng-148, the owner: off - the demo shows every trade
@@ -1192,11 +1198,7 @@ class ExecutorConfig:
     # stopped, breakout (the Turtles' ~16% 2N stop, MFE 0.3R; BB1) -1.25R - journaled, no demo trades
     # eng-173, the owner 2026-10-27: OI BUILD LONG (63 cards -26.1R, every version negative) and SHORT (85 cards -15.5R)
     # leave the demo; cards stay in signal_book (card_r / trade_mfe_r keep accumulating), the demo row is SETUP_OFF
-    # Demo is the validation environment: every setup is executed so that its
-    # real fills, exits and failure modes are measurable.  Keep this list empty
-    # and use technical safety gates (invalid levels, duplicate orders, missing
-    # protection) to stop a broken order instead of hiding a weak strategy.
-    demo_off_setups: tuple = ()
+    demo_off_setups: tuple = ('OI BUILD LONG', 'OI BUILD SHORT')
     daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 
@@ -1316,6 +1318,39 @@ def apply_overrides(config: AppConfig, overrides: Dict[str, Dict[str, Any]]) -> 
             if key not in names:
                 raise ValueError(f"Unknown config key [{section}] {key}")
             changes[key] = _coerce(section, key, getattr(current, key), value)
+        # Playbook names were split so independent methodologies cannot share one runtime gate. Keep old local
+        # configuration files safe: the former family aliases expand to every corresponding playbook explicitly.
+        if section == 'strategies' and 'enabled' in changes:
+            expanded = []
+            for mode in changes['enabled']:
+                expanded.extend({'pump': ('pump_start', 'dump_start', 'pump_top', 'dump_bounce'),
+                                 'trendline': ('trendline_break', 'trendline_touch'),
+                                 'sweep': ('sweep', 'silver_bullet'),
+                                 'wyckoff': ('wyckoff', 'cascade'),
+                                 'market_profile': ('value_area', 'auction'),
+                                 'bollinger': ('bollinger_wm', 'bollinger_method3'),
+                                 'breakout': ('breakout', 'bollinger_method1')}.get(mode, (mode,)))
+            changes['enabled'] = tuple(dict.fromkeys(expanded))
+        if section == 'pools' and 'rules' in changes:
+            # Pool rules use the same playbook names as the strategy registry. Expand
+            # legacy family names from older local TOML files so a split playbook never
+            # silently runs without its own pool.
+            aliases = {
+                'pump': ('pump_start', 'dump_start', 'pump_top', 'dump_bounce'),
+                'trendline': ('trendline_break', 'trendline_touch'),
+                'sweep': ('sweep', 'silver_bullet'),
+                'wyckoff': ('wyckoff', 'cascade'),
+                'market_profile': ('value_area', 'auction'),
+                'bollinger': ('bollinger_wm', 'bollinger_method3'),
+                'breakout': ('breakout', 'bollinger_method1'),
+            }
+            expanded_rules = []
+            for rule in changes['rules']:
+                if not isinstance(rule, (list, tuple)) or not rule:
+                    raise ValueError(f"[pools] rules: expected rule tuples, got {rule!r}")
+                names_for_rule = aliases.get(rule[0], (rule[0],))
+                expanded_rules.extend(tuple((name, *rule[1:])) for name in names_for_rule)
+            changes['rules'] = tuple(dict.fromkeys(expanded_rules))
         setattr(config, section, dataclasses.replace(current, **changes))
     return config
 
@@ -1323,7 +1358,10 @@ def apply_overrides(config: AppConfig, overrides: Dict[str, Dict[str, Any]]) -> 
 def load_overrides(config: AppConfig, path: str = LOCAL_CONFIG_PATH) -> AppConfig:
     if not os.path.exists(path):
         return config
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:                       # Python 3.10 compatibility
+        import tomli as tomllib
     with open(path, 'rb') as f:
         overrides = tomllib.load(f)
     apply_overrides(config, overrides)

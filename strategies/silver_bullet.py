@@ -132,7 +132,7 @@ class SilverBulletStrategy(Strategy):
     """The Silver Bullet playbook of the ICT liquidity strategy: the FVG's CE (first touch, 5m; with
     executor.touch_confirm_close the entry is the close of the touching candle), stop beyond the raid's extreme +
     the measured pierce, TP1 the day's draw on liquidity (PDH / PDL) ahead of the entry, else no trade."""
-    name = 'sweep'
+    name = 'silver_bullet'
     anchor_type = 'level'
     setups = {'SILVER BULLET LONG': 1, 'SILVER BULLET SHORT': -1}
     min_rr = 2.0                     # eng-84: >= 1:2 to the opposite liquidity (Silver Bullet practice)
@@ -184,7 +184,6 @@ class SilverBulletStrategy(Strategy):
         anchor = {'type': 'level', 'tf': '5m', 'level': ce, 'label': 'Silver Bullet FVG (CE)',
                   'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
         plan = base_plan(x, self.name, anchor, '5m', entry='pullback', trigger='touch', single_touch=True,
-                         entry_mode='limit',
                          zone_lo=zone[0], zone_hi=zone[1], zone_src='Silver Bullet FVG, limit at its CE',
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],

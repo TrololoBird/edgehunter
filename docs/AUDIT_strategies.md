@@ -359,6 +359,10 @@
 Команды для воспроизведения:
 ```
 .venv\Scripts\python stats.py --days 7 --last 20
-.venv\Scripts\python -m pytest tests -q
+.venv\Scripts\python -m compileall -q .
 .venv\Scripts\python research/scripts/research_pumps.py --months 38
 ```
+# Historical strategy-audit notice
+
+This report describes an earlier registry and research snapshot. Current executable names are defined by
+`strategies/__init__.py`; split aliases and current configuration are documented in `docs/DOCUMENTATION_AUDIT_2026-11-10.md`.

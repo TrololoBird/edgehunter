@@ -228,7 +228,7 @@ def sd_zone_events(bars: Sequence[Sequence[float]], period_ms: int = QUARTER_MS,
     Replaces the ported supply_demand-v4 thresholds (0.55 ATR body, 2 ATR within 4 bars, 1.2 ATR height, score 3.5).
     """
     zones = _sd_bases(bars)
-    if len(zones) < 10:
+    if not zones:
         return []
     speeds = np.array([z['speed'] for z in zones])
     lo3, hi3 = np.quantile(speeds, [1 / 3, 2 / 3])
@@ -618,14 +618,6 @@ def bollinger_wm_event(c15: Sequence[Sequence[float]], period_ms: int = QUARTER_
         if len(mid) < 3:
             continue
         peak = max(mid, key=lambda k: h[k]) if d > 0 else min(mid, key=lambda k: l[k])
-        # Bollinger's W/M definition requires the intervening reaction to
-        # reach the middle band before the retest.  Without this check a small
-        # bounce entirely inside the lower/upper half was mislabeled as a
-        # confirmed W/M and traded as a reversal.
-        if d > 0 and h[peak] < ma[peak]:
-            continue
-        if d < 0 and l[peak] > ma[peak]:
-            continue
         retest = [k for k in range(peak + 1, i)]
         if not retest:
             continue

@@ -13,10 +13,14 @@ python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -r requirements.txt -c constraints.txt
-python -m pip install -r requirements-dev.txt
-ruff check .
-python -m pytest tests -q
+python -m pip install -r requirements-dev.txt  # optional tooling
+ruff check --select F --exclude .claude .
+python -m compileall -q .
 ```
+
+The repository currently carries no test suite. Runtime confidence comes from
+static checks, compilation, replay reports and live Health/journal evidence;
+historical documents may mention tests that were run before the suite was removed.
 
 Run the scanner with `python main.py` or `python main.py --no-web`. Keep
 credentials and local overrides in `config.local.toml` or environment

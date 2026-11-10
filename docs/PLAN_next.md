@@ -135,3 +135,7 @@ Rejected (checked in code):
 40. DONE eng-167: htf_bias blocking for longs (9 / 9 lost); shorts stay shadow.
 41. DONE eng-167: pd_vpin, pd_impact_ratio, pt_squeeze shadow, small-cap seed semaphore.
 42. OWNER: daily loss limit / pause after N stops (executor.daily_loss_r / pause_losses = 0), public dashboard, README.
+# Plan history notice
+
+Some completed items cite the former test suite. Those citations identify historical validation and are not current
+commands; the present repository uses static checks, compilation and live/replay evidence.

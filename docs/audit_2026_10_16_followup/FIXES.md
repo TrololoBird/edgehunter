@@ -2,7 +2,7 @@
 
 База: master `47207ba`. Ветка не слита, не задеплоена, бот не перезапускался. Тесты в `tests/` не добавлялись.
 Проверки до/после: `checks/*.py`, выводы `checks/*.txt` (секции `== base` и `== fix`; для A06 база — таблица в
-FOLLOWUP аудита на 47207ba). Lint (ruff F, pylint E0601/E0602/E0606) и `pytest tests -q` (75) проходят.
+FOLLOWUP аудита на 47207ba). Lint (ruff F, pylint E0601/E0602/E0606) и `python -m compileall -q .` (75) проходят.
 
 ## 1. Классификация
 

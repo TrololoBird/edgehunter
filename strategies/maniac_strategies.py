@@ -120,7 +120,6 @@ class SupplyDemandStrategy(_System):
             targets.append(targets[-1])
             sources.append(sources[-1])
         plan = base_plan(x, self.name, _anchor(sig, '4h'), '4h', entry='pullback', trigger='touch', single_touch=True,
-                         entry_mode='confirmation_close',
                          zone_lo=lo, zone_hi=hi,
                          zone_src=f"{sig.get('anchor_label', 'zone')}: odds {score}/10 (strength "
                                   # R:R 2: granted here, ENFORCED by min_rr = 3 to TP1 (the nearest opposing zone,
@@ -162,7 +161,7 @@ class AuctionStrategy(_System):
     """eng-127, the failed auction (strategies/classic.failed_auction_event): in at the close of the 30-minute period
     back inside value, the stop beyond the probe's extreme, the target the value area's opposite end, out at the
     session's close. Replaces the ported auction_theory_in_code POC retest (its 0.35 ATR / 1.5 R / 2.5 R numbers)."""
-    name = 'market_profile'
+    name = 'auction'
     min_rr = 1.0
     setups = {'AUCTION LONG': 1, 'AUCTION SHORT': -1}
     ttl_key = 'classic_ttl'
@@ -229,7 +228,8 @@ class TrendlineStrategy(_System):
     """Edwards & Magee trendline break on 1h lines: two closes beyond the line, then the retest - a 15m structure
     shift with agreeing taker flow between the broken line and its measured pierce (trigger 'shift', eng-84; no
     resting limit), the stop beyond the last confirmed 1h pivot, targets the next 1h+ levels of the map."""
-    name = 'trendline'
+    # Abstract implementation shared by the two registered playbooks below.
+    name = 'trendline_base'
     setups = {'TL EM UP': 1, 'TL EM DOWN': -1,   # eng-127: the ATR-line bot (TRENDLINE UP / DOWN) is deleted
               'TL TOUCH UP': 1, 'TL TOUCH DOWN': -1}   # eng-150: the third touch (plan 4.10)
     ttl_key = 'trendline_ttl'
@@ -246,8 +246,7 @@ class TrendlineStrategy(_System):
             stop = min(edge, sig['anchor_extreme']) - pad if d > 0 else max(edge, sig['anchor_extreme']) + pad
             exit = {'stop': ['price', stop], 'stop_src': 'beyond the trendline band + measured pierce',
                     'tp': ['map', 1.0], 'atr': x.atr, 'no_atr_steps': True}
-            return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch',
-                                 entry_mode='confirmation_close')
+            return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch')
         if sig.get('target_price') is None or not x.minutes:
             return None
         # eng-79: the stop beyond the last confirmed 1h pivot (the line's own timeframe), 0.1 x ATR(1h) beyond it
@@ -284,12 +283,24 @@ class TrendlineStrategy(_System):
         return plan
 
 
+class TrendlineBreakStrategy(TrendlineStrategy):
+    """Edwards–Magee break/retest playbook kept separate from the third-touch playbook."""
+    name = 'trendline_break'
+    setups = {'TL EM UP': 1, 'TL EM DOWN': -1}
+
+
+class TrendlineTouchStrategy(TrendlineStrategy):
+    """Third-touch trendline reaction playbook; it is not a breakout/retest signal."""
+    name = 'trendline_touch'
+    setups = {'TL TOUCH UP': 1, 'TL TOUCH DOWN': -1}
+
+
 # ------------------------------------------------------------------------------------------------ indicator systems
 
 class BollingerStrategy(_System):
     """Bollinger's W-bottom / M-top (method III): entry at the close beyond the middle peak, the stop beyond the retest,
     the first target the opposite band (then the map)."""
-    name = 'bollinger'
+    name = 'bollinger_base'
     setups = {'BB W-BOTTOM': 1, 'BB M-TOP': -1, 'BB3 BUY': 1, 'BB3 SELL': -1}   # BB3: eng-106 Method III, shadow
     min_rr = 1.0                     # Bollinger: the target is the opposite band, no ratio rule - only paying > risk
     ttl_key = 'bollinger_ttl'
@@ -318,10 +329,20 @@ class BollingerStrategy(_System):
         return plan
 
 
+class BollingerWMStrategy(BollingerStrategy):
+    name = 'bollinger_wm'
+    setups = {'BB W-BOTTOM': 1, 'BB M-TOP': -1}
+
+
+class BollingerMethod3Strategy(BollingerStrategy):
+    name = 'bollinger_method3'
+    setups = {'BB3 BUY': 1, 'BB3 SELL': -1}
+
+
 class BollingerSqueezeStrategy(_System):
     """eng-127, Bollinger's Method I (strategies/maniac.bb_method1_event): in at the close of the first band close after
     a Squeeze, out on Wilder's Parabolic SAR of the 4h bars (SignalBook._trail), no target."""
-    name = 'breakout'
+    name = 'bollinger_method1'
     setups = {'BB1 UP': 1, 'BB1 DOWN': -1}
     min_rr = 0.0
     ttl_key = 'bollinger_ttl'
@@ -343,5 +364,6 @@ class BollingerSqueezeStrategy(_System):
         return plan
 
 
-MANIAC_STRATEGIES: List[Strategy] = [SupplyDemandStrategy(), AuctionStrategy(), TrendlineStrategy(),
-                                     BollingerStrategy(), BollingerSqueezeStrategy()]
+MANIAC_STRATEGIES: List[Strategy] = [SupplyDemandStrategy(), AuctionStrategy(), TrendlineBreakStrategy(),
+                                     TrendlineTouchStrategy(),
+                                     BollingerWMStrategy(), BollingerMethod3Strategy(), BollingerSqueezeStrategy()]

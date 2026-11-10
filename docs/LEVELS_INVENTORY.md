@@ -107,3 +107,6 @@
 - HVN / LVN: [NinjaTrader — Volume Profile](https://www.ninjatrader.com/futures/blogs/how-to-trade-futures-use-volume-profile-to-reveal-significant-price-level/), [LuxAlgo — High/low-volume Nodes](https://www.luxalgo.com/library/concept/high-low-volume-nodes.md), [NexusFi — Volume profile nodes](https://nexusfi.com/a/concepts/volume-profile-nodes)
 - Круглые числа: [Osler, NY Fed Staff Report 125](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr125.pdf), [Osler, NY Fed Staff Report 150](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr150.pdf), [EconPapers](https://econpapers.repec.org/RePEc:fip:fednsr:125)
 - Сессии: [Dukascopy — Forex Market Hours](https://www.dukascopy.com/plugins/fxMarketWatch/forex-market-hours/), [Babypips — Forex Market Hours](https://babypips.com/tools/forex-market-hours)
+# Historical reference notice
+
+Referenced test paths belong to an earlier checkout and are retained only to identify the original evidence.

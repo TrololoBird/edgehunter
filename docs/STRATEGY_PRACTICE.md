@@ -142,3 +142,7 @@
 - Между фазами — не меньше суток живой работы. Если в логе или журнале видна ошибка, она исправляется до следующей фазы.
 - Параллельно идёт исследование уровней (`research/scripts/research_level_events.py`). Если оно найдёт условия, при которых уровни
   работают, они встанут в фильтры зон после фазы 3.
+# Historical practice report notice
+
+The tables below are dated research observations. They are not the current strategy registry or a claim of profitability;
+check `strategies/__init__.py` and the live journal before using any name or result.
