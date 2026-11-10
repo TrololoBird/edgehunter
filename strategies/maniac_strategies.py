@@ -141,9 +141,9 @@ class SupplyDemandStrategy(_System):
             # of the zone, ~1/3 of the reward spent) then needs 2:1 - 3:1 from the confirmation close would demand
             # ~4.5:1 from the zone, which Seiden never asked.
             from config import CONFIG
-            from strategies.geometry import entry_levels
+            from strategies import entry_levels_for
             try:
-                lv = entry_levels(plan, near, None, d)
+                lv = entry_levels_for(plan, near, None, d)
             except Exception:
                 lv = None
             rr = (lv or {}).get('rr_tp1') if isinstance(lv, dict) else getattr(lv, 'rr_tp1', None)

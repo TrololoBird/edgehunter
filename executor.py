@@ -952,7 +952,7 @@ class DemoExecutor:
             errors.report('executor._save_pending', e, "Demo pending state")
 
     async def _place_limit(self, key: str, s) -> None:
-        from strategies.geometry import entry_levels
+        from strategies import entry_levels_for
         d, plan = s.direction, s.plan
         if self.risk_limit() is not None:
             return                                   # eng-58: the day's risk rules - no new resting limit (retried later)
@@ -977,7 +977,7 @@ class DemoExecutor:
             # marked: the card gets its limit once a slot frees)
             return
         line = plan['zone_hi'] if d > 0 else plan['zone_lo']
-        levels = entry_levels(plan, line, None, d)
+        levels = entry_levels_for(plan, line, None, d)
         if not levels or levels.get('low_rr'):
             self.pending[key] = {'skip': True, 'reason': 'no plan / low R:R at the line'}
             return

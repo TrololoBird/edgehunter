@@ -903,9 +903,9 @@ class SignalJournal:
                     'best_tp': int(tracked.best_target or 0) if tracked.entered_at else None})
         if not tracked.entered_at and plan.get('zone_lo') is not None and plan.get('zone_hi') is not None:
             try:
-                from strategies.geometry import entry_levels
+                from strategies import entry_levels_for
                 line = plan['zone_hi'] if tracked.direction > 0 else plan['zone_lo']
-                est = entry_levels(plan, line, None, tracked.direction)
+                est = entry_levels_for(plan, line, None, tracked.direction)
                 if est:
                     row.update(plan_entry=est['entry'], plan_sl=est['sl'])
                     if row.get('tp1') is None:
