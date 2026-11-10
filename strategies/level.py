@@ -17,7 +17,7 @@ import math
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
-from strategies.base import PlanInput, Strategy, base_plan
+from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.geometry import select_targets
 from strategies.structure import Pool
 from zones import merge, stop_beyond
@@ -113,6 +113,23 @@ class SweepStrategy(Strategy):
     anchor_type = 'level'
     setups = {'SWEEP LOW': 1, 'SWEEP HIGH': -1}
     ttl_key = 'sweep_ttl'
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """ICT sweep contract: raid extreme stop and opposite-liquidity targets."""
+        atr, ref = float(plan.get('atr') or 0), plan.get('stop_ref')
+        targets = list(plan.get('targets') or ())[:3]
+        if direction not in (-1, 1) or not atr or ref is None or not targets or not entry:
+            return None
+        sl = float(ref) - direction * 0.25 * atr; risk = direction * (entry - sl)
+        if risk <= 0 or sl <= 0: return None
+        targets += [targets[-1]] * (3 - len(targets)); rr = [direction * (t-entry)/risk for t in targets]
+        plan['contract_source'] = 'sweep_ict'
+        src = list(plan.get('target_src') or ()) + ['opposite liquidity'] * 3
+        return {'entry': float(entry), 'sl': sl, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr)/3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None, 'sl_src': 'beyond raid extreme + 0.25 ATR',
+                'tp1_src': src[0], 'tp2_src': src[1], 'tp3_src': src[2], 'zone_src': plan.get('zone_src'),
+                'range_pos': None, 'limit_entry': entry, 'volume_24h': plan.get('volume_24h')}
 
     def ttls(self, tf: str):
         # eng-84: a sweep of a daily / weekly pool is a 1h / 4h trade - its waiting and its trade last as many times
