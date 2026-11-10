@@ -32,8 +32,8 @@ Filters (each journaled with its reason instead of silently dropped, so stats.py
 Statuses follow the futures price at each scan; the journal replays each entry on 1m candles with a manual fill.
 Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CONFIG.tier0.display_hold_sec.
 """
-import re
 import copy
+import re
 import logging
 import time
 from strategies.ict import fvg_setup, fvg_trigger, range_position, touch_confirm, touch_trigger
@@ -139,7 +139,6 @@ def is_directional(kind: str, group_key: str) -> bool:
 def htf_zone_at(zones, price: float) -> bool:
     """A zone of 4h or higher (order block / FVG / BPR / breaker of 4h, daily, weekly; daily swings; HTF range)
     contains the price."""
-    import re
     for z in zones:
         if z.lo <= price <= z.hi and any(re.search(r'_(4h|1d|1w)$', k) or k in ('swing_1d', 'htf') for k in z.kinds):
             return True
@@ -237,8 +236,8 @@ FUNDING_PAID: Optional[Callable[[str, float, float], Optional[float]]] = None
 def version_no(v: Optional[str]) -> int:
     """'eng-57' -> 57, 'eng-169e' -> 169 (a letter suffix marks a sub-release of the same number; 0 for anything else).
     eng-169e: int('169e') raised -> 0, so every card of eng-169e read as the oldest logic (the >= 137 / 141 rules off)."""
-    m = re.match(r'eng-(\d+)', str(v or ''))
-    return int(m.group(1)) if m else 0
+    from core.versioning import version_no as _version_no
+    return _version_no(v)
 
 
 def _exit_flags(s: 'TrackedSignal') -> Dict:

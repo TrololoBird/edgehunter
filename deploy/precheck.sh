@@ -13,6 +13,17 @@ $PY -c "import scanner, executor, webui, briefing, strategies.detect" >/dev/null
 $PY -m pip check
 # mode tables naming a strategy nobody registers (a deleted strategy left behind) stop the start
 $PY -c "import strategies, sys; u = strategies.unknown_names(); u and sys.exit(f'unknown strategy names: {u}')"
+# Lettered releases are valid feature-gate versions, but live evidence must
+# remain on one exact release (eng-169l and eng-169m are never interchangeable).
+$PY - <<'PY'
+from config import CONFIG
+from core.versioning import version_key
+v = CONFIG.journal.logic_version
+if version_key(v) == (0, ''):
+    raise SystemExit(f'invalid logic version: {v!r}')
+if CONFIG.journal.verdict_since and version_key(CONFIG.journal.verdict_since) == (0, ''):
+    raise SystemExit(f'invalid verdict_since version: {CONFIG.journal.verdict_since!r}')
+PY
 # Every enabled mode must be represented consistently in the registry, pool rules,
 # bias/regime classification, OI expectation table and statistics nature table.
 $PY - <<'PY'

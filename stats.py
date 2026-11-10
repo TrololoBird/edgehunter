@@ -893,7 +893,6 @@ def card_results_table(console: Console, rows: List):
             return int(b)
         if r['group_key'].startswith('TP3'):
             return 3
-        import re
         m = re.search(r'after TP(\d)', _col(r, 'reason') or '')
         return int(m.group(1)) if m else 0
 
@@ -1067,8 +1066,8 @@ def robustness_table(console: Console, rows: List):
 def version_no(v: Optional[str]) -> int:
     """'eng-57' -> 57, 'eng-169e' -> 169 (a letter suffix marks a sub-release of the same number; 0 for anything else).
     eng-169e: int('169e') raised -> 0, so every card of eng-169e read as the oldest logic (the >= 137 / 141 rules off)."""
-    m = re.match(r'eng-(\d+)', str(v or ''))
-    return int(m.group(1)) if m else 0
+    from core.versioning import version_no as _version_no
+    return _version_no(v)
 
 
 def card_r_net(row) -> Optional[float]:
