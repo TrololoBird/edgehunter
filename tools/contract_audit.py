@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+import ast
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -34,10 +35,20 @@ def audit() -> dict:
             'legacy_geometry_fallback': owner.__class__.entry_levels is Strategy.entry_levels,
             'contract_fields': sorted(REQUIRED_PLAN_FIELDS),
         })
+    geometry_imports = []
+    for path in (Path(__file__).resolve().parents[1] / 'strategies').glob('*.py'):
+        try:
+            tree = ast.parse(path.read_text())
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == 'strategies.geometry':
+                geometry_imports.append(f'{path.name}:{node.lineno}')
     return {
         'registered_playbooks': len(playbooks),
         'independent_entry_contracts': sum(p['entry_levels_owner'] for p in playbooks),
         'legacy_geometry_fallbacks': sum(p['legacy_geometry_fallback'] for p in playbooks),
+        'shared_geometry_decision_imports': sorted(geometry_imports),
         'playbooks': playbooks,
     }
 
