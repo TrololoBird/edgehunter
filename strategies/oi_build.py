@@ -13,9 +13,30 @@ an edge. Replaces the OI robots of eng-56 / eng-88 (cryptomillion's OI [15m] ale
 """
 from typing import Dict, Optional, Sequence
 
+from config import CONFIG
 from strategies.base import CardLevels, PlanInput, Strategy
+from zones import merge
 
 MINUTE_MS = 60_000
+
+
+def _oi_targets(x: PlanInput, direction: int):
+    """OI-build-owned opposite-liquidity targets."""
+    atr = float(x.atr or 0)
+    ref = float(x.sig.get('anchor_close') or 0)
+    gap = CONFIG.zones.min_target_atr * atr
+    zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
+    targets, sources = [], []
+    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
+        price = zone.lo if direction > 0 else zone.hi
+        if direction * (price - (targets[-1] if targets else ref)) >= gap:
+            targets.append(price); sources.append(zone.label)
+        if len(targets) >= 3:
+            break
+    while len(targets) < 3:
+        last = targets[-1] if targets else ref
+        targets.append(last + direction * gap); sources.append('OI build ATR discovery')
+    return targets, sources
 
 
 def _oi_change(samples: Sequence, now_ms: int, minutes: int) -> Optional[float]:
@@ -150,5 +171,7 @@ class OiBuildStrategy(Strategy):
             return None
         exit = {'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': x.atr,
                 'stop_src': "beyond the hour's extreme", 'tp_src': 'the opposite liquidity'}
+        targets, sources = _oi_targets(x, x.direction)
         return _confirm_plan(x, self.name, '15m', exit, "Pring: price and OI (faster than its average) together",
-                             stop_ref=x.sig['anchor_extreme'], intent='opposite_liquidity')
+                             stop_ref=x.sig['anchor_extreme'], intent='opposite_liquidity',
+                             contract_targets=targets, contract_target_src=sources)
