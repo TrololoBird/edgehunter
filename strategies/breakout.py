@@ -9,7 +9,7 @@ archive events; it does not open cards.
 from typing import Dict, Optional, Sequence
 
 from config import CONFIG
-from strategies.base import PlanInput, Strategy
+from strategies.base import CardLevels, PlanInput, Strategy
 
 QUARTER_MS = 900_000
 
@@ -78,6 +78,35 @@ class BreakoutStrategy(Strategy):
     setups = {'BREAKOUT UP': 1, 'BREAKOUT DOWN': -1}
     ttl_key = 'breakout_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Turtle contract: 2N protective stop and channel exit, no profit targets.
+
+        This deliberately does not call the shared geometry gates: the Turtle
+        system sizes risk from its own N and exits on the opposite channel.
+        """
+        if direction not in (-1, 1) or not entry or not plan.get('turtle_n'):
+            return None
+        n = float(plan['turtle_n'])
+        stop_distance = 2.0 * n
+        stop = entry - direction * stop_distance
+        if stop <= 0 or direction * (entry - stop) <= 0:
+            return None
+        plan['contract_source'] = 'breakout_turtle'
+        return {
+            'entry': float(entry), 'sl': float(stop),
+            'tp1': None, 'tp2': None, 'tp3': None,
+            'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None,
+            'low_rr': False, 'rr_reason': None,
+            'risk_units': 1.0, 'risk0': stop_distance,
+            'stop_pierce': None, 'sl_src': '2N from Turtle entry',
+            'tp1_src': f"none: exit on {plan.get('trail_days')} day channel",
+            'tp2_src': f"none: exit on {plan.get('trail_days')} day channel",
+            'tp3_src': f"none: exit on {plan.get('trail_days')} day channel",
+            'zone_src': plan.get('zone_src') or 'Turtle channel breakout',
+            'range_pos': None, 'limit_entry': None,
+            'volume_24h': plan.get('volume_24h'),
+        }
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), x.sig.get('turtle_system')) if x.sig.get('turtle_n') else None
