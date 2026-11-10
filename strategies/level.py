@@ -22,6 +22,18 @@ from strategies.geometry import select_targets
 from strategies.structure import Pool
 from zones import merge, stop_beyond
 
+
+def _contract_pad(measured: Optional[float], work_atr: Optional[float], moved: bool):
+    """Sweep-specific stop padding; kept local so geometry cannot decide the raid stop."""
+    cfg = CONFIG.levels
+    if moved and work_atr:
+        return cfg.moved_pad_atr * work_atr, f"{cfg.moved_pad_atr:g} ATR past the pool"
+    if measured is None:
+        return None, ''
+    if work_atr and cfg.pierce_cap_atr > 0 and measured > cfg.pierce_cap_atr * work_atr:
+        return cfg.pierce_cap_atr * work_atr, f"measured pierce capped at {cfg.pierce_cap_atr:g} ATR"
+    return measured, 'measured pierce'
+
 MINUTE_MS = 60_000
 QUARTER_MS = 900_000
 
@@ -209,12 +221,11 @@ class SweepStrategy(Strategy):
         base, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol, farthest=True)
         near, _ = stop_beyond(zones, extreme, extreme, d, atr, symbol=x.symbol)
         from pierce import overshoot as _pierce
-        from strategies.geometry import capped_pad
         # eng-147: past a further pool only the small pad, else the measured pierce capped in ATR (no double buffer)
-        pad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', base), atr, base != extreme)
+        pad, _ = _contract_pad(_pierce(x.symbol, 'swing_15m', base), atr, base != extreme)
         invalid = base - d * (pad if pad is not None else CONFIG.levels.stop_buffer_atr * atr)
         sig['sl_old'] = invalid                         # the farthest-pool stop is the live one since eng-152
-        npad, _ = capped_pad(_pierce(x.symbol, 'swing_15m', near), atr, near != extreme)
+        npad, _ = _contract_pad(_pierce(x.symbol, 'swing_15m', near), atr, near != extreme)
         sig['sl_near'] = near - d * (npad if npad is not None else CONFIG.levels.stop_buffer_atr * atr)
         pool2 = None
         if moved is not None:
