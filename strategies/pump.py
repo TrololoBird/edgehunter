@@ -21,10 +21,28 @@ from typing import Dict, Optional, Sequence
 from config import CONFIG
 from levels import MINUTE_MS, resample
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
-from strategies.geometry import htf_zones, select_targets
+from strategies.geometry import htf_zones
 from zones import merge
 
 QUARTER_MS = 900_000
+
+
+def _pump_targets(zones, ref, direction, atr, fillers, filler_label):
+    """Pump-specific target ordering: own measured move/retrace, then map levels."""
+    gap = CONFIG.zones.min_target_atr * atr
+    targets, sources = [], []
+    for price in fillers:
+        if direction * (price - ref) >= gap and len(targets) < 3:
+            targets.append(price); sources.append(filler_label)
+    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
+        if len(targets) >= 3: break
+        price = zone.lo if direction > 0 else zone.hi
+        if direction * (price - (targets[-1] if targets else ref)) >= gap:
+            targets.append(price); sources.append(zone.label)
+    while len(targets) < 3:
+        last = targets[-1] if targets else ref
+        targets.append(last + direction * gap); sources.append('pump ATR discovery')
+    return targets, sources
 
 
 def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[float], now_ms: int,
@@ -343,8 +361,7 @@ class PumpStartStrategy(Strategy):
         fillers = (close + move, close + 1.618 * move)
         # eng-69: the stop spans the whole ignition, so the targets cannot be the nearest 15m swing / FVG (live eng-60:
         # TP1 at 0.56 of the risk, every entry low_rr) - the measured move and 1h+ zones only
-        targets, sources = select_targets(htf_zones(zones, '1h'), close, 1, max(atr, x.tf_atr.get('1h') or 0.0),
-                                          'extension', fillers, 'measured move')
+        targets, sources = _pump_targets(htf_zones(zones, '1h'), close, 1, max(atr, x.tf_atr.get('1h') or 0.0), fillers, 'measured move')
         targets, sources = _span_targets(targets, sources, close, 1, _risk_span(close, sig['pump_low'], move, atr))
         anchor = {'type': 'level', 'tf': '15m', 'level': sig['anchor_level'], 'label': 'pump ignition',
                   'extreme': sig['pump_low'], 'ts': sig['anchor_ts']}
@@ -413,8 +430,7 @@ class DumpStartStrategy(Strategy):
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         move = sig['dump_high'] - close
         fillers = (close - move, close - 1.618 * move)
-        targets, sources = select_targets(htf_zones(zones, '1h'), close, -1, max(atr, x.tf_atr.get('1h') or 0.0),
-                                          'extension', fillers, 'measured move')
+        targets, sources = _pump_targets(htf_zones(zones, '1h'), close, -1, max(atr, x.tf_atr.get('1h') or 0.0), fillers, 'measured move')
         targets, sources = _span_targets(targets, sources, close, -1, _risk_span(close, sig['dump_high'], move, atr))
         anchor = {'type': 'level', 'tf': '15m', 'level': sig['anchor_level'], 'label': 'dump ignition',
                   'extreme': sig['dump_high'], 'ts': sig['anchor_ts']}
@@ -475,7 +491,7 @@ class PumpTopStrategy(Strategy):
         leg = hi - lo
         retraces = tuple(hi - r * leg for r in (0.382, 0.5, 0.618))
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
-        targets, sources = select_targets(zones, sig['anchor_close'], -1, atr, 'mean', retraces, 'retrace')
+        targets, sources = _pump_targets(zones, sig['anchor_close'], -1, atr, retraces, 'retrace')
         anchor = {'type': 'level', 'tf': '15m', 'level': hi, 'label': 'pump high', 'extreme': hi,
                   'ts': sig['anchor_ts']}
         # the shift down is looked for in the climax's upper part: from the high to its 0.236 retracement
