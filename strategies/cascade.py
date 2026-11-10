@@ -22,7 +22,6 @@ from typing import Dict, Optional, Sequence
 from config import CONFIG
 from levels import min_leg_atr, fib_price, retracement_of
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
-from strategies.geometry import cap_for_rr
 from strategies.level import reached_since
 from zones import merge, vwap
 
@@ -46,6 +45,17 @@ def _cascade_targets(zones, start, direction, atr, retraces):
         last = targets[-1] if targets else start
         targets.append(last + direction * gap); sources.append('cascade ATR discovery')
     return targets, sources
+
+
+def _cascade_cap_for_rr(tp1, stop_est, direction, atr, recent_atr, volume_24h):
+    """Cascade zone cap for its own 1R first-retracement rule."""
+    from levels import slippage_bps
+    rr = 1.0
+    fee = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h, None) / 1e4) * tp1
+    floor = CONFIG.levels.min_stop_atr * max(atr, recent_atr or 0.0)
+    by_stop = (tp1 + rr * stop_est - direction * (1 + rr) * fee) / (1 + rr)
+    by_floor = tp1 - direction * (rr * floor + (1 + rr) * fee)
+    return min(by_stop, by_floor) if direction > 0 else max(by_stop, by_floor)
 
 
 def cascade_leg(sig: Dict, minutes: Sequence[Sequence[float]], direction: int, atr: float) -> Optional[Dict]:
@@ -183,8 +193,8 @@ class ExhaustionStrategy(Strategy):
         # after it are off since eng-111 / eng-123); the min_rr_tp1
         # 2.0 default here demanded 2R of the first target while the trade itself is judged by the BLENDED R:R - a
         # mean-reversion TP1 is near, the zone shrank to the extreme and 68 of 85 FLUSH REVERSALs died 'no_room'
-        capped = retracement_of(leg, cap_for_rr(targets[0], stop_est, d, atr, x.recent_atr, min_rr=1.0,
-                                                 volume_24h=x.sig.get('volume_24h'), symbol=x.symbol))
+        capped = retracement_of(leg, _cascade_cap_for_rr(targets[0], stop_est, d, atr, x.recent_atr,
+                                                         x.sig.get('volume_24h')))
         hi_ratio = max(0.0, min(hi_ratio, capped))
         zone = sorted((end, fib_price(leg, hi_ratio)))
         # eng-74: the secondary test is an AREA above the climax (Wyckoff: a narrower, lower-volume retest that holds
