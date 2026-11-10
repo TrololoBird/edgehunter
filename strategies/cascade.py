@@ -22,12 +22,30 @@ from typing import Dict, Optional, Sequence
 from config import CONFIG
 from levels import min_leg_atr, fib_price, retracement_of
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
-from strategies.geometry import cap_for_rr, select_targets
+from strategies.geometry import cap_for_rr
 from strategies.level import reached_since
 from zones import merge, vwap
 
 MINUTE_MS = 60_000
 FIVE_MIN_MS = 5 * MINUTE_MS
+
+
+def _cascade_targets(zones, start, direction, atr, retraces):
+    """Cascade-specific retracement targets followed by mean/map levels."""
+    gap = CONFIG.zones.min_target_atr * atr
+    targets, sources = [], []
+    for price in retraces:
+        if direction * (price - start) >= gap and len(targets) < 3:
+            targets.append(price); sources.append('cascade retrace')
+    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - start)):
+        if len(targets) >= 3: break
+        price = zone.lo if direction > 0 else zone.hi
+        if direction * (price - (targets[-1] if targets else start)) >= gap:
+            targets.append(price); sources.append(zone.label)
+    while len(targets) < 3:
+        last = targets[-1] if targets else start
+        targets.append(last + direction * gap); sources.append('cascade ATR discovery')
+    return targets, sources
 
 
 def cascade_leg(sig: Dict, minutes: Sequence[Sequence[float]], direction: int, atr: float) -> Optional[Dict]:
@@ -159,7 +177,7 @@ class ExhaustionStrategy(Strategy):
         stop_est = end - d * (overshoot(x.symbol, 'swing_15m', end) or CONFIG.levels.stop_buffer_atr * atr)
         reached = x.reached if x.reached is not None else reached_since(x.minutes, leg['end_ts'] + MINUTE_MS, end, d)
         retraces = [fib_price(leg, r) for r in CONFIG.levels.reversal_targets]
-        targets, sources = select_targets(zones, reached, d, atr, 'mean', retraces, 'retrace')
+        targets, sources = _cascade_targets(zones, reached, d, atr, retraces)
         hi_ratio = CONFIG.levels.reversal_zone_max
         # eng-96: the zone is capped where TP1 ALONE still pays 1R (the half out / break-even
         # after it are off since eng-111 / eng-123); the min_rr_tp1
