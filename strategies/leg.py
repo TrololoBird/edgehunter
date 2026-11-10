@@ -21,13 +21,30 @@ import polars as pl
 from config import CONFIG
 from levels import TF_MS, _leg_levels, fib_price, find_impulse, retracement_of
 from strategies.base import CardLevels, TRIGGER_MINUTES, PlanInput, Strategy, base_plan
-from strategies.geometry import select_targets
 from zones import merge
 
 
 def _leg_anchor(impulse: Dict) -> Dict:
     return {'type': 'leg', 'tf': impulse['tf'], 'start': impulse['start'], 'end': impulse['end'],
             'start_ts': impulse['start_ts'], 'end_ts': impulse['end_ts']}
+
+
+def _continuation_targets(zones, ref, direction, atr, extensions):
+    """Continuation-owned OTE target ordering: leg extensions, then map levels."""
+    gap = CONFIG.zones.min_target_atr * atr
+    targets, sources = [], []
+    for price in extensions:
+        if direction * (price - ref) >= gap and len(targets) < 3:
+            targets.append(price); sources.append('leg extension')
+    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
+        if len(targets) >= 3: break
+        price = zone.lo if direction > 0 else zone.hi
+        if direction * (price - (targets[-1] if targets else ref)) >= gap:
+            targets.append(price); sources.append(zone.label)
+    while len(targets) < 3:
+        last = targets[-1] if targets else ref
+        targets.append(last + direction * gap); sources.append('continuation ATR discovery')
+    return targets, sources
 
 
 def _rows(df: pl.DataFrame) -> List[List[float]]:
@@ -172,7 +189,7 @@ class LegContinuation(Strategy):
         extensions = [impulse['start'] + k * leg for k in cfg.continuation_targets]
         worst_entry = fib_price(impulse, lo_ratio)
         # targets spaced in the ATR of the leg's own timeframe (15m ATR steps put TP1 inside a 1h / 4h leg's noise)
-        targets, sources = select_targets(zones, worst_entry, d, impulse['atr'], 'extension', extensions, 'fib ext')
+        targets, sources = _continuation_targets(zones, worst_entry, d, impulse['atr'], extensions)
         zone = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
         # eng-117, the sources on ICT's OTE (LuxAlgo, ChartingLens: "stop beyond the swing that anchors the measurement"
         # = the 100% level, the impulse's start): the stop is beyond the leg's start, not the OTE zone's deep edge /
