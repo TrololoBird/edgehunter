@@ -247,6 +247,26 @@ class DumpBounceStrategy(Strategy):
     min_rr = 0.0                     # the research rule has no ratio filter: TP1 is the dump's low wherever it is
     ttl_key = 'pump_ttl'
 
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Dump-bounce contract: fixed bounce stop and dump low/extension targets."""
+        ex = plan.get('exit') or {}
+        stop = ex.get('stop') or []
+        targets = list(plan.get('targets') or ())[:3]
+        if direction != -1 or len(stop) < 2 or not targets or not entry:
+            return None
+        sl, risk = float(stop[1]), float(stop[1]) - entry
+        if sl <= 0 or risk <= 0:
+            return None
+        targets += [targets[-1]] * (3 - len(targets))
+        rr = [(entry - t) / risk for t in targets]
+        plan['contract_source'] = 'dump_bounce'
+        src = list(plan.get('target_src') or ()) + ['dump level'] * 3
+        return {'entry': float(entry), 'sl': sl, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr) / 3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None, 'sl_src': ex.get('stop_src') or 'bounce stop',
+                'tp1_src': src[0], 'tp2_src': src[1], 'tp3_src': src[2], 'zone_src': plan.get('zone_src'),
+                'range_pos': None, 'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
+
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('anchor_ts'), 'dump') if x.sig.get('dump_low') is not None else None
 
@@ -416,6 +436,27 @@ class PumpTopStrategy(Strategy):
     ttl_key = 'pump_ttl'
     uses_minutes = True
     default_tf = '15m'
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Buying-climax contract: stop above the pump high and retracement targets."""
+        atr = float(plan.get('atr') or 0)
+        ref = plan.get('stop_ref')
+        targets = list(plan.get('targets') or ())[:3]
+        if direction != -1 or not atr or ref is None or not targets or not entry:
+            return None
+        sl, risk = float(ref) + 0.25 * atr, float(ref) + 0.25 * atr - entry
+        if sl <= 0 or risk <= 0:
+            return None
+        targets += [targets[-1]] * (3 - len(targets))
+        rr = [(entry - t) / risk for t in targets]
+        plan['contract_source'] = 'pump_top_climax'
+        src = list(plan.get('target_src') or ()) + ['retracement'] * 3
+        return {'entry': float(entry), 'sl': sl, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr) / 3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
+                'sl_src': 'above pump high + 0.25 ATR', 'tp1_src': src[0], 'tp2_src': src[1], 'tp3_src': src[2],
+                'zone_src': plan.get('zone_src'), 'range_pos': None, 'limit_entry': None,
+                'volume_24h': plan.get('volume_24h')}
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
         # eng-167 (audit F-14, hypothesis): OI still rising with spot buying = an ongoing squeeze, not a top - shadow
