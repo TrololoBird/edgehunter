@@ -21,7 +21,6 @@ from typing import Dict, Optional, Sequence
 from config import CONFIG
 from levels import MINUTE_MS, resample
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
-from strategies.geometry import htf_zones
 from zones import merge
 
 QUARTER_MS = 900_000
@@ -43,6 +42,18 @@ def _pump_targets(zones, ref, direction, atr, fillers, filler_label):
         last = targets[-1] if targets else ref
         targets.append(last + direction * gap); sources.append('pump ATR discovery')
     return targets, sources
+
+
+def _pump_htf_zones(zones):
+    """Pump target map: retain 1h+ structure and untimed session levels."""
+    out = []
+    for zone in zones:
+        kinds = zone.kinds or ()
+        if any(k.endswith(('_15m', '_5m', '_1m')) for k in kinds) and not any(
+                k.endswith(('_1h', '_4h', '_1d', '_1w')) for k in kinds):
+            continue
+        out.append(zone)
+    return out
 
 
 def pump_start(minutes: Sequence[Sequence[float]], m: Dict, vol_15m: Optional[float], now_ms: int,
@@ -361,7 +372,7 @@ class PumpStartStrategy(Strategy):
         fillers = (close + move, close + 1.618 * move)
         # eng-69: the stop spans the whole ignition, so the targets cannot be the nearest 15m swing / FVG (live eng-60:
         # TP1 at 0.56 of the risk, every entry low_rr) - the measured move and 1h+ zones only
-        targets, sources = _pump_targets(htf_zones(zones, '1h'), close, 1, max(atr, x.tf_atr.get('1h') or 0.0), fillers, 'measured move')
+        targets, sources = _pump_targets(_pump_htf_zones(zones), close, 1, max(atr, x.tf_atr.get('1h') or 0.0), fillers, 'measured move')
         targets, sources = _span_targets(targets, sources, close, 1, _risk_span(close, sig['pump_low'], move, atr))
         anchor = {'type': 'level', 'tf': '15m', 'level': sig['anchor_level'], 'label': 'pump ignition',
                   'extreme': sig['pump_low'], 'ts': sig['anchor_ts']}
@@ -430,7 +441,7 @@ class DumpStartStrategy(Strategy):
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
         move = sig['dump_high'] - close
         fillers = (close - move, close - 1.618 * move)
-        targets, sources = _pump_targets(htf_zones(zones, '1h'), close, -1, max(atr, x.tf_atr.get('1h') or 0.0), fillers, 'measured move')
+        targets, sources = _pump_targets(_pump_htf_zones(zones), close, -1, max(atr, x.tf_atr.get('1h') or 0.0), fillers, 'measured move')
         targets, sources = _span_targets(targets, sources, close, -1, _risk_span(close, sig['dump_high'], move, atr))
         anchor = {'type': 'level', 'tf': '15m', 'level': sig['anchor_level'], 'label': 'dump ignition',
                   'extreme': sig['dump_high'], 'ts': sig['anchor_ts']}
