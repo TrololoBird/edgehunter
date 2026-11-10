@@ -11,7 +11,6 @@ import numpy as np
 from config import CONFIG
 from levels import MINUTE_MS, resample
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
-from strategies.geometry import system_levels
 from strategies.maniac import find_pivots
 from zones import merge
 
@@ -51,16 +50,10 @@ def _finish(x: PlanInput, plan: Dict, entry_est: float, extreme: Optional[float]
             plan['target_src'].append(plan['target_src'][-1] if plan['target_src'] else 'method exit')
         plan['targets_final'] = True
         return plan
-    levels = system_levels(plan, entry_est, extreme, x.direction)
-    if levels is None:
-        # no target ahead / no valid stop: journaled as such, not as a missing anchor ('no_leg', eng-50)
-        return {'skip': 'no_target'}
-    plan['targets'] = [levels['tp1'], levels['tp2'], levels['tp3']]
-    plan['target_src'] = [levels['tp1_src'], levels['tp2_src'], levels['tp3_src']]
-    # these targets already sit in front of their levels by the pierce: shown on the card, never re-read as levels
-    # (exit_target's 'map' re-measured them and pulled them by p50 a second time)
-    plan['targets_final'] = True
-    return plan
+    # Every registered maniac playbook must provide its own target contract.
+    # A missing contract is journaled as a skipped plan rather than routed
+    # through shared geometry.
+    return {'skip': 'missing_playbook_targets'}
 
 
 def _confirm_plan(x: PlanInput, name: str, tf: str, exit: Dict, zone_src: str, **fields) -> Optional[Dict]:
