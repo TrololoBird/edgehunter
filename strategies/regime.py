@@ -21,8 +21,8 @@ from typing import Dict, Optional, Sequence
 import numpy as np
 
 # setups that need the move to continue / a breakout to hold, and setups that fade an extreme back into a range
-TREND_MODES = ('continuation', 'pump_start', 'dump_start', 'pump_top', 'dump_bounce', 'oi_build', 'breakout', 'bollinger_method1', 'orb')
-RANGE_MODES = ('sweep', 'silver_bullet', 'value_area', 'auction', 'bollinger_wm', 'bollinger_method3', 'wyckoff', 'supply_demand', 'po3', 'connors', 'cascade')
+TREND_MODES = ('continuation', 'pump_start', 'dump_start', 'oi_build', 'breakout', 'bollinger_method1', 'orb', 'trendline_break', 'cup_handle')
+RANGE_MODES = ('sweep', 'silver_bullet', 'value_area', 'auction', 'bollinger_wm', 'bollinger_method3', 'wyckoff', 'supply_demand', 'po3', 'connors', 'cascade', 'pump_top', 'dump_bounce', 'trendline_touch')
 EDGE = 0.25          # the outer quarter of the range is its edge
 
 

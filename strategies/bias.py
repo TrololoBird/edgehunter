@@ -29,9 +29,9 @@ import numpy as np
 from strategies.ind_panel import ema
 
 # the method's nature (how the bias gates it); the Turtles are the higher-timeframe rule themselves and stay free
-TREND = ('continuation', 'orb', 'pump_start', 'dump_start', 'pump_top', 'dump_bounce', 'cup_handle', 'po3')
+TREND = ('continuation', 'orb', 'pump_start', 'dump_start', 'cup_handle', 'oi_build')
 WITH_BIAS = ('sweep', 'silver_bullet', 'connors', 'supply_demand')
-RANGE = ('value_area', 'auction', 'bollinger_wm', 'bollinger_method3', 'wyckoff', 'cascade')
+RANGE = ('value_area', 'auction', 'bollinger_wm', 'bollinger_method3', 'wyckoff', 'cascade', 'pump_top', 'dump_bounce', 'po3')
 # trendline: a broken trendline signals a CHANGE of trend (Edwards & Magee) - gating it by the old trend contradicts
 # the method (research/bias.md: its blocked trades +0.30R, the allowed -0.90R)
 EXEMPT = ('breakout', 'bollinger_method1', 'trendline_break', 'trendline_touch')

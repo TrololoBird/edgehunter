@@ -40,7 +40,8 @@ OI_EXPECT = {'continuation': 1, 'breakout': 1, 'sweep': -1, 'silver_bullet': -1,
              'orb': 1, 'pump_start': 1, 'dump_start': 1, 'pump_top': -1, 'dump_bounce': -1,
              'trendline_break': 1, 'trendline_touch': 1, 'cup_handle': 1,
              'bollinger_wm': -1, 'bollinger_method3': -1, 'bollinger_method1': 1,
-             'value_area': -1, 'auction': -1, 'supply_demand': -1, 'connors': -1}
+             'value_area': -1, 'auction': -1, 'supply_demand': -1, 'connors': -1,
+             'cascade': -1, 'oi_build': 1}
 REVERSALS = ('wyckoff', 'cascade', 'sweep', 'silver_bullet', 'po3')
 MINUTE_MS = 60_000
 HOUR_MS = 3_600_000

@@ -445,7 +445,7 @@ def _confirm_value(row, name: str) -> Optional[str]:
 NATURE = {'continuation': 'trend', 'breakout': 'trend', 'orb': 'trend', 'trendline': 'trend',
           'trendline_break': 'trend', 'trendline_touch': 'reversion', 'cup_handle': 'trend',
           'oi_signal': 'trend', 'pump_start': 'trend', 'dump_start': 'trend', 'pump_top': 'reversion',
-          'dump_bounce': 'reversion', 'pump': 'trend', 'connors': 'reversion', 'market_profile': 'reversion',
+          'dump_bounce': 'reversion', 'pump': 'trend', 'oi_build': 'trend', 'connors': 'reversion', 'market_profile': 'reversion',
           'silver_bullet': 'reversal', 'bollinger': 'reversion', 'bollinger_wm': 'reversion', 'bollinger_method3': 'reversion',
           'bollinger_method1': 'trend', 'value_area': 'reversion', 'auction': 'reversion', 'cascade': 'reversal',
           'supply_demand': 'reversion', 'sweep': 'reversal', 'wyckoff': 'reversal',
