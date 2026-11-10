@@ -22,11 +22,30 @@ high with no range at all). BULL E, the selling climax, is not bought: Wyckoff r
 """
 from typing import Dict, List, Optional, Sequence
 
+from config import CONFIG
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
-from strategies.geometry import select_targets
 from zones import RawLevel, merge
 
 HOUR_MS = 3_600_000
+
+
+def _wyckoff_targets(zones, edge, direction, atr, fillers):
+    """Wyckoff-owned cause/effect target ordering: far range, P&F proxy, then map."""
+    gap = CONFIG.zones.min_target_atr * atr
+    targets, sources = [], []
+    for price, label in fillers:
+        if direction * (price - edge) >= gap and len(targets) < 3:
+            targets.append(price); sources.append(label)
+    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - edge)):
+        price = zone.lo if direction > 0 else zone.hi
+        if len(targets) >= 3:
+            break
+        if direction * (price - (targets[-1] if targets else edge)) >= gap:
+            targets.append(price); sources.append(zone.label)
+    while len(targets) < 3:
+        last = targets[-1] if targets else edge
+        targets.append(last + direction * gap); sources.append('Wyckoff ATR discovery')
+    return targets, sources
 # eng-97: both are hours, converted to the candles given (eng-84 moved the detector to 4h candles and left them as bar
 # counts: a '2-day' low meant 8 days, the 'week' 4 weeks)
 # eng-120: CLIMAX_VOL / CLIMAX_SPREAD / MAX_PIERCE (ours) replaced by formulas (_phase_a, wyckoff_events)
@@ -246,7 +265,8 @@ class WyckoffRangeStrategy(Strategy):
         fillers = (far,) + ((sig['pnf_target'],) if sig.get('pnf_target') and d * (sig['pnf_target'] - far) > 0 else ())
         # eng-84 (Wyckoff practice): TP1 the middle of the range, then its far side / the P&F count
         # eng-110: Wyckoff's objectives - the range's far side and the P&F count (the eng-84 'range middle' TP1 was ours)
-        targets, sources = select_targets(zones, edge, d, atr, 'range', fillers, 'range far side / P&F proxy')
+        targets, sources = _wyckoff_targets(zones, edge, d, atr,
+                                            [(price, 'range far side / P&F proxy') for price in fillers])
         # the test: back toward the spring's area (the spring's extreme to a fifth into the range)
         # eng-110: the test comes back to the spring's area - its extreme to the range edge (the 'fifth into the range'
         # was ours)
