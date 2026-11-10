@@ -4,7 +4,7 @@ its own stop and target where the method defines one; the lifecycle, R:R rule an
 """
 from typing import Dict, Optional
 
-from strategies.base import PlanInput
+from strategies.base import CardLevels, PlanInput
 from strategies.maniac_strategies import _System, _confirm_plan
 
 
@@ -42,6 +42,24 @@ class OrbStrategy(_System):
     ttl_key = 'classic_ttl'
     time_exit = 'session'
     uses_minutes = True              # eng-84: the day's VWAP side
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Crabel ORB contract: opposite range level is the stop; session close is the exit."""
+        stop = (plan.get('exit') or {}).get('stop') or []
+        if len(stop) < 2 or stop[0] != 'price' or not entry:
+            return None
+        sl = float(stop[1])
+        risk = direction * (entry - sl)
+        if risk <= 0 or sl <= 0:
+            return None
+        plan['contract_source'] = 'orb_crabel'
+        src = (plan.get('exit') or {}).get('stop_src') or 'opposite opening-range level'
+        return {'entry': float(entry), 'sl': sl, 'tp1': None, 'tp2': None, 'tp3': None,
+                'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None, 'sl_src': src,
+                'tp1_src': 'none: session close', 'tp2_src': 'none: session close',
+                'tp3_src': 'none: session close', 'zone_src': plan.get('zone_src') or 'opening range',
+                'range_pos': None, 'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
         # eng-84 (ORB practice, no source): the breakout minute's relative volume >= 1.5 - eng-109: shadow only
