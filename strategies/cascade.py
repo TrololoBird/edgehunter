@@ -21,7 +21,7 @@ from typing import Dict, Optional, Sequence
 
 from config import CONFIG
 from levels import min_leg_atr, fib_price, retracement_of
-from strategies.base import PlanInput, Strategy, base_plan
+from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.geometry import cap_for_rr, select_targets
 from strategies.level import reached_since
 from zones import merge, vwap
@@ -117,6 +117,27 @@ class ExhaustionStrategy(Strategy):
     setups = {'FLUSH REVERSAL': 1, 'SQUEEZE REVERSAL': -1}
     ttl_key = 'exhaustion_ttl'
     uses_minutes = True
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Cascade contract: climax extreme stop and retracement/mean targets."""
+        atr, ref = float(plan.get('atr') or 0), plan.get('stop_ref')
+        targets = list(plan.get('targets') or ())[:3]
+        if direction not in (-1, 1) or not atr or ref is None or not targets or not entry:
+            return None
+        sl = float(ref) - direction * 0.25 * atr
+        risk = direction * (entry - sl)
+        if risk <= 0 or sl <= 0:
+            return None
+        targets += [targets[-1]] * (3 - len(targets))
+        rr = [direction * (t - entry) / risk for t in targets]
+        plan['contract_source'] = 'cascade_reversal'
+        src = list(plan.get('target_src') or ()) + ['retrace'] * 3
+        return {'entry': float(entry), 'sl': sl, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
+                'rr_tp1': rr[0], 'rr_tp2': rr[1], 'rr_blend': sum(rr) / 3, 'low_rr': False, 'rr_reason': None,
+                'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
+                'sl_src': 'beyond cascade extreme + 0.25 ATR', 'tp1_src': src[0], 'tp2_src': src[1], 'tp3_src': src[2],
+                'zone_src': plan.get('zone_src'), 'range_pos': None, 'limit_entry': None,
+                'volume_24h': plan.get('volume_24h')}
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         return (x.sig.get('event_ts'), x.sig.get('leg_start')) if x.sig.get('leg_start') is not None else None
