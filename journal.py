@@ -324,6 +324,7 @@ EXTRA_COLUMNS = {
     # 1h trend, last hour's ATR / ATR14) and the replay with the stop at breakeven after TP1 (exit at TP2)
     'strategy': 'TEXT', 'anchor': 'TEXT', 'mkt_1h': 'REAL', 'mkt_4h': 'REAL', 'btc_1h': 'REAL', 'btc_4h': 'REAL', 'mkt_1d': 'REAL', 'btc_1d': 'REAL', 'coin_trend': 'INTEGER',
     'contract_id': 'TEXT', 'contract_source': 'TEXT', 'planned_r': 'REAL',
+    'time_exit_policy': 'TEXT', 'trail_policy': 'TEXT', 'partial_policy': 'TEXT', 'risk_units_planned': 'REAL',
     'vol_ratio': 'REAL', 'r_be': 'REAL', 'outcome_h': 'INTEGER',
     # eng-2: the coin's 24h futures quote volume (liquidity: patterns on thin coins are one order's work)
     'volume_24h': 'REAL',
@@ -839,6 +840,10 @@ class SignalJournal:
                     'contract_id': (tracked.plan or {}).get('contract_id') or tracked.group_key,
                     'contract_source': (tracked.plan or {}).get('contract_source'),
                     'planned_r': lv.get('rr_blend'),
+                    'time_exit_policy': (tracked.plan or {}).get('time_exit') or tracked.mode,
+                    'trail_policy': (tracked.plan or {}).get('trail') or ((tracked.plan or {}).get('exit') or {}).get('tp'),
+                    'partial_policy': (tracked.plan or {}).get('partial') or ('none' if (tracked.plan or {}).get('no_tp') else 'targets'),
+                    'risk_units_planned': lv.get('risk_units'),
                     'anchor': _anchor_json(tracked.plan),
                     # eng-48: why it entered (the detector's note + the plan's trigger), was empty on entry rows
                     'reason': ' | '.join(str(x) for x in (tracked.sig.get('setup_note'),
@@ -889,6 +894,10 @@ class SignalJournal:
                     'strategy': tracked.mode, 'contract_id': plan.get('contract_id') or tracked.group_key,
                     'contract_source': plan.get('contract_source'),
                     'planned_r': lv.get('rr_blend'),
+                    'time_exit_policy': plan.get('time_exit') or tracked.mode,
+                    'trail_policy': plan.get('trail') or (plan.get('exit') or {}).get('tp'),
+                    'partial_policy': plan.get('partial') or ('none' if plan.get('no_tp') else 'targets'),
+                    'risk_units_planned': lv.get('risk_units'),
                     'anchor': _anchor_json(tracked.plan),
                     'zone_src': plan.get('zone_src'), 'perp_led': 0,
                     'entry': lv.get('entry'), 'sl': lv.get('sl'),
