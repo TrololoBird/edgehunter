@@ -20,7 +20,7 @@ import polars as pl
 
 from config import CONFIG
 from levels import TF_MS, _leg_levels, fib_price, find_impulse, retracement_of
-from strategies.base import TRIGGER_MINUTES, PlanInput, Strategy, base_plan
+from strategies.base import CardLevels, TRIGGER_MINUTES, PlanInput, Strategy, base_plan
 from strategies.geometry import select_targets
 from zones import merge
 
@@ -110,6 +110,17 @@ class LegContinuation(Strategy):
     frozen_in_zone = True
     follows_live_candle = True
 
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """ICT OTE contract: impulse-start invalidation and measured extensions."""
+        atr, ref = float(plan.get('leg_atr') or plan.get('atr') or 0), plan.get('stop_ref')
+        targets = list(plan.get('targets') or ())[:3]
+        if direction not in (-1, 1) or not atr or ref is None or not targets or not entry: return None
+        sl = float(ref) - direction * 0.25 * atr; risk = direction * (entry - sl)
+        if risk <= 0 or sl <= 0: return None
+        targets += [targets[-1]] * (3-len(targets)); rr=[direction*(t-entry)/risk for t in targets]
+        plan['contract_source']='continuation_ict_ote'; src=list(plan.get('target_src') or ())+['leg extension']*3
+        return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':'beyond impulse start + 0.25 ATR','tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
+
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         impulse = find_impulse(x.df, x.direction, x.h1)
         return (impulse['end_ts'], impulse['end']) if impulse else None
@@ -183,4 +194,7 @@ class LegContinuation(Strategy):
 class MomentumStrategy(LegContinuation):
     """The impulse detected by Tier-0 (5m move + OI + flow); the same pullback trade (eng-35: one strategy)."""
     name = 'continuation'
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        return super().entry_levels(plan, entry, extreme, direction)
     setups = {'IMPULSE UP': 1, 'IMPULSE DOWN': -1}

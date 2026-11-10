@@ -79,6 +79,16 @@ class SupplyDemandStrategy(_System):
     time_exit = 'fixed'
     uses_minutes = True
 
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        """Seiden supply/demand contract: distal zone stop and opposing fresh-zone target."""
+        ex, stop, targets = plan.get('exit') or {}, (plan.get('exit') or {}).get('stop') or [], list(plan.get('targets') or ())[:3]
+        if len(stop) < 2 or not targets or not entry: return None
+        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        if sl <= 0 or risk <= 0: return None
+        targets += [targets[-1]] * (3-len(targets)); rr=[direction*(t-entry)/risk for t in targets]
+        src=list(plan.get('target_src') or ())+['opposing fresh zone']*3; plan['contract_source']='supply_demand_seiden'
+        return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':ex.get('stop_src') or 'distal supply/demand line','tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
+
     @staticmethod
     def arrival(h1, since_ms: int, d: int) -> int:
         bars = [b for b in h1 if b[0] >= since_ms]
@@ -166,6 +176,15 @@ class AuctionStrategy(_System):
     setups = {'AUCTION LONG': 1, 'AUCTION SHORT': -1}
     ttl_key = 'classic_ttl'
     time_exit = 'session'
+
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        ex, stop, targets = plan.get('exit') or {}, (plan.get('exit') or {}).get('stop') or [], list(plan.get('targets') or ())[:3]
+        if len(stop) < 2 or not targets or not entry: return None
+        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        if sl <= 0 or risk <= 0: return None
+        targets += [targets[-1]] * (3-len(targets)); rr=[direction*(t-entry)/risk for t in targets]
+        src=list(plan.get('target_src') or ())+['value area opposite end']*3; plan['contract_source']='auction_failed_value'
+        return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':ex.get('stop_src') or 'failed probe extreme','tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
 
     def session_end(self, entered_at: float) -> Optional[float]:
         return None                  # only the signal's own session close (SignalBook._time_exit) ends it by time

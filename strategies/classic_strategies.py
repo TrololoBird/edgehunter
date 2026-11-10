@@ -16,6 +16,15 @@ class ValueAreaStrategy(_System):
     ttl_key = 'classic_ttl'
     time_exit = 'session'
 
+    def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
+        ex, stop, targets = plan.get('exit') or {}, (plan.get('exit') or {}).get('stop') or [], list(plan.get('targets') or ())[:3]
+        if len(stop) < 2 or not targets or not entry: return None
+        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        if sl <= 0 or risk <= 0: return None
+        targets += [targets[-1]] * (3-len(targets)); rr=[direction*(t-entry)/risk for t in targets]
+        src=list(plan.get('target_src') or ())+['value area far edge']*3; plan['contract_source']='value_area_dalton'
+        return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':ex.get('stop_src') or 'value area edge','tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
+
     def session_end(self, entered_at: float) -> Optional[float]:
         # Dalton: the 80% rule trades the day whose value area price re-entered - out at the UTC day's close
         return (int(entered_at) // 86400 + 1) * 86400
