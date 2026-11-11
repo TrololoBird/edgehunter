@@ -1,0 +1,36 @@
+=== captured_at_utc ===
+2026-11-11T21:40:33Z
+=== HEAD ===
+697580de095d1108dc30e98821ad8261d857e434
+=== STATUS ===
+ M README.md
+ M briefing.py
+ M briefing_chart.py
+ M deploy/edgehunter-bot.service
+ M main.py
+ M models/official_calendar.json
+ M web/app.js
+ M web/index.html
+?? docs/EDGEHUNTER_INVENTORY_v1.md
+?? docs/audit_baseline/
+=== DIFF_STAT ===
+ README.md                     |  2 +-
+ briefing.py                   | 44 ++++++++++++++++++++++++++++++-------------
+ briefing_chart.py             | 13 +++++++------
+ deploy/edgehunter-bot.service |  2 +-
+ main.py                       |  6 +++---
+ models/official_calendar.json |  2 +-
+ web/app.js                    | 17 +++++++++--------
+ web/index.html                |  6 +++---
+ 8 files changed, 56 insertions(+), 36 deletions(-)
+=== RUNTIME ===
+MainPID=662823
+ExecMainStartTimestamp=Wed 2026-11-11 16:16:43 UTC
+ActiveState=active
+SubState=running
+=== PYTHON ===
+Python 3.14.8
+=== DEPENDENCIES_HASH ===
+37dd20ffc2cfe86246f53fb3e5342321d2586a097cbbdae183050d2156adb7a2  requirements.txt
+7c43fe030ec215aa96787c473c1d7c49b0fe7b9ea181b2ad1e8fd37d078dbe65  constraints.txt
+d40abb7fbcbcf382020ba7296e9bec768f53c6ecbd9d5a8570b3256197c5e2d3  config.local.toml

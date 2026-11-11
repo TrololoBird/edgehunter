@@ -1,5 +1,5 @@
 'use strict';
-/* Microstructure Scanner browser dashboard: state over /ws after every scan, history / coin details over /api. */
+/* EdgeHunter browser dashboard: state over /ws after every scan, history / coin details over /api. */
 
 const $ = (sel, root = document) => root.querySelector(sel);
 let S = null;                       // latest state from the bot
@@ -287,7 +287,7 @@ function renderHeader() {
   if (!S) return;
   const m = S.market || {};
   let html = '';
-  for (const [k, v] of Object.entries(m)) html += `<span><b>${esc(k)}</b>${fp(v.price)} ${pct(v.change_5m)}</span>`;
+  for (const [k, v] of Object.entries(m)) html += `<span><b>${esc(k)}</b>${fp(v.price)} <span title="изменение за 5 минут">5м ${pct(v.change_5m)}</span></span>`;
   const ml = S.ml || {};
   if (ml.regime) html += `<span><b>режим</b><span class="${ml.regime.startsWith('up') ? 'up' : ml.regime.startsWith('down') ? 'down' : ''}">${esc(ml.regime)}</span></span>`;
   const NEWS = { binance_delist: ['делистинг Binance', 'down'], binance_listing: ['листинг Binance', 'up'],
@@ -636,15 +636,16 @@ function anCard(a) {
   const sc = ['long', 'short'].map(k => {
     const s = a.scenarios && a.scenarios[k];
     if (!s) return `<div class="box"><h4>${k === 'long' ? 'Лонг' : 'Шорт'}</h4><div class="dim">сценария нет</div></div>`;
-    const checks = s.checks.map(([n, st, v]) => `<span>${esc(n)}</span><span class="${st === 'ok' ? 'good' : st === 'bad' ? 'bad' : 'warn'}">${esc(v)}</span>`).join('');
+    const checks = s.checks.filter(([n]) => n !== 'R:R до TP1').map(([n, st, v]) => `<span>${esc(n)}</span><span class="${st === 'ok' ? 'good' : st === 'bad' ? 'bad' : 'warn'}">${esc(v)}</span>`).join('');
     return `<div class="box"><h4>${esc(s.name)} <span class="pill ${verdictCls(s.verdict)}">${esc(s.verdict)}</span></h4>
       <div class="dim">${esc(s.cond)}</div>
       <div class="kv"><span>вход</span><span class="mono">${fp(s.entry[0])}–${fp(s.entry[1])}</span><span>стоп</span><span class="mono">${fp(s.stop)}</span>
       <span>цели</span><span class="mono">${s.targets.map(fp).join(' / ')}</span><span>R:R до TP1</span><span class="mono">${s.rr.toFixed(1)}</span>
-      <span>безубыточная доля TP1 (с издержками)*</span><span class="mono">${s.p >= 1 ? 'не окупается: цель ближе стопа' : (s.p * 100).toFixed(0) + '%'}</span>${checks}</div></div>`;
+      <span>безубыточная доля TP1 (с издержками)</span><span class="mono">${s.be_winrate >= 1 ? 'не окупается: цель ближе стопа' : (s.be_winrate * 100).toFixed(0) + '%'}</span>
+      <span>базовая вероятность без издержек</span><span class="mono">${(s.rw_prob * 100).toFixed(0)}%</span>${checks}</div></div>`;
   }).join('');
   const T = (a.outcomes && a.outcomes.tally) || {};
-  const NM = { tp1: 'TP1', stop: 'стоп', open: 'без исхода', cancelled: 'отменён', no_entry: 'не сработал' };
+  const NM = { tp1: 'TP1', stop: 'стоп', open: 'без исхода', expired_open: 'истёк в позиции', cancelled: 'отменён', no_entry: 'не сработал' };
   const oc = Object.keys(T).length ? `<div class="dim">Исходы брифингов за ${a.outcomes.days} дн.: ` + Object.entries(T).map(([side, m]) =>
     side + ' — ' + Object.entries(m).map(([k, n]) => `${NM[k] || k} ${n}`).join(', ')).join(' · ') + '</div>' : '';
   const cards = (a.cards || []).map(c => `${esc(c.mode)} ${esc(c.setup)} ${c.direction > 0 ? '▲' : '▼'} ${esc(c.status)}`).join(' · ');
@@ -675,8 +676,8 @@ async function refreshAnalysis() {
   const ot = $('#an-total');
   if (ot) {
     const T = (p && p.outcomes && p.outcomes.tally) || {};
-    const NM = { tp1: 'TP1', stop: 'стоп', open: 'вход без исхода', cancelled: 'отменён', no_entry: 'не сработал' };
-    ot.innerHTML = Object.keys(T).length ? `<div class="dim">Исходы сценариев брифингов, все закреплённые монеты, ${p.outcomes.days} дн. (копится с трёх сводок в день, 12 ч на сценарий): `
+    const NM = { tp1: 'TP1', stop: 'стоп', open: 'вход без исхода', expired_open: 'истёк в позиции', cancelled: 'отменён', no_entry: 'не сработал' };
+    ot.innerHTML = Object.keys(T).length ? `<div class="dim">Исходы сценариев брифингов, все закреплённые монеты, ${p.outcomes.days} дн. (копится с трёх сводок в день, 72 ч на сценарий): `
       + Object.entries(T).map(([side, m]) => `<b>${esc(side)}</b>: ` + Object.entries(m).map(([k, n]) => `${NM[k] || k} ${n}`).join(', ')).join(' · ') + '</div>' : '';
   }
   pin.innerHTML = p && p.coins.length ? p.coins.map(anCard).join('') : '<div class="empty">Нет данных</div>';
@@ -684,7 +685,7 @@ async function refreshAnalysis() {
 function renderAnalysis() {
   if (!$('#an-pinned')) {
     $('#view').innerHTML = `<div class="box"><form id="an-form"><input id="an-q" placeholder="Тикер любой монеты, например PEPE или SOL" value="${esc(anQuery)}" autocomplete="off" maxlength="24"> <button>Показать</button></form>
-      <div class="dim">Уровни и чек-лист — механические правила (зоны разворотов 1h/4h/1d, ATR, старший ТФ, макро, карточки бота), не совет и не гарантия. R:R брутто, без комиссий и проскальзывания; пороги чек-листа не измерены. *Шанс TP1 по расстоянию — модель случайного блуждания без дрейфа.</div></div>
+      <div class="dim">Уровни и чек-лист — механические правила (зоны разворотов 1h/4h/1d, ATR, старший ТФ, макро, карточки бота), не совет и не гарантия. R:R брутто; безубыточная доля TP1 отдельно учитывает комиссии и проскальзывание. Пороги чек-листа не измерены.</div></div>
       <div id="an-result"></div><h3>Закреплённые монеты</h3><div id="an-total"></div><div id="an-pinned"><div class="empty">Загрузка…</div></div>`;
   }
   return refreshAnalysis();

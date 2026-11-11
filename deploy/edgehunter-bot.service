@@ -1,5 +1,5 @@
 [Unit]
-Description=EdgeHunter - microstructure scanner
+Description=EdgeHunter market analysis and signal service
 After=network-online.target
 Wants=network-online.target
 

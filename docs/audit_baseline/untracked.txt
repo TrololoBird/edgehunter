@@ -1,0 +1,5 @@
+docs/EDGEHUNTER_INVENTORY_v1.md
+docs/audit_baseline/BASELINE.txt
+docs/audit_baseline/index.diff
+docs/audit_baseline/untracked.txt
+docs/audit_baseline/working-tree.diff

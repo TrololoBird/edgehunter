@@ -124,9 +124,9 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         # eng-168j (audit): beyond EVERY zone the stop lands in (one push left it inside the next stacked zone). A chain
         # that makes the stop too wide is not published: scenario() rejects R:R < 1 with the pushed stop (ETH's long
         # stop at -3.8% was published before that check existed)
-        for z in (up if side < 0 else dn):                   # near -> far
-            if z['lo'] - z.get('tol', 0.0) <= stop <= z['hi'] + z.get('tol', 0.0):
-                stop = (z['hi'] + z.get('pad', 0.0)) if side < 0 else (z['lo'] - z.get('pad', 0.0))
+        # A scenario's stop belongs to its working zone.  Do not walk it through
+        # unrelated neighbouring zones: that made risk depend on incidental map
+        # density and could silently turn one stop into a chain of stops.
         return stop
 
     def scenario(side, e0, e1, stop, cond, tag, first=None, zone=None):
@@ -156,7 +156,8 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
                 'conf_tf': tf, 'zone': [zone['lo'], zone['hi']] if zone else None, 'atr1h': atr_1h,
                 # eng-168o / audit #9: the breakeven share on the same basis as the 'as a trade' check - the worst entry,
                 # NET of the round trip: (risk + cost) / (risk + reward)
-                'p': (abs(worst - stop) + cost) / (abs(worst - stop) + abs(tg[0] - worst))}
+                'be_winrate': (abs(worst - stop) + cost) / (abs(worst - stop) + abs(tg[0] - worst)),
+                'rw_prob': abs(worst - stop) / (abs(worst - stop) + abs(tg[0] - worst))}
     def bounce():
         """Long from the nearest support below: its test + a bullish 1h reaction candle."""
         if not dn:
@@ -361,11 +362,11 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
                     arrowprops=dict(arrowstyle='->', color=colr, lw=2.2, ls='--'), zorder=5)
     # scenario tags
     if p['long']:
-        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\n" + (f"безубыточная доля TP1: {p['long']['p'] * 100:.0f}%*" if p['long'].get('rr_ok', True) else 'как сделка невыгодно: цель ближе стопа'),
+        ax.text(xmax * 0.8, y1 - pad * 0.3, f"ЛОНГ СЦЕНАРИЙ\n({p['long']['tag']})\n" + (f"безубыточная доля TP1: {p['long']['be_winrate'] * 100:.0f}%" if p['long'].get('rr_ok', True) else 'как сделка невыгодно: цель ближе стопа'),
                 fontsize=9.5, weight='bold', color='white', ha='center', va='top', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=GREEN2, ec='none'))
     if p['short']:
-        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\n" + (f"безубыточная доля TP1: {p['short']['p'] * 100:.0f}%*" if p['short'].get('rr_ok', True) else 'как сделка невыгодно: цель ближе стопа'),
+        ax.text(xmax * 0.8, y0 + pad * 0.3, f"ШОРТ СЦЕНАРИЙ\n({p['short']['tag']})\n" + (f"безубыточная доля TP1: {p['short']['be_winrate'] * 100:.0f}%" if p['short'].get('rr_ok', True) else 'как сделка невыгодно: цель ближе стопа'),
                 fontsize=9.5, weight='bold', color='white', ha='center', va='bottom', zorder=7, linespacing=1.3,
                 bbox=dict(boxstyle='round,pad=0.5', fc=RED, ec='none'))
     ax.text(1.5, y0 + pad * 0.15, source, fontsize=13, weight='bold', color='#d0d0d0', zorder=5)

@@ -1,6 +1,6 @@
 # edgehunter
 
-`edgehunter` is a streaming crypto-market microstructure scanner and operator
+`edgehunter` is a streaming crypto-market analysis and signal system for operators
 decision-support system. It produces signal cards and a dashboard. The demo
 executor talks to BingX VST only; it is not a production trading connector.
 

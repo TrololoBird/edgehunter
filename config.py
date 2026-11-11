@@ -72,7 +72,7 @@ class ExchangeConfig:
 @dataclass(frozen=True)
 class TimeframeConfig:
     # 99, not 100: Binance futures klines cost weight 1 below limit=100 and 2 from 100
-    rest_lookback_candles: int = 99
+    rest_lookback_candles: int = 501
     rest_timeframe: str = "15m"
     scan_interval_sec: int = 10
     bulk_funding_interval_sec: int = 30
@@ -324,8 +324,8 @@ class OrderflowConfig:
     require_orderflow_confirm: bool = False
     # CVD divergence at a reversal's extreme: the previous swing is looked for this far back
     divergence_lookback_min: int = 60
-    # Entry confirmations required by rule ('<strategy>:<confirmation>', strategies/confirm.py): a breakout needs
-    # rising OI (new positions behind it), as the D / F phases and directional impulses already do
+    # Entry confirmations required by configuration ('<strategy>:<confirmation>', strategies/confirm.py).
+    # Detector requirements are defined separately by each detector.
     required_confirmations: tuple = ()
     # strategies whose source has no confirmation rule: min_confirmations does not apply (the Turtles: eng-31)
     confirm_exempt: tuple = ('breakout',)
@@ -1085,14 +1085,14 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-169m"   # Current profile after the playbook/gate registry split
+    logic_version: str = "eng-170b"   # Central net risk gate plus causal pump/dump overextension guard
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
     # eng-162: eng-156..161 changed vetoes (against_bias blocking, crowd_max), enabled setups, detection (DUMP START,
     # small caps, median RVOL) - by the rule above the waiting cards of older versions expire at this restart
-    keep_waiting_from: str = "eng-167"   # eng-166: not_in_pool veto changed in eng-165
+    keep_waiting_from: str = "eng-170b"   # eng-170b: re-plan waiting cards under the causal pump/dump guard
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
     verdict_since: str = "eng-55"

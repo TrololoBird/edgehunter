@@ -533,8 +533,14 @@ class Briefing:
         import sr
         md = src['md'] if 'md' in src else self.sc.market_data.get(symbol)
         now_ms = time.time() * 1000
-        zs = sr.zones({'1h': list(md.h1) if md else [], '4h': list(md.h4) if md else [],
-                       '1d': list(md.d1) if md else []}, now_ms, tol=0.6 * atr1h, max_width=1.5 * atr1h)
+        # Level construction must never see the currently forming candle.  The
+        # ATR path already applies this rule; keep the zone path consistent.
+        closed = {
+            '1h': [c for c in list(md.h1) if c[0] + HOUR_MS <= now_ms] if md else [],
+            '4h': [c for c in list(md.h4) if c[0] + 4 * HOUR_MS <= now_ms] if md else [],
+            '1d': [c for c in list(md.d1) if c[0] + 24 * HOUR_MS <= now_ms] if md else [],
+        }
+        zs = sr.zones(closed, now_ms, tol=0.6 * atr1h, max_width=1.5 * atr1h)
         zs = [z for z in zs if z['lo'] - price <= self.cfg.span_atr_1d * atr1d
               and price - z['hi'] <= self.cfg.span_atr_1d * atr1d]
         cands: List[Dict] = []
@@ -772,7 +778,7 @@ class Briefing:
                'chg_day': (price / d1c[-1][4] - 1) * 100 if d1c else None,
                'bias': bias, 'bias_ru': BIAS_RU.get(bias, bias), 'bias_line': self._bias_line(symbol, bias, st),
                'atr1h': atr1h, 'atr1d': atr1d,
-               'zones': [{k: z.get(k) for k in ('lo', 'hi', 'side', 'strength', 'label', 'near', 'pierce_src', 'conf_tf')}
+               'zones': [{k: z.get(k) for k in ('lo', 'hi', 'side', 'strength', 'label', 'near', 'pierce_src', 'conf_tf', 'tol')}
                          for z in zones],
                # eng-168y: the if-then level map with its base view and the crowd (universe coins only)
                'level_map': self.level_map(price, zones, self.session_bias(md)),
@@ -823,7 +829,8 @@ class Briefing:
                 verdict = f"ограниченный анализ: {verdict}"
             out['scenarios'][side] = {
                 'name': name, 'cond': sc['cond'], 'tag': sc.get('tag'), 'entry': list(sc['entry']), 'stop': sc['stop'],
-                'targets': list(sc['targets']), 'p': sc['p'], 'rr': rr, 'checks': checks, 'verdict': verdict}
+               'targets': list(sc['targets']), 'be_winrate': sc['be_winrate'], 'rw_prob': sc['rw_prob'],
+               'rr': rr, 'checks': checks, 'verdict': verdict}
         return out
 
     def market_text(self) -> str:
@@ -1017,6 +1024,7 @@ class Briefing:
         armed = not breakout
         fill, fill_ms = None, None
         touched = False
+        pending_retest = False
         step = H4_MS if len(bars) > 1 and bars[1][0] - bars[0][0] >= H4_MS else HOUR_MS
         for c in bars:
             end = c[0] + step
@@ -1027,18 +1035,28 @@ class Briefing:
                     armed = True
                 continue
             if fill is None:
+                if pending_retest:
+                    # Variant B: confirmation arms the setup; execution is a
+                    # limit fill only on a later candle returning to the entry
+                    # band.  The confirmation candle itself can never be the
+                    # fill, so its close cannot create look-ahead execution.
+                    if (c[3] <= e1 and c[2] >= e0):
+                        fill = e1 if side > 0 else e0
+                        fill_ms = end
+                        pending_retest = False
+                        if side * (tp1 - fill) <= 0:
+                            return 'пропущен: ретест уже за TP1', end, None, None
+                        if side * (tp1 - fill) < abs(fill - stop):
+                            return 'пропущен: ретест оставил R:R < 1', end, None, None
+                    else:
+                        if (c[3] <= stop) if side > 0 else (c[2] >= stop):
+                            return 'отменён: стоп до лимитного ретеста', end, None, None
+                        continue
                 touched = touched or (c[3] <= e1 and c[2] >= e0)
                 if side * (c[4] - stop) <= 0:
                     return 'отменён: закрытие за стопом до реакции', end, None, None
                 if cls.reaction(sc, side, c):
-                    fill, fill_ms = c[4], end
-                    if side * (tp1 - fill) <= 0:
-                        # audit C15: the reaction closed at / beyond TP1 - no trade with a target ahead
-                        return 'пропущен: реакция закрылась за TP1', end, None, None
-                    if side * (tp1 - fill) < abs(fill - stop):
-                        # eng-168l (audit #3): a reaction candle that closed most of the way to TP1 leaves R:R < 1
-                        # from its close - the publication rule (R:R >= 1) applies to the real entry too
-                        return 'пропущен: реакция закрылась слишком далеко (R:R < 1)', end, None, None
+                    pending_retest = True
                 continue
             if (c[3] <= stop) if side > 0 else (c[2] >= stop):
                 return 'вход → стоп (−1R)', end, -1.0, fill_ms
@@ -1329,7 +1347,7 @@ class Briefing:
     # eng-168l (audit #3): the version of the briefing rules (zones / plan / scoring) in every saved record; the tally
     # counts only the current one (records of older rules are not mixed in). Bump on any change to sr.py, plan() or
     # score_scenario().
-    RULES_V = 'b169a'
+    RULES_V = 'b170a'
 
     def outcomes(self, symbol: Optional[str] = None, days: int = 7, md=None) -> Dict:
         """The saved briefings' scenarios scored on the closed candles (each against its own MSK day, as the recap):

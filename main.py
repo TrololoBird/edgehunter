@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Crypto Market Microstructure Scanner (Binance USD-M perpetuals).
+EdgeHunter crypto market analysis and signal system (Binance USD-M perpetuals).
 
 - Phases on 15m candles (scorer.py): long = A accumulation / B spring / E capitulation, short = C distribution /
   D breakdown; Tier-0 raw anomalies every 2s (RVOL 1m, OI 5m, price 5m, whale flow).
@@ -208,7 +208,7 @@ def keep_awake(on: bool) -> None:
 
 
 async def main(use_web: bool = True):
-    print("Crypto microstructure scanner - loading markets and starting streams (Ctrl+C to stop)")
+    print("EdgeHunter - loading markets and starting streams (Ctrl+C to stop)")
     # the streams allocate millions of short-lived tuples a minute: the default gen-0 threshold (2000) promoted them
     # into gen 2 and its full collections paused the loop 0.3s+ (watchdog 'gc (gen 2)', 100+ a day); fewer, younger
     # collections - long-lived history is kept in compact arrays; the fetcher no
@@ -295,7 +295,7 @@ async def main(use_web: bool = True):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Crypto microstructure scanner")
+    parser = argparse.ArgumentParser(description="EdgeHunter crypto market analysis and signals")
     parser.add_argument("--no-web", action="store_true", help="log only, no browser dashboard")
     args = parser.parse_args()
     # QuickEdit off BEFORE the first console write: a click into the fresh window froze the start at main()'s
