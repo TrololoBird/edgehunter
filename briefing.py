@@ -1049,8 +1049,13 @@ class Briefing:
             mtm = side * (bars[-1][4] - fill) / abs(fill - stop) if abs(fill - stop) > 0 else 0.0
             return 'вход, без исхода', None, round(mtm, 2), fill_ms
         if armed and breakout and not touched:
-            far = max(c[2] for c in bars) if side > 0 else min(c[3] for c in bars)
-            reached = (far >= tp1) if side > 0 else (far <= tp1)
+            # Only price action after the breakout was armed belongs to the
+            # no-retest outcome.  Earlier wicks cannot satisfy TP1.
+            armed_idx = next((i for i, b in enumerate(bars)
+                              if (side > 0 and b[4] > e0) or (side < 0 and b[4] < e1)), None)
+            post_arm = bars[armed_idx:] if armed_idx is not None else []
+            far = (max(c[2] for c in post_arm) if side > 0 else min(c[3] for c in post_arm)) if post_arm else None
+            reached = far is not None and ((far >= tp1) if side > 0 else (far <= tp1))
             return 'закрепление без ретеста' + (' — цена дошла до TP1 без входа' if reached else ''), None, None, None
         return ('тест без реакции' if touched else 'не включился'), None, None, None
 
@@ -1498,8 +1503,7 @@ class Briefing:
                 if not macro_calendar.live_ok(time.time() * 1000):
                     continue                     # eng-168s: fail-closed - no 'scenario on' without a fresh calendar
                 if armed and self.reaction(x, side, c) and side * (c[4] - x['stop']) > 0 \
-                        and (side * (x['targets'][0] - c[4]) >= abs(c[4] - x['stop'])            # eng-168l: R:R >= 1
-                             or (x.get('rr_ok') is False and side * (x['targets'][0] - c[4]) > 0)):  # eng-168x
+                        and side * (x['targets'][0] - c[4]) >= abs(c[4] - x['stop']):  # live/replay R:R parity
                     rr = side * (x['targets'][0] - c[4]) / abs(c[4] - x['stop'])
                     self._post(f"✅ {_short(symbol)}: реакция у зоны — {name.lower()}-сценарий включён"
                                + (" (как сделка невыгодно: цель ближе стопа)" if x.get('rr_ok') is False else '') + "\n"

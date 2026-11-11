@@ -12,7 +12,6 @@ from typing import Optional
 
 class QualityState(StrEnum):
     FRESH = 'fresh'
-    DEGRADED = 'degraded'
     STALE = 'stale'
     MISSING = 'missing'
     INVALID = 'invalid'
@@ -36,7 +35,7 @@ class DataQuality:
 
     @property
     def stale(self) -> bool:
-        return self.state in (QualityState.DEGRADED, QualityState.STALE, QualityState.MISSING,
+        return self.state in (QualityState.STALE, QualityState.MISSING,
                               QualityState.INVALID, QualityState.FAILED, QualityState.DEAD)
 
 
@@ -51,8 +50,13 @@ def quality(now: float, fetched_at: Optional[float], ttl: float, max_age: float,
     if fetched_at is None:
         return DataQuality(QualityState.MISSING, None, None, coverage, source, 'missing')
     age = max(0.0, now - fetched_at)
-    if age <= ttl:
-        state = QualityState.DEGRADED if coverage is not None and coverage < 1.0 else QualityState.FRESH
+    if age <= ttl and (coverage is None or coverage >= 1.0):
+        state = QualityState.FRESH
+    elif age <= ttl and coverage is not None and coverage < 1.0:
+        # Partial coverage is an infrastructure failure, never a degraded
+        # operating mode.  Callers must repair the source or stop the path.
+        return DataQuality(QualityState.INVALID, fetched_at, age, coverage, source,
+                           'incomplete coverage')
     else:
         state = QualityState.STALE if age <= max_age else QualityState.DEAD
     return DataQuality(state, fetched_at, age, coverage, source)

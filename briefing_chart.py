@@ -249,7 +249,9 @@ def render(name: str, candles: List[List[float]], price: float, zones: List[Dict
     """`candles`: 4h candles drawn on the chart; `atr_1h`: the drawn timeframe's ATR (4h); `candles_1h` for the 24h
     change / high / low."""
     """PNG bytes of the card. `candles`: 1h [ts, o, h, l, c, ...], oldest first (the forming one may be last)."""
-    p = plan(price, zones, atr_1d, ath, ath_days)
+    # Render the exact same geometry as the API/text path.  Recomputing with
+    # the daily-ATR fallback made PNG cards disagree with their scenario.
+    p = plan(price, zones, atr_1d, ath, ath_days, atr_1h=atr_1h)
     c = candles[-BARS:]
     day = (candles_1h or [])[-24:] or candles[-6:]
     # the 24h extremes from the caller's minute candles when it has them (the 1h candles lag a minute after the hour:
