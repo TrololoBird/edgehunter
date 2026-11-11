@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 MSK = ZoneInfo('Europe/Moscow')
 NY = ZoneInfo('America/New_York')
 HOUR_MS = 3_600_000
+BRIEFING_SCHEMA_V = 2
 
 # kinds that are no price-action zone of a briefing (models / pullable orders / dealer positions)
 SKIP_KINDS = {'liq_est', 'liq_hl', 'book', 'wall', 'liq_hit'}
@@ -825,8 +826,6 @@ class Briefing:
             bad = sum(1 for _, s, _ in checks if s == 'bad')
             warn = sum(1 for _, s, _ in checks if s == 'warn')
             verdict = 'нет' if bad else 'осторожно' if warn >= 2 else 'формальные условия выполнены' if warn == 0 else 'приемлемо'
-            if src is not None:
-                verdict = f"ограниченный анализ: {verdict}"
             out['scenarios'][side] = {
                 'name': name, 'cond': sc['cond'], 'tag': sc.get('tag'), 'entry': list(sc['entry']), 'stop': sc['stop'],
                'targets': list(sc['targets']), 'be_winrate': sc['be_winrate'], 'rw_prob': sc['rw_prob'],
@@ -925,7 +924,9 @@ class Briefing:
         rows = []
         for symbol in self.watched():
             bias, st = self._bias_of(symbol)
-            rows.append(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'rules_v': self.RULES_V,
+            ts = time.time()
+            rows.append(json.dumps({'slot': slot, 'title': title, 'ts': ts, 'publication_id': f'{slot}|{symbol}',
+                                    'schema_v': BRIEFING_SCHEMA_V, 'rules_v': self.RULES_V,
                                     'price': self.sc._price_of(symbol), 'bias': bias,
                                     'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
                                     'zones': self.zones.get(symbol) or [], 'scenario': self.scenario.get(symbol)},
@@ -949,7 +950,9 @@ class Briefing:
                 except Exception as e:
                     errors.report('briefing._save', e, f"Silent briefing record failed for {symbol}")
                     continue
-                rows.append(json.dumps({'slot': slot, 'title': title, 'ts': time.time(), 'symbol': symbol, 'silent': True, 'rules_v': self.RULES_V,
+                ts = time.time()
+                rows.append(json.dumps({'slot': slot, 'title': title, 'ts': ts, 'publication_id': f'{slot}|{symbol}',
+                                    'schema_v': BRIEFING_SCHEMA_V, 'symbol': symbol, 'silent': True, 'rules_v': self.RULES_V,
                                     'price': price, 'bias': bias,
                                     'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
                                     'zones': zones, 'scenario': {'long': p['long'], 'short': p['short'], 'price': price,
@@ -1490,10 +1493,10 @@ class Briefing:
                     msg = f"⬆️ {_short(symbol)}: закрепление {tf} выше зоны {lbl} (закрытие {_fmt(c[4])})"
                 elif p[4] >= z['lo'] > c[4]:
                     msg = f"⬇️ {_short(symbol)}: закрепление {tf} ниже зоны {lbl} (закрытие {_fmt(c[4])})"
-                elif c[2] > z['hi'] and c[4] < z['hi'] and p[4] < z['hi']:
-                    msg = f"↩️ {_short(symbol)}: снятие верха {lbl} (хай {_fmt(c[2])}) и возврат под зону ({tf})"
-                elif c[3] < z['lo'] and c[4] > z['lo'] and p[4] > z['lo']:
-                    msg = f"↪️ {_short(symbol)}: снятие низа {lbl} (лой {_fmt(c[3])}) и возврат над зону ({tf})"
+                elif c[2] > z['hi'] and c[4] < z['lo'] and p[4] < z['lo']:
+                    msg = f"↩️ {_short(symbol)}: снятие верха {lbl} (хай {_fmt(c[2])}) и возврат под всю зону ({tf})"
+                elif c[3] < z['lo'] and c[4] > z['hi'] and p[4] > z['hi']:
+                    msg = f"↪️ {_short(symbol)}: снятие низа {lbl} (лой {_fmt(c[3])}) и возврат над всю зону ({tf})"
                 if msg:
                     self._post(msg + f"\n{z.get('desc') or z['label']}" + self._scenario_note(symbol, c[4]),
                                key=f"lvl|{symbol}|{z['lo']:.8g}|{msg[:2]}", every_sec=4 * 3600)
