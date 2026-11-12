@@ -965,6 +965,17 @@ class Briefing:
                 rows.append(json.dumps(row, ensure_ascii=False, default=str))
         append_jsonl(os.path.join('data', 'briefings.jsonl'), rows)
 
+    def _publication_intent(self, slot: str, title: str) -> None:
+        """Persist an idempotent publication intent before external delivery."""
+        import json
+        from storage import append_jsonl
+        ts = time.time()
+        rows = [{'publication_id': f'{slot}|{symbol}', 'slot': slot, 'title': title,
+                 'symbol': symbol, 'ts': ts, 'status': 'intent', 'schema_v': BRIEFING_SCHEMA_V,
+                 'rules_v': self.RULES_V} for symbol in self.watched()]
+        append_jsonl(os.path.join('data', 'publication_events.jsonl'),
+                     [json.dumps(row, ensure_ascii=False) for row in rows])
+
     def outcomes_total(self, days: int = 14) -> Dict:
         """The tally over every pinned coin (long / short x outcome class) for the analysis page's header."""
         total: Dict[str, Dict[str, int]] = {}
@@ -1777,6 +1788,7 @@ class Briefing:
                             self.sc.notifier.post(await asyncio.to_thread(self.recap), 'briefing')
                             await asyncio.to_thread(self.snapshot_outcomes)
                         else:
+                            await asyncio.to_thread(self._publication_intent, slot, title)
                             for png, cap in await asyncio.to_thread(self.cards, title):
                                 self.sc.notifier.post_photo(png, cap)
                             await asyncio.to_thread(self._save, slot, title)
