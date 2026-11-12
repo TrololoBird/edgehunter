@@ -1778,7 +1778,19 @@ class Briefing:
         self._loop = asyncio.get_running_loop()
         while not self.sc.fetcher.baselines_loaded():
             await asyncio.sleep(30)
-        await asyncio.sleep(120)                            # the maps / histories of the watched coins
+        await asyncio.sleep(120)                            # allow baseline/history workers to start
+        # Readiness is data-based, not a fixed startup delay.  Briefing must
+        # not repeatedly attempt to build zones while mandatory ATR frames
+        # are still absent.
+        deadline = time.time() + 900
+        while self._running and time.time() < deadline:
+            ready = 0
+            for symbol in self.watched():
+                tf = self.sc._tf_atrs(symbol)
+                ready += all(tf.get(k, 0) > 0 for k in ('1h', '4h', '1d'))
+            if ready == len(self.watched()):
+                break
+            await asyncio.sleep(15)
         # the zones to watch exist from the start (a briefing is not sent at start-up)
         # eng-168i: off the event loop - the zones (sr.zones, ~1-2 s CPU a coin) and the XAU proxy history (a blocking
         # urllib request, 20 s timeout) blocked the scanner's loop 1.5-2.2 s at a time (watchdog, 24-25.10)
