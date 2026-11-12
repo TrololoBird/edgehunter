@@ -1366,6 +1366,7 @@ class Briefing:
         tally: Dict[str, Dict[str, int]] = {}
         r_sum: Dict[str, float] = {}
         ex: Dict[str, Dict] = {}
+        publication_ids = set()
         for r in recs:
             sym = r.get('symbol')
             if r.get('ts', 0) < since or (symbol and sym != symbol) or r.get('rules_v') != self.RULES_V:
@@ -1373,6 +1374,8 @@ class Briefing:
             m = md if (md is not None and sym == symbol) else self.sc.market_data.get(sym)
             if m is None:
                 continue
+            if r.get('publication_id'):
+                publication_ids.add(r['publication_id'])
             closed = [c for c in m.h1 if c[0] + HOUR_MS <= now]
             minutes = [c for c in list(getattr(m, 'minute_klines', []) or []) if c[0] + 60_000 <= now]
             # eng-168k (audit): a fixed horizon after the post (OUTCOME_HOURS), not the end of its MSK day - a target
@@ -1422,7 +1425,8 @@ class Briefing:
         for e in ex.values():                     # sums -> means for the excursions
             e['mfe_r'] = round(e['mfe_r'] / e['n'], 2) if e['n'] else None
             e['mae_r'] = round(e['mae_r'] / e['n'], 2) if e['n'] else None
-        return {'days': days, 'tally': tally, 'r': r_sum, 'exec': ex}
+        return {'days': days, 'tally': tally, 'r': r_sum, 'exec': ex,
+                'publication_ids': sorted(publication_ids), 'schema_v': BRIEFING_SCHEMA_V}
 
     @staticmethod
     def _outcome_r(txt: str) -> Optional[float]:
