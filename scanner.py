@@ -2217,6 +2217,7 @@ class Scanner:
             logger.info(f"SETUP {t.symbol} {t.group_key} {'long' if t.direction > 0 else 'short'} @ {t.price_at_signal:.6g}")
         for t in entries:
             lv = t.levels
-            logger.info(f"ENTRY {t.symbol} {t.group_key} entry {lv['entry']:.6g} SL {lv['sl']:.6g} ({lv.get('sl_src')}) "
-                        f"TP1 {lv['tp1']:.6g} ({lv.get('tp1_src')}) TP2 {lv['tp2']:.6g} TP3 {lv['tp3']:.6g} "
+            fmt = lambda value: f'{value:.6g}' if value is not None else '—'
+            logger.info(f"ENTRY {t.symbol} {t.group_key} entry {fmt(lv.get('entry'))} SL {fmt(lv.get('sl'))} ({lv.get('sl_src')}) "
+                        f"TP1 {fmt(lv.get('tp1'))} ({lv.get('tp1_src')}) TP2 {fmt(lv.get('tp2'))} TP3 {fmt(lv.get('tp3'))} "
                         f"R:R {_rr_text(lv)} | confirms {t.confirms}")
