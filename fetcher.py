@@ -1493,11 +1493,13 @@ class DataFetcher:
         coins (~600 weight per hour against a ~1400 / minute budget). Waits for the 15m history first (priority).
         """
         cfg = CONFIG.strategies
+        logger.info('1h history loader started')
         while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
             await asyncio.sleep(10)
         while self._running:
             started = time.time()
             symbols = [s for s, md in self.markets.items() if started - md.h1_loaded >= cfg.h1_refresh_sec - 120]
+            logger.info('1h history loader pass: %d symbols', len(symbols))
             sem = asyncio.Semaphore(8)
 
             async def one(symbol: str):
@@ -1540,12 +1542,14 @@ class DataFetcher:
 
     async def _h4_candles_loop(self):
         """200 closed 4h candles of every universe coin (limit 200, weight 2) after each 4h close and for joining coins."""
+        logger.info('4h history loader started')
         while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
             await asyncio.sleep(10)
         while self._running:
             now = time.time()
             slot = int(now // 14_400)
             symbols = [s for s, md in self.markets.items() if md.h4_slot < slot]
+            logger.info('4h history loader pass: %d symbols', len(symbols))
             sem = asyncio.Semaphore(4)
 
             async def one(symbol: str):
@@ -1575,6 +1579,7 @@ class DataFetcher:
         Up to 1500 daily candles of every universe coin (weight 10) once per UTC day, a minute after the daily close,
         and for coins that join: Connors' RSI(2) system reads daily closes (~240 weight a day).
         """
+        logger.info('daily history loader started')
         while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
             await asyncio.sleep(10)
         while self._running:
