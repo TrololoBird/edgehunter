@@ -1783,7 +1783,7 @@ class Briefing:
         # not repeatedly attempt to build zones while mandatory ATR frames
         # are still absent.
         deadline = time.time() + 900
-        while self._running and time.time() < deadline:
+        while self.sc._running and time.time() < deadline:
             ready = 0
             for symbol in self.watched():
                 tf = self.sc._tf_atrs(symbol)
