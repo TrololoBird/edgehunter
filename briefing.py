@@ -496,7 +496,11 @@ class Briefing:
         price = src['price'] if 'price' in src else self.sc._price_of(symbol)
         levels = src['levels'] if 'levels' in src else self.sc._levels_of(symbol)
         tf = src['tf'] if 'tf' in src else self.sc._tf_atrs(symbol)
-        require_briefing_inputs(symbol, price, levels, tf)
+        try:
+            require_briefing_inputs(symbol, price, levels, tf)
+        except Exception as exc:
+            errors.report('briefing.data_gate', exc, symbol)
+            return price, []
         atr1d = tf['1d']
         atr1h = tf['1h']
         # only the levels a session forecast stands on (the owner 2026-10-08: minor levels made huge zones) - daily /
