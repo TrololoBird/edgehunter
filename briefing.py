@@ -955,13 +955,14 @@ class Briefing:
                     errors.report('briefing._save', e, f"Silent briefing record failed for {symbol}")
                     continue
                 ts = time.time()
-                rows.append(json.dumps({'slot': slot, 'title': title, 'ts': ts, 'publication_id': f'{slot}|{symbol}',
-                                    'schema_v': BRIEFING_SCHEMA_V, 'symbol': symbol, 'silent': True, 'rules_v': self.RULES_V,
-                                    'price': price, 'bias': bias,
-                                    'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
-                                    'zones': zones, 'scenario': {'long': p['long'], 'short': p['short'], 'price': price,
-                                                                 'ts': time.time()}},
-                                   ensure_ascii=False, default=str))
+                snapshot = ScenarioSnapshot(f'{slot}|{symbol}', f'{self.RULES_V}|{int(ts)}',
+                                            os.environ.get('EDGEHUNTER_BUILD_ID', 'live'), BRIEFING_SCHEMA_V,
+                                            self.RULES_V, symbol, slot, ts, ts, price, bias,
+                                            {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')}, zones,
+                                            {'long': p['long'], 'short': p['short'], 'price': price, 'ts': ts})
+                row = snapshot.to_dict()
+                row.update({'title': title, 'ts': ts, 'silent': True})
+                rows.append(json.dumps(row, ensure_ascii=False, default=str))
         append_jsonl(os.path.join('data', 'briefings.jsonl'), rows)
 
     def outcomes_total(self, days: int = 14) -> Dict:
