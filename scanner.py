@@ -328,8 +328,12 @@ class Scanner:
         self.notifier.resume()                  # audit B05: trading messages a previous run left undelivered
 
     async def _seed_okx_later(self):
+        # This is a long-lived owned task.  A one-shot coroutine returning is
+        # interpreted by the supervisor as failure and gets restarted forever.
         await asyncio.sleep(5)                  # the streams' start time is known by then
-        await self.ext.seed_okx_flow()
+        while self._running:
+            await self.ext.seed_okx_flow()
+            await asyncio.sleep(900)
 
     def _background_task(self, coro):
         if not hasattr(self, '_task_supervisor'):
