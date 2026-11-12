@@ -18,6 +18,8 @@ def migrate(path='data/briefings.jsonl'):
         if not row.get('publication_id'):
             row['publication_id'] = f"legacy|{row.get('slot', 'unknown')}|{row.get('symbol', 'unknown')}|{idx}"
         row.setdefault('schema_v', 1)
+        if not row.get('rules_v'):
+            row['rules_v'] = 'legacy_model'
         row.setdefault('execution_model', 'legacy_model')
         row.setdefault('legacy', True)
         rows.append(row)
