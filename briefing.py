@@ -990,6 +990,17 @@ class Briefing:
         append_jsonl(os.path.join('data', 'publication_events.jsonl'),
                      [json.dumps(row, ensure_ascii=False) for row in rows])
 
+    def _reconcile_publication(self, slot: str) -> None:
+        """Check the just-sent slot against delivery and archive identities."""
+        events = _read_jsonl(os.path.join('data', 'publication_events.jsonl'))
+        archive = {r.get('publication_id') for r in _read_jsonl(os.path.join('data', 'briefings.jsonl'))}
+        expected = {f'{slot}|{symbol}' for symbol in self.watched()}
+        delivered = {r.get('publication_id') for r in events
+                     if r.get('status') == 'delivered' and r.get('slot') == slot}
+        missing = sorted(expected - delivered) + sorted(delivered - archive)
+        if missing:
+            errors.report('briefing.reconciliation', RuntimeError(f'{slot}: {len(missing)} mismatches'), slot)
+
     def outcomes_total(self, days: int = 14) -> Dict:
         """The tally over every pinned coin (long / short x outcome class) for the analysis page's header."""
         total: Dict[str, Dict[str, int]] = {}
@@ -1808,6 +1819,7 @@ class Briefing:
                                 self.sc.notifier.post_photo(png, cap)
                             await asyncio.to_thread(self._publication_delivery, slot, title, len(cards))
                             await asyncio.to_thread(self._save, slot, title)
+                            await asyncio.to_thread(self._reconcile_publication, slot)
                 for dt, name in macro_today(now):
                     if timedelta(0) <= dt - now <= timedelta(minutes=30):
                         # eng-168k (audit): the text says what the trading guard really does - signal_book's
