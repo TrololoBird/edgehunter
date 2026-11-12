@@ -489,15 +489,15 @@ class Briefing:
         measured p80 pierce, at least zone_buffer_atr x the 1h ATR - Osler: stops cluster just beyond a level).
         """
         from pierce import overshoot
+        from data_contract import require_briefing_inputs
         # src: a coin outside the universe (the web analysis): {'price', 'levels', 'tf', 'md'} built from REST candles
         src = src or {}
         price = src['price'] if 'price' in src else self.sc._price_of(symbol)
         levels = src['levels'] if 'levels' in src else self.sc._levels_of(symbol)
         tf = src['tf'] if 'tf' in src else self.sc._tf_atrs(symbol)
-        atr1d = tf.get('1d') or (tf.get('4h') or 0) * 2.5
-        atr1h = tf.get('1h') or (atr1d / 5 if atr1d else 0)
-        if not price or (not levels and 'levels' not in src) or not atr1d:
-            return price, []
+        require_briefing_inputs(symbol, price, levels, tf)
+        atr1d = tf['1d']
+        atr1h = tf['1h']
         # only the levels a session forecast stands on (the owner 2026-10-08: minor levels made huge zones) - daily /
         # weekly swings, the previous day / week / month extremes, the week / month open, the year's extremes, 4h+ ICT
         # zones, naked daily POCs and the 4-day profile; the current day's / sessions' extremes, VWAP, the 24h profile,
