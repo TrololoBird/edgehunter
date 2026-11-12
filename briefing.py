@@ -980,11 +980,11 @@ class Briefing:
         import json
         from storage import append_jsonl
         ts = time.time()
-        row = {'publication_id': slot, 'slot': slot, 'title': title, 'ts': ts,
-               'status': 'delivered', 'cards': count, 'schema_v': BRIEFING_SCHEMA_V,
-               'rules_v': self.RULES_V}
+        rows = [{'publication_id': f'{slot}|{symbol}', 'slot': slot, 'title': title, 'ts': ts,
+                 'status': 'delivered', 'cards': count, 'schema_v': BRIEFING_SCHEMA_V,
+                 'rules_v': self.RULES_V} for symbol in self.watched()]
         append_jsonl(os.path.join('data', 'publication_events.jsonl'),
-                     [json.dumps(row, ensure_ascii=False)])
+                     [json.dumps(row, ensure_ascii=False) for row in rows])
 
     def outcomes_total(self, days: int = 14) -> Dict:
         """The tally over every pinned coin (long / short x outcome class) for the analysis page's header."""
