@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 import errors
 from config import CONFIG
+from scenario_snapshot import ScenarioSnapshot
 
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo('Europe/Moscow')
@@ -925,12 +926,15 @@ class Briefing:
         for symbol in self.watched():
             bias, st = self._bias_of(symbol)
             ts = time.time()
-            rows.append(json.dumps({'slot': slot, 'title': title, 'ts': ts, 'publication_id': f'{slot}|{symbol}',
-                                    'schema_v': BRIEFING_SCHEMA_V, 'rules_v': self.RULES_V,
-                                    'price': self.sc._price_of(symbol), 'bias': bias,
-                                    'state': {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
-                                    'zones': self.zones.get(symbol) or [], 'scenario': self.scenario.get(symbol)},
-                                   ensure_ascii=False, default=str))
+            snapshot = ScenarioSnapshot(f'{slot}|{symbol}', f'{self.RULES_V}|{int(ts)}', os.environ.get('EDGEHUNTER_BUILD_ID', 'live'),
+                                        BRIEFING_SCHEMA_V, self.RULES_V, symbol, slot, ts, ts,
+                                        self.sc._price_of(symbol), bias,
+                                        {k: st.get(k) for k in ('tsm', 'w1', 'd1', 'h4', 'adx4')},
+                                        self.zones.get(symbol) or [], self.scenario.get(symbol))
+            row = snapshot.to_dict()
+            row['title'] = title
+            row['ts'] = ts
+            rows.append(json.dumps(row, ensure_ascii=False, default=str))
         # the other pinned coins: the same forecast kept silently (no post) so their scenarios are scored too
         import briefing_chart
         watched = set(self.watched())
