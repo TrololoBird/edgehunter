@@ -976,6 +976,16 @@ class Briefing:
         append_jsonl(os.path.join('data', 'publication_events.jsonl'),
                      [json.dumps(row, ensure_ascii=False) for row in rows])
 
+    def _publication_delivery(self, slot: str, title: str, count: int) -> None:
+        import json
+        from storage import append_jsonl
+        ts = time.time()
+        row = {'publication_id': slot, 'slot': slot, 'title': title, 'ts': ts,
+               'status': 'delivered', 'cards': count, 'schema_v': BRIEFING_SCHEMA_V,
+               'rules_v': self.RULES_V}
+        append_jsonl(os.path.join('data', 'publication_events.jsonl'),
+                     [json.dumps(row, ensure_ascii=False)])
+
     def outcomes_total(self, days: int = 14) -> Dict:
         """The tally over every pinned coin (long / short x outcome class) for the analysis page's header."""
         total: Dict[str, Dict[str, int]] = {}
@@ -1789,8 +1799,10 @@ class Briefing:
                             await asyncio.to_thread(self.snapshot_outcomes)
                         else:
                             await asyncio.to_thread(self._publication_intent, slot, title)
-                            for png, cap in await asyncio.to_thread(self.cards, title):
+                            cards = await asyncio.to_thread(self.cards, title)
+                            for png, cap in cards:
                                 self.sc.notifier.post_photo(png, cap)
+                            await asyncio.to_thread(self._publication_delivery, slot, title, len(cards))
                             await asyncio.to_thread(self._save, slot, title)
                 for dt, name in macro_today(now):
                     if timedelta(0) <= dt - now <= timedelta(minutes=30):
