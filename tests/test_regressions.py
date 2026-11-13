@@ -97,6 +97,17 @@ def test_executor_entry_intent_is_idempotent(tmp_path):
     assert demo._protection_state({'strategy': 'connors', 'no_stop': 1}) == 'NO_STOP_ALLOWED'
 
 
+def test_virtual_tp_parts_are_bounded_and_deterministic():
+    class Exchange:
+        @staticmethod
+        def amount_to_precision(symbol, amount):
+            return f'{amount:.8f}'
+
+    assert DemoExecutor.tp_parts(Exchange(), 'BTC', 9, trail=False, no_tp=False) == [(1, 3.0), (2, 3.0), (3, 3.0)]
+    assert DemoExecutor.tp_parts(Exchange(), 'BTC', 9, trail=True, no_tp=False) == [(1, 4.5)]
+    assert DemoExecutor.tp_parts(Exchange(), 'BTC', 9, trail=False, no_tp=True) == []
+
+
 def test_shrinkage_gate_is_explicit_and_conservative_for_small_samples():
     assert 0.5 < shrinkage_upper(1, 1) < 1.0
     assert shrinkage_upper(1, 1) >= shrinkage_upper(0, 1)
