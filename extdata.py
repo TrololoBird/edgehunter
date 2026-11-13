@@ -85,6 +85,15 @@ def okx_taker_rows(payload) -> list[tuple[int, float, float]]:
     return out
 
 
+def okx_completed_bucket(ts_ms: int, started_ms: int) -> Optional[int]:
+    """Return a 5m bucket start for either OKX timestamp convention."""
+    if ts_ms + 300_000 <= started_ms:
+        return ts_ms
+    if ts_ms <= started_ms:
+        return ts_ms - 300_000
+    return None
+
+
 def us_session(now_s: float) -> Optional[int]:
     """1 = the NYSE regular session (09:30-16:00 New York, 13:00 on early closes) is open, 0 = closed. The holidays and
     early closes come from us_calendar.json (tools/farside_flows.py writes it from exchange_calendars: pandas stays out
@@ -138,7 +147,7 @@ class ExternalData:
         self._upbit_t = 0.0
         self.okx_seed_stats = {
             'coins': 0, 'requests': 0, 'responses': 0, 'rows': 0,
-            'buckets_written': 0, 'empty': 0, 'malformed': 0, 'errors': 0,
+            'buckets_written': 0, 'window_misses': 0, 'empty': 0, 'malformed': 0, 'errors': 0,
         }
 
     async def _json(self, url: str, payload=None):
@@ -364,16 +373,25 @@ class ExternalData:
                 if raw and not rows:
                     self.okx_seed_stats['malformed'] += 1
                 for t, sell, buy in rows[:4]:
-                    if started - 15 * 60_000 <= t and t + 300_000 <= started:
+                    # Rubik versions have used both bucket-open and bucket-close
+                    # timestamps. Convert either form to the start of the last
+                    # completed bucket before the stream start.
+                    bucket = okx_completed_bucket(t, started)
+                    if bucket is not None and started - 15 * 60_000 <= bucket and bucket + 300_000 <= started:
                         for k in range(5):      # the 5m bucket spread over its minutes
-                            self.fetcher.flow.seed_minute('okx', key, t + k * 60_000, float(buy) / 5, float(sell) / 5, 0)
+                            self.fetcher.flow.seed_minute('okx', key, bucket + k * 60_000,
+                                                          float(buy) / 5, float(sell) / 5, 0)
                         seeded += 1
+                        self.okx_seed_stats['buckets_written'] += 1
+                    else:
+                        self.okx_seed_stats['window_misses'] += 1
             except Exception as e:
                 self.okx_seed_stats['errors'] += 1
                 errors.report('extdata.seed_okx_flow', e, f"OKX taker volume {coin}")
             await asyncio.sleep(0.45)           # rubik: 5 requests / 2s
         logger.info(f"OKX flow seeded: {seeded} 5m buckets for {len(coins)} coins; "
                     f"requests={self.okx_seed_stats['requests']} rows={self.okx_seed_stats['rows']} "
+                    f"buckets={self.okx_seed_stats['buckets_written']} misses={self.okx_seed_stats['window_misses']} "
                     f"empty={self.okx_seed_stats['empty']} malformed={self.okx_seed_stats['malformed']} "
                     f"errors={self.okx_seed_stats['errors']}")
 
