@@ -210,6 +210,8 @@ class DemoExecutor:
                     trade['protection_state'] = protection
                 if protection == 'INVALID_GEOMETRY':
                     logger.error("Demo ledger row %s has invalid stop geometry: %s", trade['id'], trade.get('symbol'))
+                    self.alert(f"⛔ Демо {trade.get('symbol')}: legacy-позиция {trade['id']} имеет invalid stop geometry; "
+                               "автоматическая реконструкция запрещена")
                 if trade.get('close_pending_reason') is not None:
                     trade['close_pending'] = [trade['close_pending_reason'], trade['close_pending_r']]
                 self.open[trade['card_id']] = trade
