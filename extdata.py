@@ -56,6 +56,35 @@ ETF_MAX_AGE_D = 6        # a last visible day older than this (Farside timer dea
 SLOW_MAX_AGE_S = 2 * 86400   # VIX / Fear & Greed not refreshed for this long: NULL, never an old value
 
 
+def okx_taker_rows(payload) -> list[tuple[int, float, float]]:
+    """Normalize OKX Rubik taker-volume rows to (timestamp_ms, sell, buy).
+
+    The endpoint returns strings and has historically returned both millisecond
+    and second timestamps in fixtures. Invalid rows are discarded by the
+    caller's counter instead of being interpreted as zero flow.
+    """
+    if not isinstance(payload, dict) or payload.get('code') not in (None, '0', 0):
+        return []
+    data = payload.get('data')
+    if not isinstance(data, list):
+        return []
+    out = []
+    for row in data:
+        if not isinstance(row, (list, tuple)) or len(row) < 3:
+            continue
+        try:
+            ts = int(float(row[0]))
+            if ts < 10_000_000_000:  # OKX fixtures/API variants may use epoch seconds
+                ts *= 1000
+            sell, buy = float(row[1]), float(row[2])
+            if ts <= 0 or sell < 0 or buy < 0:
+                continue
+        except (TypeError, ValueError, OverflowError):
+            continue
+        out.append((ts, sell, buy))
+    return out
+
+
 def us_session(now_s: float) -> Optional[int]:
     """1 = the NYSE regular session (09:30-16:00 New York, 13:00 on early closes) is open, 0 = closed. The holidays and
     early closes come from us_calendar.json (tools/farside_flows.py writes it from exchange_calendars: pandas stays out
@@ -107,6 +136,10 @@ class ExternalData:
         self._slow_stale: set = set()
         self._upbit: Dict[str, tuple] = {}       # coin -> (KRW price, its last trade time s)
         self._upbit_t = 0.0
+        self.okx_seed_stats = {
+            'coins': 0, 'requests': 0, 'responses': 0, 'rows': 0,
+            'buckets_written': 0, 'empty': 0, 'malformed': 0, 'errors': 0,
+        }
 
     async def _json(self, url: str, payload=None):
         if self._session is None:
@@ -316,20 +349,33 @@ class ExternalData:
             for m in self.fetcher.symbol_map.by_key.get(key, {}).values():
                 if m.venue == 'okx':
                     coins[m.coin] = key
+        self.okx_seed_stats['coins'] = len(coins)
         seeded = 0
         for coin, key in coins.items():
             try:
+                self.okx_seed_stats['requests'] += 1
                 d = await self._json(f"{OKX}/rubik/stat/taker-volume?ccy={coin}&instType=CONTRACTS&period=5m")
-                for ts, sell, buy in (d.get('data') or [])[:4]:
-                    t = int(ts)
+                self.okx_seed_stats['responses'] += 1
+                raw = d.get('data') if isinstance(d, dict) else None
+                if not raw:
+                    self.okx_seed_stats['empty'] += 1
+                rows = okx_taker_rows(d)
+                self.okx_seed_stats['rows'] += len(rows)
+                if raw and not rows:
+                    self.okx_seed_stats['malformed'] += 1
+                for t, sell, buy in rows[:4]:
                     if started - 15 * 60_000 <= t and t + 300_000 <= started:
                         for k in range(5):      # the 5m bucket spread over its minutes
                             self.fetcher.flow.seed_minute('okx', key, t + k * 60_000, float(buy) / 5, float(sell) / 5, 0)
                         seeded += 1
             except Exception as e:
+                self.okx_seed_stats['errors'] += 1
                 errors.report('extdata.seed_okx_flow', e, f"OKX taker volume {coin}")
             await asyncio.sleep(0.45)           # rubik: 5 requests / 2s
-        logger.info(f"OKX flow seeded: {seeded} 5m buckets for {len(coins)} coins")
+        logger.info(f"OKX flow seeded: {seeded} 5m buckets for {len(coins)} coins; "
+                    f"requests={self.okx_seed_stats['requests']} rows={self.okx_seed_stats['rows']} "
+                    f"empty={self.okx_seed_stats['empty']} malformed={self.okx_seed_stats['malformed']} "
+                    f"errors={self.okx_seed_stats['errors']}")
 
     # ------------------------------------------------------------------ cross-venue books
     @staticmethod

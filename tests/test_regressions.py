@@ -5,6 +5,7 @@ from security import safe_urlopen
 from strategies.base import validate_card_levels
 from journal import EXTRA_COLUMNS
 from depth import BookState, DepthBook
+from extdata import okx_taker_rows
 
 
 def test_sql_identifier_requires_allowlist():
@@ -52,3 +53,8 @@ def test_depth_pruning_bounds_changed_levels():
     DepthBook._prune(book, 100.0)
     assert set(book.bids) == {99.0, 100.0}
     assert set(book.asks) == {100.0, 101.0}
+
+
+def test_okx_taker_rows_normalize_timestamp_and_reject_bad_rows():
+    rows = okx_taker_rows({'code': '0', 'data': [['1700000000', '2.5', '4'], ['bad', 1, 2], ['x']]})
+    assert rows == [(1700000000000, 2.5, 4.0)]

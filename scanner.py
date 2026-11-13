@@ -2017,6 +2017,7 @@ class Scanner:
                            'down': [r.split()[0] for r in rates if ' DOWN' in r],
                            'cpu_pct': cpu, 'rss_mb': rss,
                            'backfill': dict(getattr(self.fetcher, 'backfill_stats', {})),
+                           'okx_flow_seed': dict(getattr(self.ext, 'okx_seed_stats', {})),
                            'gc': gc_line, 'errors': failed}
             await self._minute_hole_pass()
             bf = getattr(self.fetcher, 'backfill_stats', {})
