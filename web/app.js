@@ -507,7 +507,7 @@ async function renderAnom() {
 function pumpsHtml() {
   const rows = (S.pumps || []).filter(matches);
   const st = rows.length ? rows[0].stats : null;
-  return `<h3>Пампы и дампы щитков за 48ч <small>вне топ-30 по объёму; +15% (−15%) за ≤6ч на объёме ×3; первый откат 38.2–61.8%</small></h3>` +
+  return `<h3>Пампы и дампы щитков за 48ч <small>информационный monitor-only контур, не торговый сигнал; вне топ-30 по объёму; +15% (−15%) за ≤6ч на объёме ×3; первый откат 38.2–61.8%</small></h3>` +
     table('pumps', [
       { k: 'Монета', v: r => `<b>${esc(r.name)}</b> ${r.kind === 'pump' ? 'памп' : 'дамп'}`, s: r => r.name },
       { k: 'Когда', v: r => clock(r.event_ts), s: r => r.event_ts },

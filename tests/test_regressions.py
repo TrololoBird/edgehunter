@@ -10,6 +10,7 @@ from levels import simulate
 from executor import credentials, DemoExecutor
 from fetcher import DataFetcher
 from core.quant_gate import scenario_gate
+import pumps
 
 
 def test_sql_identifier_requires_allowlist():
@@ -134,3 +135,8 @@ def test_briefing_quant_gate_rejects_non_positive_net_ev():
     assert rejected['ev_net'] < 0
     assert accepted['trade_gate'] is True
     assert accepted['p_base'] >= accepted['p_breakeven']
+
+
+def test_pump_monitor_is_explicitly_informational():
+    assert pumps.STATS['pump']['verdict'].startswith('НЕ подтверждено')
+    assert pumps.PUMP == 0.15 and pumps.WIN == 6
