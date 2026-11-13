@@ -33,6 +33,7 @@ def fixture():
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--renders', type=int, default=1000)
+    parser.add_argument('--max-growth-mb', type=float, default=256.0)
     args = parser.parse_args()
     if args.renders <= 0:
         raise SystemExit('--renders must be positive')
@@ -44,15 +45,19 @@ def main() -> None:
         briefing_chart.render('TESTUSDT', candles, price, zones, 2, atr_1d=5, candles_1h=candles)
     gc.collect()
     after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    growth_mb = (after - before) / 1024.0
     print(json.dumps({
         'renders': args.renders,
         'seconds': round(time.perf_counter() - started, 3),
         'rss_max_before_kb': before,
         'rss_max_after_kb': after,
+        'rss_growth_mb': round(growth_mb, 2),
         'live_figures': len(plt.get_fignums()),
     }, sort_keys=True))
     if plt.get_fignums():
         raise SystemExit('render leaked live matplotlib figures')
+    if growth_mb > args.max_growth_mb:
+        raise SystemExit(f'render RSS growth {growth_mb:.1f} MB exceeds {args.max_growth_mb:.1f} MB')
 
 
 if __name__ == '__main__':
