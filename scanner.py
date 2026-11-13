@@ -2039,6 +2039,14 @@ class Scanner:
                            'okx_flow_seed': dict(getattr(self.ext, 'okx_seed_stats', {})),
                            'model_status': dict(getattr(self.journal, 'model_status', {})),
                            'pool_metrics': dict(getattr(self, '_pool_metrics', {})),
+                           'backfill_jobs': {
+                               'counts': dict(__import__('collections').Counter(
+                                   str(v.get('state')) for v in getattr(self.fetcher, '_backfill_state', {}).values())),
+                               'active': {
+                                   f'{k[0]}|{k[1]}': v for k, v in getattr(self.fetcher, '_backfill_state', {}).items()
+                                   if v.get('state') in ('queued', 'running')
+                               },
+                           },
                            'gc': gc_line, 'errors': failed}
             await self._minute_hole_pass()
             bf = getattr(self.fetcher, 'backfill_stats', {})

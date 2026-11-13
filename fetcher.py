@@ -487,8 +487,11 @@ class DataFetcher:
         self._backfill_retry_at: Dict[Tuple[str, str], float] = {}
         self.backfill_stats: Dict[str, int] = {
             'requested': 0, 'attempted': 0, 'applied': 0, 'verified': 0,
-            'failed': 0, 'deferred': 0,
+            'failed': 0, 'deferred': 0, 'jobs_attempted': 0,
+            'jobs_applied': 0, 'jobs_failed': 0, 'jobs_deferred': 0,
+            'job_retries': 0,
         }
+        self._backfill_state: Dict[Tuple[str, str], Dict[str, object]] = {}
         self._backfill_semaphore = asyncio.Semaphore(3)
         self.funding_interval_hours: Dict[str, int] = {}
         self.streams_started_ms = 0               # the flow windows before it are seeded from REST klines
@@ -1942,6 +1945,12 @@ class DataFetcher:
         if key in self._backfill_pending or not self._running or time.time() < self._backfill_retry_at.get(key, 0):
             return
         self.backfill_stats['requested'] += 1
+        now = time.time()
+        if len(self._backfill_state) > 1000:
+            self._backfill_state = {k: v for k, v in self._backfill_state.items()
+                                    if v.get('state') in ('queued', 'running') or now - float(v.get('updated', 0)) < 3600}
+        self._backfill_state[key] = {'state': 'queued', 'need_ts': int(need_ts or 0),
+                                     'attempts': 0, 'updated': now, 'reason': None}
         self._backfill_pending.add(key)
         self._spawn(self._backfill(symbol, market, need_ts))
 
@@ -1962,9 +1971,12 @@ class DataFetcher:
 
     async def _backfill(self, symbol: str, market: str, need_ts: int = 0):
         key = (symbol, market)
+        state = self._backfill_state.setdefault(key, {'state': 'queued', 'attempts': 0})
         try:
             for delay in self.BACKFILL_DELAYS_SEC:
                 await asyncio.sleep(delay)
+                state.update(state='running', updated=time.time(), attempts=int(state.get('attempts', 0)) + 1)
+                self.backfill_stats['jobs_attempted'] += 1
                 try:
                     async with self._backfill_semaphore:
                         df, final = await self._load_frame(market, symbol)
@@ -1976,13 +1988,22 @@ class DataFetcher:
                     if isinstance(e, (ccxt.BadSymbol, ccxt.BadRequest, ccxt.InvalidNonce)):
                         logger.info(f"Backfill skipped permanently for {symbol} ({market}): {type(e).__name__}")
                         self._backfill_retry_at[key] = time.time() + 3600
+                        state.update(state='failed', updated=time.time(), reason=type(e).__name__)
+                        self.backfill_stats['jobs_failed'] += 1
                         return
                     errors.report('fetcher._backfill', e, f"Backfill attempt failed for {symbol} ({market})")
+                    state.update(state='queued', updated=time.time(), reason=type(e).__name__)
+                    self.backfill_stats['job_retries'] += 1
                     continue
                 md = self.markets.get(symbol)
                 if md is None:
+                    state.update(state='failed', updated=time.time(), reason='symbol_removed')
+                    self.backfill_stats['jobs_failed'] += 1
                     return
                 if df.is_empty() or final < need_ts:
+                    state.update(state='queued', updated=time.time(),
+                                 reason='empty_response' if df.is_empty() else 'not_published')
+                    self.backfill_stats['jobs_deferred'] += 1
                     continue   # the candle to replace is not published yet: next attempt
                 # REST is the authority for the candles it has; only complete stream candles NEWER than the snapshot
                 # (closed while it was in flight) are applied on top. Re-applying older stream rows put an incomplete
@@ -1995,11 +2016,16 @@ class DataFetcher:
                 md.history_version += 1
                 md.last_merged.pop(market, None)  # re-apply the live candle on top of the new snapshot
                 md.finalized_until[market] = max(md.finalized_until[market], final)
+                state.update(state='verified', updated=time.time(), reason=None)
+                self.backfill_stats['jobs_applied'] += 1
                 logger.debug(f"Backfilled {market} candles for {symbol}")
                 return
+            state.update(state='failed', updated=time.time(), reason='retry_exhausted')
+            self.backfill_stats['jobs_failed'] += 1
             (logger.debug if NETWORK.down else logger.warning)(f"Backfill failed for {symbol} ({market}) after {len(self.BACKFILL_DELAYS_SEC)} attempts")
             self._backfill_retry_at[key] = time.time() + 600
         finally:
+            state['updated'] = time.time()
             self._backfill_pending.discard(key)
 
     @staticmethod
