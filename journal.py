@@ -1132,6 +1132,7 @@ class SignalJournal:
                 self.success.learn(row, label)
                 learned += 1
         if learned:
+            self.model_status['edge_mature'] = bool(self.success.mature)
             logger.info(f"P(edge) model warmed up on {learned} journal rows ({self.success.drifts} drift resets)")
         return learned
 
@@ -1154,6 +1155,7 @@ class SignalJournal:
             self._trade_learned.add(row['id'])
         try:
             self.trade.learn(row, label)
+            self.model_status['trade_mature'] = bool(self.trade.mature)
         except Exception:
             with self._lock:
                 self._trade_learned.discard(row['id'])
@@ -1576,6 +1578,7 @@ class SignalJournal:
         label = label_of(row, self.universe_return(row['ts_ms'], 240, 'median'))
         if label is not None:
             self.success.learn(row, label)
+            self.model_status['edge_mature'] = bool(self.success.mature)
 
     def close(self):
         with self._lock:
