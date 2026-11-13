@@ -90,4 +90,8 @@ def validate_manifest(model_path: str, state: Dict[str, Any], *, require: bool =
         return False, "trained_from_dirty_source"
     if current.get("source_dirty"):
         return False, "runtime_source_dirty"
+    if manifest.get("source_commit") != current.get("source_commit"):
+        return False, "source_commit_mismatch"
+    if manifest.get("implementation_hash") != current.get("implementation_hash"):
+        return False, "implementation_hash_mismatch"
     return True, "ok"

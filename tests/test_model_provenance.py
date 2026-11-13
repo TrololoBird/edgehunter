@@ -11,6 +11,11 @@ def test_model_manifest_detects_tampering(tmp_path, monkeypatch):
         "source_commit": "test-commit", "implementation_hash": "test-implementation", "source_dirty": 0})
     provenance.write_manifest(str(model), state)
     assert provenance.validate_manifest(str(model), state) == (True, "ok")
+    monkeypatch.setattr(provenance, "provenance_fields", lambda: {
+        "source_commit": "other-commit", "implementation_hash": "test-implementation", "source_dirty": 0})
+    assert provenance.validate_manifest(str(model), state) == (False, "source_commit_mismatch")
+    monkeypatch.setattr(provenance, "provenance_fields", lambda: {
+        "source_commit": "test-commit", "implementation_hash": "test-implementation", "source_dirty": 0})
     model.write_bytes(b"tampered")
     assert provenance.validate_manifest(str(model), state) == (False, "artifact_hash_mismatch")
 
