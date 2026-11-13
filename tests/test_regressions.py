@@ -6,6 +6,7 @@ from strategies.base import validate_card_levels
 from journal import EXTRA_COLUMNS
 from depth import BookState, DepthBook
 from extdata import okx_completed_bucket, okx_taker_rows
+from levels import simulate
 
 
 def test_sql_identifier_requires_allowlist():
@@ -61,3 +62,15 @@ def test_okx_taker_rows_normalize_timestamp_and_reject_bad_rows():
     assert okx_completed_bucket(1_700_000_000_000, 1_700_000_600_000) == 1_700_000_000_000
     assert okx_completed_bucket(1_700_000_600_000, 1_700_000_600_000) == 1_700_000_300_000
     assert okx_completed_bucket(1_700_000_900_000, 1_700_000_600_000) is None
+
+
+@pytest.mark.parametrize(
+    "direction,levels,candle",
+    [
+        (1, {'entry': 100, 'sl': 95, 'tp1': 105, 'tp2': 110, 'tp3': 115}, [0, 100, 106, 94, 100, 0]),
+        (-1, {'entry': 100, 'sl': 105, 'tp1': 95, 'tp2': 90, 'tp3': 85}, [0, 100, 106, 94, 100, 0]),
+    ],
+)
+def test_replay_resolves_intrabar_stop_before_target(direction, levels, candle):
+    result = simulate(levels, direction, [candle], use_fill=False)
+    assert result['outcome'] == 'SL'
