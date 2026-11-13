@@ -151,3 +151,16 @@ def test_iceberg_is_unknown_without_fresh_l2_coverage():
     assert detector.features('BTC', now_ms=1000 + 61_000)['iceberg_reason'] == 'stale_l2_coverage'
     detector.invalidate('BTC')
     assert detector.features('BTC', now_ms=2000)['iceberg_reason'] == 'sequence_resync_or_no_book'
+
+
+def test_depth_records_sequence_gaps_and_buffer_drops():
+    from depth import DepthBook
+    book = DepthBook()
+    book.start('BTC')
+    for i in range(2001):
+        book.on_diff('BTC', {'u': i + 1, 'U': i + 1, 'pu': 0, 'E': i})
+    assert book.books['BTC'].buffer_drops == 1000
+    book.books['BTC'].synced = True
+    book.books['BTC'].last_u = 10
+    book.on_diff('BTC', {'u': 12, 'U': 12, 'pu': 11, 'E': 1})
+    assert book.books['BTC'].sequence_gaps == 1

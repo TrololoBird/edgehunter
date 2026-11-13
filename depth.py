@@ -46,7 +46,8 @@ ADDED, PULLED, FILLED = 0, 1, 2
 class BookState:
     """One coin's local book and everything derived from it."""
 
-    __slots__ = ('bids', 'asks', 'last_u', 'synced', 'buffer', 'ts_ms', 'recv', 'resyncs', 'executed', 'flow',
+    __slots__ = ('bids', 'asks', 'last_u', 'synced', 'buffer', 'ts_ms', 'recv', 'resyncs', 'sequence_gaps',
+                 'buffer_drops', 'executed', 'flow',
                  'heat', 'heat_step', 'heat_ts', 'walls', 'bands', 'bands_ts', 'deep_bids', 'deep_asks', 'deep_ts',
                  'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts', 'wall_info', 'wall_log', 'wall_ended', 'unexplained')
 
@@ -61,6 +62,8 @@ class BookState:
         self.ts_ms = 0                 # exchange time of the last applied event
         self.recv = 0.0                # epoch seconds of the last applied event
         self.resyncs = 0
+        self.sequence_gaps = 0
+        self.buffer_drops = 0
         # (side +1 bid / -1 ask, price) -> [quantity executed, last trade ms]
         self.executed: Dict[Tuple[int, float], List[float]] = {}
         # audit N09: book decreases no trade explained YET: (side, price) -> [qty, ts, flow cell, offset, wall] - a
@@ -144,11 +147,13 @@ class DepthBook:
         if not book.synced:
             book.buffer.append(event)
             if len(book.buffer) > 2000:           # the snapshot is late: keep the newest
+                book.buffer_drops += 1000
                 del book.buffer[:1000]
             if book.pending is not None and int(event.get('u', 0)) >= int(book.pending.get('lastUpdateId') or 0):
                 self.set_snapshot(symbol, book.pending, now)
             return
         if event.get('pu') != book.last_u:
+            book.sequence_gaps += 1
             self._resync_book(book)
             book.buffer.append(event)
             return
@@ -494,7 +499,9 @@ class DepthBook:
             return {}
         mid = (best_bid + best_ask) / 2
         out: Dict[str, float] = {'mid': mid, 'spread_bps': (best_ask - best_bid) / mid * 1e4, 'deep': 1.0,
-                                 'levels': float(len(book.bids) + len(book.asks)), 'resyncs': float(book.resyncs)}
+                                 'levels': float(len(book.bids) + len(book.asks)), 'resyncs': float(book.resyncs),
+                                 'sequence_gaps': float(book.sequence_gaps),
+                                 'buffer_drops': float(book.buffer_drops)}
         for band in CONFIG.depth.band_pcts:
             bid = sum(p * q for p, q in book.bids.items() if p >= mid * (1 - band))
             ask = sum(p * q for p, q in book.asks.items() if p <= mid * (1 + band))
