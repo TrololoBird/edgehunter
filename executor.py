@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS demo_skips (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     card_id TEXT, symbol TEXT, setup TEXT, strategy TEXT, direction INTEGER,
     opened_ms INTEGER NOT NULL, reason TEXT NOT NULL, logic_version TEXT
+);
+CREATE TABLE IF NOT EXISTS execution_intents (
+    card_id TEXT NOT NULL,
+    execution_phase TEXT NOT NULL,
+    created_ms INTEGER NOT NULL,
+    PRIMARY KEY (card_id, execution_phase)
 )
 """
 
@@ -308,6 +314,19 @@ class DemoExecutor:
     def _drop_inflight(self, card_id: str) -> None:
         getattr(self, '_inflight', {}).pop(card_id, None)
 
+    def _claim_execution(self, card_id: str, phase: str) -> bool:
+        """Persist an idempotency claim before the first exchange mutation."""
+        if not card_id or not phase:
+            return False
+        try:
+            with self._db() as c:
+                c.execute("INSERT OR IGNORE INTO execution_intents(card_id, execution_phase, created_ms) "
+                          "VALUES (?, ?, ?)", (card_id, phase, int(time.time() * 1000)))
+                return c.execute("SELECT changes()").fetchone()[0] == 1
+        except sqlite3.Error as e:
+            errors.report('executor._claim_execution', e, f'{card_id}:{phase}')
+            return False
+
     async def on_entry(self, s) -> None:
         if not self.enabled or s.levels is None:
             return
@@ -374,6 +393,11 @@ class DemoExecutor:
                               'direction': s.direction, 'opened_ms': int(time.time() * 1000),
                               'error': f"coin held by {busy.get('setup') or busy.get('card_id')}", 'closed_ms': int(time.time() * 1000),
                               'close_reason': 'OVERLAP'})
+                return
+            # The in-memory inflight map closes the race within one process;
+            # this durable claim also survives a restart or a lost reply.
+            if not self._claim_execution(card_id, 'ENTRY'):
+                logger.info(f"Demo: {s.symbol} {s.group_key} duplicate entry intent skipped")
                 return
             self._inflight[card_id] = {'card_id': card_id, 'symbol': s.symbol,
                                        'coin': coin, 'direction': s.direction,

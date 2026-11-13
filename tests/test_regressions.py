@@ -7,7 +7,7 @@ from journal import EXTRA_COLUMNS
 from depth import BookState, DepthBook
 from extdata import okx_completed_bucket, okx_taker_rows
 from levels import simulate
-from executor import credentials
+from executor import credentials, DemoExecutor
 
 
 def test_sql_identifier_requires_allowlist():
@@ -81,3 +81,10 @@ def test_executor_credentials_fail_closed_without_environment(monkeypatch):
     monkeypatch.delenv('BINGX_API_KEY', raising=False)
     monkeypatch.delenv('BINGX_API_SECRET', raising=False)
     assert credentials() == ('', '')
+
+
+def test_executor_entry_intent_is_idempotent(tmp_path):
+    demo = DemoExecutor(str(tmp_path / 'demo.sqlite'))
+    assert demo._claim_execution('card-1', 'ENTRY') is True
+    assert demo._claim_execution('card-1', 'ENTRY') is False
+    assert demo._claim_execution('card-1', 'STOP') is True
