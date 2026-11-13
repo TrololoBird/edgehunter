@@ -33,8 +33,13 @@ FEATURES = ('d_up', 'd_down', 's_up', 's_down', 'p_geo', 'trend_1h', 'trend_4h',
             'vol_ratio', 'btc_ret_24h', 'btc_ret_7d', 'btc_trend_4h', 'n_up', 'n_down')
 _model_cache: Dict = {}
 SCENARIO_MODEL_STATUS = {'status': 'not_loaded', 'reason': None}
-if os.path.isfile(MODEL_PATH) and not os.path.isfile(manifest_path(MODEL_PATH)):
-    SCENARIO_MODEL_STATUS.update(status='rejected', reason='manifest_missing')
+if os.path.isfile(MODEL_PATH):
+    try:
+        with open(manifest_path(MODEL_PATH), encoding='utf-8') as _manifest_file:
+            if json.load(_manifest_file).get('quarantine'):
+                SCENARIO_MODEL_STATUS.update(status='rejected', reason='legacy_quarantine')
+    except FileNotFoundError:
+        SCENARIO_MODEL_STATUS.update(status='rejected', reason='manifest_missing')
 # Measured on the archive (research/level_triggers.md: 478 coins, 2024-01..2026-08, 772k trades, the newer half):
 # TP1 hit rate, the geometric (random-walk) rate of the same entry / stop / target, net R to TP1
 TRIGGER_STATS = {
