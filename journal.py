@@ -745,17 +745,20 @@ class SignalJournal:
         self.success = None
         self.trade = None
         self.model_status = MODEL_STATUS
+        self.model_status.update(edge_mode='shadow', trade_mode='shadow', edge_mature=False, trade_mature=False)
         self._trade_learned: set = set()      # entry row ids the P(trade) model has learned (warm start vs live close)
         if CONFIG.ml.trade_enabled:
             try:
                 from ml import TradeModel
                 self.trade = TradeModel()
+                self.model_status['trade_mature'] = bool(self.trade.mature)
             except Exception as e:
                 logger.warning(f"P(trade) model unavailable: {e}")
         if CONFIG.ml.success_enabled:
             try:
                 from ml import SuccessModel
                 self.success = SuccessModel()
+                self.model_status['edge_mature'] = bool(self.success.mature)
             except Exception as e:
                 logger.warning(f"P(edge) model unavailable: {e}")
             pretrained = load_pretrained()
@@ -764,6 +767,7 @@ class SignalJournal:
                                "Legacy pretrain.py cannot supply live-loopside-v1 events.")
             elif self.success is not None and pretrained and pretrained.get('success'):
                 self.success.load_pretrained(pretrained['success'])
+                self.model_status['edge_mature'] = bool(self.success.mature)
                 logger.info(f"P(edge) model: pretrained on {pretrained['rows']} historical rows of {pretrained['coins']} "
                             f"coins ({pretrained['start']} .. {pretrained['end']}); the journal replay continues it")
 
