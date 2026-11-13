@@ -1,0 +1,11 @@
+{
+  "artifact_sha256": "9dcbe3bed38c61d6403b0a64b1e66e234779d090154c6939a3dfb34e219fcd14",
+  "feature_schema_version": "unknown",
+  "implementation_hash": null,
+  "logic_version": "legacy-quarantined",
+  "model_id": "scenario_prob.pkl",
+  "quarantine": true,
+  "reason": "legacy artifact lacks verifiable training provenance; never auto-load",
+  "source_commit": null,
+  "source_dirty": 1
+}

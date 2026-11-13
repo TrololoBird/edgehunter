@@ -17,6 +17,7 @@ previous day / week and session highs / lows, the 8-day volume profile of the 1h
 import errors
 import math
 import os
+import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence
 
@@ -227,6 +228,11 @@ def load_model(path: str = MODEL_PATH) -> Optional[Dict]:
                 SCENARIO_MODEL_STATUS.update(status='rejected', reason='manifest_missing')
                 _model_cache.update(mtime=mtime, model=None)
                 return None
+            with open(sidecar, encoding='utf-8') as manifest_file:
+                if json.load(manifest_file).get('quarantine'):
+                    SCENARIO_MODEL_STATUS.update(status='rejected', reason='legacy_quarantine')
+                    _model_cache.update(mtime=mtime, model=None)
+                    return None
             model = safe_pickle_load(path, os.path.dirname(path))
             valid, reason = validate_manifest(path, model, require=True)
             if not valid:

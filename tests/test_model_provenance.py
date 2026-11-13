@@ -51,3 +51,17 @@ def test_scenario_model_requires_manifest(tmp_path):
     scenarios._model_cache.clear()
     assert scenarios.load_model(str(path)) is None
     assert scenarios.SCENARIO_MODEL_STATUS['reason'] == 'manifest_missing'
+
+
+def test_scenario_quarantine_is_rejected_before_pickle_load(tmp_path):
+    import hashlib
+    import json
+    path = tmp_path / 'scenario_prob.pkl'
+    payload = b'not-loaded'
+    path.write_bytes(payload)
+    (tmp_path / 'scenario_prob.pkl.manifest.json').write_text(json.dumps({
+        'model_id': path.name, 'artifact_sha256': hashlib.sha256(payload).hexdigest(),
+        'quarantine': True}), encoding='utf-8')
+    scenarios._model_cache.clear()
+    assert scenarios.load_model(str(path)) is None
+    assert scenarios.SCENARIO_MODEL_STATUS['reason'] == 'legacy_quarantine'

@@ -30,14 +30,18 @@ def audit(root: str = '.') -> dict:
                 item['manifest_logic_version'] = payload.get('logic_version')
                 item['manifest_feature_schema'] = payload.get('feature_schema_version')
                 item['hash_matches'] = payload.get('artifact_sha256') == __import__('hashlib').sha256(path.read_bytes()).hexdigest()
+                if payload.get('quarantine'):
+                    item['status'] = 'legacy_quarantined'
             except (OSError, ValueError):
                 item['manifest_error'] = True
         else:
             item['status'] = 'legacy_unverified'
         artifacts.append(item)
     unverified = [a['path'] for a in artifacts if a.get('status') == 'legacy_unverified']
+    quarantined = [a['path'] for a in artifacts if a.get('status') == 'legacy_quarantined']
     return {'feature_schema_version': FEATURE_SCHEMA_VERSION, 'artifacts': artifacts,
-            'legacy_unverified': unverified, 'status': 'attention_required' if unverified else 'ok'}
+            'legacy_unverified': unverified, 'legacy_quarantined': quarantined,
+            'status': 'attention_required' if unverified else 'ok'}
 
 
 def main() -> None:

@@ -1,0 +1,11 @@
+{
+  "artifact_sha256": "8df809f5013d3ef454d2ac19e75acc5e6ac9694c3e1a01d6bc4dc7dd75332622",
+  "feature_schema_version": "unknown",
+  "implementation_hash": null,
+  "logic_version": "legacy-quarantined",
+  "model_id": "pretrained.eng-7.pkl",
+  "quarantine": true,
+  "reason": "legacy artifact lacks verifiable training provenance; never auto-load",
+  "source_commit": null,
+  "source_dirty": 1
+}
