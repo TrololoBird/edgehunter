@@ -7,6 +7,7 @@ from journal import EXTRA_COLUMNS
 from depth import BookState, DepthBook
 from extdata import okx_completed_bucket, okx_taker_rows
 from levels import simulate
+from executor import credentials
 
 
 def test_sql_identifier_requires_allowlist():
@@ -74,3 +75,9 @@ def test_okx_taker_rows_normalize_timestamp_and_reject_bad_rows():
 def test_replay_resolves_intrabar_stop_before_target(direction, levels, candle):
     result = simulate(levels, direction, [candle], use_fill=False)
     assert result['outcome'] == 'SL'
+
+
+def test_executor_credentials_fail_closed_without_environment(monkeypatch):
+    monkeypatch.delenv('BINGX_API_KEY', raising=False)
+    monkeypatch.delenv('BINGX_API_SECRET', raising=False)
+    assert credentials() == ('', '')

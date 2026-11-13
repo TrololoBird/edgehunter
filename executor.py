@@ -102,10 +102,15 @@ def basis_reject(basis: float) -> Optional[str]:
 
 
 def credentials() -> tuple:
-    """(key, secret): BINGX_API_KEY / BINGX_API_SECRET from the environment (systemd EnvironmentFile, mode 600)
-    first, then config.local.toml [executor] - the key out of a file that sits next to the code."""
-    cfg = CONFIG.executor
-    return (os.environ.get('BINGX_API_KEY') or cfg.api_key, os.environ.get('BINGX_API_SECRET') or cfg.api_secret)
+    """(key, secret) from the service environment only.
+
+    A missing/cleared EnvironmentFile must disable exchange access. Falling
+    back to credentials kept in the checkout could silently keep trading after
+    an operator attempted an emergency stop.
+    """
+    key = os.environ.get('BINGX_API_KEY', '').strip()
+    secret = os.environ.get('BINGX_API_SECRET', '').strip()
+    return key, secret
 
 
 class DemoExecutor:
