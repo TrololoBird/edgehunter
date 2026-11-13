@@ -518,7 +518,7 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
                         f"{len(rp.entries)} entries / vetoes, {time.time() - started:.0f}s")
     # every entry - passed or vetoed - replayed like the journal does (levels.simulate over the trade's lifetime, net
     # of the round-trip fee): the veto's effect is measured on the same geometry (stats.vetoes_table's question)
-    from levels import simulate
+    from core.strategy_engine import MarketSnapshot, StrategyEngine
     from stats import net_r
     ttl = CONFIG.levels.trade_ttl_sec * 1000
     for e in rp.entries:
@@ -530,8 +530,10 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
         a = int(np.searchsorted(c.m_ts, e['ts'], side='left'))
         b = int(np.searchsorted(c.m_ts, e['ts'] + ttl, side='left'))
         lv = {k: e.get(k) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3', 'limit_entry', 'volume_24h', 'symbol')}
-        res = simulate(lv, e['direction'], c.fut[a:b, :6].tolist(), funding_8h=e.get('funding'),
-                       funding_hours=e.get('funding_hours'))
+        snapshot = MarketSnapshot(int(e['ts'] + MINUTE_MS), e['symbol'],
+                                  tuple(tuple(x) for x in c.fut[a:b, :6].tolist()))
+        res = StrategyEngine.manage_position(snapshot, lv, e['direction'], funding_8h=e.get('funding'),
+                                             funding_hours=e.get('funding_hours'))
         e['outcome'] = res.get('outcome')
         for col in ('r_tp1', 'r_tp2', 'r_be'):
             e[col] = net_r({col: res.get(col), 'entry': lv['entry'], 'entry_fill': res.get('entry_fill'),
