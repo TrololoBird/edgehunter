@@ -48,16 +48,20 @@ def load_pretrained() -> Optional[Dict]:
     import os
     path = CONFIG.pretrain.path
     if not os.path.exists(path):
+        MODEL_STATUS.update(pretrained='missing', reason='artifact_missing')
         return None
     try:
         state = safe_pickle_load(path, os.path.dirname(path))
         from core.model_provenance import validate_manifest
         valid, reason = validate_manifest(path, state, require=True)
         if not valid:
+            MODEL_STATUS.update(pretrained='rejected', reason=reason)
             logging.getLogger(__name__).warning("Pretrained model rejected: %s", reason)
             return None
+        MODEL_STATUS.update(pretrained='accepted', reason='manifest_valid')
         return state
     except Exception as e:
+        MODEL_STATUS.update(pretrained='rejected', reason=type(e).__name__)
         logging.getLogger(__name__).warning(f"Pretrained models unreadable ({type(e).__name__} {e}); run pretrain.py again")
         return None
 
@@ -91,6 +95,7 @@ def _policy_text(value) -> Optional[str]:
 logger = logging.getLogger(__name__)
 
 FEATURE_SCHEMA_VERSION = 'features-v1'
+MODEL_STATUS = {'pretrained': 'not_loaded', 'reason': None}
 
 # Horizon label -> minutes after the signal
 # 8h = a trade's lifetime (levels.trade_ttl_sec): entries are replayed over it (a 4h replay marked every longer trade
@@ -726,6 +731,7 @@ class SignalJournal:
         self._symbol_index: Dict[str, int] = {}
         self.success = None
         self.trade = None
+        self.model_status = MODEL_STATUS
         self._trade_learned: set = set()      # entry row ids the P(trade) model has learned (warm start vs live close)
         if CONFIG.ml.trade_enabled:
             try:
