@@ -1136,28 +1136,32 @@ class Scanner:
             return {}
         corr = self._correlates() if any(job[8] for job in jobs) else None
         from concurrent.futures.process import BrokenProcessPool
-        started = time.perf_counter()
-        try:
-            # Measure the actual IPC object, off the event loop. This is
-            # telemetry only; workers still receive compact columns/arrays.
-            payload_bytes = await asyncio.to_thread(
-                lambda: len(__import__('pickle').dumps((jobs, corr), protocol=5)))
-            out = await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs, corr)
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            metrics = self._pool_metrics
-            metrics['maps_passes'] += 1
-            metrics['maps_jobs'] += len(jobs)
-            metrics['maps_payload_bytes'] = payload_bytes
-            metrics['maps_max_payload_bytes'] = max(metrics['maps_max_payload_bytes'], payload_bytes)
-            metrics['maps_wall_ms'] = elapsed_ms
-            metrics['maps_max_wall_ms'] = max(metrics['maps_max_wall_ms'], elapsed_ms)
-            for err in out.pop('__errors__', ()):
-                errors.report('scanner.maps', RuntimeError(err), f"Level map failed: {err}")
-            return out
-        except BrokenProcessPool:
-            self._pool_metrics['maps_broken'] += 1
-            logger.warning(f"Maps worker died during a pass of {len(jobs)} maps: retried on the next pass")
-            return {}
+        out_all: Dict[str, tuple] = {}
+        for offset in range(0, len(jobs), 30):
+            batch = jobs[offset:offset + 30]
+            started = time.perf_counter()
+            try:
+                # Keep IPC bounded. A full universe payload reached 38 MB and
+                # held both parent and worker copies during a context refresh.
+                payload_bytes = await asyncio.to_thread(
+                    lambda: len(__import__('pickle').dumps((batch, corr), protocol=5)))
+                out = await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, batch, corr)
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                metrics = self._pool_metrics
+                metrics['maps_passes'] += 1
+                metrics['maps_jobs'] += len(batch)
+                metrics['maps_payload_bytes'] = payload_bytes
+                metrics['maps_max_payload_bytes'] = max(metrics['maps_max_payload_bytes'], payload_bytes)
+                metrics['maps_wall_ms'] = elapsed_ms
+                metrics['maps_max_wall_ms'] = max(metrics['maps_max_wall_ms'], elapsed_ms)
+                for err in out.pop('__errors__', ()):
+                    errors.report('scanner.maps', RuntimeError(err), f"Level map failed: {err}")
+                out_all.update(out)
+            except BrokenProcessPool:
+                self._pool_metrics['maps_broken'] += 1
+                logger.warning(f"Maps worker died during a pass of {len(batch)} maps: retried on the next pass")
+                return {}
+        return out_all
 
     async def _schedule_context_refresh(self) -> None:
         """Replace a context refresh only after the previous writer has stopped."""
