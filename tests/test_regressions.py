@@ -148,5 +148,6 @@ def test_iceberg_is_unknown_without_fresh_l2_coverage():
     assert detector.features('BTC', now_ms=1000)['iceberg_net_5m'] is None
     detector.on_book('BTC', [[100, 2]], [[101, 2]], 1000)
     assert detector.features('BTC', now_ms=2000)['iceberg_reason'] == 'ok'
+    assert detector.features('BTC', now_ms=1000 + 61_000)['iceberg_reason'] == 'stale_l2_coverage'
     detector.invalidate('BTC')
     assert detector.features('BTC', now_ms=2000)['iceberg_reason'] == 'sequence_resync_or_no_book'

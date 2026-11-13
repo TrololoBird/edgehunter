@@ -128,7 +128,7 @@ class IcebergDetector:
     def features(self, symbol: str, window_sec: int = 300, now_ms: float = None) -> Dict[str, float]:
         now_ms = now_ms or time.time() * 1000
         valid, last_book, reason = self.coverage.get(symbol, (False, 0, 'insufficient_l2_coverage'))
-        if not valid or not last_book or now_ms - last_book > max(3_000, window_sec * 1000):
+        if not valid or not last_book or now_ms - last_book > CONFIG.depth.stale_sec * 1000:
             return {'iceberg_net_5m': None, 'iceberg_n_5m': None,
                     'iceberg_reason': reason if not valid else 'stale_l2_coverage'}
         ev = [e for e in self.events.get(symbol, ()) if now_ms - e[0] <= window_sec * 1000]
