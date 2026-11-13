@@ -34,7 +34,10 @@ from config import CONFIG
 
 NY = ZoneInfo('America/New_York')
 UA = {'User-Agent': 'edgehunter-bot/1.0'}
-CACHE = os.path.join('models', 'official_calendar.json')
+# Keep the checked-in model as an immutable seed.  Runtime refreshes belong in
+# the writable data directory so a healthy service cannot dirty its checkout.
+CACHE = os.environ.get('EDGEHUNTER_OFFICIAL_CALENDAR_CACHE', os.path.join('data', 'official_calendar.json'))
+LEGACY_CACHE = os.path.join('models', 'official_calendar.json')
 OFFICIAL_MAX_AGE_SEC = 36 * 3600.0           # refreshed every 6h; a day and a half of failures = stale
 COVER_DAYS = 7
 BLOCKING = ('CPI', 'NFP', 'PPI', 'FOMC', 'ISM_M', 'ISM_S')          # FOMC_PC is inside the statement's window
@@ -165,13 +168,15 @@ def load() -> None:
     if _loaded:
         return
     _loaded = True
-    try:
-        with open(CACHE, encoding='utf-8') as f:
-            d = json.load(f)
-        if isinstance(d, dict) and isinstance(d.get('events'), list):
-            STATE.update(events=d['events'], sources=d.get('sources') or {})
-    except (OSError, ValueError):
-        pass
+    for path in (CACHE, LEGACY_CACHE):
+        try:
+            with open(path, encoding='utf-8') as f:
+                d = json.load(f)
+            if isinstance(d, dict) and isinstance(d.get('events'), list):
+                STATE.update(events=d['events'], sources=d.get('sources') or {})
+                return
+        except (OSError, ValueError):
+            continue
 
 
 def covered(category: str, now_ms: float) -> bool:
