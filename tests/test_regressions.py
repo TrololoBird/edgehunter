@@ -8,6 +8,7 @@ from depth import BookState, DepthBook
 from extdata import okx_completed_bucket, okx_taker_rows
 from levels import simulate
 from executor import credentials, DemoExecutor
+from fetcher import DataFetcher
 
 
 def test_sql_identifier_requires_allowlist():
@@ -94,3 +95,29 @@ def test_shrinkage_gate_is_explicit_and_conservative_for_small_samples():
     assert 0.5 < shrinkage_upper(1, 1) < 1.0
     assert shrinkage_upper(1, 1) >= shrinkage_upper(0, 1)
     assert wilson_upper(1, 1) > 0.9
+
+
+def test_minute_backfill_counts_only_after_gap_is_verified(monkeypatch):
+    class MD:
+        minute_klines = [[0, 1, 1, 1, 1, 1, 1, 1],
+                         [60_000, 1, 1, 1, 1, 1, 1, 1],
+                         [180_000, 1, 1, 1, 1, 1, 1, 1]]
+        minute_closed_until = 180_000
+
+        def seed_minutes(self, market, rows, now_ms):
+            self.minute_klines.extend(rows)
+            self.minute_klines.sort(key=lambda row: row[0])
+
+    fetcher = object.__new__(DataFetcher)
+    fetcher.backfill_stats = {'requested': 0, 'attempted': 0, 'applied': 0, 'verified': 0,
+                              'failed': 0, 'deferred': 0}
+
+    async def rows(*args):
+        return [[120_000, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0]]
+
+    monkeypatch.setattr(fetcher, 'fetch_minute_klines', rows)
+    md = MD()
+    import asyncio
+    assert asyncio.run(fetcher.patch_minute_holes('BTC', md, 200_000)) == 0
+    assert fetcher.backfill_stats['applied'] == 1
+    assert fetcher.backfill_stats['verified'] == 1
