@@ -406,7 +406,9 @@ function hoursPicker() {
 }
 let filterDir = Number(localStorage.getItem('fdir') || 0), filterStrat = localStorage.getItem('fstrat') || '';
 function filterBox() {
-  const strats = [...new Set((S.cards || []).map(c => c.strategy || c.mode).filter(Boolean))].sort();
+  const registryStrats = Object.values(S.registry || {}).map(r => r.strategy).filter(Boolean);
+  const cardStrats = (S.cards || []).map(c => c.strategy || c.mode).filter(Boolean);
+  const strats = [...new Set([...registryStrats, ...cardStrats])].sort();
   return `<input id="filter" placeholder="фильтр: монета или метка" value="${esc(filterText)}">
     <select id="fdir" title="направление"><option value="0">↕ все</option><option value="1" ${filterDir > 0 ? 'selected' : ''}>▲ long</option><option value="-1" ${filterDir < 0 ? 'selected' : ''}>▼ short</option></select>
     <select id="fstrat" title="стратегия"><option value="">все стратегии</option>${strats.map(x => `<option ${x === filterStrat ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
