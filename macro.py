@@ -17,7 +17,7 @@ import io
 import json
 import os
 import time
-import urllib.request
+from security import safe_urlopen
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from storage import atomic_write
@@ -46,7 +46,7 @@ MACRO_FEATURES = ('us10y_5d_bp', 'dxy_5d', 'brent_5d')
 
 def fetch(series_id: str, timeout: Optional[float] = None) -> List[Tuple[int, float]]:
     """[(day start ms, value)] of a FRED series; '.' (holidays) skipped."""
-    with urllib.request.urlopen(URL.format(series_id), timeout=timeout or CONFIG.rest.total_timeout_sec) as resp:
+    with safe_urlopen(URL.format(series_id), timeout=timeout or CONFIG.rest.total_timeout_sec) as resp:
         text = resp.read().decode('utf-8')
     out = []
     for row in csv.reader(io.StringIO(text)):

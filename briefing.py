@@ -1,3 +1,4 @@
+from security import safe_urlopen
 """
 Market briefings and watch alerts for the owner's Telegram channel (the owner's request 2026-10-05: BTC, ETH, gold and
 oil lead the altcoin market; the session opens move it).
@@ -293,12 +294,11 @@ class Briefing:
         if cached and time.time() - cached[0] < 6 * 3600:
             return cached[1]
         import json
-        import urllib.request
         out = {}
         try:
             for tf, n in (('1d', 1000), ('1w', 200)):
                 url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={tf}&limit={n}"
-                with urllib.request.urlopen(url, timeout=20) as r:
+                with safe_urlopen(url, timeout=20) as r:
                     out[tf] = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])]
                                for k in json.loads(r.read())]
         except Exception as e:
@@ -1293,7 +1293,7 @@ class Briefing:
                 b = symbol.split('/')[0] + 'USDT'
                 url = (f"https://fapi.binance.com/fapi/v1/klines?symbol={b}&interval=1m"
                        f"&startTime={int(post_ms) // 60_000 * 60_000}&endTime={first_full - 1}&limit=61")
-                with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'edgehunter-bot/1.0'}),
+                with safe_urlopen(urllib.request.Request(url, headers={'User-Agent': 'edgehunter-bot/1.0'}),
                                             timeout=15) as resp:
                     out = [[float(x) for x in k[:5]] for k in json.loads(resp.read())]
             except Exception as e:

@@ -33,7 +33,7 @@ signal_book.py. Detection: Tier-0 (impulse), structure.build_context (15m closes
 """
 from typing import Dict, Optional, Tuple
 
-from strategies.base import PlanInput, Strategy
+from strategies.base import PlanInput, Strategy, validate_card_levels
 from strategies.breakout import BreakoutStrategy
 from strategies.cascade import ExhaustionStrategy
 from strategies.leg import MomentumStrategy
@@ -75,7 +75,12 @@ def entry_levels_for(plan: dict, entry: float, extreme, direction: int):
         strategy = STRATEGIES.get(str(plan.get('strategy') or ''))
     if strategy is None:
         raise ValueError(f"unregistered playbook: {plan.get('setup') or plan.get('strategy')}")
-    return strategy.entry_levels(plan, entry, extreme, direction)
+    levels = strategy.entry_levels(plan, entry, extreme, direction)
+    if levels is not None and not validate_card_levels(levels, direction):
+        # A malformed contract must never reach journal/executor.  The caller
+        # treats None as an unexecutable plan and records the reason upstream.
+        return None
+    return levels
 
 
 __all__ = ["PlanInput", "Strategy", "STRATEGIES", "SETUPS", "strategy_of"]

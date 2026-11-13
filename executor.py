@@ -22,12 +22,14 @@ import errors
 import math
 import os
 import sqlite3
+from sqlsafe import identifier
 import contextlib
 import time
 from typing import Dict, List, Optional
 
 from config import CONFIG
 from storage import atomic_write
+from core.provenance import fields as provenance_fields
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,12 @@ CREATE TABLE IF NOT EXISTS demo_trades (
     opened_ms INTEGER, entry_plan REAL, entry_fill REAL, qty REAL, sl REAL, tp1 REAL, tp2 REAL, tp3 REAL,
     risk_usd REAL, closed_ms INTEGER, close_reason TEXT, exit_avg REAL, fees_usd REAL, pnl_usd REAL, r REAL,
     journal_r REAL, error TEXT)
+;
+CREATE TABLE IF NOT EXISTS demo_skips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id TEXT, symbol TEXT, setup TEXT, strategy TEXT, direction INTEGER,
+    opened_ms INTEGER NOT NULL, reason TEXT NOT NULL, logic_version TEXT
+)
 """
 
 
@@ -148,7 +156,7 @@ class DemoExecutor:
             pass
         self._markets_ready = False
         with self._db() as c:
-            c.execute(SCHEMA)
+            c.executescript(SCHEMA)
             c.execute("CREATE INDEX IF NOT EXISTS idx_demo_pending ON demo_trades(error, closed_ms)")
             # columns added after the first schema: migrated once here (was an ALTER TABLE on every trade)
             have = {r[1] for r in c.execute("PRAGMA table_info(demo_trades)")}
@@ -161,9 +169,18 @@ class DemoExecutor:
                               ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER'),
                               ('slip_bps', 'REAL'), ('latency_ms', 'INTEGER'), ('leverage', 'INTEGER'),
                               ('logic_version', 'TEXT'), ('partial_done', 'INTEGER'), ('n_units', 'INTEGER'), ('r_unit', 'REAL'),
-                              ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER')):
+                              ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER'),
+                              ('source_commit', 'TEXT'), ('implementation_hash', 'TEXT'), ('config_logic_version', 'TEXT'),
+                              ('source_dirty', 'INTEGER')):
                 if col not in have:
-                    c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
+                    safe_col = identifier(col, {
+                        'basis', 'exit_ref', 'no_stop', 'scale', 'entry_order', 'fill_confirmed', 'funding_usd',
+                        'close_pending_reason', 'close_pending_r', 'from_limit', 'trail', 'no_tp', 'slip_bps',
+                        'latency_ms', 'leverage', 'logic_version', 'partial_done', 'n_units', 'r_unit', 'exit_via',
+                        'virt', 'tp_done', 'units', 'source_commit', 'implementation_hash',
+                        'config_logic_version', 'source_dirty',
+                    })
+                    c.execute(f"ALTER TABLE demo_trades ADD COLUMN {safe_col} {kind}")
             placeholders = ', '.join('?' for _ in UNIT_SETUPS)
             c.execute(
                 f"UPDATE demo_trades SET units = 1 WHERE units IS NULL "
@@ -333,10 +350,7 @@ class DemoExecutor:
             gate = self.entry_gate(s)
             if gate is not None:
                 logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {gate}")
-                self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
-                              'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': gate,
-                              'closed_ms': int(time.time() * 1000),
-                              'close_reason': 'SETUP_OFF' if gate.startswith('setup') else 'CLUSTER'})
+                self._record_skip(s, gate)
                 return
             coin = _coin(s.symbol)
             busy = next((t for t in self.open.values() if _coin(t['symbol']) == coin), None) or \
@@ -489,8 +503,13 @@ class DemoExecutor:
                     if 'STOP' in (t := str((o.get('info') or {}).get('type') or o.get('type') or '').upper())
                     or 'TAKE_PROFIT' in t)
         except Exception as e:
-            logger.debug(f"Demo TP/SL count {symbol}: {e!r}")
-            return None
+            # A failed open-order read cannot prove that a protective slot is
+            # available.  Failing open here allowed a market entry followed by
+            # BingX 110206 (no slot left for the stop), leaving an unprotected
+            # position.  Treat the count as an operational gate failure; the
+            # caller retries from reconcile/next signal.
+            errors.report('executor._ensure_sl_slot', e, f"Demo TP/SL count unreadable for {symbol}")
+            return f"TP/SL slot count unreadable for {symbol}: {type(e).__name__}"
         self._tpsl_est = (time.time(), n + 5)
         if n >= cfg.tpsl_warn and time.time() - self._tpsl_warned > 600:
             self._tpsl_warned = time.time()
@@ -636,6 +655,18 @@ class DemoExecutor:
         if hit is not None:
             return f"cluster: {hit} entered {'long' if d > 0 else 'short'} within {cfg.cluster_entry_sec // 60} min"
         return None
+
+    def _record_skip(self, s, reason: str) -> None:
+        """Keep non-trades out of the execution ledger while preserving auditability."""
+        card_id = f"{s.symbol}|{s.group_key}|{int(getattr(s, 'entered_at', 0) or 0)}"
+        with self._db() as c:
+            c.execute(
+                "INSERT INTO demo_skips "
+                "(card_id, symbol, setup, strategy, direction, opened_ms, reason, logic_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (card_id, s.symbol, s.group_key, getattr(s, 'mode', None), s.direction,
+                 int(time.time() * 1000), str(reason)[:300], CONFIG.journal.logic_version),
+            )
 
     def cluster_hit(self, d: int) -> Optional[str]:
         """The coin of a demo entry in direction d within cluster_entry_sec: a filled trade, or a resting limit placed /
@@ -2192,8 +2223,12 @@ class DemoExecutor:
 
     @contextlib.contextmanager
     def _db(self):
-        c = sqlite3.connect(self.db_path)
+        c = sqlite3.connect(self.db_path, timeout=30.0)
         try:
+            c.execute("PRAGMA busy_timeout=30000")
+            if self.db_path != ':memory:':
+                c.execute("PRAGMA journal_mode=WAL")
+                c.execute("PRAGMA synchronous=NORMAL")
             with c:
                 yield c
         finally:
@@ -2225,6 +2260,9 @@ class DemoExecutor:
 
     def _insert(self, row: Dict) -> int:
         row.setdefault('logic_version', CONFIG.journal.logic_version)   # eng-144: demo statistics per logic version
+        row.setdefault('config_logic_version', CONFIG.journal.logic_version)
+        for key, value in provenance_fields().items():
+            row.setdefault(key, value)
         cols = [k for k in row if k != 'id']
         unexpected = set(cols) - self._schema_cols
         if unexpected:

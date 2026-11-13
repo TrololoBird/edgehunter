@@ -622,7 +622,8 @@ class WebUI:
             try:
                 # audit A15: the rows stats.demo_table counts (not the duplicates / rejects it excludes, whatever their
                 # r), the NEWEST 5000 (oldest-first with LIMIT froze the page at the first 5000), returned in order
-                where = f"WHERE r IS NOT NULL AND COALESCE(close_reason, '') NOT IN ({','.join('?' * len(DEMO_EXCLUDED))})"
+                where = ("WHERE r IS NOT NULL AND COALESCE(close_reason, '') NOT IN "
+                         "(?,?,?,?,?,?,?,?,?,?,?)")
                 args = list(DEMO_EXCLUDED)
                 if symbol:
                     where, args = "WHERE entry_fill IS NOT NULL AND symbol = ?", [symbol]

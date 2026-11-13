@@ -280,6 +280,11 @@ class DepthBook:
         if best_bid is None or best_ask is None:
             return
         mid = (best_bid + best_ask) / 2
+        self._prune(book, mid)
+        best_bid, best_ask = book.best()
+        if best_bid is None or best_ask is None:
+            return
+        mid = (best_bid + best_ask) / 2
         # the grid is fixed per coin so snapshots line up; a move of > 20% re-bases it (old snapshots no longer fit)
         if not book.heat_step or abs(mid / (book.heat_step / cfg.heat_bucket_pct) - 1) > 0.2:
             book.heat_step = mid * cfg.heat_bucket_pct
@@ -357,6 +362,30 @@ class DepthBook:
         book.walls = {w: book.walls.get(w, now) for w in current}
         book.bands = self._bands(book)
         book.bands_ts = now
+
+    @staticmethod
+    def _prune(book: BookState, mid: float) -> None:
+        """Bound changed-depth levels that are outside the actionable window.
+
+        Binance diff streams can report a level after the initial snapshot has
+        moved far away.  Those levels are useful only while they are near the
+        current market; retaining every changed price makes the Python dicts
+        grow with uptime.  Keep the nearest configured levels as a second
+        bound, so a thin book cannot be emptied by the percentage filter.
+        """
+        cfg = CONFIG.depth
+        pct = max(0.0, float(cfg.prune_range_pct))
+        lo, hi = mid * (1 - pct), mid * (1 + pct)
+        bids = [(p, q) for p, q in book.bids.items() if lo <= p <= mid]
+        asks = [(p, q) for p, q in book.asks.items() if mid <= p <= hi]
+        cap = max(1, int(cfg.max_levels_per_side))
+        bids.sort(key=lambda x: x[0], reverse=True)
+        asks.sort(key=lambda x: x[0])
+        book.bids = dict(bids[:cap])
+        book.asks = dict(asks[:cap])
+        allowed = {(1, p) for p in book.bids} | {(-1, p) for p in book.asks}
+        book.executed = {k: v for k, v in book.executed.items() if k in allowed}
+        book.unexplained = {k: v for k, v in book.unexplained.items() if k in allowed}
 
     @staticmethod
     def _bands(book: BookState) -> List[Tuple[float, int, float]]:

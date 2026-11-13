@@ -23,6 +23,9 @@ from config import CONFIG
 from levels import simulate
 from strategies import confirm
 from scorer import LONG_PHASES, SHORT_PHASES
+from sqlsafe import identifier
+from security import safe_pickle_load
+from core.provenance import fields as provenance_fields
 
 
 def wilson_upper(hits: int, n: int, z: float = 1.96) -> float:
@@ -43,13 +46,11 @@ def _anchor_json(plan: Optional[Dict]) -> Optional[str]:
 def load_pretrained() -> Optional[Dict]:
     """The models pretrain.py built from the public archive (None when it was not run)."""
     import os
-    import pickle
     path = CONFIG.pretrain.path
     if not os.path.exists(path):
         return None
     try:
-        with open(path, 'rb') as fh:
-            return pickle.load(fh)      # our own file, written by pretrain.py
+        return safe_pickle_load(path, os.path.dirname(path))
     except Exception as e:
         logging.getLogger(__name__).warning(f"Pretrained models unreadable ({type(e).__name__} {e}); run pretrain.py again")
         return None
@@ -82,6 +83,8 @@ def _policy_text(value) -> Optional[str]:
     return str(value)
 
 logger = logging.getLogger(__name__)
+
+FEATURE_SCHEMA_VERSION = 'features-v1'
 
 # Horizon label -> minutes after the signal
 # 8h = a trade's lifetime (levels.trade_ttl_sec): entries are replayed over it (a 4h replay marked every longer trade
@@ -317,6 +320,7 @@ EXTRA_COLUMNS = {
     # mtf-4 features (order flow, multi-venue, positioning): stats.py splits Edge by them
     'price_z': 'REAL', 'oi_z': 'REAL', 'spot_delta_1h': 'REAL', 'perp_delta_1h': 'REAL', 'perp_led': 'INTEGER',
     'spot_cvd_5m': 'REAL', 'futures_cvd_5m': 'REAL', 'agg_cvd_5m': 'REAL', 'agg_oi_change_5m': 'REAL',
+    'agg_oi_change_1h': 'REAL', 'oi_venues': 'INTEGER',
     'agg_ready': 'INTEGER', 'top_venue': 'TEXT', 'top_venue_share': 'REAL', 'liq_long_5m': 'REAL',
     'liq_short_5m': 'REAL', 'cluster': 'INTEGER', 'depth_imb': 'REAL', 'top_ratio': 'REAL', 'basis': 'REAL',
     'sec_into_candle': 'INTEGER',
@@ -324,6 +328,8 @@ EXTRA_COLUMNS = {
     'ml_score': 'REAL', 'regime': 'TEXT', 'p_edge': 'REAL',
     # eng-174: P(trade) of the entry (shadow) and the trade's exit time on its ENTRY row (real label interval)
     'p_trade': 'REAL', 'exit_ts_ms': 'INTEGER',
+    'source_commit': 'TEXT', 'implementation_hash': 'TEXT', 'source_dirty': 'INTEGER',
+    'feature_schema_version': 'TEXT',
     # mtf-5: level-map sources of the entry zone / targets / stop, card outcomes (kind='card') with their reason
     'zone_src': 'TEXT', 'tp1_stepped': 'INTEGER', 'trade_mfe_r': 'REAL', 'trade_mae_r': 'REAL', 'tp1_src': 'TEXT', 'tp2_src': 'TEXT', 'tp3_src': 'TEXT', 'sl_src': 'TEXT', 'reason': 'TEXT',
     'setup_ts_ms': 'INTEGER',
@@ -402,7 +408,8 @@ FEATURE_KEYS = {
     # journal column: signal key
     'price_z': 'price_z', 'oi_z': 'oi_z', 'spot_delta_1h': 'spot_delta_1h', 'perp_delta_1h': 'perp_delta_1h',
     'spot_cvd_5m': 'spot_cvd_5m', 'futures_cvd_5m': 'futures_cvd_5m', 'agg_cvd_5m': 'agg_cvd_5m',
-    'agg_oi_change_5m': 'agg_oi_change_5m', 'top_venue': 'top_venue', 'top_venue_share': 'top_venue_share',
+    'agg_oi_change_5m': 'agg_oi_change_5m', 'agg_oi_change_1h': 'agg_oi_change_1h', 'oi_venues': 'oi_venues',
+    'top_venue': 'top_venue', 'top_venue_share': 'top_venue_share',
     'liq_long_5m': 'liq_long_5m', 'liq_short_5m': 'liq_short_5m', 'depth_imb': 'depth_imb', 'top_ratio': 'top_ratio',
     'basis': 'basis', 'ml_score': 'ml_score', 'regime': 'regime',
     'ls_global': 'ls_global', 'ls_top': 'ls_top', 'hl_net_usd': 'hl_net_usd', 'cb_premium': 'cb_premium',
@@ -739,7 +746,8 @@ class SignalJournal:
         existing = {row[1] for row in self.conn.execute("PRAGMA table_info(signals)")}
         for column, sql_type in EXTRA_COLUMNS.items():
             if column not in existing:
-                self.conn.execute(f"ALTER TABLE signals ADD COLUMN {column} {sql_type}")
+                safe_column = identifier(column, set(EXTRA_COLUMNS))
+                self.conn.execute(f"ALTER TABLE signals ADD COLUMN {safe_column} {sql_type}")
 
     def _insert(self, rows: List[Dict]):
         if not rows:
@@ -765,6 +773,8 @@ class SignalJournal:
             'whale_net_5m': sig.get('whale_net_5m', 0.0), 'logic_version': CONFIG.journal.logic_version,
             'data_quality_ok': int(bool(sig.get('data_quality_ok', True))),
         }
+        row.update(provenance_fields())
+        row['feature_schema_version'] = FEATURE_SCHEMA_VERSION
         row.update(_features(sig))
         row['contract_id'] = sig.get('contract_id') or sig.get('setup')
         return row

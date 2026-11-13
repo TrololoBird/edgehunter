@@ -77,6 +77,11 @@ class TimeframeConfig:
     scan_interval_sec: int = 10
     bulk_funding_interval_sec: int = 30
     oi_update_interval_sec: int = 60
+    # Closed-minute repair: keep the queue moving across the whole universe
+    # instead of retrying only 15 coins every ten minutes (which let gaps grow
+    # faster than REST could repair them after a reconnect wave).
+    hole_repair_coins_per_pass: int = 30
+    hole_repair_retry_sec: int = 120
 
 
 @dataclass(frozen=True)
@@ -279,6 +284,11 @@ class DepthConfig:
     wall_skip_levels: int = 10
     # Diff streams push on change: a book is stale after this long without an event
     stale_sec: int = 60
+    # Keep only the actionable near-book window.  Diff streams can contain
+    # changed levels outside the original snapshot; retaining them forever
+    # made the Python dicts grow with uptime.
+    prune_range_pct: float = 0.05
+    max_levels_per_side: int = 2000
     # Heatmap: the whole local book within +-heat_range_pct, bucketed by heat_bucket_pct of price, every
     # heat_snapshot_sec, heat_snapshots kept (2h); a bucket is a liquidity band when it held >= heat_band_multiple x the
     # snapshot's median bucket in >= heat_band_presence of the snapshots of heat_band_window_sec (at least

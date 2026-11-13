@@ -25,6 +25,7 @@ import os
 import re
 import time
 import urllib.request
+from security import safe_urlopen
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -117,7 +118,7 @@ PARSERS = {'BLS': parse_bls, 'ISM': parse_ism, 'FED': parse_fed}
 
 def _fetch(url: str) -> str:
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as r:
+    with safe_urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as r:
         return r.read().decode('utf-8', errors='replace')
 
 

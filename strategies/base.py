@@ -21,6 +21,7 @@ Lifecycle and journal transport are shared; trade decisions belong to each
 playbook contract and are dispatched by the owning Strategy instance.
 """
 from dataclasses import dataclass, field
+import math
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypedDict
 
 import polars as pl
@@ -52,6 +53,41 @@ class CardLevels(TypedDict, total=False):
     range_pos: Optional[float]
     limit_entry: Optional[float]
     volume_24h: Optional[float]
+
+
+def validate_card_levels(levels: Optional[CardLevels], direction: int) -> bool:
+    """Fail-closed validation for executable stop/target geometry.
+
+    Target-less contracts (Turtles, Connors, ORB) are valid when they provide a
+    finite entry and stop; contracts that provide targets must keep every target
+    on the trade side and in monotone order.  This check is deliberately small
+    and side-effect free so all playbooks and the executor share the same rule.
+    """
+    if not levels or direction not in (-1, 1):
+        return False
+    try:
+        entry = float(levels.get('entry'))
+        stop = float(levels.get('sl'))
+    except (TypeError, ValueError):
+        return False
+    if not all(math.isfinite(x) for x in (entry, stop)) or entry <= 0:
+        return False
+    if direction * (entry - stop) <= 0:
+        return False
+    targets = [levels.get(f'tp{k}') for k in (1, 2, 3)]
+    if all(t is None for t in targets):
+        return True
+    if any(t is None for t in targets):
+        return False
+    try:
+        values = [float(t) for t in targets]
+    except (TypeError, ValueError):
+        return False
+    if not all(math.isfinite(t) and t > 0 for t in values):
+        return False
+    if any(direction * (t - entry) <= 0 for t in values):
+        return False
+    return all(direction * (values[i + 1] - values[i]) >= 0 for i in range(2))
 
 
 @dataclass

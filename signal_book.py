@@ -1755,7 +1755,7 @@ class SignalBook:
             # review: the resting limit's stop is known BEFORE the touch (no wick of the touch bar), and the journal
             # window starts at the touch bar's open, so a stop inside that bar counts (conservative: the bar's
             # minutes before the touch count too)
-                levels = entry_levels_for(s.plan, level, None, d)
+            levels = entry_levels_for(s.plan, level, None, d)
             if levels and d * (levels['entry'] - levels['sl']) > 0:
                 levels['zone_src'] = s.plan.get('zone_src')
                 self._variant(s, name, levels, trig['time'] - interval_ms, limit=True)

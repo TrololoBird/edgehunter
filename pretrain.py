@@ -478,7 +478,7 @@ def _paths(fut_id: str, start_iso: str, end_iso: str, days: frozenset = frozense
     import os
     # the logic version and the coin's eligible days are part of the name: rows of older signal logic or of another
     # volume floor are never resumed
-    tag = hashlib.sha1(','.join(map(str, sorted(days))).encode()).hexdigest()[:8]
+    tag = hashlib.sha256(','.join(map(str, sorted(days))).encode()).hexdigest()[:8]
     stem = os.path.join(CONFIG.pretrain.cache_dir, 'rows',
                         f"{fut_id}_{start_iso}_{end_iso}_{tag}_{CONFIG.journal.logic_version}")
     return {'rows': stem + '.rows.parquet', 'series': stem + '.series.parquet', 'series5': stem + '.series5.parquet'}

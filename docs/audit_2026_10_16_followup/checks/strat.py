@@ -26,12 +26,12 @@ def a02():
             if d == 1 or now_ms >= 2:
                 return {'direction': d, 'setup': 'L' if d > 0 else 'S'}
         return None
-    if not takes_skip:
-        fake_old = lambda bars, now_ms, pdh=None, pdl=None: fake(bars, now_ms, pdh, pdl)   # noqa: E731
+    fake_old = lambda bars, now_ms, pdh=None, pdl=None: fake(bars, now_ms, pdh, pdl)   # noqa: E731
     out = []
     loop = SimpleNamespace(_sb_checked={}, _sb_fired=set(), minutes_of=lambda s: [], m15_of=lambda s: [])
     md = SimpleNamespace(minute_closed_until=None, d1=[])
-    with patch.object(sbm, 'silver_bullet', fake if takes_skip else fake_old), \
+    detector = fake if takes_skip else fake_old
+    with patch.object(sbm, 'silver_bullet', detector), \
             patch.object(sbm, 'window_of', lambda now: 0):
         for now, minute in ((1, 240_000), (2, 540_000), (3, 840_000)):
             md.minute_closed_until = minute

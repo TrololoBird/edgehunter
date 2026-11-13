@@ -22,6 +22,7 @@ import logging
 import re
 import time
 import urllib.request
+from security import safe_urlopen
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ def parse_upbit(title: str, listed_at: str, known) -> List[Tuple[str, str, float
 
 def _get(url: str):
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with safe_urlopen(req, timeout=30) as r:
         return json.load(r)
 
 

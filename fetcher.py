@@ -1,3 +1,4 @@
+from security import safe_urlopen
 import asyncio
 import bisect
 import gc
@@ -484,6 +485,10 @@ class DataFetcher:
         self._binance_keys: Dict[Tuple[str, str], str] = {}
         self._backfill_pending: set = set()
         self._backfill_retry_at: Dict[Tuple[str, str], float] = {}
+        self.backfill_stats: Dict[str, int] = {
+            'requested': 0, 'attempted': 0, 'applied': 0, 'verified': 0,
+            'failed': 0, 'deferred': 0,
+        }
         self._backfill_semaphore = asyncio.Semaphore(3)
         self.funding_interval_hours: Dict[str, int] = {}
         self.streams_started_ms = 0               # the flow windows before it are seeded from REST klines
@@ -1249,11 +1254,21 @@ class DataFetcher:
         holes = self.minute_holes(md.minute_klines, md.minute_closed_until)
         if not holes:
             return 0
+        self.backfill_stats['attempted'] += 1
         count = min(1000, (int(md.minute_closed_until) - holes[0]) // 60_000 + 1)
         rows = await self.fetch_minute_klines(symbol, holes[0] - 1, count)
         if rows:
+            before = len(holes)
             md.seed_minutes('futures', [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
                                          float(k[10]), float(k[5])] for k in rows], now_ms)
+            after = len(self.minute_holes(md.minute_klines, md.minute_closed_until))
+            self.backfill_stats['applied'] += max(0, before - after)
+            if after == 0:
+                self.backfill_stats['verified'] += 1
+            else:
+                self.backfill_stats['deferred'] += 1
+            return after
+        self.backfill_stats['failed'] += 1
         return len(self.minute_holes(md.minute_klines, md.minute_closed_until))
 
     async def _fetch_oi_history(self, futures_symbol: str) -> List:
@@ -1640,7 +1655,7 @@ class DataFetcher:
             try:
                 def fetch():
                     req = urllib.request.Request(url, headers={'User-Agent': 'edgehunter'})
-                    with urllib.request.urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as resp:
+                    with safe_urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as resp:
                         return json.load(resp)
                 data = (await asyncio.to_thread(fetch)).get('data') or {}
                 pct = data.get('market_cap_percentage') or {}
@@ -1664,7 +1679,7 @@ class DataFetcher:
 
         def get(url):
             req = urllib.request.Request(url, headers={'User-Agent': 'edgehunter'})
-            with urllib.request.urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as resp:
+            with safe_urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as resp:
                 return json.load(resp)
         last = {'cal': 0.0, 'strikes': 0.0, 'official': 0.0}
         while self._running:
@@ -1926,6 +1941,7 @@ class DataFetcher:
         key = (symbol, market)
         if key in self._backfill_pending or not self._running or time.time() < self._backfill_retry_at.get(key, 0):
             return
+        self.backfill_stats['requested'] += 1
         self._backfill_pending.add(key)
         self._spawn(self._backfill(symbol, market, need_ts))
 

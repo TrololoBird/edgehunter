@@ -1533,8 +1533,13 @@ class Scanner:
         return coinbase / binance - 1 if binance else None
 
     async def _minute_hole_pass(self) -> None:
-        """eng-161: which coins miss closed 1m candles (the source of '1m gaps dropped'), refilled from REST - at most
-        15 coins a pass, the worst first; one log line with the worst offenders."""
+        """Repair missing closed minutes, prioritising the worst symbols.
+
+        The old fixed 15-symbol/10-minute cadence could not catch up after a
+        reconnect wave across the universe.  The budget is configurable and
+        the per-symbol retry interval is short enough to keep the queue moving
+        while the REST gate still controls exchange weight.
+        """
         try:
             now_ms = int(time.time() * 1000)
             holes = {s: len(self.fetcher.minute_holes(md.minute_klines, md.minute_closed_until))
@@ -1545,11 +1550,11 @@ class Scanner:
             left, done = 0, 0
             last = self.__dict__.setdefault('_hole_patched', {})
             for n, s in bad:
-                if done >= 15:
+                if done >= CONFIG.timeframe.hole_repair_coins_per_pass:
                     break
                 md = self.market_data.get(s)
-                if md is None or now_ms - last.get(s, 0) < 600_000:
-                    continue                    # one refill per coin per 10 minutes
+                if md is None or now_ms - last.get(s, 0) < CONFIG.timeframe.hole_repair_retry_sec * 1000:
+                    continue
                 last[s] = now_ms
                 done += 1
                 left += await self.fetcher.patch_minute_holes(s, md, now_ms)
@@ -2011,13 +2016,17 @@ class Scanner:
                            'heavy_sec': self.last_heavy_sec, 'books': len(self._hot), 'streams': rates,
                            'down': [r.split()[0] for r in rates if ' DOWN' in r],
                            'cpu_pct': cpu, 'rss_mb': rss,
+                           'backfill': dict(getattr(self.fetcher, 'backfill_stats', {})),
                            'gc': gc_line, 'errors': failed}
             await self._minute_hole_pass()
+            bf = getattr(self.fetcher, 'backfill_stats', {})
+            bf_text = (f"; backfill req {bf.get('requested', 0)} attempted {bf.get('attempted', 0)} "
+                       f"verified {bf.get('verified', 0)} failed {bf.get('failed', 0)}")
             logger.info(f"Health: tier0 {self.last_tier0_sec:.2f}s, scan {self.last_scan_sec:.2f}s "
                         f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
                         f"smt pairs {pairs}/{len(ctxs)}, 1m gaps patched {RESAMPLE_QUALITY['patched']} / dropped "
                         f"{RESAMPLE_QUALITY['dropped']} (main process), streams " + ", ".join(rates)
-                        + (f"; {gc_line}" if gc_line else '') + (f"; {failed}" if failed else '')
+                        + bf_text + (f"; {gc_line}" if gc_line else '') + (f"; {failed}" if failed else '')
                         + (f"; {self.smallcap.health()}" if self.smallcap is not None else ''))
             if time.time() - last_memory >= 1800:
                 # where the memory sits (process classes + the bot's own structures), every 30 minutes (the walk holds

@@ -4,6 +4,15 @@
 set -e
 cd "$(dirname "$0")/.."
 PY=.venv/bin/python
+# The running service must be reproducible from a commit.  Manual/local checks
+# stay permissive unless the unit sets EDGEHUNTER_REQUIRE_CLEAN=1.
+if [ "${EDGEHUNTER_REQUIRE_CLEAN:-0}" = 1 ]; then
+  if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+    echo "refusing production start: working tree is dirty" >&2
+    git status --short >&2
+    exit 1
+  fi
+fi
 # Runtime precheck must cover executable application code only. Audit snippets and
 # offline research extracts are intentionally incomplete and are not importable
 # production modules; linting them can block an otherwise valid service restart.

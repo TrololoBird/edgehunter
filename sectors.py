@@ -9,6 +9,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from security import safe_urlopen
 from typing import Dict, Optional
 from storage import atomic_write
 
@@ -41,7 +42,7 @@ def _fetch(category: str, pages: int = 2) -> list:
         req = urllib.request.Request(URL.format(category, page), headers={'accept': 'application/json'})
         for attempt in range(5):
             try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with safe_urlopen(req, timeout=30) as resp:
                     batch = json.loads(resp.read().decode('utf-8'))
                 break
             except urllib.error.HTTPError as e:
