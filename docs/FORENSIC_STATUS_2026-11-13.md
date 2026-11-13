@@ -15,16 +15,16 @@ This report uses the readable checkout at `/opt/edgehunter`, the running systemd
 
 | Claim | Provenance | Evidence | Confidence |
 |---|---|---|---|
-| Runtime provenance is persisted on signal and demo rows | `FACT_CODE` | `core/provenance.py`, `journal.py` `FEATURE_SCHEMA_VERSION`, `executor.py` provenance fields | high |
-| Dirty checkout can be refused before service start | `FACT_CODE` | `deploy/precheck.sh`, `deploy/edgehunter-bot.service` | high |
-| SignalBook, live limit execution, and replay share `StrategyEngine` geometry and causal snapshots | `FACT_CODE` | `core/strategy_engine.py`, `signal_book.py`, `executor.py`, `replay.py` | high |
+| Runtime provenance is persisted on signal and demo rows | `FACT_CODE` | `core/provenance.py:39-50`, `journal.py:312-355`, `executor.py:2320-2328` | high |
+| Dirty checkout can be refused before service start | `FACT_CODE` | `deploy/precheck.sh:8-25`, `deploy/edgehunter-bot.service:12-27` | high |
+| SignalBook, live limit execution, and replay share `StrategyEngine` geometry and causal snapshots | `FACT_CODE` | `core/strategy_engine.py:9-46`, `signal_book.py`, `executor.py`, `replay.py` | high |
 | Replay resolves simultaneous stop and target touches stop-first | `FACT_CODE` | `levels.py:simulate`, `tests/test_regressions.py` | high |
-| Entry execution has durable `(card_id, execution_phase)` idempotency claims | `FACT_CODE` and `FACT_DATA` | `executor.py`, SQLite `execution_intents` table | high |
+| Entry execution has durable `(card_id, execution_phase)` idempotency claims | `FACT_CODE` and `FACT_DATA` | `executor.py:342-355`, SQLite `execution_intents` table | high |
 | Missing exchange credentials fail closed | `FACT_CODE` | `executor.py:credentials` | high |
-| Backfill jobs expose queued/running/verified/failed lifecycle and reasons | `FACT_CODE` | `fetcher.py`, `scanner.py` health payload | high |
-| Depth reports sequence gaps, resyncs, and buffer drops | `FACT_CODE` | `depth.py`, `DepthBook.diagnostics()` | high |
-| Iceberg features become NULL when L2 coverage is absent or stale | `FACT_CODE` | `iceberg.py`, journal `iceberg_reason` feature | high |
-| Legacy model artifacts are quarantined and never auto-loaded | `FACT_CODE` and `FACT_DATA` | `models/*.manifest.json`, `scenarios.py`, `tools/model_audit.py` | high |
+| Backfill jobs expose queued/running/verified/failed lifecycle and reasons | `FACT_CODE` | `fetcher.py:1972-2035`, `scanner.py:2040-2054` | high |
+| Depth reports sequence gaps, resyncs, and buffer drops | `FACT_CODE` | `depth.py:35-75`, `depth.py:140-160`, `depth.py:540-552` | high |
+| Iceberg features become NULL when L2 coverage is absent or stale | `FACT_CODE` | `iceberg.py:44-85`, `iceberg.py:130-143`, `journal.py:350-445` | high |
+| Legacy model artifacts are quarantined and never auto-loaded | `FACT_CODE` and `FACT_DATA` | `models/*.manifest.json`, `scenarios.py:222-255`, `tools/model_audit.py:12-45` | high |
 | `p_edge` and `p_trade` are shadow-only | `FACT_CODE` and `FACT_RUNTIME` | `journal.py` model status, `/api/health` | high |
 | Briefing calculates cost-aware `EV_net` and displays `NO TRADE` for non-positive EV | `FACT_CODE` | `core/quant_gate.py`, `briefing.py`, `briefing_chart.py`, `web/app.js` | high |
 
