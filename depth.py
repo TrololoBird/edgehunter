@@ -534,6 +534,17 @@ class DepthBook:
                        ask_pulled_5m=sums[3 + PULLED], ask_filled_5m=sums[3 + FILLED])
         return out
 
+    def diagnostics(self) -> Dict[str, int]:
+        """Aggregate sequence/resync counters for health and external diagnostics."""
+        return {
+            'books': len(self.books),
+            'synced': sum(1 for book in self.books.values() if book.synced),
+            'resyncs': sum(book.resyncs for book in self.books.values()),
+            'sequence_gaps': sum(book.sequence_gaps for book in self.books.values()),
+            'buffer_drops': sum(book.buffer_drops for book in self.books.values()),
+            'levels': sum(len(book.bids) + len(book.asks) for book in self.books.values()),
+        }
+
     def wall_history(self, symbol: str) -> List[Dict]:
         """eng-105: the walls that ended recently and how: broken / eaten (filled) / pulled (cancelled) / faded."""
         book = self.books.get(symbol)

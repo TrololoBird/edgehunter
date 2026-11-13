@@ -164,3 +164,5 @@ def test_depth_records_sequence_gaps_and_buffer_drops():
     book.books['BTC'].last_u = 10
     book.on_diff('BTC', {'u': 12, 'U': 12, 'pu': 11, 'E': 1})
     assert book.books['BTC'].sequence_gaps == 1
+    diag = book.diagnostics()
+    assert diag['sequence_gaps'] == 1 and diag['buffer_drops'] == 1000
