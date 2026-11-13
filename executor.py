@@ -182,14 +182,14 @@ class DemoExecutor:
                               ('logic_version', 'TEXT'), ('partial_done', 'INTEGER'), ('n_units', 'INTEGER'), ('r_unit', 'REAL'),
                               ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER'),
                               ('source_commit', 'TEXT'), ('implementation_hash', 'TEXT'), ('config_logic_version', 'TEXT'),
-                              ('source_dirty', 'INTEGER')):
+                              ('source_dirty', 'INTEGER'), ('protection_state', 'TEXT')):
                 if col not in have:
                     safe_col = identifier(col, {
                         'basis', 'exit_ref', 'no_stop', 'scale', 'entry_order', 'fill_confirmed', 'funding_usd',
                         'close_pending_reason', 'close_pending_r', 'from_limit', 'trail', 'no_tp', 'slip_bps',
                         'latency_ms', 'leverage', 'logic_version', 'partial_done', 'n_units', 'r_unit', 'exit_via',
                         'virt', 'tp_done', 'units', 'source_commit', 'implementation_hash',
-                        'config_logic_version', 'source_dirty',
+                        'config_logic_version', 'source_dirty', 'protection_state',
                     })
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {safe_col} {kind}")
             placeholders = ', '.join('?' for _ in UNIT_SETUPS)
@@ -202,11 +202,20 @@ class DemoExecutor:
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
             # without it a restored trade's new stop went out at scale 1); rows from before the column: entry_plan
             c.row_factory = sqlite3.Row
-            for row in c.execute("SELECT * FROM demo_trades WHERE closed_ms IS NULL"):
+            for row in c.execute("SELECT * FROM demo_trades WHERE closed_ms IS NULL").fetchall():
                 trade = dict(row)
+                protection = self._protection_state(trade)
+                if trade.get('protection_state') != protection:
+                    c.execute("UPDATE demo_trades SET protection_state = ? WHERE id = ?", (protection, trade['id']))
+                    trade['protection_state'] = protection
+                if protection == 'INVALID_GEOMETRY':
+                    logger.error("Demo ledger row %s has invalid stop geometry: %s", trade['id'], trade.get('symbol'))
                 if trade.get('close_pending_reason') is not None:
                     trade['close_pending'] = [trade['close_pending_reason'], trade['close_pending_r']]
                 self.open[trade['card_id']] = trade
+                if trade.get('card_id'):
+                    c.execute("INSERT OR IGNORE INTO execution_intents(card_id, execution_phase, created_ms) "
+                              "VALUES (?, 'ENTRY', ?)", (trade['card_id'], int(trade.get('opened_ms') or time.time() * 1000)))
             c.execute("CREATE INDEX IF NOT EXISTS idx_demo_entry_order ON demo_trades(symbol, entry_order)")
 
     # ------------------------------------------------------------------ exchange
@@ -313,6 +322,20 @@ class DemoExecutor:
 
     def _drop_inflight(self, card_id: str) -> None:
         getattr(self, '_inflight', {}).pop(card_id, None)
+
+    @staticmethod
+    def _protection_state(trade: Dict) -> str:
+        if bool(trade.get('no_stop')):
+            return 'NO_STOP_ALLOWED' if str(trade.get('strategy') or '').lower() == 'connors' else 'INVALID'
+        try:
+            entry = float(trade.get('entry_fill') or trade.get('entry_plan'))
+            stop = float(trade.get('sl'))
+            direction = int(trade.get('direction'))
+            if math.isfinite(entry) and math.isfinite(stop) and direction in (-1, 1) and direction * (entry - stop) > 0:
+                return 'PROTECTED'
+        except (TypeError, ValueError):
+            pass
+        return 'INVALID_GEOMETRY'
 
     def _claim_execution(self, card_id: str, phase: str) -> bool:
         """Persist an idempotency claim before the first exchange mutation."""
@@ -953,6 +976,10 @@ class DemoExecutor:
         plan = getattr(s, 'plan', None) or {}
         # The entry row and in-memory ownership already exist; only exchange
         # targets remain to be installed.
+        trade['protection_state'] = 'PROTECTED' if not no_stop else 'NO_STOP_ALLOWED'
+        with self._db() as c:
+            c.execute("UPDATE demo_trades SET protection_state = ? WHERE id = ?",
+                      (trade['protection_state'], trade['id']))
         self._set_inflight(card_id, 'PROTECTED', trade_id=trade['id'])
         await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(plan.get('trail_after_tp1')),
                                                      bool(plan.get('no_tp'))), min_qty)
@@ -1328,6 +1355,10 @@ class DemoExecutor:
     async def _restore_stop(self, trade: Dict) -> None:
         if trade.get('no_stop') or trade.get('strategy') == 'connors' or not trade.get('sl'):
             return                                   # eng-127: a system without a stop (Connors) - nothing to restore
+        if self._protection_state(trade) != 'PROTECTED':
+            logger.error("Demo %s: refusing to restore invalid stop geometry", trade.get('symbol'))
+            self.alert(f"⛔ Демо {trade.get('symbol')}: invalid stop geometry, automatic re-protection refused")
+            return
         symbol, d, sl = trade['symbol'], trade['direction'], float(trade['sl'])
         left = await self._position_qty(symbol)
         if left <= 0:
@@ -2290,6 +2321,7 @@ class DemoExecutor:
     def _insert(self, row: Dict) -> int:
         row.setdefault('logic_version', CONFIG.journal.logic_version)   # eng-144: demo statistics per logic version
         row.setdefault('config_logic_version', CONFIG.journal.logic_version)
+        row.setdefault('protection_state', self._protection_state(row))
         for key, value in provenance_fields().items():
             row.setdefault(key, value)
         cols = [k for k in row if k != 'id']

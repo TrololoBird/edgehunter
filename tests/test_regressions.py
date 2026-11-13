@@ -90,6 +90,9 @@ def test_executor_entry_intent_is_idempotent(tmp_path):
     assert demo._claim_execution('card-1', 'ENTRY') is True
     assert demo._claim_execution('card-1', 'ENTRY') is False
     assert demo._claim_execution('card-1', 'STOP') is True
+    assert demo._protection_state({'direction': 1, 'entry_fill': 100, 'sl': 95, 'no_stop': 0}) == 'PROTECTED'
+    assert demo._protection_state({'direction': -1, 'entry_fill': 100, 'sl': 95, 'no_stop': 0}) == 'INVALID_GEOMETRY'
+    assert demo._protection_state({'strategy': 'connors', 'no_stop': 1}) == 'NO_STOP_ALLOWED'
 
 
 def test_shrinkage_gate_is_explicit_and_conservative_for_small_samples():
