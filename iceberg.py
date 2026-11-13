@@ -50,15 +50,21 @@ class IcebergDetector:
         # symbol -> side (+1 bid / -1 ask) -> price -> level
         self.levels: Dict[str, Dict[int, Dict[float, _Level]]] = {}
         self.events: Dict[str, Deque[Tuple[int, int, float, float]]] = {}   # symbol -> (ts, side, price, usd)
+        self.coverage: Dict[str, Tuple[bool, int, str]] = {}
     def invalidate(self, symbol: str):
         self.levels.pop(symbol, None)
         self.events.pop(symbol, None)
+        self.coverage[symbol] = (False, 0, 'sequence_resync_or_no_book')
 
     def clear_symbol(self, symbol: str):
         self.invalidate(symbol)
 
     def on_book(self, symbol: str, bids, asks, ts_ms: int):
         """Largest size seen at each price of the live book (USD); a level traded against and shown again = a refill."""
+        if not bids or not asks:
+            self.coverage[symbol] = (False, int(ts_ms), 'insufficient_l2_coverage')
+            return
+        self.coverage[symbol] = (True, int(ts_ms), 'ok')
         book = self.levels.setdefault(symbol, {1: {}, -1: {}})
         for side, rows in ((1, bids), (-1, asks)):
             levels = book[side]
@@ -121,8 +127,13 @@ class IcebergDetector:
 
     def features(self, symbol: str, window_sec: int = 300, now_ms: float = None) -> Dict[str, float]:
         now_ms = now_ms or time.time() * 1000
+        valid, last_book, reason = self.coverage.get(symbol, (False, 0, 'insufficient_l2_coverage'))
+        if not valid or not last_book or now_ms - last_book > max(3_000, window_sec * 1000):
+            return {'iceberg_net_5m': None, 'iceberg_n_5m': None,
+                    'iceberg_reason': reason if not valid else 'stale_l2_coverage'}
         ev = [e for e in self.events.get(symbol, ()) if now_ms - e[0] <= window_sec * 1000]
-        return {'iceberg_net_5m': sum(e[1] * e[3] for e in ev), 'iceberg_n_5m': float(len(ev))}
+        return {'iceberg_net_5m': sum(e[1] * e[3] for e in ev), 'iceberg_n_5m': float(len(ev)),
+                'iceberg_reason': 'ok'}
 
     def prune(self, now_ms: float = None):
         now_ms = now_ms or time.time() * 1000

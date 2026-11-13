@@ -11,6 +11,7 @@ from executor import credentials, DemoExecutor
 from fetcher import DataFetcher
 from core.quant_gate import scenario_gate
 import pumps
+from iceberg import IcebergDetector
 
 
 def test_sql_identifier_requires_allowlist():
@@ -140,3 +141,12 @@ def test_briefing_quant_gate_rejects_non_positive_net_ev():
 def test_pump_monitor_is_explicitly_informational():
     assert pumps.STATS['pump']['verdict'].startswith('НЕ подтверждено')
     assert pumps.PUMP == 0.15 and pumps.WIN == 6
+
+
+def test_iceberg_is_unknown_without_fresh_l2_coverage():
+    detector = IcebergDetector()
+    assert detector.features('BTC', now_ms=1000)['iceberg_net_5m'] is None
+    detector.on_book('BTC', [[100, 2]], [[101, 2]], 1000)
+    assert detector.features('BTC', now_ms=2000)['iceberg_reason'] == 'ok'
+    detector.invalidate('BTC')
+    assert detector.features('BTC', now_ms=2000)['iceberg_reason'] == 'sequence_resync_or_no_book'
