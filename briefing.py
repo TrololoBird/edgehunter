@@ -814,6 +814,9 @@ class Briefing:
                 checks.append(('Импульс 1–3 дн.', 'ok' if sb == d else 'warn',
                                {1: 'рост', -1: 'падение', 0: 'нейтрально'}[sb]))
             checks.append(('R:R до TP1', 'ok' if rr >= 2 else 'warn' if rr >= 1 else 'bad', f"{rr:.1f}"))
+            if sc.get('ev_net') is not None:
+                checks.append(('EV net', 'ok' if sc['trade_gate'] else 'bad',
+                               f"{sc['ev_net']:+.5g}" if sc['trade_gate'] else 'NO TRADE'))
             if dist is not None:
                 checks.append(('Вход от цены', 'ok' if dist <= 1.5 else 'warn' if dist <= 4 else 'bad',
                                f"{dist:.1f} ATR(1h)"))
@@ -834,6 +837,8 @@ class Briefing:
             out['scenarios'][side] = {
                 'name': name, 'cond': sc['cond'], 'tag': sc.get('tag'), 'entry': list(sc['entry']), 'stop': sc['stop'],
                'targets': list(sc['targets']), 'be_winrate': sc['be_winrate'], 'rw_prob': sc['rw_prob'],
+               'p_base': sc.get('p_base'), 'p_breakeven': sc.get('p_breakeven'),
+               'ev_net': sc.get('ev_net'), 'trade_gate': sc.get('trade_gate', False),
                'rr': rr, 'checks': checks, 'verdict': verdict}
         return out
 

@@ -642,6 +642,7 @@ function anCard(a) {
       <div class="kv"><span>вход</span><span class="mono">${fp(s.entry[0])}–${fp(s.entry[1])}</span><span>стоп</span><span class="mono">${fp(s.stop)}</span>
       <span>цели</span><span class="mono">${s.targets.map(fp).join(' / ')}</span><span>R:R до TP1</span><span class="mono">${s.rr.toFixed(1)}</span>
       <span>безубыточная доля TP1 (с издержками)</span><span class="mono">${s.be_winrate >= 1 ? 'не окупается: цель ближе стопа' : (s.be_winrate * 100).toFixed(0) + '%'}</span>
+      <span>EV net (нейтральная база 50%)</span><span class="mono ${s.trade_gate ? 'good' : 'bad'}">${s.trade_gate ? Number(s.ev_net || 0).toPrecision(4) : 'NO TRADE'}</span>
       <span>базовая вероятность без издержек</span><span class="mono">${(s.rw_prob * 100).toFixed(0)}%</span>${checks}</div></div>`;
   }).join('');
   const T = (a.outcomes && a.outcomes.tally) || {};

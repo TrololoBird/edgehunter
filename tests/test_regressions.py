@@ -9,6 +9,7 @@ from extdata import okx_completed_bucket, okx_taker_rows
 from levels import simulate
 from executor import credentials, DemoExecutor
 from fetcher import DataFetcher
+from core.quant_gate import scenario_gate
 
 
 def test_sql_identifier_requires_allowlist():
@@ -121,3 +122,12 @@ def test_minute_backfill_counts_only_after_gap_is_verified(monkeypatch):
     assert asyncio.run(fetcher.patch_minute_holes('BTC', md, 200_000)) == 0
     assert fetcher.backfill_stats['applied'] == 1
     assert fetcher.backfill_stats['verified'] == 1
+
+
+def test_briefing_quant_gate_rejects_non_positive_net_ev():
+    rejected = scenario_gate(0.5, reward=1.0, risk=1.0, cost=0.01)
+    accepted = scenario_gate(0.7, reward=2.0, risk=1.0, cost=0.01)
+    assert rejected['trade_gate'] is False
+    assert rejected['ev_net'] < 0
+    assert accepted['trade_gate'] is True
+    assert accepted['p_base'] >= accepted['p_breakeven']
