@@ -38,6 +38,18 @@ def wilson_upper(hits: int, n: int, z: float = 1.96) -> float:
     return min(1.0, (centre + spread) / (1 + z * z / n))
 
 
+def shrinkage_upper(hits: int, n: int, prior: tuple[float, float] = (1.0, 1.0), level: float = 0.95) -> float:
+    """Upper posterior probability with an explicit Beta prior."""
+    if n <= 0:
+        return 1.0
+    hits = min(max(int(hits), 0), int(n))
+    try:
+        from scipy.stats import beta
+        return float(beta.ppf(level, hits + prior[0], n - hits + prior[1]))
+    except (ImportError, TypeError, ValueError):
+        return wilson_upper(hits, n)
+
+
 def _anchor_json(plan: Optional[Dict]) -> Optional[str]:
     anchor = (plan or {}).get('anchor')
     return json.dumps(anchor, separators=(',', ':'), default=float) if anchor else None
@@ -1281,8 +1293,9 @@ class SignalJournal:
                     c[k] += 1
         # eng-124: no fixed n >= 30 (a 60% rate after 20-50 trades is anywhere in 35-85% / 46-74%): every strategy with
         # decided entries gets its rate AND the upper end of its 95% Wilson interval; the veto uses the upper end
-        rates = {s: (h1 / (h1 + sl), h1 + sl, wilson_upper(h1, h1 + sl), wilson_upper(h2, h1 + sl),
-                     wilson_upper(h3, h1 + sl)) for s, (sl, h1, h2, h3) in counts.items() if h1 + sl > 0}
+        rates = {s: (h1 / (h1 + sl), h1 + sl, shrinkage_upper(h1, h1 + sl),
+                     shrinkage_upper(h2, h1 + sl), shrinkage_upper(h3, h1 + sl))
+                 for s, (sl, h1, h2, h3) in counts.items() if h1 + sl > 0}
         geometry.HIT_RATE.clear()
         geometry.HIT_RATE.update(rates)
         return len(rates)

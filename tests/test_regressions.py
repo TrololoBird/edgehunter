@@ -3,7 +3,7 @@ import pytest
 from sqlsafe import identifier
 from security import safe_urlopen
 from strategies.base import validate_card_levels
-from journal import EXTRA_COLUMNS
+from journal import EXTRA_COLUMNS, shrinkage_upper, wilson_upper
 from depth import BookState, DepthBook
 from extdata import okx_completed_bucket, okx_taker_rows
 from levels import simulate
@@ -88,3 +88,9 @@ def test_executor_entry_intent_is_idempotent(tmp_path):
     assert demo._claim_execution('card-1', 'ENTRY') is True
     assert demo._claim_execution('card-1', 'ENTRY') is False
     assert demo._claim_execution('card-1', 'STOP') is True
+
+
+def test_shrinkage_gate_is_explicit_and_conservative_for_small_samples():
+    assert 0.5 < shrinkage_upper(1, 1) < 1.0
+    assert shrinkage_upper(1, 1) >= shrinkage_upper(0, 1)
+    assert wilson_upper(1, 1) > 0.9

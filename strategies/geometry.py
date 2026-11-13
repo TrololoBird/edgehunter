@@ -185,7 +185,7 @@ def is_synthetic(label: Optional[str]) -> bool:
     return label in ('ATR step', '1R step') or bool(re.fullmatch(r'[0-9.]+ R', label)) or label.startswith('none')
 
 
-# (strategy -> (p(TP1 before the stop), n, upper end of p's 95% Wilson interval)) measured by the journal's replay
+# (strategy -> (p(TP1 before the stop), n, upper end of p's 95% shrinkage interval)) measured by the journal's replay
 # (journal.refresh_hit_rates, hourly): the entry is vetoed when its expectancy is negative even at the upper end
 # setup -> (p TP1, n, upper 95% of p TP1, upper of p TP2, upper of p TP3)
 HIT_RATE: Dict[str, Tuple[float, ...]] = {}
@@ -212,7 +212,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
     - risk must be >= cost_guard x the round-trip execution cost (audit F09: the text said 3x / 'a third of the
       risk'; the rule is CONFIG.levels.cost_guard, 1 since eng-108 - the risk at least pays one round trip)
     - with a journal-measured p(TP_k before the stop) for the setup the entry must have a positive expectancy of its
-      three thirds, sum_k (p_k x R:R_k - (1 - p_k)) / 3 at the upper ends of the Wilson intervals; the method's
+      three thirds, sum_k (p_k x R:R_k - (1 - p_k)) / 3 at the upper ends of the shrinkage intervals; the method's
       minimum R:R (Strategy.min_rr, else the global one) holds as well.
     """
     if direction not in (-1, 1) or not targets or len(targets) != len(sources):
