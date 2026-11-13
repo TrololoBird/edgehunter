@@ -50,7 +50,13 @@ def load_pretrained() -> Optional[Dict]:
     if not os.path.exists(path):
         return None
     try:
-        return safe_pickle_load(path, os.path.dirname(path))
+        state = safe_pickle_load(path, os.path.dirname(path))
+        from core.model_provenance import validate_manifest
+        valid, reason = validate_manifest(path, state, require=True)
+        if not valid:
+            logging.getLogger(__name__).warning("Pretrained model rejected: %s", reason)
+            return None
+        return state
     except Exception as e:
         logging.getLogger(__name__).warning(f"Pretrained models unreadable ({type(e).__name__} {e}); run pretrain.py again")
         return None

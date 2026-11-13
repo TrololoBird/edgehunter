@@ -37,7 +37,9 @@ def _implementation_hash() -> str | None:
 
 
 SOURCE_COMMIT = os.environ.get('EDGEHUNTER_SOURCE_COMMIT') or _git('rev-parse', 'HEAD')
-SOURCE_DIRTY = bool(os.environ.get('EDGEHUNTER_SOURCE_DIRTY')) or bool(_git('status', '--porcelain'))
+_dirty_override = os.environ.get('EDGEHUNTER_SOURCE_DIRTY')
+SOURCE_DIRTY = ((_dirty_override.strip().lower() in {'1', 'true', 'yes', 'on'})
+                if _dirty_override is not None else bool(_git('status', '--porcelain')))
 IMPLEMENTATION_HASH = os.environ.get('EDGEHUNTER_IMPLEMENTATION_HASH') or _implementation_hash()
 
 

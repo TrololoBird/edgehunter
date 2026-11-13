@@ -715,8 +715,11 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
         'success': success.state(), 'regime_history': regime_model.history, 'summary': summary,
     }
     atomic_write(CONFIG.pretrain.path, pickle.dumps(state))
+    from core.model_provenance import write_manifest
+    manifest = write_manifest(CONFIG.pretrain.path, state)
     logger.info(f"pretrain: P(edge) learned {learned} rows ({success.drifts} drift resets, accuracy "
-                f"{(success.accuracy or 0):.1%}); saved {CONFIG.pretrain.path} in {time.time() - started:.0f}s")
+                f"{(success.accuracy or 0):.1%}); saved {CONFIG.pretrain.path} and {manifest} "
+                f"in {time.time() - started:.0f}s")
     for g, (n, e) in sorted(summary.items(), key=lambda kv: -kv[1][0]):
         logger.info(f"pretrain:   {g:24} n={n:6}  Edge 4h {e * 100:+.3f}%")
     return state
