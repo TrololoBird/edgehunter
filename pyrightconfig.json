@@ -1,0 +1,19 @@
+{
+  "include": ["core"],
+  "exclude": [
+    ".venv",
+    "data",
+    "models",
+    "research",
+    "docs",
+    "history_cache",
+    "pretrain_rows"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "useLibraryCodeForTypes": false,
+  "analyzeUnannotatedFunctions": false,
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none"
+}

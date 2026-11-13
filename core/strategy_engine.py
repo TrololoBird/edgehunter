@@ -15,7 +15,7 @@ class MarketSnapshot:
     candles: tuple[tuple[Any, ...], ...] = ()
     features: Mapping[str, Any] = MappingProxyType({})
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.asof_ms) < 0:
             raise ValueError('snapshot asof_ms must be non-negative')
         if not self.symbol:

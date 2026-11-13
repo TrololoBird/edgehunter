@@ -12,12 +12,13 @@ def scenario_gate(p_base: Optional[float], reward: float, risk: float, cost: flo
     the round-trip price cost. A missing base probability is reported but does
     not silently become a trade approval.
     """
-    values = (p_base, reward, risk, cost)
-    if not all(v is None or math.isfinite(float(v)) for v in values) or risk <= 0 or reward < 0 or cost < 0:
+    if (p_base is not None and not math.isfinite(float(p_base))) or \
+            not all(math.isfinite(float(v)) for v in (reward, risk, cost)) or risk <= 0 or reward < 0 or cost < 0:
         return {'p_base': p_base, 'p_breakeven': None, 'ev_net': None, 'trade_gate': False,
                 'reason': 'invalid_inputs'}
     p_be = (risk + cost) / (risk + reward)
-    ev = None if p_base is None else float(p_base) * (reward - cost) - (1.0 - float(p_base)) * (risk + cost)
-    approved = bool(ev is not None and ev > 0 and float(p_base) >= p_be)
+    base = float(p_base) if p_base is not None else None
+    ev = None if base is None else base * (reward - cost) - (1.0 - base) * (risk + cost)
+    approved = bool(base is not None and ev is not None and ev > 0 and base >= p_be)
     return {'p_base': p_base, 'p_breakeven': p_be, 'ev_net': ev, 'trade_gate': approved,
             'reason': 'ok' if approved else 'non_positive_ev_or_insufficient_probability'}
