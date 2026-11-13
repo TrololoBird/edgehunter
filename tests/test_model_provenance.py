@@ -2,6 +2,7 @@ import json
 
 import core.model_provenance as provenance
 from tools.model_audit import audit
+import scenarios
 
 
 def test_model_manifest_detects_tampering(tmp_path, monkeypatch):
@@ -42,3 +43,11 @@ def test_model_audit_does_not_load_legacy_pickles(tmp_path):
     result = audit(str(tmp_path))
     assert result['status'] == 'attention_required'
     assert result['legacy_unverified'] == ['models/legacy.pkl']
+
+
+def test_scenario_model_requires_manifest(tmp_path):
+    path = tmp_path / 'scenario_prob.pkl'
+    path.write_bytes(b'not-loaded')
+    scenarios._model_cache.clear()
+    assert scenarios.load_model(str(path)) is None
+    assert scenarios.SCENARIO_MODEL_STATUS['reason'] == 'manifest_missing'

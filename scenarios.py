@@ -17,19 +17,21 @@ previous day / week and session highs / lows, the 8-day volume profile of the 1h
 import errors
 import math
 import os
-import pickle
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
 from levels import atr_of, resample_htf
 from zones import RawLevel, Zone, day_levels, equal_pools, merge, round_levels, swings, volume_profile
+from security import safe_pickle_load
+from core.model_provenance import manifest_path, validate_manifest
 
 MODEL_PATH = os.path.join('models', 'scenario_prob.pkl')
 HOUR_MS = 3_600_000
 FEATURES = ('d_up', 'd_down', 's_up', 's_down', 'p_geo', 'trend_1h', 'trend_4h', 'ret_24h', 'ret_7d', 'range_pos',
             'vol_ratio', 'btc_ret_24h', 'btc_ret_7d', 'btc_trend_4h', 'n_up', 'n_down')
 _model_cache: Dict = {}
+SCENARIO_MODEL_STATUS = {'status': 'not_loaded', 'reason': None}
 # Measured on the archive (research/level_triggers.md: 478 coins, 2024-01..2026-08, 772k trades, the newer half):
 # TP1 hit rate, the geometric (random-walk) rate of the same entry / stop / target, net R to TP1
 TRIGGER_STATS = {
@@ -214,13 +216,26 @@ def load_model(path: str = MODEL_PATH) -> Optional[Dict]:
     try:
         mtime = os.path.getmtime(path)
     except OSError:
+        SCENARIO_MODEL_STATUS.update(status='missing', reason='artifact_missing')
         return None
     if _model_cache.get('mtime') != mtime:
         try:
-            with open(path, 'rb') as fh:
-                _model_cache.update(mtime=mtime, model=pickle.load(fh))
+            sidecar = manifest_path(path)
+            if not os.path.isfile(sidecar):
+                SCENARIO_MODEL_STATUS.update(status='rejected', reason='manifest_missing')
+                _model_cache.update(mtime=mtime, model=None)
+                return None
+            model = safe_pickle_load(path, os.path.dirname(path))
+            valid, reason = validate_manifest(path, model, require=True)
+            if not valid:
+                SCENARIO_MODEL_STATUS.update(status='rejected', reason=reason)
+                _model_cache.update(mtime=mtime, model=None)
+                return None
+            _model_cache.update(mtime=mtime, model=model)
+            SCENARIO_MODEL_STATUS.update(status='accepted', reason='manifest_valid')
         except Exception as e:
             errors.report('scenarios.model', e, f"{path} unreadable: scenario cards without the model")
+            SCENARIO_MODEL_STATUS.update(status='rejected', reason=type(e).__name__)
             _model_cache.update(mtime=mtime, model=None)
     m = _model_cache.get('model')
     return m if m and m.get('passed') else None
