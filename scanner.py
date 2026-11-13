@@ -2038,6 +2038,7 @@ class Scanner:
                            'backfill': dict(getattr(self.fetcher, 'backfill_stats', {})),
                            'okx_flow_seed': dict(getattr(self.ext, 'okx_seed_stats', {})),
                            'model_status': dict(getattr(self.journal, 'model_status', {})),
+                           'scenario_model_status': dict(__import__('scenarios').SCENARIO_MODEL_STATUS),
                            'pool_metrics': dict(getattr(self, '_pool_metrics', {})),
                            'backfill_jobs': {
                                'counts': dict(__import__('collections').Counter(
