@@ -106,7 +106,7 @@ def _policy_text(value) -> Optional[str]:
 
 logger = logging.getLogger(__name__)
 
-FEATURE_SCHEMA_VERSION = 'features-v1'
+FEATURE_SCHEMA_VERSION = 'features-v2'
 MODEL_STATUS = {'pretrained': 'not_loaded', 'reason': None}
 
 # Horizon label -> minutes after the signal
@@ -344,6 +344,7 @@ EXTRA_COLUMNS = {
     'price_z': 'REAL', 'oi_z': 'REAL', 'spot_delta_1h': 'REAL', 'perp_delta_1h': 'REAL', 'perp_led': 'INTEGER',
     'spot_cvd_5m': 'REAL', 'futures_cvd_5m': 'REAL', 'agg_cvd_5m': 'REAL', 'agg_oi_change_5m': 'REAL',
     'agg_oi_change_1h': 'REAL', 'oi_venues': 'INTEGER',
+    'iceberg_reason': 'TEXT',
     'agg_ready': 'INTEGER', 'top_venue': 'TEXT', 'top_venue_share': 'REAL', 'liq_long_5m': 'REAL',
     'liq_short_5m': 'REAL', 'cluster': 'INTEGER', 'depth_imb': 'REAL', 'top_ratio': 'REAL', 'basis': 'REAL',
     'sec_into_candle': 'INTEGER',
@@ -442,7 +443,7 @@ FEATURE_KEYS = {
     'weekend': 'weekend', 'liq_on_wick': 'liq_on_wick', 'oi_change_sweep': 'oi_change_sweep', 'adx': 'adx',
     'trend_w': 'trend_w', 'breadth_w': 'breadth_w',
     'dvol_btc': 'dvol_btc', 'dvol_chg_1h': 'dvol_chg_1h', 'pc_oi_btc': 'pc_oi_btc', 'funding_spread': 'funding_spread',
-    'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb', 'kimchi_prem': 'kimchi_prem', 'news': 'news', 'news_age_h': 'news_age_h',
+    'okx_book_imb': 'okx_book_imb', 'bybit_book_imb': 'bybit_book_imb', 'kimchi_prem': 'kimchi_prem', 'iceberg_reason': 'iceberg_reason', 'news': 'news', 'news_age_h': 'news_age_h',
     'iceberg_net_5m': 'iceberg_net_5m', 'iceberg_n_5m': 'iceberg_n_5m', 'daily_bias': 'daily_bias', 'weekly_bias': 'weekly_bias', 'btc_bias': 'btc_bias', 'vpin': 'vpin', 'vol_entropy': 'vol_entropy', 'lead_venue': 'lead_venue', 'lead_corr': 'lead_corr',
     'prem_1h': 'prem_1h', 'prem_z': 'prem_z', 'funding_1h': 'funding_1h', 'oi_vol': 'oi_vol', 'er_1h': 'er_1h',
     'chop_1h': 'chop_1h', 'rs_btc_z': 'rs_btc_z',

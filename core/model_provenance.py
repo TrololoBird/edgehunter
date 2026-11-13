@@ -15,7 +15,7 @@ from typing import Any, Dict
 
 from core.provenance import fields as provenance_fields
 
-FEATURE_SCHEMA_VERSION = "features-v1"
+FEATURE_SCHEMA_VERSION = "features-v2"
 
 
 def _sha256(path: str | os.PathLike[str]) -> str:

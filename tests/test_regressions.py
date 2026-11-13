@@ -49,7 +49,7 @@ def test_card_geometry_is_side_aware(direction, levels, valid):
 
 
 def test_runtime_feature_contract_is_persisted():
-    assert {'agg_oi_change_1h', 'oi_venues', 'feature_schema_version'} <= set(EXTRA_COLUMNS)
+    assert {'agg_oi_change_1h', 'oi_venues', 'iceberg_reason', 'feature_schema_version'} <= set(EXTRA_COLUMNS)
 
 
 def test_depth_pruning_bounds_changed_levels():
