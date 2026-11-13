@@ -233,6 +233,11 @@ class Scanner:
         self._context_task: Optional[asyncio.Task] = None
         self._maps_pool = None          # ProcessPoolExecutor (one worker) for level maps: see _maps_executor
         self._recorder_pool = None      # isolated from maps: recording must survive a map-worker crash
+        self._pool_metrics = {
+            'maps_passes': 0, 'maps_jobs': 0, 'maps_payload_bytes': 0,
+            'maps_wall_ms': 0.0, 'maps_max_payload_bytes': 0,
+            'maps_max_wall_ms': 0.0, 'maps_broken': 0,
+        }
         self._blind_at: Dict[Tuple[str, str], float] = {}   # (symbol, strategy) -> when a history gate last stopped it
         from strategies.loopside import LoopDetectors
         # eng-59: the loop-side detectors live in strategies/loopside.py (the archive replay runs the same code)
@@ -1131,12 +1136,26 @@ class Scanner:
             return {}
         corr = self._correlates() if any(job[8] for job in jobs) else None
         from concurrent.futures.process import BrokenProcessPool
+        started = time.perf_counter()
         try:
+            # Measure the actual IPC object, off the event loop. This is
+            # telemetry only; workers still receive compact columns/arrays.
+            payload_bytes = await asyncio.to_thread(
+                lambda: len(__import__('pickle').dumps((jobs, corr), protocol=5)))
             out = await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs, corr)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            metrics = self._pool_metrics
+            metrics['maps_passes'] += 1
+            metrics['maps_jobs'] += len(jobs)
+            metrics['maps_payload_bytes'] = payload_bytes
+            metrics['maps_max_payload_bytes'] = max(metrics['maps_max_payload_bytes'], payload_bytes)
+            metrics['maps_wall_ms'] = elapsed_ms
+            metrics['maps_max_wall_ms'] = max(metrics['maps_max_wall_ms'], elapsed_ms)
             for err in out.pop('__errors__', ()):
                 errors.report('scanner.maps', RuntimeError(err), f"Level map failed: {err}")
             return out
         except BrokenProcessPool:
+            self._pool_metrics['maps_broken'] += 1
             logger.warning(f"Maps worker died during a pass of {len(jobs)} maps: retried on the next pass")
             return {}
 
@@ -2019,6 +2038,7 @@ class Scanner:
                            'backfill': dict(getattr(self.fetcher, 'backfill_stats', {})),
                            'okx_flow_seed': dict(getattr(self.ext, 'okx_seed_stats', {})),
                            'model_status': dict(getattr(self.journal, 'model_status', {})),
+                           'pool_metrics': dict(getattr(self, '_pool_metrics', {})),
                            'gc': gc_line, 'errors': failed}
             await self._minute_hole_pass()
             bf = getattr(self.fetcher, 'backfill_stats', {})
