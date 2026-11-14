@@ -376,9 +376,9 @@ class MLConfig:
     regime_history: int = 20_000
     regime_min_history: int = 60
     regime_refit_sec: int = 86_400
-    # Mute a setup in the current regime once its journal Edge there has >= regime_veto_min_n results and the
-    # upper end of its 90% interval is below 0 (journaled with vetoed='regime')
-    regime_veto: bool = True
+    # Keep regime performance as telemetry only. A negative regime sample must never switch a playbook off on the
+    # demo account; it is still journaled with vetoed='regime' for later analysis.
+    regime_veto: bool = False
     regime_veto_min_n: int = 30
     # False discovery rate of the journal's automatic rules (regime mutes, promoted confirmations): Benjamini-
     # Hochberg over all the groups tested at once
@@ -675,12 +675,9 @@ class StrategiesConfig:
     entry timeframe is 3-6x finer than the structure (Elder's factor of ~5): 15m -> 5m, 1h -> 15m, 4h -> 1h. Sizes are
     in 15m ATRs; lifetimes are (waiting, trigger in the zone, open trade) seconds.
     """
-    # Every strategy produces cards again (eng-10, the owner's decision 2026-09-30): the archive replay cannot see the
-    # live-only inputs (confirmations from spot / other venues / footprint, liquidations, books), and a disabled
-    # strategy produced no card, so no entry, no confirmations and no replay were ever measured live. Setups that lost
-    # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
-    # CLAUDE.md ("Live verdict"): kept or deleted from the code.
-    # oi_build stays listed but its setups are off through disabled_setups (eng-144)
+    # Every registered playbook produces cards and remains enabled in the demo run. Archive results and live journal
+    # performance are observations; neither is allowed to disable a playbook. Setups that lost on the archive are
+    # marked on their cards (`archive_negative`) for reporting only.
     enabled: tuple = ('continuation', 'wyckoff', 'cascade', 'sweep', 'silver_bullet', 'breakout', 'supply_demand', 'value_area', 'auction',
                       'trendline_break', 'trendline_touch', 'bollinger_wm', 'bollinger_method3', 'bollinger_method1', 'orb', 'connors', 'pump_start', 'dump_start', 'pump_top',
                       'dump_bounce', 'cup_handle', 'po3', 'oi_build')
@@ -688,15 +685,15 @@ class StrategiesConfig:
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
     # is unknown, a head fake comes first) and it is no Wyckoff phase - journaled, no card (eng-30, classic rule)
-    # eng-55 PUMP TOP: a short against the pump at its first turn - the archive's FADE (-0.08R on 560 trades
-    # Apr-Sep 2026, -0.19R on 60%+ pumps, negative in every period and split): journaled, no card
+    # eng-55 PUMP TOP: a short against the pump at its first turn. The archive result is displayed on the card and
+    # remains available for the demo journal; it is not an enable/disable switch.
     # eng-83 ORB UP / DOWN: Crabel's ORB lost net of costs on 14 months of Binance 15m / 5m (research/exit_bt):
     # the bot's daily-open variant -0.07R on 9.4k holdout trades (43 coins), no exit rule fixed it (breakeven,
     # chandelier 3/6 ATR, 2R target, partials, 8h); session opens (Asia / London / NY, 15-120m ranges, Stretch or wide
     # 0.5-1 daily ATR stops) negative after 0.20% too; the only gross edge (majors, London / NY) is 0.05-0.1% a trade,
     # below the costs: journaled, no card
-    # eng-88: OI SIGNAL LONG and PUMP START off - after the signal the coin lagged the market by 0.8% at 15 minutes and
-    # 1.5-2.4% at 1-2h, in rising and falling markets alike (minute marks 11-13.10), and lost on the demo
+    # OI BUILD and PUMP START stay active so their live data and outcomes are measured on the demo account. Historical
+    # losses are retained as card/journal metadata and do not change eligibility.
     # eng-101, shadow mode: filters / detector confirmations with no proven effect on either journal (server
     # 11-14.10, laptop 30.09-11.10) no longer block - the entry is taken and journaled with shadow_veto = the
     # reasons that WOULD have vetoed it, so card_r of shadowed vs clean entries measures each rule on live trades.
@@ -722,8 +719,7 @@ class StrategiesConfig:
                             'htf_bias', 'htf_conflict', 'htf_range', 'rg_breakout_in_range', 'rg_countertrend',
                             'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day',
                             'sweep_no_htf_bias')   # eng-151 (external audit #1): shadow, outcome journaled
-    # eng-157, the owner's order: EVERY setup on - cards and journal for all, data first, the verdict later
-    # (was: BULL E, BULL A, PUMP TOP, PUMP START, OI BUILD LONG / SHORT)
+    # Demo policy: every registered setup is on. Keep this empty; an entry here would be an explicit strategy shutdown.
     disabled_setups: tuple = ()
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
@@ -1202,13 +1198,9 @@ class ExecutorConfig:
     # owner 2026-10-18 (live demo 10-11..10-17: 3 longs in one 15 min all stopped, LDO/ATOM/VIRTUAL, ONDO/FIL/NIGHT,
     # MAGIC/ALGO/APE): at most one demo entry per direction within cluster_entry_sec (0 = off)
     cluster_entry_sec: int = 0       # eng-148, the owner: off - the demo shows every trade
-    # owner 2026-10-18: no demo trade of these setups (live demo 10-11..10-17: 23 of 30 lost, -17.8R of -33.8R, BTC up
-    # or down alike); their cards are still journaled
-    # eng-145, the owner (live journal eng-82..144): market_profile 12 of 13 stopped, bollinger 18 of 20 without TP1
-    # stopped, breakout (the Turtles' ~16% 2N stop, MFE 0.3R; BB1) -1.25R - journaled, no demo trades
-    # eng-173, the owner 2026-10-27: OI BUILD LONG (63 cards -26.1R, every version negative) and SHORT (85 cards -15.5R)
-    # leave the demo; cards stay in signal_book (card_r / trade_mfe_r keep accumulating), the demo row is SETUP_OFF
-    demo_off_setups: tuple = ('OI BUILD LONG', 'OI BUILD SHORT')
+    # Every setup is eligible for demo execution. Keep this empty so performance history, archive labels, and regime
+    # statistics cannot turn a playbook into SETUP_OFF.
+    demo_off_setups: tuple = ()
     daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 

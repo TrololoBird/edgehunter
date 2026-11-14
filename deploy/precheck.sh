@@ -57,4 +57,17 @@ expected = {
 missing = {name: sorted(values) for name, values in expected.items() if values}
 if missing:
     raise SystemExit(f'incomplete strategy tables: {missing}')
+
+# Demo policy: every registered playbook must stay enabled.  Refuse a start if a local override or a future edit
+# reintroduces a strategy/demo-off list, regime auto-veto, or performance kill switch.
+if set(STRATEGIES) - enabled:
+    raise SystemExit(f'disabled registered strategies: {sorted(set(STRATEGIES) - enabled)}')
+if CONFIG.strategies.disabled_setups:
+    raise SystemExit(f'demo strategy shutdowns are not allowed: {CONFIG.strategies.disabled_setups!r}')
+if CONFIG.executor.demo_off_setups:
+    raise SystemExit(f'demo-off setups are not allowed: {CONFIG.executor.demo_off_setups!r}')
+if CONFIG.ml.regime_veto:
+    raise SystemExit('regime_veto must remain false in the demo run')
+if CONFIG.executor.strategy_kill_r > 0:
+    raise SystemExit('strategy_kill_r must remain zero in the demo run')
 PY

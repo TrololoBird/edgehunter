@@ -181,9 +181,8 @@ _REAL_NO = ('no_data', 'no_leg', 'no_room', 'no_anchor', 'no_test_data')
 # One list for _enter and the dashboard (audit N33: the page described setups by a hand-kept table)
 # audit (Connors): the book's long (RSI2X LONG) is traded; our eng-84 cross-back entry (RSI2 LONG / SHORT) and the
 # mirrored short the book does not state (RSI2X SHORT) are measured in shadow
-# eng-169f (the owner, 2026-10-26: "the demo account has no limits"): no setup is hidden from the signal journal by
-# this table.  The explicit execution policy is carried as ``sig['demo_eligible']`` from CONFIG.executor, so OI BUILD
-# remains measurable while its configured demo-off status is visible to journal and executor.
+# The demo policy keeps every registered setup visible to the signal journal and eligible for execution. The explicit
+# execution field is still carried as ``sig['demo_eligible']`` so journal and executor share one auditable contract.
 SHADOW_SETUPS: tuple = ()
 
 
@@ -1558,8 +1557,8 @@ class SignalBook:
                confirms: Dict) -> TrackedSignal:
         """Enter, or journal the entry that would have been taken with the veto reason (the card keeps waiting)."""
         entered_at = now_ms / 1000
-        # Keep the execution policy on the signal itself so the journal and executor cannot silently disagree about
-        # a setup that is shadow-only (currently OI BUILD).  The config tuple remains the single source of truth.
+        # Keep the execution policy on the signal itself so the journal and executor cannot silently disagree. The
+        # config tuple remains the single source of truth and is intentionally empty for this demo run.
         s.sig['demo_eligible'] = int(s.group_key not in CONFIG.executor.demo_off_setups)
         # A signal without a fresh market/flow coverage contract remains journalable but cannot become a live entry.
         # This is deliberately fail-closed: older/replay signals that lack the field are not silently treated as fresh.
@@ -1572,8 +1571,8 @@ class SignalBook:
             elif not live_ok(now_ms):
                 # eng-168s (audit #6): fail-closed - no fresh macro calendar, no NEW entry (open trades are managed)
                 reason = 'macro_unknown'
-        # eng-106 / eng-127: optional shadow vetoes are measured beside the traded rules (SHADOW_SETUPS); execution
-        # eligibility is a separate explicit field so a demo-off setup cannot be mistaken for a vetoed signal.
+        # Optional shadow vetoes are measured beside the traded rules (SHADOW_SETUPS); execution eligibility is a
+        # separate explicit field so a signal status cannot be mistaken for a setup disable.
         if reason is None:
             reason = shadow_of(s.group_key)
         if reason is None and s.mode == 'supply_demand' and (s.plan or {}).get('sd_score', 10) < 8:

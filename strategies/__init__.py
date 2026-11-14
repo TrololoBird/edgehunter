@@ -25,11 +25,11 @@ registry as it stands (eng-145; one methodology = one strategy name, several pla
     pump_start / dump_start / pump_top / dump_bounce         pump.py              separate pump playbooks
     cup_handle      CUP HANDLE                               cup_handle.py        O'Neil, 1h / 4h
     po3             PO3 LONG / SHORT                         po3.py               ICT power of three, Asian range
-    oi_build        OI BUILD LONG / SHORT                    oi_build.py          journaled; demo-off (CONFIG.executor.demo_off_setups)
+    oi_build        OI BUILD LONG / SHORT                    oi_build.py          demo-eligible; outcomes remain journaled
 
-Which setups trade on the demo account: CONFIG.executor.demo_off_setups; journaled-only setups: SHADOW_SETUPS in
-signal_book.py. Detection: Tier-0 (impulse), structure.build_context (15m closes, worker process), loopside.py
-(1m / daily candles on the loop).
+All registered setups are eligible on the demo account. CONFIG.executor.demo_off_setups and
+CONFIG.strategies.disabled_setups are intentionally empty; archive and regime results are telemetry only. Detection:
+Tier-0 (impulse), structure.build_context (15m closes, worker process), loopside.py (1m / daily candles on the loop).
 """
 from typing import Dict, Optional, Tuple
 
@@ -86,7 +86,7 @@ __all__ = ["PlanInput", "Strategy", "STRATEGIES", "SETUPS", "strategy_of"]
 
 def unknown_names() -> Dict[str, list]:
     """audit-80: strategy names in the mode tables (regime / bias / confirm) that no registered strategy carries - a
-    deleted strategy's leftover (the oi_signal outage). deploy/precheck.sh prints them; 'cascade' is a shadow mode."""
+    deleted strategy's leftover (the oi_signal outage). deploy/precheck.sh prints them; cascade is a registered playbook."""
     from strategies import bias, confirm, regime
     known = set(STRATEGIES) | {'cascade'}
     tables = {'regime.TREND_MODES': regime.TREND_MODES, 'regime.RANGE_MODES': regime.RANGE_MODES,

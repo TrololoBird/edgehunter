@@ -727,7 +727,7 @@ class DemoExecutor:
         return None
 
     def entry_gate(self, s) -> Optional[str]:
-        """Owner 2026-10-18: one demo entry per direction per cluster_entry_sec; demo_off_setups are not traded."""
+        """Apply the shared demo eligibility field, then the optional per-direction cluster limit."""
         cfg = CONFIG.executor
         d = s.direction
         demo_eligible = getattr(s, 'sig', None) or {}
