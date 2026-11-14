@@ -178,7 +178,15 @@ def merge_live_candle(raw_df: pl.DataFrame, row: Optional[dict], finalized_until
     last_ts = raw_df['timestamp'][-1]
     ts = row['timestamp']
     if ts < last_ts:
-        return raw_df, False
+        # A late websocket correction can arrive after newer finalized candles.  Dropping every older row made the
+        # REST/WS merge keep the stale first value forever.  Replace only an existing timestamp; an unknown ancient
+        # row is outside the rolling frame and is safely ignored.
+        if not raw_df.filter(pl.col('timestamp') == ts).height:
+            return raw_df, False
+        raw_df = raw_df.filter(pl.col('timestamp') != ts)
+        new_row = pl.DataFrame({c: [row.get(c)] for c in raw_df.columns}, schema=raw_df.schema)
+        return pl.concat([raw_df, new_row], how='vertical').sort('timestamp').tail(
+            CONFIG.timeframe.rest_lookback_candles).rechunk(), False
 
     needs_backfill = False
     if ts == last_ts:
@@ -202,6 +210,9 @@ TIER0_COLUMNS = (
     'agg_cvd_5m', 'agg_oi_change_5m', 'top_venue_share', 'top_venue_net', 'venues_active', 'spot_cvd_5m',
     'futures_cvd_5m', 'oi_chg_15m', 'oi_chg_60m',
     'rush_n_10s', 'rush_n_30s', 'rush_net_30s', 'rush_usd_30s', 'rush_z_30s', 'flow_depth_5m',
+    # Explicit freshness/coverage contracts.  Missing is represented as NULL/NaN by callers and never as a positive
+    # default; the signal book fails closed before a live entry when the core contract is not fresh.
+    'data_quality_ok', 'flow_quality_ok', 'oi_quality_ok',
     # ml.AnomalyModel: IsolationForest score (lower = more unusual), its flag, and whether it is fitted
     'ml_score', 'ml_anomaly', 'ml_ready',
 )

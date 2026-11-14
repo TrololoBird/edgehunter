@@ -12,6 +12,7 @@ import asyncio
 import bisect
 import json
 import logging
+import math
 import sqlite3
 import threading
 
@@ -46,8 +47,11 @@ def shrinkage_upper(hits: int, n: int, prior: tuple[float, float] = (1.0, 1.0), 
     try:
         from scipy.stats import beta
         return float(beta.ppf(level, hits + prior[0], n - hits + prior[1]))
-    except (ImportError, TypeError, ValueError):
-        return wilson_upper(hits, n)
+    except ImportError as exc:
+        # Wilson and Beta posterior intervals are not interchangeable.  Falling back silently changed the shrinkage
+        # model on hosts without SciPy (and even returned exactly 1.0 for a perfect one-trade sample), which poisoned
+        # expectancy gates.  SciPy is a declared runtime dependency; fail closed if an incomplete environment starts.
+        raise RuntimeError('scipy is required for shrinkage_upper Beta posterior intervals') from exc
 
 
 def _anchor_json(plan: Optional[Dict]) -> Optional[str]:
@@ -335,6 +339,8 @@ EXTRA_COLUMNS = {
     # Signal-logic version that produced the row (NULL = before versioning)
     'logic_version': 'TEXT',
     'data_quality_ok': 'INTEGER',
+    'demo_eligible': 'INTEGER',
+    'quarantined': 'INTEGER', 'quarantine_reason': 'TEXT',
     # Levels of entry rows (levels.py) and their replay (levels.simulate)
     'entry': 'REAL', 'sl': 'REAL', 'tp1': 'REAL', 'tp2': 'REAL', 'tp3': 'REAL',
     'filled': 'INTEGER', 'outcome': 'TEXT', 'r_tp1': 'REAL', 'r_tp2': 'REAL',
@@ -362,7 +368,7 @@ EXTRA_COLUMNS = {
     # eng-1: the strategy and its anchor (JSON), the market / coin context (universe median and BTC moves, the coin's
     # 1h trend, last hour's ATR / ATR14) and the replay with the stop at breakeven after TP1 (exit at TP2)
     'strategy': 'TEXT', 'anchor': 'TEXT', 'mkt_1h': 'REAL', 'mkt_4h': 'REAL', 'btc_1h': 'REAL', 'btc_4h': 'REAL', 'mkt_1d': 'REAL', 'btc_1d': 'REAL', 'coin_trend': 'INTEGER',
-    'contract_id': 'TEXT', 'contract_source': 'TEXT', 'planned_r': 'REAL',
+    'contract_id': 'TEXT', 'contract_source': 'TEXT', 'geometry_source': 'TEXT', 'planned_r': 'REAL',
     'time_exit_policy': 'TEXT', 'trail_policy': 'TEXT', 'partial_policy': 'TEXT', 'risk_units_planned': 'REAL',
     'vol_ratio': 'REAL', 'r_be': 'REAL', 'outcome_h': 'INTEGER',
     # eng-2: the coin's 24h futures quote volume (liquidity: patterns on thin coins are one order's work)
@@ -777,6 +783,19 @@ class SignalJournal:
             if column not in existing:
                 safe_column = identifier(column, set(EXTRA_COLUMNS))
                 self.conn.execute(f"ALTER TABLE signals ADD COLUMN {safe_column} {sql_type}")
+        # Historical rows were written before the shared contract gate.  Keep them for auditability, but remove
+        # malformed entries from performance metrics instead of letting them masquerade as executable trades.
+        self.conn.execute(
+            "UPDATE signals SET quarantined = 1, quarantine_reason = CASE "
+            "WHEN entry IS NOT NULL AND sl IS NOT NULL AND direction * (entry - sl) <= 0 THEN 'wrong stop side' "
+            "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= entry) OR (direction = -1 AND tp1 >= entry)) THEN 'wrong TP1 side' "
+            "WHEN rr_tp1 IS NOT NULL AND rr_tp1 < 1 AND COALESCE(low_rr, 0) = 0 AND COALESCE(vetoed, '') = '' THEN 'low RR without veto' "
+            "ELSE COALESCE(quarantine_reason, 'legacy malformed geometry') END "
+            "WHERE kind = 'entry' AND ("
+            "(entry IS NOT NULL AND sl IS NOT NULL AND direction * (entry - sl) <= 0) OR "
+            "(tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= entry) OR (direction = -1 AND tp1 >= entry))) OR "
+            "(rr_tp1 IS NOT NULL AND rr_tp1 < 1 AND COALESCE(low_rr, 0) = 0 AND COALESCE(vetoed, '') = '')"
+            ")")
 
     def _insert(self, rows: List[Dict]):
         if not rows:
@@ -791,6 +810,11 @@ class SignalJournal:
 
     @staticmethod
     def _base_row(ts_ms: int, symbol: str, kind: str, group_key: str, direction: int, price: float, sig: Dict) -> Dict:
+        quality_value = sig.get('data_quality_ok')
+        try:
+            quality_value = None if quality_value is None or not math.isfinite(float(quality_value)) else int(float(quality_value) >= 1.0)
+        except (TypeError, ValueError):
+            quality_value = None
         row = {
             'ts_ms': ts_ms, 'symbol': symbol, 'kind': kind, 'group_key': group_key, 'direction': direction,
             'price': price, 'long_score': sig.get('long_score', 0), 'short_score': sig.get('short_score', 0),
@@ -800,7 +824,12 @@ class SignalJournal:
             'delta_ratio': sig.get('delta_ratio', 0.0), 'funding_8h': sig.get('funding_rate', 0.0),
             'funding_hours': sig.get('funding_interval_h'),           # review V09: the contract's funding interval
             'whale_net_5m': sig.get('whale_net_5m', 0.0), 'logic_version': CONFIG.journal.logic_version,
-            'data_quality_ok': int(bool(sig.get('data_quality_ok', True))),
+            # Missing freshness/coverage is NULL.  A default of True turned rows from a dead stream into apparently
+            # valid observations and let downstream entry/statistics code treat absent quality as a pass.
+            'data_quality_ok': quality_value,
+            'demo_eligible': (None if sig.get('demo_eligible') is None else int(bool(sig.get('demo_eligible')))),
+            'quarantined': int(bool(sig.get('quarantined'))) if sig.get('quarantined') is not None else 0,
+            'quarantine_reason': sig.get('quarantine_reason'),
         }
         row.update(provenance_fields())
         row['feature_schema_version'] = FEATURE_SCHEMA_VERSION
@@ -887,6 +916,7 @@ class SignalJournal:
                     'setup_ts_ms': int(tracked.created * 1000), 'strategy': tracked.mode,
                     'contract_id': (tracked.plan or {}).get('contract_id') or tracked.group_key,
                     'contract_source': (tracked.plan or {}).get('contract_source'),
+                    'geometry_source': lv.get('geometry_source'),
                     'planned_r': lv.get('rr_blend'),
                     'time_exit_policy': (tracked.plan or {}).get('time_exit') or tracked.mode,
                     'trail_policy': _policy_text((tracked.plan or {}).get('trail') or ((tracked.plan or {}).get('exit') or {}).get('tp')),
@@ -941,6 +971,7 @@ class SignalJournal:
         row.update({'reason': tracked.finish_reason + (f" | {notes[-1]}" if notes else ''), 'setup_ts_ms': int(tracked.created * 1000),
                     'strategy': tracked.mode, 'contract_id': plan.get('contract_id') or tracked.group_key,
                     'contract_source': plan.get('contract_source'),
+                    'geometry_source': lv.get('geometry_source'),
                     'planned_r': lv.get('rr_blend'),
                     'time_exit_policy': plan.get('time_exit') or tracked.mode,
                     'trail_policy': _policy_text(plan.get('trail') or (plan.get('exit') or {}).get('tp')),
@@ -1141,7 +1172,8 @@ class SignalJournal:
             self.conn.row_factory = sqlite3.Row
             try:
                 return self.conn.execute(
-                    "SELECT * FROM signals WHERE kind = 'entry' AND vetoed IS NULL AND card_r IS NOT NULL AND "
+                    "SELECT * FROM signals WHERE kind = 'entry' AND COALESCE(quarantined, 0) = 0 "
+                    "AND vetoed IS NULL AND card_r IS NOT NULL AND "
                     + where, args).fetchall()
             finally:
                 self.conn.row_factory = None
@@ -1273,7 +1305,8 @@ class SignalJournal:
         since = int((time.time() - 30 * 86400) * 1000)
         with self._lock:
             rows = self.conn.execute(
-                "SELECT group_key, outcome, logic_version FROM signals WHERE kind = 'entry' AND ts_ms >= ? AND "
+                "SELECT group_key, outcome, logic_version FROM signals WHERE kind = 'entry' "
+                "AND COALESCE(quarantined, 0) = 0 AND ts_ms >= ? AND "
                 "outcome IN ('TP1', 'TP2', 'TP3', 'SL') AND strategy IS NOT NULL AND tp1 IS NOT NULL AND "
                 "COALESCE(vetoed, '') NOT IN ('low_rr', 'flow_entry', 'weak_mss', 'reclaim_entry', 'bb3_shadow', 'rsi2x_shadow', "
                 "'tl_em_shadow', 'oi_shadow', 'cascade_shadow', 'rsi2_crossback_shadow', 'connors_short_shadow')",
@@ -1318,8 +1351,8 @@ class SignalJournal:
             return 0
         with self._lock:
             rows = self.conn.execute(
-                "SELECT ts_ms, direction, strategy, confirms, ret_4h FROM signals WHERE kind = 'entry' AND "
-                "ret_4h IS NOT NULL AND confirms IS NOT NULL AND logic_version = ?",
+                "SELECT ts_ms, direction, strategy, confirms, ret_4h FROM signals WHERE kind = 'entry' "
+                "AND COALESCE(quarantined, 0) = 0 AND ret_4h IS NOT NULL AND confirms IS NOT NULL AND logic_version = ?",
                 (CONFIG.journal.logic_version,)).fetchall()
         groups: Dict[Tuple[str, str], Dict[tuple, List[float]]] = {}
         for ts_ms, direction, strategy, confirms, ret in rows:
@@ -1348,7 +1381,7 @@ class SignalJournal:
         with self._lock:
             rows = self.conn.execute(
                 "SELECT strategy, symbol, ts_ms, direction, card_r, logic_version FROM signals "
-                "WHERE kind = 'entry' AND card_r IS NOT NULL "
+                "WHERE kind = 'entry' AND COALESCE(quarantined, 0) = 0 AND card_r IS NOT NULL "
                 "AND (vetoed IS NULL OR vetoed = '') AND strategy IS NOT NULL AND ts_ms >= ?", (since_ms,)).fetchall()
         return [r[:5] for r in rows if version_no(r[5]) >= floor]
 
@@ -1391,7 +1424,7 @@ class SignalJournal:
                 # replayed as a market fill (next minute's open + slippage) at the default liquidity's slippage
                 f"SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, {rets}, kind, funding_8h, "
                 f"funding_hours, limit_entry, volume_24h, anchor, atr_entry, zone_far FROM signals "
-                f"WHERE eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
+                f"WHERE COALESCE(quarantined, 0) = 0 AND eval_failed = 0 AND ({pending}) ORDER BY ts_ms LIMIT ?",
                 (*[due[label] for label in horizons], limit),
             )
             columns = [c[0] for c in cursor.description]
@@ -1517,7 +1550,8 @@ class SignalJournal:
         with self._lock:
             cursor = self.conn.execute(
                 "SELECT id, ts_ms, symbol, price, direction, entry, sl, tp1, tp2, tp3, kind, funding_8h, funding_hours, "
-                "limit_entry, volume_24h, anchor, atr_entry, zone_far FROM signals WHERE kind = 'entry' AND eval_failed = 0 AND entry IS NOT NULL "
+                "limit_entry, volume_24h, anchor, atr_entry, zone_far FROM signals WHERE kind = 'entry' "
+                "AND COALESCE(quarantined, 0) = 0 AND eval_failed = 0 AND entry IS NOT NULL "
                 "AND direction IS NOT NULL AND outcome IN ('OPEN', 'TP1', 'TP2') AND COALESCE(outcome_h, 8) < ? "
                 "AND ts_ms <= ? AND ts_ms >= ? ORDER BY ts_ms LIMIT ?", (hours, due, since, limit))
             columns = [c[0] for c in cursor.description]

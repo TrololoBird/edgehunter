@@ -363,9 +363,12 @@ def pullback_volume_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     """
     if not reference_minute_usd:
         return None
-    window = [c[5] for c in minute_candles if since_ms <= c[0] < until_ms]
+    selected = [c for c in minute_candles if since_ms <= c[0] < until_ms]
+    window = [c[5] for c in selected]
     if not window:
         return None
+    if not window_coverage_ok(selected, since_ms, until_ms, MINUTE_MS):
+        return False
     return sum(window) / len(window) <= CONFIG.levels.spring_test_volume_ratio * reference_minute_usd
 
 
@@ -379,12 +382,42 @@ def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     """
     if not spring_range:
         return None
-    # complete=False: the pullback window starts mid-bucket by design (its first 15m bar is the zone's part of it)
-    bars = resample([c for c in minute_candles if since_ms <= c[0] < until_ms], 15, until_ms, complete=False)
+    selected = [c for c in minute_candles if since_ms <= c[0] < until_ms]
+    if not selected:
+        return None
+    if not window_coverage_ok(selected, since_ms, until_ms, MINUTE_MS):
+        return False
+    # complete=False: the pullback window starts mid-bucket by design (its first 15m bar is the zone's part of it),
+    # while the explicit minute coverage check above rejects an inner gap that would otherwise look like a narrow test.
+    bars = resample(selected, 15, until_ms, complete=False)
     if not bars:
         return None
     avg = sum(b[2] - b[3] for b in bars) / len(bars)
     return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range / (max(spring_minutes, 15) / 15) ** 0.5
+
+
+def window_coverage_ok(candles: Sequence[Sequence[float]], since_ms: int, until_ms: int,
+                       interval_ms: int = MINUTE_MS, min_ratio: float = 1.0) -> bool:
+    """Whether a candle window contains every expected open without a transport gap.
+
+    The first bucket may start part-way through an interval (the caller's event time), but missing inner opens are
+    never interpreted as zero volume.  Duplicate timestamps count once, matching ``resample``'s correction policy.
+    """
+    if until_ms <= since_ms or interval_ms <= 0:
+        return False
+    starts = {int(c[0]) for c in candles if len(c) and since_ms <= int(c[0]) < until_ms}
+    if not starts:
+        return False
+    first = ((int(since_ms) + interval_ms - 1) // interval_ms) * interval_ms
+    last = (int(until_ms) - 1) // interval_ms * interval_ms
+    expected = list(range(first, last + interval_ms, interval_ms))
+    # A window that begins mid-interval does not require the pre-window portion of the first candle.
+    expected = [t for t in expected if t >= first and t < until_ms]
+    if not expected:
+        return False
+    ratio = len(starts & set(expected)) / len(expected)
+    contiguous = all(b - a == interval_ms for a, b in zip(sorted(starts), sorted(starts)[1:]))
+    return ratio >= min_ratio and contiguous and first in starts and last in starts
 
 
 # eng-124: bps of an executor.max_notional_usd market order walked through each coin's REST book (worst side, from the

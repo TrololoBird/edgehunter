@@ -140,6 +140,7 @@ class OiBuildStrategy(Strategy):
     ttl_key = 'oi_build_ttl'
     time_exit = 'fixed'
     default_tf = '15m'
+    requires = ('flow', 'oi')
 
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
         """Pring OI-build contract: hour extreme stop and opposite-liquidity targets."""
@@ -169,7 +170,7 @@ class OiBuildStrategy(Strategy):
         from strategies.maniac_strategies import _confirm_plan
         if x.sig.get('oi_build_oi60') is None:
             return None
-        exit = {'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': x.atr,
+        exit = {'stop': ['ref', x.sig['anchor_extreme']], 'tp': ['map', 0.0], 'atr': x.atr,
                 'stop_src': "beyond the hour's extreme", 'tp_src': 'the opposite liquidity'}
         targets, sources = _oi_targets(x, x.direction)
         return _confirm_plan(x, self.name, '15m', exit, "Pring: price and OI (faster than its average) together",

@@ -67,7 +67,9 @@ def _confirm_plan(x: PlanInput, name: str, tf: str, exit: Dict, zone_src: str, *
     half = overshoot(x.symbol, 'swing_15m', close, 'p50') or 0.25 * atr
     plan = base_plan(x, name, _anchor(sig, tf), tf, entry='confirm', confirm_only=True,
                      zone_lo=close - half, zone_hi=close + half, zone_src=zone_src, missable=False,
-                     exit=exit, zones=zones, targets=[], target_src=[], key=(sig['anchor_ts'], name), **fields)
+                     exit=exit, zones=zones, targets=[], target_src=[], key=(sig['anchor_ts'], name),
+                     confirmation_entry_price=float(close),
+                     confirmation_ts=int(sig.get('event_ts') or sig.get('anchor_ts') or 0), **fields)
     # Method-owned level exits are already complete contracts; do not send
     # them through the shared system-level target selector.
     level_targets, level_sources = [], []
@@ -82,6 +84,8 @@ def _confirm_plan(x: PlanInput, name: str, tf: str, exit: Dict, zone_src: str, *
     elif (exit.get('tp') or [None])[0] == 'trail':
         plan['contract_targets'] = []
         plan['contract_target_src'] = []
+        plan['allow_no_targets'] = True
+        plan['exit_manager'] = str(exit.get('tp_src') or 'trailing exit')
     return _finish(x, plan, close, sig.get('anchor_extreme'))
 
 
@@ -174,7 +178,7 @@ class SupplyDemandStrategy(_System):
                                   f"{big}, arrival {arrival})",
                          invalid=far, fix_invalid=True, missable=False, stop_ref=far,
                          # the opposing zones only (own_targets): TP1 the nearest, TP2 the next (the last repeats)
-                         exit={'stop': ['ref', 0.0], 'tp': ['level', targets[0], 0.0, None],
+                         exit={'stop': ['ref', far], 'tp': ['level', targets[0], 0.0, None],
                                'tp2': ['level', targets[1], 0.0, None], 'own_targets': True, 'atr': atr,
                                'stop_src': 'beyond the distal line', 'tp_src': 'the opposing 4h supply / demand zone (Seiden)'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
@@ -229,7 +233,7 @@ class AuctionStrategy(_System):
         sig = x.sig
         if sig.get('va_far') is None:
             return None
-        exit = {'stop': ['ref', 0.0], 'tp': ['level', sig['va_far'], 1.0, None], 'atr': x.atr, 'own_targets': True,
+        exit = {'stop': ['price', sig['anchor_extreme']], 'tp': ['level', sig['va_far'], 1.0, None], 'atr': x.atr, 'own_targets': True,
                 'stop_src': "beyond the failed probe's extreme", 'tp_src': 'value area opposite end (failed auction)'}
         return _confirm_plan(x, self.name, '15m', exit, 'back inside value after a probe without acceptance',
                              stop_ref=sig['anchor_extreme'], stop_ref_only=True)

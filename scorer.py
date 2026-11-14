@@ -101,7 +101,15 @@ class PhaseScorer:
             df = df.join(tier0, on='symbol', how='left', maintain_order='left')
         elif isinstance(tier0, dict) and tier0:
             # Tier-0 metrics are live scalars, broadcast onto every row like funding_rate
-            df = df.with_columns([pl.lit(float(tier0.get(c, 0.0)), dtype=pl.Float64).alias(c) for c in TIER0_COLUMNS])
+            def live_value(c):
+                value = tier0.get(c)
+                if value is None:
+                    return None
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+            df = df.with_columns([pl.lit(live_value(c), dtype=pl.Float64).alias(c) for c in TIER0_COLUMNS])
         if extras is not None and not extras.is_empty():
             df = df.join(extras, on='symbol', how='left', maintain_order='left')
         missing = [c for c in EXTRA_COLUMNS if c not in df.columns]
@@ -443,15 +451,31 @@ class PhaseScorer:
             'rule_anomaly': bool(row.get('rule_anomaly')),
             'agg_ready': bool(row.get('agg_ready')),
         }
+        quality_columns = {'data_quality_ok', 'flow_quality_ok', 'oi_quality_ok'}
         for c in TIER0_COLUMNS:
-            signal[c] = num(c)
+            # Quality is a tri-state contract.  Preserve NULL/NaN as unknown instead of turning it into the historic
+            # numeric zero/true defaults; the entry gate treats anything other than 1 as unavailable.
+            if c in quality_columns:
+                value = row.get(c)
+                signal[c] = None if value is None else float(value)
+            else:
+                signal[c] = num(c)
         return signal
 
 
 def _tier0_frame(tier0: Dict[str, Dict[str, float]]) -> pl.DataFrame:
     symbols = list(tier0)
+    quality_columns = {'data_quality_ok', 'flow_quality_ok', 'oi_quality_ok'}
+    def value(symbol, c):
+        v = (tier0[symbol] or {}).get(c)
+        if v is None and c in quality_columns:
+            return None
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return None if c in quality_columns else 0.0
     return pl.DataFrame(
-        {'symbol': symbols, **{c: [float((tier0[s] or {}).get(c, 0.0) or 0.0) for s in symbols] for c in TIER0_COLUMNS}},
+        {'symbol': symbols, **{c: [value(s, c) for s in symbols] for c in TIER0_COLUMNS}},
         schema={'symbol': pl.String, **{c: pl.Float64 for c in TIER0_COLUMNS}},
     )
 

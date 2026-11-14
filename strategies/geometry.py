@@ -397,7 +397,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
         rrs, blended, reason, low, sources = [None, None, None], None, None, False, [label] * 3
     obstacle_r, obstacle_src = obstacle_before(zones, entry, targets[0], direction, risk)
     return {'entry': entry, 'sl': stop, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],
-            'stop_pierce': stop_pierce(plan, stop), 'rr_tp1': rrs[0], 'rr_tp2': rrs[1], 'rr_blend': blended, 'tp1_stepped': stepped, 'low_rr': bool(low or reason),
+            'risk0': risk, 'stop_pierce': stop_pierce(plan, stop), 'rr_tp1': rrs[0], 'rr_tp2': rrs[1], 'rr_blend': blended, 'tp1_stepped': stepped, 'low_rr': bool(low or reason),
             'rr_reason': reason, 'risk_units': risk_units, 'exp_model': exp, 'exp_note': exp_note,
             'obstacle_r': obstacle_r, 'obstacle_src': obstacle_src,
             'tp1_src': sources[0], 'tp2_src': sources[1], 'tp3_src': sources[2], 'sl_src': sl_src}

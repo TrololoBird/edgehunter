@@ -11,6 +11,7 @@ uvloop>=0.22,<1          # the event loop on Linux (ccxt pins the exact version)
 certifi                  # CA bundle of the shared client SSL context (venues.ssl_context, executor)
 psutil>=7.2,<8           # CPU / memory in the Health line
 scikit-learn>=1.9,<2     # IsolationForest anomalies, GaussianMixture regimes
+scipy>=1.14,<2          # exact Beta posterior intervals used by journal shrinkage_upper
 river>=0.26,<0.27; python_version >= '3.11'  # online P(edge) + ADWIN; ml.py has a Python 3.10 fallback
 matplotlib>=3.10,<4      # briefing cards (briefing_chart.py, Agg backend)
 rich>=15,<16             # stats.py tables

@@ -328,6 +328,7 @@ class PumpStartStrategy(Strategy):
     ttl_key = 'pump_ttl'
     uses_minutes = True
     default_tf = '15m'
+    requires = ('spot', 'oi')
 
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
         """Pump ignition contract: stop below ignition and measured/map targets."""
@@ -381,7 +382,7 @@ class PumpStartStrategy(Strategy):
         plan = base_plan(x, self.name, anchor, '15m', entry='confirm', confirm_only=True,
                          zone_lo=close - 0.25 * atr, zone_hi=close + 0.25 * atr, zone_src='momentum ignition',
                          missable=False, stop_ref=sig['pump_low'],
-                         exit={'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': atr,
+                         exit={'stop': ['ref', sig['pump_low']], 'tp': ['map', 0.0], 'atr': atr,
                                'stop_src': 'below the ignition'},
                          intent='extension', fillers=fillers, fill_label='measured move', targets=targets,
                          target_src=sources, zones=zones, key=(sig['anchor_ts'], 'start'))
@@ -450,7 +451,7 @@ class DumpStartStrategy(Strategy):
         plan = base_plan(x, self.name, anchor, '15m', entry='confirm', confirm_only=True,
                          zone_lo=close - 0.25 * atr, zone_hi=close + 0.25 * atr, zone_src='momentum ignition (dump)',
                          missable=False, stop_ref=sig['dump_high'],
-                         exit={'stop': ['ref', 0.0], 'tp': ['map', 0.0], 'atr': atr,
+                         exit={'stop': ['ref', sig['dump_high']], 'tp': ['map', 0.0], 'atr': atr,
                                'stop_src': 'above the ignition'},
                          intent='extension', fillers=fillers, fill_label='measured move', targets=targets,
                          target_src=sources, zones=zones, key=(sig['anchor_ts'], 'dstart'))

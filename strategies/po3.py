@@ -26,6 +26,14 @@ FIVE_MS = 300_000
 FIRST_MAX_R = float('inf')  # eng-110: no cap - the source's target (the Asian range's far side) stands; the 3R was ours
 
 
+def _complete_grid(rows: Sequence[Sequence[float]], start: int, end: int, interval: int = FIVE_MS) -> bool:
+    """Strictly contiguous closed bars for a session window."""
+    if end <= start:
+        return False
+    expected = list(range(start, end, interval))
+    return bool(expected) and [int(b[0]) for b in rows] == expected
+
+
 def displacement_bar(bar: Sequence[float], direction: int) -> bool:
     """ICT displacement confirmation: directional body must occupy at least half of the candle range."""
     span = float(bar[2] - bar[3])
@@ -52,10 +60,11 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
     if w is None:
         return None
     start, _, a0, a1 = w
-    asia = [b for b in bars5 if a0 <= b[0] < a1]
-    inside = [b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms]
+    asia = sorted((b for b in bars5 if a0 <= b[0] < a1), key=lambda b: b[0])
+    inside = sorted((b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms), key=lambda b: b[0])
     # eng-138: the whole Asian range (48 final 5m bars, 20:00-00:00 NY): a missing bar may hold its high / low
-    if len(asia) < 48 or len(inside) < 3:
+    inside_end = (inside[-1][0] + FIVE_MS) if inside else start
+    if not _complete_grid(asia, a0, a1) or len(inside) < 3 or not _complete_grid(inside, start, inside_end):
         return None
     a_hi, a_lo = max(b[2] for b in asia), min(b[3] for b in asia)
     for d in (1, -1):
@@ -193,7 +202,7 @@ class Po3Strategy(Strategy):
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
                          # system_levels takes TP1 from exit['tp'] (eng-94)
-                         exit={'stop': ['ref', 0.0], 'atr': atr,
+                         exit={'stop': ['ref', sig['anchor_extreme']], 'atr': atr,
                                'tp': ['level', sig['po3_target'], 1.0, None],
                                'stop_src': "beyond the Judas swing's extreme",
                                'tp_src': "the Asian range's other side"},

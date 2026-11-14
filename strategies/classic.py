@@ -92,9 +92,42 @@ def _day_candles(m15: Sequence[Sequence[float]], day_start: int) -> List[Sequenc
 
 
 def _complete_quarters(rows: Sequence[Sequence[float]], start: int, cut: int) -> bool:
-    """Exact closed 15m grid; an off-grid session open needs finer source data."""
-    return (cut > start and start % QUARTER_MS == 0 and cut % QUARTER_MS == 0
-            and [c[0] for c in rows] == list(range(start, cut, QUARTER_MS)))
+    """Exact session-relative 15m grid, including sessions opening off the UTC quarter.
+
+    The old ``start % 15m`` guard silently disabled the COMEX 08:20 ET XAU/XAG session.  Callers use
+    ``_session_quarters`` to align the available closed 15m bars to the session origin before this strict check.
+    """
+    return bool(cut > start and [int(c[0]) for c in rows] == list(range(start, cut, QUARTER_MS)))
+
+
+def _session_quarters(rows: Sequence[Sequence[float]], start: int, cut: int) -> List[List[float]]:
+    """Aggregate closed 15m rows into a session-relative grid.
+
+    Binance's standard 15m candles are UTC aligned, while COMEX opens at :20.  A bar's midpoint identifies the
+    session-relative bucket; every bucket must have a source bar, otherwise the result is rejected as incomplete.
+    This preserves a deterministic partial-edge convention without inventing candles across a data gap.
+    """
+    if cut <= start:
+        return []
+    n = (cut - start + QUARTER_MS - 1) // QUARTER_MS
+    groups: Dict[int, List[Sequence[float]]] = {i: [] for i in range(n)}
+    for c in sorted(rows, key=lambda x: x[0]):
+        midpoint = int(c[0]) + QUARTER_MS // 2
+        i = (midpoint - start) // QUARTER_MS
+        if 0 <= i < n:
+            groups[int(i)].append(c)
+    if any(not group for group in groups.values()):
+        return []
+    out: List[List[float]] = []
+    for i in range(n):
+        group = groups[i]
+        first, last = group[0], group[-1]
+        volume = sum(float(c[5] or 0.0) for c in group)
+        taker = sum(float(c[6] or 0.0) if len(c) > 6 else 0.0 for c in group)
+        base = sum(float(c[7] or 0.0) for c in group) if any(len(c) > 7 and c[7] is not None for c in group) else None
+        out.append([start + i * QUARTER_MS, first[1], max(c[2] for c in group), min(c[3] for c in group),
+                    last[4], volume, taker, base])
+    return out
 
 
 def value_area_event(m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]:
@@ -218,10 +251,10 @@ def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Opt
         prev = previous_session(base, name, open_ms)
         if prev is None:
             continue
-        pc = [c for c in m15 if prev[0] <= c[0] < prev[1]]
-        if len(pc) < 0.8 * (prev[1] - prev[0]) / QUARTER_MS:
+        pc = _session_quarters([c for c in m15 if prev[0] - QUARTER_MS <= c[0] < prev[1] + QUARTER_MS], prev[0], prev[1])
+        if not _complete_quarters(pc, prev[0], prev[1]):
             continue
-        day = [c for c in m15 if open_ms <= c[0] < cut]
+        day = _session_quarters([c for c in m15 if open_ms - QUARTER_MS <= c[0] < cut + QUARTER_MS], open_ms, cut)
         if len(day) < 4 or len(day) % 2 or cut >= close_ms or not _complete_quarters(day, open_ms, cut):
             continue
         va = value_area(pc, tpo=True)
@@ -265,10 +298,10 @@ def failed_auction_event(base: str, m15: Sequence[Sequence[float]], cut: int) ->
         prev = previous_session(base, name, open_ms)
         if prev is None:
             continue
-        pc = [c for c in m15 if prev[0] <= c[0] < prev[1]]
-        if len(pc) < 0.8 * (prev[1] - prev[0]) / QUARTER_MS:
+        pc = _session_quarters([c for c in m15 if prev[0] - QUARTER_MS <= c[0] < prev[1] + QUARTER_MS], prev[0], prev[1])
+        if not _complete_quarters(pc, prev[0], prev[1]):
             continue
-        day = [c for c in m15 if open_ms <= c[0] < cut]
+        day = _session_quarters([c for c in m15 if open_ms - QUARTER_MS <= c[0] < cut + QUARTER_MS], open_ms, cut)
         if len(day) < 2 or len(day) % 2 or cut >= close_ms or not _complete_quarters(day, open_ms, cut):
             continue
         va = value_area(pc, tpo=True)

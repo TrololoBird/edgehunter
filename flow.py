@@ -91,13 +91,13 @@ class VenueFlow:
                     self.counts[lo:hi] = 0
         self.last_sec = sec
 
-    def add(self, row: int, sec: int, field: int, usd: float, count: int = 0):
+    def add(self, row: int, sec: int, field: int, usd: float, count: int = 0, track_gap: bool = True):
         if sec > self.last_sec:
             self.advance(sec)
         elif sec <= self.last_sec - self.H:
             return  # older than the buffer
         if sec > self.last_msg_sec:
-            if self.last_msg_sec and sec - self.last_msg_sec > GAP_SEC:
+            if track_gap and self.last_msg_sec and sec - self.last_msg_sec > GAP_SEC:
                 # a whole venue silent for this long is a dropped / stalled feed, not a quiet market: the stretch is
                 # unknown coverage (zeros in the ring there are 'no data', never 'no trades')
                 self.gaps = (self.gaps + [(self.last_msg_sec, sec)])[-100:]
@@ -214,8 +214,10 @@ class FlowStore:
         if row is None or flow is None:
             return
         sec = int(minute_ms // 1000) + 30
-        flow.add(row, sec, BUY, buy_usd, trades // 2)
-        flow.add(row, sec, SELL, sell_usd, trades - trades // 2)
+        # REST seed points are closed historical candles, not transport messages.  They are often exactly one minute
+        # apart, so treating their 60-second spacing as a websocket outage would manufacture a gap on every cold start.
+        flow.add(row, sec, BUY, buy_usd, trades // 2, track_gap=False)
+        flow.add(row, sec, SELL, sell_usd, trades - trades // 2, track_gap=False)
         flow.first_sec = min(flow.first_sec, sec - 30) if flow.first_sec else sec - 30   # the seeded minute is coverage
 
     def trade(self, venue: str, symbol: str, ts_ms: int, usd: float, side: int, recv_ms: Optional[float] = None):
@@ -329,6 +331,27 @@ class FlowStore:
             metrics['venues_active'] = int(sum(1 for a in per_venue_net.values() if a[row] != 0))
             out[symbol] = metrics
         return out
+
+    def quality(self, symbol: str, now_sec: Optional[int] = None, window_sec: int = 300) -> Dict[str, object]:
+        """Return a real coverage verdict for a symbol's futures flow window.
+
+        ``snapshot`` intentionally emits zero-valued metric keys for every registered symbol.  Key presence therefore
+        cannot mean that a venue actually delivered data.  This method checks the ring-buffer start, per-symbol first
+        print, transport gaps and the freshness bound for the requested window.  Binance must be covered when it is
+        configured; otherwise at least half of the configured futures venues must be live.
+        """
+        now_sec = int(now_sec if now_sec is not None else time.time())
+        row = self.rows.get(symbol)
+        if row is None:
+            return {'ok': False, 'coverage': 0.0, 'reason': 'unregistered symbol', 'venues': []}
+        start, end = now_sec - int(window_sec), now_sec + 1
+        active = [v for v in FUTURES_VENUES if v in self.venues]
+        covered = [v for v in active if self.venues[v].covers(start, end, row)]
+        coverage = len(covered) / len(active) if active else 0.0
+        binance_ok = 'binance' not in active or 'binance' in covered
+        enough = bool(covered) and (binance_ok if 'binance' in active else coverage >= 0.5)
+        reason = None if enough else ('binance coverage missing' if not binance_ok else 'insufficient venue coverage')
+        return {'ok': bool(enough), 'coverage': float(coverage), 'reason': reason, 'venues': covered}
 
     def micro_features(self, symbol: str, minutes: Sequence[Sequence[float]], now_sec: Optional[int] = None,
                        window: int = 3600, buckets: int = 50) -> Dict[str, Optional[float]]:

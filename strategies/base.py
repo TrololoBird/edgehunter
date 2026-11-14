@@ -53,6 +53,7 @@ class CardLevels(TypedDict, total=False):
     range_pos: Optional[float]
     limit_entry: Optional[float]
     volume_24h: Optional[float]
+    geometry_source: str
 
 
 def validate_card_levels(levels: Optional[CardLevels], direction: int) -> bool:
@@ -88,6 +89,71 @@ def validate_card_levels(levels: Optional[CardLevels], direction: int) -> bool:
     if any(direction * (t - entry) <= 0 for t in values):
         return False
     return all(direction * (values[i + 1] - values[i]) >= 0 for i in range(2))
+
+
+def finalize_card_levels(plan: Dict, levels: Optional[CardLevels], direction: int) -> Optional[CardLevels]:
+    """Run every playbook contract through the shared risk/geometry evaluator.
+
+    Playbooks are allowed to choose their structural reference and target intent, but they are not allowed to
+    choose a private definition of risk.  The lazy import keeps the strategy module graph acyclic while making
+    ``entry_levels_for`` the single decision point for all contracts.
+    """
+    if not validate_card_levels(levels, direction):
+        return None
+    assert levels is not None
+    try:
+        entry = float(levels['entry'])
+        stop = float(levels['sl'])
+        risk = direction * (entry - stop)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(risk) or risk <= 0:
+        return None
+
+    from strategies.geometry import cost_of, finish_levels, stop_too_far
+
+    fee = cost_of(entry, plan.get('volume_24h'), plan.get('symbol'))
+    if not math.isfinite(fee) or fee < 0:
+        return None
+    cap = (plan.get('exit') or {}).get('max_loss_pct') or plan.get('max_loss_pct')
+    if cap is not None:
+        try:
+            if not math.isfinite(float(cap)) or float(cap) <= 0 or risk > float(cap) * entry * (1 + 1e-9):
+                return None
+        except (TypeError, ValueError):
+            return None
+
+    targets = [levels.get(f'tp{k}') for k in (1, 2, 3)]
+    if all(t is None for t in targets):
+        # A targetless contract is valid only when the plan names its exit manager.  Its cost and stop-distance
+        # checks are still mandatory; no synthetic 100R targets are used to make it look like a targetful card.
+        if not plan.get('allow_no_targets') or not plan.get('exit_manager'):
+            return None
+        reason = None
+        if risk < CONFIG.levels.cost_guard * fee:
+            reason = f"risk < {CONFIG.levels.cost_guard:g}x the round-trip costs" if CONFIG.levels.cost_guard != 1 \
+                else 'costs exceed the risk'
+        reason = reason or stop_too_far(plan, entry, stop)
+        out = dict(levels)
+        out.update(risk0=risk, rr_tp1=None, rr_tp2=None, rr_blend=None,
+                   low_rr=bool(reason), rr_reason=reason, geometry_source='shared_targetless_guard')
+        return out
+
+    sources = [str(levels.get(f'tp{k}_src') or 'custom target') for k in (1, 2, 3)]
+    try:
+        out = finish_levels(plan, entry, stop, [float(t) for t in targets], sources, direction,
+                            str(levels.get('sl_src') or 'strategy stop'))
+    except (TypeError, ValueError, KeyError):
+        return None
+    if out is None:
+        return None
+    # finish_levels owns the decision fields; preserve transport/management metadata supplied by the playbook.
+    for key in ('zone_src', 'range_pos', 'limit_entry', 'volume_24h', 'contract_source'):
+        if key in levels:
+            out[key] = levels[key]
+    out['risk0'] = risk
+    out['geometry_source'] = 'shared_finish_levels'
+    return out
 
 
 @dataclass
@@ -138,7 +204,14 @@ class Strategy:
     requires: tuple = ()
 
     def has_data(self, sig: Dict) -> bool:
-        return all(bool(sig.get('has_spot')) for need in self.requires if need == 'spot')
+        for need in self.requires:
+            if need == 'spot' and not bool(sig.get('has_spot')):
+                return False
+            if need == 'flow' and sig.get('flow_quality_ok') != 1:
+                return False
+            if need == 'oi' and sig.get('oi_quality_ok') != 1:
+                return False
+        return True
     follows_live_candle = False                     # the plan depends on the live 15m candle's high / low (a leg)
     # the method's own minimum reward / risk to TP1 (its source's rule); None = CONFIG.levels.min_rr_tp1 (eng-40)
     min_rr: Optional[float] = None
@@ -208,6 +281,10 @@ def base_plan(x: PlanInput, strategy: str, anchor: Dict, tf: str, **fields) -> D
         # the invalid price (a wick through is allowed)
         'trigger': 'shift', 'exit': None, 'confirm_only': False, 'session': None, 'trigger_from_ms': None,
         'invalid_close_min': None,
+        # Confirmation contracts are immutable facts from the closed signal candle; a later scanner quote is only a
+        # freshness/slippage check and must never redraw the original geometry.
+        'confirmation_entry_price': None, 'confirmation_ts': None,
+        'allow_no_targets': False, 'exit_manager': None,
         'contract_id': Strategy.contract_id(x.setup),
     }
     from strategies.ict import dealing_range, protected_swing

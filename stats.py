@@ -1343,21 +1343,38 @@ def main():
 
 # eng-144: demo trades of the current logic version only (None = every version; rows before eng-144 have none)
 _DEMO_VERSION: Optional[str] = None
+_DEMO_OFF_SETUPS = tuple(CONFIG.executor.demo_off_setups)
 
 
 def _demo_where(cols) -> str:
-    return " WHERE logic_version = ?" if _DEMO_VERSION and 'logic_version' in cols else ""
+    clauses = []
+    if 'quarantined' in cols:
+        clauses.append('COALESCE(quarantined, 0) = 0')
+    if 'demo_eligible' in cols:
+        clauses.append('COALESCE(demo_eligible, 1) = 1')
+    # Keep historical databases safe even when the executor has not yet run its migration.  The same configured
+    # eligibility policy applies to rows written before the explicit column existed.
+    if 'setup' in cols and _DEMO_OFF_SETUPS:
+        clauses.append('COALESCE(setup, \'\') NOT IN (' + ','.join('?' for _ in _DEMO_OFF_SETUPS) + ')')
+    if _DEMO_VERSION and 'logic_version' in cols:
+        clauses.append('logic_version = ?')
+    return (' WHERE ' + ' AND '.join(clauses)) if clauses else ''
 
 
 def _demo_args(cols) -> tuple:
-    return (_DEMO_VERSION,) if _DEMO_VERSION and 'logic_version' in cols else ()
+    args = list(_DEMO_OFF_SETUPS) if 'setup' in cols and _DEMO_OFF_SETUPS else []
+    if _DEMO_VERSION and 'logic_version' in cols:
+        args.append(_DEMO_VERSION)
+    return tuple(args)
 
 
 def _report(console: Console, conn: sqlite3.Connection, db: str, days: Optional[float], last: int, all_versions: bool):
     global _DEMO_VERSION
     _DEMO_VERSION = None if all_versions else CONFIG.journal.logic_version
     since = int((time.time() - days * 86400) * 1000) if days else 0
-    raw_rows = conn.execute("SELECT * FROM signals WHERE ts_ms >= ? ORDER BY ts_ms", (since,)).fetchall()
+    signal_cols = {c[1] for c in conn.execute("PRAGMA table_info(signals)")}
+    quarantine_clause = " AND COALESCE(quarantined, 0) = 0" if 'quarantined' in signal_cols else ""
+    raw_rows = conn.execute(f"SELECT * FROM signals WHERE ts_ms >= ?{quarantine_clause} ORDER BY ts_ms", (since,)).fetchall()
     # Historical databases predate the long-horizon columns.  Normalize rows
     # in memory so old evidence remains immutable and reports can still expose
     # the complete current horizon schema.

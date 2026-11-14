@@ -25,7 +25,7 @@ registry as it stands (eng-145; one methodology = one strategy name, several pla
     pump_start / dump_start / pump_top / dump_bounce         pump.py              separate pump playbooks
     cup_handle      CUP HANDLE                               cup_handle.py        O'Neil, 1h / 4h
     po3             PO3 LONG / SHORT                         po3.py               ICT power of three, Asian range
-    oi_build        OI BUILD LONG / SHORT                    oi_build.py          off (CONFIG.strategies.disabled_setups)
+    oi_build        OI BUILD LONG / SHORT                    oi_build.py          journaled; demo-off (CONFIG.executor.demo_off_setups)
 
 Which setups trade on the demo account: CONFIG.executor.demo_off_setups; journaled-only setups: SHADOW_SETUPS in
 signal_book.py. Detection: Tier-0 (impulse), structure.build_context (15m closes, worker process), loopside.py
@@ -33,7 +33,7 @@ signal_book.py. Detection: Tier-0 (impulse), structure.build_context (15m closes
 """
 from typing import Dict, Optional, Tuple
 
-from strategies.base import PlanInput, Strategy, validate_card_levels
+from strategies.base import PlanInput, Strategy, finalize_card_levels
 from strategies.breakout import BreakoutStrategy
 from strategies.cascade import ExhaustionStrategy
 from strategies.leg import MomentumStrategy
@@ -76,11 +76,9 @@ def entry_levels_for(plan: dict, entry: float, extreme, direction: int):
     if strategy is None:
         raise ValueError(f"unregistered playbook: {plan.get('setup') or plan.get('strategy')}")
     levels = strategy.entry_levels(plan, entry, extreme, direction)
-    if levels is not None and not validate_card_levels(levels, direction):
-        # A malformed contract must never reach journal/executor.  The caller
-        # treats None as an unexecutable plan and records the reason upstream.
-        return None
-    return levels
+    # Every registered playbook supplies intent, while this shared finalizer supplies the executable risk contract.
+    # A malformed or low-quality contract must never reach journal/executor.
+    return finalize_card_levels(plan, levels, direction)
 
 
 __all__ = ["PlanInput", "Strategy", "STRATEGIES", "SETUPS", "strategy_of"]

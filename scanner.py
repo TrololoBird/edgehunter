@@ -89,8 +89,8 @@ def make_entry_intent(s):
 
 class _FrameLookup:
     """
-    dict-like .get(symbol) for the tracked cards: the symbol's closed 15m futures candles with indicators plus
-    the in-progress candle's OHLC (so the 15m leg follows the live high / low between candle closes).
+    dict-like .get(symbol, include_live=False) for the tracked cards.  Closed 15m candles are the default; only a
+    strategy that explicitly opts into ``follows_live_candle`` receives the in-progress OHLC.
     `parts` = the closed frame split per symbol once per heavy pass: filtering the whole universe's frame for every
     card on every scan blocked the event loop for over a second with ~40 cards.
     """
@@ -98,24 +98,25 @@ class _FrameLookup:
     def __init__(self, parts: Dict[str, pl.DataFrame], markets: Dict[str, MarketData]):
         self.parts = parts
         self.markets = markets
-        self._memo: Dict[str, Optional[pl.DataFrame]] = {}
+        self._memo: Dict[tuple, Optional[pl.DataFrame]] = {}
 
-    def get(self, symbol: str) -> Optional[pl.DataFrame]:
+    def get(self, symbol: str, include_live: bool = False) -> Optional[pl.DataFrame]:
         # one lookup serves one scan: a coin's frame is built once however many cards / gates ask for it
-        if symbol in self._memo:
-            return self._memo[symbol]
+        cache_key = (symbol, bool(include_live))
+        if cache_key in self._memo:
+            return self._memo[cache_key]
         part = self.parts.get(symbol)
         if part is None or part.is_empty():
-            self._memo[symbol] = None
+            self._memo[cache_key] = None
             return None
         md = self.markets.get(symbol)
-        live = md.live_candle('futures') if md else None
+        live = md.live_candle('futures') if include_live and md else None
         if live and live['timestamp'] > part['timestamp'][-1]:
             # (measured: this diagonal concat ~2 ms; part.clear(1) + vstack of the ~110-column frame 67 ms)
             row = {c: live.get(c) for c in ('timestamp', 'open', 'high', 'low', 'close')}
             row.update(symbol=symbol, atr=part['atr'][-1])
             part = pl.concat([part, pl.DataFrame([row])], how='diagonal_relaxed')
-        self._memo[symbol] = part
+        self._memo[cache_key] = part
         return part
 
 
@@ -469,8 +470,17 @@ class Scanner:
                                         ret_std=md.ret_std * ret_scale if md.ret_std else md.ret_std, oi_std=md.oi_std,
                                         avg_minute_usd=md.avg_minute_usd * vol_scale if md.avg_minute_usd else md.avg_minute_usd)
             flow = snapshot.get(symbol) or {}
-            has_flow = len(flow) > 0
-            m['data_quality_ok'] = has_flow
+            flow_quality = self.fetcher.flow.quality(symbol, int(now_ms // 1000), CONFIG.tier0.window_sec)
+            has_flow = bool(flow_quality.get('ok'))
+            ticker_fresh = bool(md.ticker_samples and now_ms - md.ticker_samples[-1][0] <= 60_000)
+            minute_fresh = bool(md.minute_klines and now_ms - md.minute_klines[-1][0] <= 120_000)
+            oi_interval = CONFIG.timeframe.oi_update_interval_sec * 1000
+            oi_fresh = bool(md.oi_samples and now_ms - md.oi_samples[-1][0] <= 3 * oi_interval)
+            m['flow_quality_ok'] = 1.0 if has_flow else 0.0
+            m['oi_quality_ok'] = 1.0 if oi_fresh else 0.0
+            # Core quality is deliberately conservative: a zero-valued snapshot is not evidence of a healthy feed.
+            # OI has its own flag because methods that do not use OI remain journalable while OI-required methods veto.
+            m['data_quality_ok'] = 1.0 if ticker_fresh and minute_fresh and has_flow else 0.0
             m['whale_net_5m'] = whales.net_units(symbol, CONFIG.tier0.window_sec, now_ms)
             m['cluster'] = float(whales.cluster(symbol, now_ms))
             for key in ('liq_long_5m', 'liq_short_5m', 'agg_cvd_5m', 'top_venue_share', 'top_venue_net', 'venues_active'):

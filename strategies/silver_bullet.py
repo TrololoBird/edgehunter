@@ -24,6 +24,22 @@ WINDOWS = ((3, 4), (10, 11), (14, 15))
 FIVE_MS = 300_000
 
 
+def _complete_grid(rows: Sequence[Sequence[float]], start: int, end: int, interval: int = FIVE_MS) -> bool:
+    """Require every expected closed bar in a session window; gaps are unknown, not zero volume."""
+    if end <= start:
+        return False
+    expected = list(range(start, end, interval))
+    return bool(expected) and [int(b[0]) for b in rows] == expected
+
+
+def _complete_pool(rows: Sequence[Sequence[float]], start: int, end: int) -> bool:
+    """Session pools may use the 5m stream or the 15m long-history fallback, both with strict coverage."""
+    for interval in (FIVE_MS, 15 * FIVE_MS):
+        if _complete_grid(rows, start, end, interval):
+            return True
+    return False
+
+
 def window_of(ts_ms: int) -> Optional[int]:
     """The window's start (epoch ms) when `ts_ms` falls inside one, else None."""
     local = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone(NY)
@@ -41,9 +57,11 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
     start = window_of(now_ms)
     if start is None:
         return None
-    before = [b for b in bars5 if start - 3_600_000 <= b[0] < start]
-    inside = [b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms]
-    if len(before) < 10 or len(inside) < 3:
+    before = sorted((b for b in bars5 if start - 3_600_000 <= b[0] < start), key=lambda b: b[0])
+    inside = sorted((b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms), key=lambda b: b[0])
+    inside_end = inside[-1][0] + FIVE_MS if inside else start
+    if not _complete_grid(before, start - 3_600_000, start) or len(inside) < 3 \
+            or not _complete_grid(inside, start, inside_end):
         return None
     hour_hi, hour_lo = max(b[2] for b in before), min(b[3] for b in before)
     # eng-106, the sources (LuxAlgo, ChartingLens, TradingView on ICT): the liquidity a Silver Bullet raids is the
@@ -63,7 +81,7 @@ def silver_bullet(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[f
         if b > start:
             continue                                # a session still running at the window's start is no pool yet
         part = [x for x in bars5 if a <= x[0] < b and x[0] + FIVE_MS <= start]
-        if len(part) >= 6:
+        if _complete_pool(part, int(a), int(b)):
             pools_hi.append((max(x[2] for x in part), tag))
             pools_lo.append((min(x[3] for x in part), tag))
     open_px = inside[0][1]
@@ -225,7 +243,7 @@ class SilverBulletStrategy(Strategy):
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
                          # system_levels takes TP1 from exit['tp'] (eng-96)
-                         exit={'stop': ['ref', 0.0], 'atr': atr, 'stop_src': "beyond the raid's extreme",
+                         exit={'stop': ['ref', sig['anchor_extreme']], 'atr': atr, 'stop_src': "beyond the raid's extreme",
                                'tp': ['level', sig['sb_target'], 1.0, None],
                                'tp_src': "the day's draw on liquidity (PDH / PDL)"},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,

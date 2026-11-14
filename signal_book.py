@@ -124,6 +124,18 @@ LIVE_KEY = slice(1, 4)
 def _without_live(key: tuple) -> tuple:
     return key[:LIVE_KEY.start] + key[LIVE_KEY.stop:]
 
+
+def _frame_for(frames, symbol: str, strategy: Optional[Strategy] = None):
+    """Return a closed frame unless the owning strategy explicitly opts into the live candle."""
+    if frames is None:
+        return None
+    include_live = bool(strategy is not None and getattr(strategy, 'follows_live_candle', False))
+    try:
+        return frames.get(symbol, include_live=include_live)
+    except TypeError:
+        # Plain dicts are used by replay/tests and already contain their intended frame.
+        return frames.get(symbol)
+
 # Which anomaly label a coin's row shows when several readings of one event arrive (higher = more significant)
 ANOMALY_PRIORITY = {
     'IMPULSE UP': 10, 'IMPULSE DOWN': 10, 'LIQ CASCADE': 9, 'SHORT SQUEEZE': 8, 'LONG FLUSH': 8,
@@ -169,9 +181,9 @@ _REAL_NO = ('no_data', 'no_leg', 'no_room', 'no_anchor', 'no_test_data')
 # One list for _enter and the dashboard (audit N33: the page described setups by a hand-kept table)
 # audit (Connors): the book's long (RSI2X LONG) is traded; our eng-84 cross-back entry (RSI2 LONG / SHORT) and the
 # mirrored short the book does not state (RSI2X SHORT) are measured in shadow
-# eng-169f (the owner, 2026-10-26: "the demo account has no limits"): no setup is held back in shadow any more - RSI2
-# cross-back, RSI2X SHORT, the cascade reversals, OI BUILD and BB3 trade on the demo like every other setup (they
-# were the AI's 'no study yet' holds of eng-106 / eng-127 / eng-144, never the owner's)
+# eng-169f (the owner, 2026-10-26: "the demo account has no limits"): no setup is hidden from the signal journal by
+# this table.  The explicit execution policy is carried as ``sig['demo_eligible']`` from CONFIG.executor, so OI BUILD
+# remains measurable while its configured demo-off status is visible to journal and executor.
 SHADOW_SETUPS: tuple = ()
 
 
@@ -205,6 +217,15 @@ def card_tp1(plan: Dict) -> float:
     if len(spec) > 1 and spec[0] == 'level' and spec[1] is not None:
         return float(spec[1])
     return plan['targets'][0]
+
+
+def plan_has_executable_exit(plan: Optional[Dict]) -> bool:
+    """A plan is tradable with either real targets or an explicitly named targetless exit manager."""
+    if not plan:
+        return False
+    if plan.get('targets'):
+        return True
+    return bool(plan.get('allow_no_targets') and plan.get('exit_manager'))
 
 
 DEFERRED = object()     # eng-147: SignalBook._enter's 'entry held for the crowd ranking' marker
@@ -431,8 +452,9 @@ class SignalBook:
         confirm_of: Optional[ConfirmCheck] = None,
     ) -> Tuple[List[TrackedSignal], List[TrackedSignal]]:
         """
-        Feed one scan's signals. `frames.get(symbol)` returns the symbol's 15m futures frame with indicators and
-        `candles_of(symbol)` its final 1m futures candles; `confirm_of(...)` reads an entry's confirmations
+        Feed one scan's signals. `frames.get(symbol, include_live=...)` returns the symbol's 15m futures frame with
+        indicators (closed by default; live only for an opted-in strategy) and `candles_of(symbol)` its final 1m candles;
+        `confirm_of(...)` reads an entry's confirmations
         (strategies.confirm). Returns (setups created, entries
         triggered this scan); vetoed entries are in the list too, with `.vetoed` set and no status change.
         """
@@ -618,7 +640,9 @@ class SignalBook:
 
     def _input(self, symbol: str, group_key: str, direction: int, sig: Dict, frames,
                reached: Optional[float]) -> PlanInput:
-        return PlanInput(symbol=symbol, direction=direction, setup=group_key, sig=sig, df=frames.get(symbol),
+        strategy = strategy_of(group_key)
+        return PlanInput(symbol=symbol, direction=direction, setup=group_key, sig=sig,
+                         df=_frame_for(frames, symbol, strategy),
                          minutes=list(self._candles_of(symbol)),
                          raw_levels=(self.levels_of(symbol) if self.levels_of else None) or [],
                          h1=(self.htf_of(symbol) if self.htf_of else None) or [],
@@ -634,7 +658,7 @@ class SignalBook:
         finished ('same_leg': a setup keeps confirming on every candle, the idea was already played). A leg strategy
         without the coin's 1h history is decided by the first plan (1h / 4h legs need it).
         """
-        frame = frames.get(symbol)
+        frame = _frame_for(frames, symbol, strategy)
         if frame is None or frame.height < 20:
             return None
         if strategy.anchor_type == 'leg' and not getattr(strategy, 'own_leg', False) and not (self.htf_of and self.htf_of(symbol)):
@@ -656,12 +680,14 @@ class SignalBook:
 
     PLAN_GRACE_SEC = 600      # after the book is created: the history of every coin loads in the background
 
-    def _plan_data_ready(self, symbol: str, frames, now: float) -> bool:
+    def _plan_data_ready(self, symbol: str, frames, now: float, strategy: Optional[Strategy] = None) -> bool:
         """Can a missing plan be trusted: the book has run PLAN_GRACE_SEC and the coin has its 15m frame, its 1h / 4h /
         daily ATRs and final 1m candles (a plan built without them is None for want of data, not of a setup)."""
         if now - self._born < self.PLAN_GRACE_SEC:
             return False
-        df = frames.get(symbol) if frames is not None else None
+        # A live candle cannot establish the historical ATR/coverage prerequisites for a new plan.  Only a strategy
+        # explicitly marked ``follows_live_candle`` may request it here.
+        df = _frame_for(frames, symbol, strategy)
         if df is None or not getattr(df, 'height', 0):
             return False
         if self.tf_atr_of is not None and not self.tf_atr_of(symbol):
@@ -1099,7 +1125,7 @@ class SignalBook:
         if not s.activated:
             # The first plan needs the coin's 15m history (after a start it loads in the background); a leg strategy
             # also its 1h history and level map (loaded once the card exists)
-            frame = frames.get(s.symbol)
+            frame = _frame_for(frames, s.symbol, strategy)
             # eng-158: a small cap outside the universe has no 15m frame - its plan runs on the watch's minutes / ATR
             if (frame is None or frame.height < 20) and not (s.sig or {}).get('smallcap'):
                 s.status = 'BIAS'
@@ -1113,10 +1139,11 @@ class SignalBook:
                 s.status = 'BIAS'
                 return None
             s.plan = self._plan(s, frames)
-            if s.plan is None or not s.plan['targets']:
+            if s.plan is None or not plan_has_executable_exit(s.plan):
                 self._drop(s, now, self._skip_reason.pop((s.symbol, s.group_key), 'no_leg') if s.plan is None else 'no_room')
                 return None
-            if s.plan.get('missable') and s.plan['entry'] != 'confirm' and d * (price - card_tp1(s.plan)) >= 0:
+            if s.plan.get('missable') and s.plan['entry'] != 'confirm' and s.plan.get('targets') \
+                    and d * (price - card_tp1(s.plan)) >= 0:
                 # eng-74: a waiting card whose TP1 is already behind the price was born MISSED (ETH FLUSH REVERSAL
                 # 2026-10-07 10:08, created after the bounce): not a card
                 self._drop(s, now, 'tp1_passed')
@@ -1141,9 +1168,9 @@ class SignalBook:
             s.plan = {**s.plan, **s.armed['plan']}
         watch_ttl, zone_ttl, _ = strategy.ttls(self._tf(s))
         plan = s.plan
-        if plan is None or not plan['targets']:
+        if not plan_has_executable_exit(plan):
             s.status = 'BIAS'
-            if CONFIG.strategies.structural_lifetimes and not self._plan_data_ready(s.symbol, frames, now):
+            if CONFIG.strategies.structural_lifetimes and not self._plan_data_ready(s.symbol, frames, now, strategy):
                 # the coin's history is not in yet (after a start: the 15m / 1h / 4h history loads in the background):
                 # no plan says nothing about the setup - it waits (every restart expired 14-59 restored cards here),
                 # at most its watch TTL (a coin whose data never comes - it left the universe)
@@ -1179,12 +1206,14 @@ class SignalBook:
             self._pool2_on_invalid(s, candles_of, now_ms)
             self._finish(s, 'INVALID', now, self._invalid_reason(s, price, invalid))
             return None
-        tp1 = card_tp1(plan)
+        # Targetless contracts (trailing/SMA exits) have no TP1 lifecycle event.  They are normally confirm-only,
+        # but keep the waiting-card path total so a restored or custom plan cannot crash on ``targets[0]``.
+        tp1 = card_tp1(plan) if plan.get('targets') else None
         # eng-108: with structural lifetimes EVERY waiting card ends once TP1 traded before an entry (its structural end;
         # the invented waiting clocks are gone)
         tp_seen = self._tp1_since(s, candles_of, tp1, plan) if version_no(s.logic_version) >= 141 else None
         imp = plan.get('impulse') or {}
-        if imp.get('end') is not None and s.status != 'ZONE' and getattr(strategy, 'frozen_in_zone', False) \
+        if tp1 is not None and imp.get('end') is not None and s.status != 'ZONE' and getattr(strategy, 'frozen_in_zone', False) \
                 and abs(tp1 - imp['end']) <= 1e-9 * max(abs(tp1), 1.0):
             # eng-168e: a continuation's TP1 is the impulse's own end (ICT's prior high, extension 1.0) and its plan
             # follows a continuing impulse until price reaches the OTE zone. A new high before the pullback is the leg
@@ -1194,8 +1223,8 @@ class SignalBook:
             tp_seen = None
             if d * (price - tp1) >= 0:
                 return None
-        if (plan.get('missable') or CONFIG.strategies.structural_lifetimes) and (d * (price - tp1) >= 0
-                                                                                  or tp_seen is not None):
+        if tp1 is not None and (plan.get('missable') or CONFIG.strategies.structural_lifetimes) \
+                and (d * (price - tp1) >= 0 or tp_seen is not None):
             reasons = ', '.join(sorted(set(s.veto_log)))
             # two different failures: price never came back to the zone (the zone is too far from where the move
             # turns) vs it did and no trigger fired (the trigger is too strict)
@@ -1450,13 +1479,33 @@ class SignalBook:
     def _confirmation_entry(self, s: TrackedSignal, price: float, now_ms: int,
                             confirm_of: Optional[ConfirmCheck]) -> Optional[TrackedSignal]:
         """
-        Entry at the setup's confirmation (the closed candle that confirmed it), at the current price: taken when R:R
-        to TP1 allows it, else the card waits in its zone for a trigger.
+        Entry at the immutable close of the setup's confirmation candle.  The current quote is only a safety check:
+        it may invalidate a stale signal, but it must not redraw the levels or the journaled decision price.
         """
         self._new_attempt(s)
-        levels = self._entry_levels(s.plan, price, None, s.direction)
-        if not levels or s.direction * (price - levels['sl']) <= 0:
+        plan = s.plan or {}
+        decision_price = plan.get('confirmation_entry_price')
+        if decision_price is None:
+            decision_price = (s.sig or {}).get('anchor_close')
+        if decision_price is None:
             return None
+        try:
+            decision_price = float(decision_price)
+        except (TypeError, ValueError):
+            return None
+        levels = self._entry_levels(plan, decision_price, None, s.direction)
+        if not levels or s.direction * (decision_price - levels['sl']) <= 0:
+            return None
+        # A confirmation whose current quote has already crossed its stop or TP is stale.  Do not chase it and do not
+        # recompute a new contract at the quote; the card's confirm-only path will expire it with this reason.
+        if s.direction * (price - levels['sl']) <= 0:
+            s.sig['confirmation_veto'] = 'stale_confirmation_stop'
+            return None
+        if levels.get('rr_tp1') is not None and s.direction * (levels['tp1'] - price) <= 0:
+            s.sig['confirmation_veto'] = 'stale_confirmation_tp1'
+            return None
+        levels['confirmation_entry_price'] = decision_price
+        levels['confirmation_ts'] = plan.get('confirmation_ts')
         levels['zone_src'] = 'setup confirmation'
         levels['range_pos'] = range_position(s.plan.get('dealing_range'), levels['entry'], s.direction)
         anchor = s.plan.get('anchor') or {}
@@ -1509,6 +1558,13 @@ class SignalBook:
                confirms: Dict) -> TrackedSignal:
         """Enter, or journal the entry that would have been taken with the veto reason (the card keeps waiting)."""
         entered_at = now_ms / 1000
+        # Keep the execution policy on the signal itself so the journal and executor cannot silently disagree about
+        # a setup that is shadow-only (currently OI BUILD).  The config tuple remains the single source of truth.
+        s.sig['demo_eligible'] = int(s.group_key not in CONFIG.executor.demo_off_setups)
+        # A signal without a fresh market/flow coverage contract remains journalable but cannot become a live entry.
+        # This is deliberately fail-closed: older/replay signals that lack the field are not silently treated as fresh.
+        if reason is None and (s.sig or {}).get('data_quality_ok') != 1:
+            reason = 'data_quality_missing'
         if reason is None:
             from macro_calendar import blackout, live_ok
             if blackout(now_ms):
@@ -1516,8 +1572,8 @@ class SignalBook:
             elif not live_ok(now_ms):
                 # eng-168s (audit #6): fail-closed - no fresh macro calendar, no NEW entry (open trades are managed)
                 reason = 'macro_unknown'
-        # eng-106 / eng-127: RSI2X (Connors' original entry), BB3 (Bollinger's Method III), the cascade reversals and
-        # Pring's OI rule are measured in shadow beside the traded rules (SHADOW_SETUPS)
+        # eng-106 / eng-127: optional shadow vetoes are measured beside the traded rules (SHADOW_SETUPS); execution
+        # eligibility is a separate explicit field so a demo-off setup cannot be mistaken for a vetoed signal.
         if reason is None:
             reason = shadow_of(s.group_key)
         if reason is None and s.mode == 'supply_demand' and (s.plan or {}).get('sd_score', 10) < 8:

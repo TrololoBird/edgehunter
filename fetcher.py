@@ -3,6 +3,7 @@ import asyncio
 import bisect
 import gc
 import logging
+import math
 import errors
 import time
 import zlib
@@ -68,6 +69,10 @@ class MarketData:
     minute_klines: deque = field(default_factory=lambda: deque(maxlen=600))
     # Open time of the newest FINAL futures 1m candle (kline x=true): the last deque entry may still be running
     minute_closed_until: int = 0
+    # Closed minute timestamps already folded into a 15m bucket.  A late/out-of-order websocket delivery must not be
+    # counted a second time; corrected values are rebuilt from the keyed minute buffer.
+    _closed_seen: dict = field(default_factory=lambda: {m: set() for m in MARKETS})
+    _closed_seen_order: dict = field(default_factory=lambda: {m: deque(maxlen=5000) for m in MARKETS})
     # audit C03: (open time, event time ms) of the latest futures 1m kline update - its price is as fresh as the event,
     # not as the candle's schedule
     kline_event: tuple = (0, 0.0)
@@ -213,16 +218,16 @@ class MarketData:
 
     def seed_minutes(self, market: str, rows: List[List[float]], now_ms: int):
         """
-        Closed 1m candles from REST merged under the streamed ones (a streamed candle wins): flows, RVOL, absorption,
+        Closed 1m candles from REST merged over the streamed ones (REST is the closed authoritative value): flows, RVOL, absorption,
         the entry trigger and its confirmations work right after a start instead of after an hour of streaming.
         The futures closes also seed the price samples of Tier-0's 5m price change.
         """
         target = self.minute_klines if market == 'futures' else self.spot_minute_klines
-        closed = [r for r in rows if r[0] + 60_000 <= now_ms]
+        closed = sorted((r for r in rows if r[0] + 60_000 <= now_ms), key=lambda r: r[0])
         if not closed:
             return
-        merged = {r[0]: r for r in closed}
-        merged.update({c[0]: c for c in target})
+        merged = {c[0]: c for c in target}
+        merged.update({r[0]: r for r in closed})
         candles = sorted(merged.values(), key=lambda c: c[0])[-target.maxlen:]
         target.clear()
         target.extend(candles)
@@ -256,16 +261,33 @@ class MarketData:
             candle = [int(k['t']), float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['q']), float(k['Q']),
                       float(k.get('v', 'nan'))]                   # base volume (coins), NaN if absent
             target = self.minute_klines if market == 'futures' else self.spot_minute_klines
-            if target and target[-1][0] == candle[0]:
-                target[-1] = candle
-            elif not target or candle[0] > target[-1][0]:
-                target.append(candle)
-            if market == 'futures' and target[-1][0] == candle[0]:
+            previous = next((c for c in target if c[0] == candle[0]), None)
+            keyed = {int(c[0]): c for c in target}
+            keyed[candle[0]] = candle
+            ordered = sorted(keyed.values(), key=lambda c: c[0])[-target.maxlen:]
+            target.clear()
+            target.extend(ordered)
+            if market == 'futures' and target and target[-1][0] == candle[0]:
                 self.kline_event = (candle[0], float(event_ms or time.time() * 1000))
             if k.get('x'):
                 if market == 'futures':
                     self.minute_closed_until = max(self.minute_closed_until, candle[0])
-                self._add_closed_minute(market, candle, float(k.get('v') or 0.0))
+                seen = self._closed_seen[market]
+                if candle[0] in seen:
+                    if previous != candle:
+                        self._replace_closed_bucket(market, candle[0] // TIMEFRAME_MS * TIMEFRAME_MS)
+                else:
+                    seen.add(candle[0])
+                    order = self._closed_seen_order[market]
+                    order.append(candle[0])
+                    if len(order) == order.maxlen:
+                        keep = set(order)
+                        seen.intersection_update(keep)
+                    bucket_start = candle[0] // TIMEFRAME_MS * TIMEFRAME_MS
+                    if bucket_start <= self.bucket_done.get(market, -1):
+                        self._replace_closed_bucket(market, bucket_start)
+                    else:
+                        self._add_closed_minute(market, candle, float(k.get('v') or 0.0))
             return
 
         quote_vol = float(k['q'])
@@ -327,6 +349,38 @@ class MarketData:
         bucket['minutes'] += 1
         if int(c[0]) == start + TIMEFRAME_MS - 60_000:
             self._finalize_bucket(market, bucket)
+
+    def _replace_closed_bucket(self, market: str, start: int) -> None:
+        """Rebuild a 15m aggregate after a late correction to an already closed minute."""
+        target = self.minute_klines if market == 'futures' else self.spot_minute_klines
+        rows = sorted((c for c in target if start <= c[0] < start + TIMEFRAME_MS), key=lambda c: c[0])
+        if not rows:
+            return
+        complete = {int(c[0]) for c in rows} == set(range(start, start + TIMEFRAME_MS, 60_000))
+        def base_volume(c):
+            try:
+                value = float(c[7]) if len(c) > 7 else float('nan')
+            except (TypeError, ValueError):
+                value = float('nan')
+            return value if math.isfinite(value) else 0.0
+        row = {'timestamp': start, 'open': rows[0][1], 'high': max(c[2] for c in rows), 'low': min(c[3] for c in rows),
+               'close': rows[-1][4], 'volume': sum(base_volume(c) for c in rows),
+               'quote_volume': sum(float(c[5]) for c in rows), 'taker_delta': sum(2 * float(c[6]) - float(c[5]) for c in rows),
+               'open_interest': None}
+        # Replace a pending aggregate with its corrected value instead of queueing two rows at the same timestamp.
+        # ``merge_live_candle`` also handles corrections after a row was drained, but keeping this queue unique avoids
+        # duplicate work and makes a cold-start backfill deterministic.
+        self.closed_klines[market] = [r for r in self.closed_klines[market] if r['timestamp'] != start]
+        self.closed_klines[market].append(row)
+        if complete:
+            self.incomplete[market].discard(start)
+            recent = deque((r for r in self.recent_closed[market] if r['timestamp'] != start), maxlen=self.recent_closed[market].maxlen)
+            recent.append(dict(row))
+            self.recent_closed[market] = recent
+            self.finalized_until[market] = max(self.finalized_until[market], start)
+        else:
+            self.incomplete[market].add(start)
+            self.backfill_wanted[market] = max(self.backfill_wanted.get(market, 0), start)
 
     def _finalize_bucket(self, market: str, bucket: dict):
         self.minute_bucket.pop(market, None)
