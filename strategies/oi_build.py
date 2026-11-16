@@ -18,24 +18,48 @@ from strategies.base import CardLevels, PlanInput, Strategy
 from zones import merge
 
 MINUTE_MS = 60_000
+OI_TARGET_MIN_NET_RR = 1.0
+# Keep the OI map search finite.  Six working ATRs is the existing zone-map merge span and is the
+# same practical discovery window used by the map, while still allowing the first structural pool
+# beyond a micro level to be selected.
+OI_TARGET_MAX_ATR = 6.0
 
 
 def _oi_targets(x: PlanInput, direction: int):
-    """OI-build-owned opposite-liquidity targets."""
+    """OI-build-owned opposite-liquidity targets with a cost-aware first target floor.
+
+    OI's raw level map often contains a near micro-level immediately in front of the entry.  It is
+    still a valid map observation, but it is not a usable TP1 when the net reward is below one unit
+    of the actual stop risk.  Skip those levels before writing the contract targets so the shared
+    geometry layer sees the first structural level that can pay the trade's round-trip cost.
+    """
     atr = float(x.atr or 0)
     ref = float(x.sig.get('anchor_close') or 0)
+    stop_ref = x.sig.get('anchor_extreme')
+    stop = float(stop_ref) - direction * 0.25 * atr if stop_ref is not None else None
+    risk = direction * (ref - stop) if stop is not None else 0.0
+    from strategies.geometry import cost_of
+    fee = cost_of(ref, x.sig.get('volume_24h'), x.symbol) if ref else 0.0
     gap = CONFIG.zones.min_target_atr * atr
     zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
     targets, sources = [], []
     for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
         price = zone.lo if direction > 0 else zone.hi
-        if direction * (price - (targets[-1] if targets else ref)) >= gap:
-            targets.append(price); sources.append(zone.label)
+        distance = direction * (price - ref)
+        net_rr = ((distance - fee) / (risk + fee)) if risk > 0 else -float('inf')
+        if (0 < distance <= OI_TARGET_MAX_ATR * atr and net_rr >= OI_TARGET_MIN_NET_RR
+                and (not targets or direction * (price - targets[-1]) >= gap)):
+            targets.append(price)
+            sources.append(zone.label)
         if len(targets) >= 3:
             break
+    # No structural level that pays the minimum: keep the plan unexecutable instead of manufacturing
+    # an ATR target at/inside the entry.  With one or two levels the shared geometry contract repeats
+    # the last real map level for the remaining slots.
+    if not targets:
+        return [], []
     while len(targets) < 3:
-        last = targets[-1] if targets else ref
-        targets.append(last + direction * gap); sources.append('OI build ATR discovery')
+        targets.append(targets[-1]); sources.append(sources[-1])
     return targets, sources
 
 
@@ -153,7 +177,9 @@ class OiBuildStrategy(Strategy):
         if risk <= 0 or sl <= 0:
             return None
         targets += [targets[-1]] * (3 - len(targets))
-        rr = [direction * (t - entry) / risk for t in targets]
+        from strategies.geometry import cost_of
+        fee = cost_of(entry, plan.get('volume_24h'), plan.get('symbol'))
+        rr = [(direction * (t - entry) - fee) / (risk + fee) for t in targets]
         plan['contract_source'] = 'oi_build_pring'
         src = list(plan.get('target_src') or ()) + ['opposite liquidity'] * 3
         return {'entry': float(entry), 'sl': sl, 'tp1': targets[0], 'tp2': targets[1], 'tp3': targets[2],

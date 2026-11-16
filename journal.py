@@ -29,6 +29,19 @@ from security import safe_pickle_load
 from core.provenance import fields as provenance_fields
 
 
+# Alternative entries are measured on the same card but never become the card's primary trade.  Keep
+# the reason list centralized so old rows without the explicit flag can still be classified correctly.
+BENCHMARK_REASONS = frozenset({
+    'flow_entry', 'reclaim_entry', 'weak_mss', 'variant_ce_limit', 'variant_fvg_edge',
+    'variant_pool2', 'variant_retest', 'variant_shift', 'variant_st_stop', 'variant_orb_open',
+})
+
+
+def is_benchmark_reason(reason: Optional[str]) -> bool:
+    text = str(reason or '')
+    return text in BENCHMARK_REASONS or text.startswith('variant_')
+
+
 def wilson_upper(hits: int, n: int, z: float = 1.96) -> float:
     """The upper end of the 95% Wilson score interval of a proportion (hits of n)."""
     if n <= 0:
@@ -330,6 +343,8 @@ EXTRA_COLUMNS = {
     'btc_mom_7d': 'REAL',
     # eng-101: the shadowed vetoes (strategies.shadow_vetoes) that would have blocked this row's setup / entry
     'shadow_veto': 'TEXT',
+    # Phase 1: benchmark/variant entry rows are explicit schema data, not primary vetoes.
+    'is_benchmark_variant': 'INTEGER',
     # eng-104: the one regime (strategies/regime.py) at the entry: 'range pos 0.40 adx 23.6 h1 -1 h4 -1'
     'regime2': 'TEXT',
     # eng-108: the values of removed thresholds (sweep volume / depth / pool age), journaled to look at them later
@@ -786,6 +801,17 @@ class SignalJournal:
             if column not in existing:
                 safe_column = identifier(column, set(EXTRA_COLUMNS))
                 self.conn.execute(f"ALTER TABLE signals ADD COLUMN {safe_column} {sql_type}")
+        # Backfill the explicit benchmark flag for legacy rows.  A newly added INTEGER column is NULL on all old
+        # entries; leaving it NULL would make a SQL `COALESCE(is_benchmark_variant, 0) = 0` query mix old shadow rows
+        # back into the primary denominator.  The reason fallback remains in Python analytics for read-only snapshots
+        # that predate this migration.
+        placeholders = ','.join('?' for _ in BENCHMARK_REASONS)
+        self.conn.execute(
+            "UPDATE signals SET is_benchmark_variant = 1 WHERE kind = 'entry' AND "
+            "(COALESCE(vetoed, '') GLOB 'variant_*' OR COALESCE(vetoed, '') IN (" + placeholders + ")) "
+            "AND COALESCE(is_benchmark_variant, 0) = 0",
+            tuple(BENCHMARK_REASONS),
+        )
         # Historical rows were written before the shared contract gate.  Keep them for auditability, but remove
         # malformed entries from performance metrics instead of letting them masquerade as executable trades.
         self.conn.execute(
@@ -847,6 +873,7 @@ class SignalJournal:
             'demo_eligible': (None if sig.get('demo_eligible') is None else int(bool(sig.get('demo_eligible')))),
             'quarantined': int(bool(sig.get('quarantined'))) if sig.get('quarantined') is not None else 0,
             'quarantine_reason': sig.get('quarantine_reason'),
+            'is_benchmark_variant': int(bool(sig.get('is_benchmark_variant'))),
         }
         row.update(provenance_fields())
         row['feature_schema_version'] = FEATURE_SCHEMA_VERSION
@@ -912,6 +939,8 @@ class SignalJournal:
                     'exp_model': lv.get('exp_model'), 'exp_note': lv.get('exp_note'),
                     'obstacle_r': lv.get('obstacle_r'), 'obstacle_src': lv.get('obstacle_src'),
                     'vetoed': getattr(tracked, 'vetoed', None), 'of_confirm': getattr(tracked, 'of_confirm', None),
+                    'is_benchmark_variant': int(bool(getattr(tracked, 'is_benchmark_variant', False)
+                                                     or is_benchmark_reason(getattr(tracked, 'vetoed', None)))),
                     'confirms': json.dumps(getattr(tracked, 'confirms', None) or {}),
                     'conf_n': sum(1 for k, v in (getattr(tracked, 'confirms', None) or {}).items()
                                   if not k.startswith('_') and confirm.positive(v)),
@@ -948,9 +977,8 @@ class SignalJournal:
                                                           (tracked.plan or {}).get('entry_note')) if x) or None})
         # eng-153 (external audit #3): the shadow benchmarks (flow_entry / reclaim_entry / weak_mss, never traded) are
         # rows of their own like variant_*: they took the card's one veto slot and the method's own later veto was lost
-        shadow = "(COALESCE(vetoed, '') LIKE 'variant_%' OR COALESCE(vetoed, '') IN ('flow_entry', 'reclaim_entry', 'weak_mss'))"
-        is_shadow = row['vetoed'] is not None and (row['vetoed'].startswith('variant_')
-                                                   or row['vetoed'] in ('flow_entry', 'reclaim_entry', 'weak_mss'))
+        shadow = "COALESCE(is_benchmark_variant, 0) = 1"
+        is_shadow = bool(row.get('is_benchmark_variant'))
         if self.trade is not None:
             row['p_trade'] = self.trade.predict(row)
         with self._lock:

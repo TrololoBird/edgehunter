@@ -37,7 +37,7 @@ from rich.table import Table
 from rich.text import Text
 
 from config import CONFIG
-from journal import HORIZONS
+from journal import BENCHMARK_REASONS, HORIZONS
 from strategies import SETUPS
 
 MIN_SAMPLE = 30
@@ -348,6 +348,14 @@ def _col(row, name: str, default=None):
     return row[name] if name in row.keys() else default
 
 
+def _is_benchmark_variant(row) -> bool:
+    """True for an explicit benchmark row or a legacy row identified by its reason."""
+    if bool(_col(row, 'is_benchmark_variant', 0)):
+        return True
+    reason = str(_col(row, 'vetoed') or '')
+    return reason in BENCHMARK_REASONS or reason.startswith('variant_')
+
+
 def net_r(row, col: str) -> Optional[float]:
     """R result minus the round-trip fee expressed in R (fee x entry / risk)."""
     r = _col(row, col)
@@ -551,7 +559,8 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
 
 def features_table(console: Console, rows: List, baseline: Baseline):
     """Edge 4h of directional rows split by each recorded feature: does the filter / context add anything?"""
-    directional = [r for r in rows if r['direction'] and r['ret_4h'] is not None and r['kind'] != 'card']
+    directional = [r for r in rows if r['direction'] and r['ret_4h'] is not None and r['kind'] != 'card'
+                   and not _is_benchmark_variant(r)]
     if not directional:
         return
     table = Table(title="Edge 4h by feature (directional signals)", header_style="bold magenta", border_style="blue")
@@ -604,7 +613,8 @@ def source_kind(label: Optional[str]) -> Optional[str]:
 
 def sources_table(console: Console, rows: List):
     """How often TP1 was reached, per the source of TP1 (entry rows with a replay): which level kinds hold up?"""
-    entries = [r for r in rows if r['kind'] == 'entry' and _col(r, 'outcome') not in (None, 'SKIPPED', 'OPEN')
+    entries = [r for r in rows if r['kind'] == 'entry' and not _is_benchmark_variant(r)
+               and _col(r, 'outcome') not in (None, 'SKIPPED', 'OPEN')
                and _col(r, 'tp1_src')]
     if not entries:
         return
@@ -664,7 +674,8 @@ def vetoes_table(console: Console, rows: List):
     filter earns its place only if the trades it vetoes do WORSE than the ones it lets through (R:R 2, the
     confirmation minimum, off-session, macro events ...). Per strategy too, where a strategy has both.
     """
-    entries = [r for r in rows if r['kind'] == 'entry' and _col(r, 'outcome') not in (None, 'SKIPPED', 'OPEN')]
+    entries = [r for r in rows if r['kind'] == 'entry' and not _is_benchmark_variant(r)
+               and _col(r, 'outcome') not in (None, 'SKIPPED', 'OPEN')]
     if not entries:
         return
     table = Table(title="Filters: replay of the entries each veto rejected vs the passed ones (net R @TP1)",
@@ -696,7 +707,8 @@ def slices_table(console: Console, rows: List):
     every split shown. Read-only diagnostics: a split decides nothing without the pre-registered pass rule
     (>= 100 clusters, p < 0.05, E[R] > 0 after costs, both halves).
     """
-    entries = [r for r in rows if r['kind'] == 'entry' and _col(r, 'outcome') not in (None, 'SKIPPED', 'OPEN')
+    entries = [r for r in rows if r['kind'] == 'entry' and not _is_benchmark_variant(r)
+               and _col(r, 'outcome') not in (None, 'SKIPPED', 'OPEN')
                and net_r(r, 'r_tp1') is not None]
     if len(entries) < MIN_SAMPLE:
         return
@@ -781,14 +793,12 @@ def variants_table(console: Console, rows: List):
     entries = [r for r in rows if r['kind'] == 'entry']
     if not entries:
         return
-    other_shadows = ('flow_entry', 'reclaim_entry', 'weak_mss', 'variant_shift')
     clus = lambda r: (r['ts_ms'] // 900_000, r['direction'])   # noqa: E731
     by_card: Dict = {}
     for r in entries:
         by_card.setdefault((r['symbol'], r['group_key'], _col(r, 'setup_ts_ms')), []).append(r)
     lines = []      # (name, [(variant, own, cluster)])
-    live = [r for r in entries if not (_col(r, 'vetoed') or '').startswith('variant_')
-            and _col(r, 'vetoed') not in other_shadows]
+    live = [r for r in entries if not _is_benchmark_variant(r)]
     lines.append(('two-contour stop vs plain stop', [(r['two_stop_r'], r['base_stop_r'], clus(r)) for r in live
                   if _col(r, 'two_stop_r') is not None and _col(r, 'base_stop_r') is not None]))
     lines.append(('sweep second test vs its first entry', [(r['retest_r'], r['base_stop_r'], clus(r)) for r in live
@@ -797,8 +807,7 @@ def variants_table(console: Console, rows: List):
         pairs = []
         for members in by_card.values():
             var = next((r for r in members if _col(r, 'vetoed') == name), None)
-            own = next((r for r in members if not (_col(r, 'vetoed') or '').startswith('variant_')
-                        and _col(r, 'vetoed') not in other_shadows), None)
+            own = next((r for r in members if not _is_benchmark_variant(r)), None)
             if var is not None and own is not None and _col(var, 'base_stop_r') is not None \
                     and _col(own, 'base_stop_r') is not None:
                 pairs.append((var['base_stop_r'], own['base_stop_r'], clus(var)))
@@ -807,8 +816,7 @@ def variants_table(console: Console, rows: List):
             # the cards whose limit filled but whose own entry never came (own = 0R: no trade)
             none = [(r['base_stop_r'], 0.0, clus(r)) for members in by_card.values()
                     for r in members if _col(r, 'vetoed') == name and _col(r, 'base_stop_r') is not None
-                    and not any(not (_col(x, 'vetoed') or '').startswith('variant_')
-                                and _col(x, 'vetoed') not in other_shadows for x in members)]
+                    and not any(not _is_benchmark_variant(x) for x in members)]
             lines.append((f"{name}, no own entry (own = 0R)", none))
     split = []
     for members in by_card.values():
@@ -848,7 +856,7 @@ def funnel_table(console: Console, rows: List):
             st = (r['group_key'] or '').split(' ', 1)[0]
             by.setdefault(strat, {}).setdefault(f"card {st}", 0)
             by[strat][f"card {st}"] += 1
-        elif r['kind'] == 'entry':
+        elif r['kind'] == 'entry' and not _is_benchmark_variant(r):
             v = _col(r, 'vetoed')
             if v and v.startswith('variant_'):
                 continue
@@ -1094,7 +1102,7 @@ def effective_trials(rows: List) -> Tuple[int, int]:
     """
     series: Dict[tuple, Dict[int, List[float]]] = {}
     for r in rows:
-        if _col(r, 'kind') not in ('entry', 'card') or not _col(r, 'strategy'):
+        if _col(r, 'kind') not in ('entry', 'card') or not _col(r, 'strategy') or _is_benchmark_variant(r):
             continue
         v = card_r_net(r) if _col(r, 'kind') == 'card' else net_r(r, 'r_tp1') if _col(r, 'r_tp1') is not None else None
         if v is None or (_col(r, 'kind') == 'entry' and _col(r, 'vetoed')):

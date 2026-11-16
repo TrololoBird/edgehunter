@@ -3,7 +3,7 @@ Cup with handle (William O'Neil, "How to Make Money in Stocks"; statistics: Thom
 Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
 
 - a prior advance of >= 30% into the left rim (the lowest low of the 2x cup-length before it to the rim);
-- the cup: 12-33% deep (O'Neil; eng-58, was up to 50%), 35..325 daily candles (his 7 .. 65 weeks);
+- the cup: 12-33% deep (O'Neil; eng-58, was up to 50%), 49..420 daily candles (7 .. 60 calendar weeks in the retained 898-bar window);
 - the handle after the right rim: 5 days (O'Neil: at least one to two weeks) .. cup/4 candles, drifting in the cup's UPPER half and no deeper than 12% of the
   rim, on lower volume than the cup's;
 - the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
@@ -16,6 +16,12 @@ from typing import Dict, List, Optional, Sequence
 from config import CONFIG
 from strategies.base import CardLevels, PlanInput, Strategy
 from strategies.maniac_strategies import _System, _confirm_plan  # noqa: F401  (_System: the gate key)
+
+
+# The scanner retains at most 898 closed daily bars.  Keeping the prior-advance window at 2x the
+# cup length therefore caps the cup at 420 bars (about 60 calendar weeks) so every allowed pattern
+# can be evaluated without a truncated left side.
+CUP_MAX_LEN = 420
 
 
 def _pivots_high(h: List[float], k: int = 3) -> List[int]:
@@ -40,9 +46,9 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
         handle = list(range(r + 1, last))
         for left in reversed([p for p in pivots if p < r]):
             cup_len = r - left
-            # audit: O'Neil's 7-65 WEEKS are calendar time; the crypto daily chart has 7 candles a week, so 49-455
-            # candles (35-325 were stock trading days: 5 weeks on a 24/7 market)
-            if not 49 <= cup_len <= 455:
+            # audit: O'Neil's 7-65 WEEKS are calendar time; the crypto daily chart has 7 candles a week.  The
+            # retained prior-advance window is 2x the cup, so 49-420 keeps the full pattern inside <=840 bars.
+            if not 49 <= cup_len <= CUP_MAX_LEN:
                 continue
             rim = min(h[left], h[r])
             bottom = min(l[left:r + 1])

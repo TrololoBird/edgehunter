@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from strategies.base import CardLevels
 
 from config import CONFIG
-from journal import classify, veto_reason
+from journal import BENCHMARK_REASONS, classify, is_benchmark_reason, veto_reason
 from levels import MINUTE_MS, funding_r, ltf_trigger, pullback_spread_ok, pullback_volume_ok, resample, slippage_bps
 from core.strategy_engine import StrategyEngine
 
@@ -309,6 +309,9 @@ class TrackedSignal:
     vetoed_triggers: int = 0
     variants_done: list = field(default_factory=list)    # eng-149: shadow variants journaled for this card
     limit_variant: bool = False                          # eng-149: a variant that rests a limit (replay fills at it)
+    # Benchmark entries are alternative fills measured beside the card's primary trigger.  They must never
+    # consume the primary entry/veto denominator in the journal or funnel reports.
+    is_benchmark_variant: bool = False
     # Veto reasons of the triggers skipped so far, and why / where the card finished
     veto_log: list = field(default_factory=list)
     # Why a far stop did not pay (low_rr): stop / TP1 / the entry's distance from the zone's edge, the last few
@@ -825,11 +828,19 @@ class SignalBook:
         if status in ('SL', 'TP3') or (status == 'CLOSED' and s.entered_at):
             self.events.append((s, status))
 
-    def _direction_units(self, s: TrackedSignal) -> int:
-        """The Turtles' units already held in s's direction: open (not finished) cards of OTHER coins / setups that carry
-        units (only unit systems do), so a waiting or finished card never counts (eng-164 test)."""
+    def _open_turtle_units(self, direction: int, exclude: Optional[TrackedSignal] = None) -> int:
+        """Count units of real open Turtle positions only.
+
+        ``units`` is also used by historical averaging/variant paths.  The portfolio cap is a Turtle
+        contract, so waiting cards, finished cards and non-Turtle units must not consume it.
+        """
         return sum(len(o.units) for o in self.signals.values()
-                   if o is not s and not o.finished and o.units and o.direction == s.direction)
+                   if o is not exclude and o.entered_at and not o.finished and o.units
+                   and o.direction == direction and (o.plan or {}).get('turtle_n'))
+
+    def _direction_units(self, s: TrackedSignal) -> int:
+        """The open Turtle units already held in s's direction, excluding s itself."""
+        return self._open_turtle_units(s.direction, exclude=s)
 
     def _partial_1r(self, s: TrackedSignal, hi: Optional[float], lo: Optional[float]) -> None:
         """eng-105 / eng-155: partial_share of the position out once price traded +partial_r R (the demo's tp0, or a
@@ -1614,17 +1625,17 @@ class SignalBook:
                 s.sig['shadow_veto'] = ','.join(sorted(have | {'market_down'}))
             else:
                 reason = 'market_down'
-        # This is a blocking predicate, parallel to _market_down: True means
-        # both 24h market moves are positive and the OI short must be vetoed.
-        if reason is None and self._market_up_veto(s):
-            reason = 'market_up'
-        # OI BUILD SHORT is the one live leak identified in the negative-entry
-        # audit.  Its missing flow confirmation had been converted to a shadow
-        # tag by the generic ``<confirmations>`` policy, so a buy-led move could
-        # still become a card.  Keep this setup fail-closed until the directional
-        # flow is present; the companion _market_up_veto gate handles the regime side.
-        if reason is None and s.group_key == 'OI BUILD SHORT' and (confirms or {}).get('flow') is not True:
-            reason = 'flow_entry'
+        # OI BUILD SHORT's flow/regime checks are diagnostics, not primary
+        # eligibility gates.  The old hard vetoes removed more profitable than
+        # losing replay rows (audit Addendum B), and ``flow_entry`` is also the
+        # name of a separate benchmark fill.  Keep the two OI observations in
+        # the shadow-veto telemetry with distinct names so they cannot collide
+        # with benchmark classification in the journal.
+        if s.group_key == 'OI BUILD SHORT':
+            if self._market_up_veto(s):
+                shadow_veto(s.sig, 'market_up')
+            if (confirms or {}).get('flow') is not True:
+                shadow_veto(s.sig, 'oi_short_no_flow')
         hb = (confirms or {}).get('_bias') or {}
         # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py). eng-168 (audit):
         # evaluated even after an earlier veto so its shadow tag is journaled on every row (no censoring by order)
@@ -1695,6 +1706,7 @@ class SignalBook:
             vetoed = copy.copy(s)
             vetoed.levels, vetoed.entered_at, vetoed.vetoed = levels, entered_at, reason
             vetoed.of_confirm, vetoed.confirms = of, dict(confirms)
+            vetoed.is_benchmark_variant = is_benchmark_reason(reason)
             s.vetoed_triggers += 1
             if reason == 'low_rr' and levels.get('entry'):
                 # A stop that far does not pay: the question is why the signal came here (entry vs the zone's edge)
@@ -1758,6 +1770,7 @@ class SignalBook:
         shadow = copy.copy(s)
         shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, name
         shadow.of_confirm, shadow.confirms, shadow.limit_variant = None, {}, limit
+        shadow.is_benchmark_variant = name in BENCHMARK_REASONS or name.startswith('variant_')
         self._extra.append(shadow)
 
     RETEST_SETUPS = ('PUMP START', 'DUMP START')
@@ -1940,6 +1953,7 @@ class SignalBook:
         shadow = copy.copy(s)
         shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, reason
         shadow.of_confirm, shadow.confirms = None, {}
+        shadow.is_benchmark_variant = reason in BENCHMARK_REASONS or reason.startswith('variant_')
         return shadow
 
     def _flow_entry(self, s: TrackedSignal, minutes, now_ms: int, price: float,
@@ -1978,6 +1992,7 @@ class SignalBook:
         shadow = copy.copy(s)
         shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, 'flow_entry'
         shadow.of_confirm, shadow.confirms = c.get('orderflow'), dict(c)
+        shadow.is_benchmark_variant = True
         return shadow
 
     def _reclaim_entry(self, s: TrackedSignal, price: float, now_ms: int) -> Optional[TrackedSignal]:
@@ -2008,6 +2023,7 @@ class SignalBook:
         shadow = copy.copy(s)
         shadow.levels, shadow.entered_at, shadow.vetoed = levels, now_ms / 1000, 'reclaim_entry'
         shadow.of_confirm, shadow.confirms = None, {}
+        shadow.is_benchmark_variant = True
         return shadow
 
     def _against_day(self, s: TrackedSignal, at_ms: int) -> Optional[str]:
@@ -2202,8 +2218,7 @@ class SignalBook:
         n = (s.plan or {}).get('turtle_n')
         if n and s.units and len(s.units) < CONFIG.strategies.turtle_max_units and \
                 d * (price - s.units[-1][0]) >= CONFIG.strategies.turtle_add_n * n:
-            held = sum(len(o.units) for o in self.signals.values()
-                       if not o.finished and o.units and o.direction == d)
+            held = self._open_turtle_units(d)
             if held < CONFIG.strategies.turtle_max_direction_units:
                 # the Turtles' pyramid: one more unit every 1/2 N in the trade's favour, the stop of ALL units moved
                 # to 2N from the newest one. Faith: the 1/2 N interval is measured from the ACTUAL fill of the previous

@@ -29,6 +29,12 @@ except Exception:  # pragma: no cover - the report can still run against a copie
     DEFAULT_LOGIC_VERSION = None
 
 
+BENCHMARK_REASONS = frozenset({
+    'flow_entry', 'reclaim_entry', 'weak_mss', 'variant_ce_limit', 'variant_fvg_edge',
+    'variant_pool2', 'variant_retest', 'variant_shift', 'variant_st_stop', 'variant_orb_open',
+})
+
+
 def read_rows(path: str, table: str, where: str = "", args: tuple = ()):
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -60,6 +66,13 @@ def is_setup(row, name: str) -> bool:
 
 def truthy(row, key) -> bool:
     return bool(val(row, key, 0) or 0)
+
+
+def is_benchmark_variant(row) -> bool:
+    if truthy(row, 'is_benchmark_variant'):
+        return True
+    reason = str(val(row, 'vetoed') or '')
+    return reason in BENCHMARK_REASONS or reason.startswith('variant_')
 
 
 def pct(n, d) -> str:
@@ -152,9 +165,12 @@ def main() -> None:
     signals = [r for r in signals_all if in_scope(r, args.logic_version, args.source_commit)]
     entries = [r for r in signals if val(r, 'kind') == 'entry']
     valid = [r for r in entries if not truthy(r, 'quarantined')]
+    primary = [r for r in valid if not is_benchmark_variant(r)]
+    benchmark = [r for r in valid if is_benchmark_variant(r)]
     quarantined = [r for r in entries if truthy(r, 'quarantined')]
     negatives = [r for r in entries if val(r, 'filled') == 1 and val(r, 'r_tp1') is not None and float(val(r, 'r_tp1')) < 0]
-    valid_neg = [r for r in negatives if not truthy(r, 'quarantined')]
+    valid_neg = [r for r in negatives if not truthy(r, 'quarantined') and not is_benchmark_variant(r)]
+    benchmark_neg = [r for r in negatives if not truthy(r, 'quarantined') and is_benchmark_variant(r)]
     unvetoed_neg = [r for r in valid_neg if val(r, 'vetoed') in (None, '')]
     blocked_neg = [r for r in valid_neg if val(r, 'vetoed') not in (None, '')]
     q_neg = [r for r in negatives if truthy(r, 'quarantined')]
@@ -172,7 +188,7 @@ def main() -> None:
     orphan_neg = [r for r in realized_neg if val(r, 'close_reason') in ('ORPHAN', 'UNTRACKED')]
 
     groups = collections.defaultdict(list)
-    for row in valid:
+    for row in primary:
         groups[setup(row)].append(row)
     neg_groups = collections.defaultdict(list)
     for row in valid_neg:
@@ -191,12 +207,12 @@ def main() -> None:
         '# Edgehunter: veto-aware negative-entry and execution forensics', '',
         f'Generated `{now.isoformat()}` UTC. Scope starts `{cut.isoformat()}` UTC.',
         f"Provenance filter: logic_version={args.logic_version or 'all'}, source_commit={args.source_commit or 'all'}.", '',
-        'The report treats `quarantined=0 AND vetoed IS NULL` as the executable replay population. '
-        '`vetoed IS NOT NULL` is a shadow/blocked benchmark and is shown separately.', '',
+        'The report treats `COALESCE(quarantined, 0) = 0 AND vetoed IS NULL AND is_benchmark_variant = 0` as the executable replay population. '
+        'Benchmark rows are identified by `is_benchmark_variant=1` (with legacy reason fallback) and are shown separately; non-benchmark `vetoed` rows are real blocked primary candidates.', '',
         '## Scope counts', '',
-        f'- Entry rows: **{len(entries)}**; valid: **{len(valid)}**; quarantined: **{len(quarantined)}**.',
+        f'- Entry rows: **{len(entries)}**; valid: **{len(valid)}**; primary: **{len(primary)}**; benchmark variants: **{len(benchmark)}**; quarantined: **{len(quarantined)}**.',
         f'- Negative replay rows: **{len(negatives)}**; valid: **{len(valid_neg)}**; '
-        f'unvetoed: **{len(unvetoed_neg)}**; blocked: **{len(blocked_neg)}**; quarantined negatives: **{len(q_neg)}**.',
+        f'unvetoed primary: **{len(unvetoed_neg)}**; blocked primary: **{len(blocked_neg)}**; benchmark negatives: **{len(benchmark_neg)}**; quarantined negatives: **{len(q_neg)}**.',
         f'- Cards: **{len(cards_all)}**; cards with result: **{len(cards)}**; negative cards: **{len(neg_cards)}**.',
         f'- Demo rows after cutoff: **{len(demo_after)}**; strategy rows: **{len(strategy_after)}**; '
         f'new negative strategy closes: **{len(strategy_neg_after)}**.',
@@ -231,10 +247,10 @@ def main() -> None:
                      f"{top(rows, 'geometry_error')} | {top(rows, 'risk_gate_reason')} | "
                      f"{', '.join(f'{k}={v}' for k, v in outcomes.most_common(4))} |")
 
-    lines += ['', '## Veto Effectiveness (Shadow/Blocked)', '',
+    lines += ['', '## Veto Effectiveness (Primary Blocked)', '',
                'These losses are useful for measuring filter coverage, but they do not represent candidates that reached a card.', '',
                table_header(['Veto reason', 'Rows', 'Filled replay', 'Negative', 'Negative among filled', 'Non-negative filled', 'Setups']),]
-    blocked_all = [r for r in valid if val(r, 'vetoed') not in (None, '')]
+    blocked_all = [r for r in primary if val(r, 'vetoed') not in (None, '')]
     veto_groups = collections.defaultdict(list)
     for row in blocked_all:
         for reason in str(val(row, 'vetoed')).split(','):
@@ -266,7 +282,7 @@ def main() -> None:
                      f"{val(row, 'close_reason') or '—'} | {val(row, 'geometry_error') or '—'} | {val(row, 'risk_gate_reason') or '—'} | "
                      f"{fmt(val(row, 'sl'))} | {fmt(val(row, 'tp1'))} | {fmt(val(row, 'entry_fill'))} |")
 
-    oi_entries = [r for r in entries if is_setup(r, 'OI BUILD SHORT')]
+    oi_entries = [r for r in primary if is_setup(r, 'OI BUILD SHORT')]
     oi_unveto_neg = [r for r in oi_entries if val(r, 'filled') == 1 and val(r, 'r_tp1') is not None
                      and float(val(r, 'r_tp1')) < 0 and not truthy(r, 'quarantined')
                      and val(r, 'vetoed') in (None, '')]

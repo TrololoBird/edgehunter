@@ -461,8 +461,13 @@ class _Frames:
 
 def _entry_row(e, now_ms: int) -> Dict:
     lv = e.levels or {}
+    reason = e.vetoed
+    is_benchmark = bool(getattr(e, 'is_benchmark_variant', False) or
+                        (isinstance(reason, str) and (reason.startswith('variant_') or
+                                                     reason in {'flow_entry', 'reclaim_entry', 'weak_mss'})))
     return {'ts': now_ms, 'symbol': e.symbol, 'setup': e.group_key, 'strategy': e.mode, 'direction': e.direction,
-            'stage': 'entry', 'vetoed': e.vetoed, 'entry': lv.get('entry'), 'sl': lv.get('sl'), 'tp1': lv.get('tp1'),
+            'stage': 'entry', 'vetoed': reason, 'is_benchmark_variant': int(is_benchmark),
+            'entry': lv.get('entry'), 'sl': lv.get('sl'), 'tp1': lv.get('tp1'),
             'tp2': lv.get('tp2'), 'tp3': lv.get('tp3'), 'rr_tp1': lv.get('rr_tp1'), 'sl_src': lv.get('sl_src'),
             'limit_entry': lv.get('limit_entry'), 'volume_24h': (e.sig or {}).get('volume_24h'),
             'funding': (e.sig or {}).get('funding_rate'),

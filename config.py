@@ -718,7 +718,7 @@ class StrategiesConfig:
                             '<confirmations>',     # every missing entry confirmation (confirm.required_names)
                             'htf_bias', 'htf_conflict', 'htf_range', 'rg_breakout_in_range', 'rg_countertrend',
                             'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day',
-                            'sweep_no_htf_bias')   # eng-151 (external audit #1): shadow, outcome journaled
+                            'sweep_no_htf_bias', 'market_up', 'oi_short_no_flow')   # eng-151 / eng-170c: OI short diagnostics stay shadow
     # Demo policy: every registered setup is on. Keep this empty; an entry here would be an explicit strategy shutdown.
     disabled_setups: tuple = ()
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
@@ -872,8 +872,8 @@ class StrategiesConfig:
     # Connors' RSI(2) levels (eng-58: 5 / 95, his original rule; 10 / 90 is a later variant)
     connors_rsi_low: float = 5.0
     connors_rsi_high: float = 95.0
-    # eng-55: Connors uses no stop. A perpetual with leverage needs one for the margin: a CATASTROPHIC stop this many
-    # daily ATR(20) away, journaled as our deviation (it is not part of his exit)
+    # Connors' SMA5 exit is paired with the explicit 2 daily-ATR catastrophe stop in classic_strategies.py; it is a
+    # real exchange protection order and the position size is based on that distance.
     # eng-55 dump bounce (research/pumps*.md, positive in every period 2021-2026): a DUMP = close >= dump_min_move
     # below the 6h high on >= 3x the hour's volume of the week before; short the first 38.2-61.8% bounce on a 1h close
     # below the previous low; stop above the bounce + 0.25 ATR(1h); TP1 the dump's low, TP2 the 1.618 extension
@@ -1091,7 +1091,7 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-170c"   # strict execution geometry, OI-short regime/flow veto, and reconciliation guard
+    logic_version: str = "eng-170c"   # strict execution geometry, OI-short regime/flow telemetry, and reconciliation guard
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump

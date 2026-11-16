@@ -1009,7 +1009,9 @@ class DemoExecutor:
                           'closed_ms': int(time.time() * 1000), 'close_reason': 'NO_SLOT'})
             return
         balance = min(await self._balance(), cfg.account_usd)
-        # sized from BingX's own bid / ask: the plan's entry understated the risk by the spread (WLD 2026-10-02: -1.45R)
+        # Size from the exchange-side quote and the actual exchange stop distance; the Binance plan's entry can
+        # understate the risk by the spread (WLD 2026-10-02: -1.45R).  Once filled, the persisted risk_usd below is
+        # recomputed from the confirmed fill-to-stop distance so the stop is exactly -1R of the recorded trade risk.
         stop_dist = abs(fill_est - lv['sl'])
         if balance <= 0 or stop_dist <= 0:
             return
@@ -1030,8 +1032,8 @@ class DemoExecutor:
         from strategies.geometry import cost_of
         fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'), s.symbol)
         no_stop = bool((getattr(s, 'plan', None) or {}).get('no_stop'))
-        # eng-127: a system without a stop (Connors: "stops hurt") - the 'stop' is only the R unit (1 daily ATR, the
-        # Turtles' N sizing) and the position runs at 1x, so the account carries it to any price without a liquidation
+        # Connors now carries a declared catastrophe stop like every other protected card.  Keep the no-stop branch
+        # only for legacy/restored contracts that explicitly opt into it.
         leverage = 1 if no_stop else cfg.max_leverage
         if not no_stop and fill_est:
             # eng-167 (trade-geometry review, section 11): the stop must come before a liquidation. BingX's estimate of
@@ -1157,9 +1159,11 @@ class DemoExecutor:
             if not no_stop:
                 await self._place_stop(symbol, d, qty, lv['sl'])
             elif lv.get('sl'):
-                # eng-144: a perpetual is never left without a stop - a catastrophe stop 3 R units away (Connors trades
-                # without one in his book; the exit stays the SMA5 close, this only caps a gap / delisting tail)
-                far = fill - 3 * (lv['entry'] - lv['sl']) if lv.get('entry') else None
+                # Legacy no-stop cards are still protected, but the stop distance is the explicit contract distance
+                # carried in ``lv['sl']``.  Do not silently turn a one-unit R into a hard-coded 3R loss.  New Connors
+                # cards set no_stop=False and place their declared 2 daily-ATR catastrophe stop through the normal path.
+                distance = abs(float(fill) - float(lv['sl'])) if lv.get('sl') else None
+                far = fill - d * distance if distance else None
                 if far and far > 0:
                     await self._place_stop(symbol, d, qty, far)
         except Exception as e:

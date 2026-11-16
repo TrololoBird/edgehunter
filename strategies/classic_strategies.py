@@ -8,6 +8,9 @@ from strategies.base import CardLevels, PlanInput
 from strategies.maniac_strategies import _System, _confirm_plan
 
 
+CONNORS_CATASTROPHE_STOP_ATR = 2.0
+
+
 class ValueAreaStrategy(_System):
     """Dalton's 80% rule: target the value area's far edge, stop beyond the edge price re-entered through."""
     name = 'value_area'
@@ -119,17 +122,17 @@ class OrbStrategy(_System):
 
 
 class ConnorsStrategy(_System):
-    """Connors' RSI(2): out at the SMA5 (the target), stop from the structure (he uses none)."""
+    """Connors' RSI(2): out at the SMA5 with an explicit 2 daily-ATR catastrophe stop."""
     name = 'connors'
     # Connors' published rule implemented here is RSI2X LONG only: close above SMA200 and RSI(2) < 5.
     # Cross-back and mirrored short variants are research alternatives, not this method's executable card.
     setups = {'RSI2X LONG': 1}
-    min_rr = 0.0                     # Connors: no stop, no ratio - out at the SMA5; the R is only measured
+    min_rr = 0.0                     # Connors: no fixed TP ratio - out at the SMA5; risk is the declared catastrophe stop
     ttl_key = 'connors_ttl'
     time_exit = 'fixed'                # the method's own exit (eng-47)
 
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
-        """Connors contract: daily ATR is a sizing unit, SMA5 close is the exit, no stop order."""
+        """Connors contract: the SMA5 is the method exit and the 2 daily-ATR stop is real protection."""
         exit = plan.get('exit') or {}
         stop = exit.get('stop') or []
         if len(stop) < 2 or not entry:
@@ -139,7 +142,7 @@ class ConnorsStrategy(_System):
         if risk <= 0 or unit_stop <= 0:
             return None
         plan['contract_source'] = 'connors_rsi2'
-        src = exit.get('stop_src') or 'daily ATR sizing unit (no stop order)'
+        src = exit.get('stop_src') or '2 daily ATR catastrophe stop'
         tp_src = exit.get('tp_src') or 'SMA5 close'
         return {'entry': float(entry), 'sl': unit_stop, 'tp1': None, 'tp2': None, 'tp3': None,
                 'rr_tp1': None, 'rr_tp2': None, 'rr_blend': None, 'low_rr': False, 'rr_reason': None,
@@ -154,21 +157,21 @@ class ConnorsStrategy(_System):
             return None
         # Connors: out on the first daily CLOSE above (long) / below (short) the CURRENT 5-day SMA - a moving
         # exit, not the SMA5 of the signal day touched intraday (eng-48); SignalBook checks it on each daily close
-        # eng-127, Connors (Short Term Trading Strategies That Work, rule 5 "Stops Hurt": stops of 1-50% all lowered
-        # the results): NO stop order. The position runs at 1x (executor: no liquidation) and is sized like a Turtle
-        # unit - 1% of the account per daily ATR (N); 'sl' = entry -+ 1 N is only the R unit, never an exit
+        # The source rule exits on SMA5, but a leveraged perpetual needs an explicit disaster stop.  The stop is
+        # part of this project's contract and the executor sizes risk from its actual exchange distance.
         datr = sig.get('connors_atr')
         if not datr:
             return None
-        stop = ['price', sig['anchor_close'] - x.direction * datr]
+        stop = ['price', sig['anchor_close'] - x.direction * CONNORS_CATASTROPHE_STOP_ATR * datr]
         exit = {'stop': stop, 'tp': ['level', sig['connors_sma5'], 0.0, None], 'atr': x.atr,
-                'stop_src': 'none (Connors): R unit = 1 daily ATR, position at 1x',
+                'stop_src': f'{CONNORS_CATASTROPHE_STOP_ATR:g} daily ATR catastrophe stop (Connors contract)',
                 'tp_src': 'SMA5 (Connors exit)', 'connors_exit': True}
         plan = _confirm_plan(x, self.name, '1d', exit, 'daily RSI(2) extreme with the SMA200 trend')
         if plan and not plan.get('skip'):
             plan['connors_exit'] = True
             plan['no_tp'] = True              # out on the SMA5 close: no take-profit orders
-            plan['no_stop'] = True
+            plan['no_stop'] = False           # the catastrophe stop is a real exchange protection order
+            plan['catastrophe_stop_atr'] = CONNORS_CATASTROPHE_STOP_ATR
             plan['allow_no_targets'] = True
             plan['exit_manager'] = 'daily SMA5 close'
         return plan

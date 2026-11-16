@@ -71,7 +71,7 @@ def _orb_shadow_row(found: Dict):
                                             'tp1': None, 'tp2': None, 'tp3': None},
                            plan={'no_tp': True, 'tf': '15m'}, entered_at=found['event_ts'] / 1000,
                            created=found['anchor_ts'] / 1000, vetoed='variant_orb_open', confirms={},
-                           of_confirm=None, limit_variant=False)
+                           of_confirm=None, limit_variant=False, is_benchmark_variant=True)
 
 
 def make_entry_intent(s):
@@ -85,6 +85,7 @@ def make_entry_intent(s):
         plan=copy.deepcopy(getattr(s, 'plan', None)),
         sig=dict(getattr(s, 'sig', None) or {}),
         units=list(getattr(s, 'units', None) or []),
+        is_benchmark_variant=bool(getattr(s, 'is_benchmark_variant', False)),
     )
 
 class _FrameLookup:
