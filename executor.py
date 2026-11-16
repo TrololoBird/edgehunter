@@ -188,7 +188,8 @@ class DemoExecutor:
                               ('source_commit', 'TEXT'), ('implementation_hash', 'TEXT'), ('config_logic_version', 'TEXT'),
                               ('source_dirty', 'INTEGER'), ('protection_state', 'TEXT'),
                               ('quarantined', 'INTEGER'), ('quarantine_reason', 'TEXT'),
-                              ('demo_eligible', 'INTEGER')):
+                              ('demo_eligible', 'INTEGER'), ('client_order_id', 'TEXT'),
+                              ('geometry_error', 'TEXT'), ('risk_gate_reason', 'TEXT')):
                 if col not in have:
                     safe_col = identifier(col, {
                         'basis', 'exit_ref', 'no_stop', 'scale', 'entry_order', 'fill_confirmed', 'funding_usd',
@@ -196,7 +197,7 @@ class DemoExecutor:
                         'latency_ms', 'leverage', 'logic_version', 'partial_done', 'n_units', 'r_unit', 'exit_via',
                         'virt', 'tp_done', 'units', 'source_commit', 'implementation_hash',
                         'config_logic_version', 'source_dirty', 'protection_state', 'quarantined', 'quarantine_reason',
-                        'demo_eligible',
+                        'demo_eligible', 'client_order_id', 'geometry_error', 'risk_gate_reason',
                     })
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {safe_col} {kind}")
             placeholders = ', '.join('?' for _ in UNIT_SETUPS)
@@ -209,13 +210,23 @@ class DemoExecutor:
             # Quarantine legacy malformed geometry before restoring open ownership.  The rows remain available for
             # incident review, while risk limits and demo reports exclude them via COALESCE(quarantined, 0) = 0.
             c.execute(
-                "UPDATE demo_trades SET quarantined = 1, quarantine_reason = CASE "
-                "WHEN entry_fill IS NOT NULL AND sl IS NOT NULL AND direction * (entry_fill - sl) <= 0 THEN 'wrong stop side' "
-                "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= entry_fill) OR (direction = -1 AND tp1 >= entry_fill)) THEN 'wrong TP1 side' "
+                "UPDATE demo_trades SET quarantined = 1, "
+                "geometry_error = CASE "
+                "WHEN (entry_plan IS NOT NULL AND sl IS NOT NULL AND direction * (entry_plan - sl) <= 0) OR "
+                "     (entry_fill IS NOT NULL AND sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) THEN 'wrong_stop_side' "
+                "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
+                "     (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))) THEN 'wrong_tp1_side' "
+                "ELSE geometry_error END, quarantine_reason = CASE "
+                "WHEN (entry_plan IS NOT NULL AND sl IS NOT NULL AND direction * (entry_plan - sl) <= 0) OR "
+                "     (entry_fill IS NOT NULL AND sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) THEN 'wrong stop side' "
+                "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
+                "     (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))) THEN 'wrong TP1 side' "
                 "ELSE COALESCE(quarantine_reason, 'legacy malformed geometry') END "
-                "WHERE entry_fill IS NOT NULL AND ("
+                "WHERE ("
+                "(entry_plan IS NOT NULL AND sl IS NOT NULL AND direction * (entry_plan - sl) <= 0) OR "
                 "(sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) OR "
-                "(tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= entry_fill) OR (direction = -1 AND tp1 >= entry_fill)))"
+                "(tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
+                "                         (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))))"
                 ")")
             # The config keeps OI BUILD visible in the journal but disabled for demo execution.  Mark legacy rows too,
             # so reports cannot silently count rows written before the execution eligibility field existed.
@@ -351,6 +362,14 @@ class DemoExecutor:
     def _protection_state(trade: Dict) -> str:
         if bool(trade.get('no_stop')):
             return 'NO_STOP_ALLOWED' if str(trade.get('strategy') or '').lower() == 'connors' else 'INVALID'
+        try:
+            from strategies.base import geometry_error
+            level_view = dict(trade)
+            level_view['entry'] = trade.get('entry_plan') or trade.get('entry_fill')
+            if geometry_error(level_view, int(trade.get('direction')), trade.get('entry_fill')) is not None:
+                return 'INVALID_GEOMETRY'
+        except (TypeError, ValueError):
+            return 'INVALID_GEOMETRY'
         try:
             entry = float(trade.get('entry_fill') or trade.get('entry_plan'))
             stop = float(trade.get('sl'))
@@ -705,10 +724,14 @@ class DemoExecutor:
             return None                              # all off: no three queries per entry
         try:
             with self._db() as c:
-                closed = c.execute("SELECT r FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 AND closed_ms >= ? AND r IS NOT NULL", (day0,)).fetchall()
+                closed = c.execute("SELECT r FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 "
+                                   "AND COALESCE(close_reason, '') NOT IN ('ORPHAN', 'UNTRACKED') "
+                                   "AND closed_ms >= ? AND r IS NOT NULL", (day0,)).fetchall()
                 opened = c.execute("SELECT COUNT(*) FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 AND opened_ms >= ? AND entry_fill IS NOT NULL",
                                    (day0,)).fetchone()[0]
-                last = c.execute("SELECT r, closed_ms FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 AND r IS NOT NULL ORDER BY closed_ms DESC LIMIT ?",
+                last = c.execute("SELECT r, closed_ms FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 "
+                                 "AND COALESCE(close_reason, '') NOT IN ('ORPHAN', 'UNTRACKED') "
+                                 "AND r IS NOT NULL ORDER BY closed_ms DESC LIMIT ?",
                                  (pause_n,)).fetchall() if pause_n else []
         except sqlite3.Error as e:
             # audit T06: limits that are ON but cannot be read block new risk (was None - the entry went through
@@ -790,6 +813,7 @@ class DemoExecutor:
         ``reason`` is None only when the position can be managed by the recorded stop/targets.
         """
         from strategies.geometry import cost_of, stop_too_far
+        from strategies.base import geometry_error
 
         try:
             fill = float(fill)
@@ -799,6 +823,9 @@ class DemoExecutor:
             return 'non-numeric exchange fill geometry', None, None
         if not all(math.isfinite(v) for v in (fill, qty, stop)) or fill <= 0 or qty <= 0:
             return 'non-finite or non-positive exchange fill', None, None
+        code = geometry_error(levels, direction, fill)
+        if code is not None:
+            return code, None, None
         risk = direction * (fill - stop)
         if direction not in (-1, 1) or not math.isfinite(risk) or risk <= 0:
             return f'fill {fill:.12g} is on the wrong side of stop {stop:.12g}', None, None
@@ -806,7 +833,7 @@ class DemoExecutor:
         if not math.isfinite(fee) or fee < 0:
             return 'invalid execution cost', None, None
         if risk < CONFIG.levels.cost_guard * fee:
-            return f'actual stop risk {risk:.12g} is below execution cost guard {fee:.12g}', risk, fee
+            return f'low_rr: actual stop risk {risk:.12g} is below execution cost guard {fee:.12g}', risk, fee
         far = stop_too_far(plan, fill, stop)
         if far:
             return f'actual fill geometry: {far}', risk, fee
@@ -832,6 +859,12 @@ class DemoExecutor:
             rrs = [(direction * (t - fill) - fee) / (risk + fee) for t in targets]
             if not all(math.isfinite(r) for r in rrs):
                 return 'non-finite actual R:R', risk, fee
+            # The executable TP1 must remain at least 1R after venue basis,
+            # spread and fill slippage.  This gate is independent of a
+            # playbook's own minimum and catches the historical low-RR rows
+            # that reached card creation without a veto.
+            if rrs[0] < 1.0 - 1e-12 or str(levels.get('rr_reason') or '').strip().lower() == 'costs exceed the risk':
+                return f'low_rr: actual TP1 R:R {rrs[0]:.3g} < 1', risk, fee
             method_min = plan.get('min_rr')
             try:
                 method_min = float(method_min) if method_min is not None else None
@@ -854,14 +887,29 @@ class DemoExecutor:
         return None, risk, fee
 
     async def _close_invalid_fill(self, trade: Dict, reason: str) -> None:
-        """Quarantine a confirmed but unusable fill and flatten it immediately."""
+        """Quarantine a confirmed but unusable fill and flatten it immediately.
+
+        The position already exists at this point, so this is an emergency
+        reduce-only close rather than an entry veto.  Keep geometry breaches
+        separate from slippage-induced R:R breaches in the ledger and exit
+        reason so strategy expectancy does not absorb execution damage.
+        """
         trade['protection_state'] = 'INVALID_GEOMETRY'
         trade['error'] = f'post_fill_geometry: {reason}'[:300]
+        geometry_code = reason.split(':', 1)[0].strip() if reason else 'invalid_geometry'
+        slippage_abort = geometry_code.startswith('low_rr')
+        if slippage_abort:
+            trade['risk_gate_reason'] = 'low_rr'
+        else:
+            trade['geometry_error'] = geometry_code
+        close_reason = 'SLIPPAGE_ABORT' if slippage_abort else 'INVALID_FILL_GEOMETRY'
         with self._db() as c:
-            c.execute("UPDATE demo_trades SET protection_state = ?, error = ?, quarantined = 1, quarantine_reason = ? "
-                      "WHERE id = ?", (trade['protection_state'], trade['error'], reason[:300], trade['id']))
-        self.alert(f"⛔ Демо {trade['symbol']}: фактический fill нарушил геометрию ({reason}), позиция закрывается")
-        await self._close(trade, 'INVALID_GEOMETRY', None)
+            c.execute("UPDATE demo_trades SET protection_state = ?, error = ?, quarantined = 1, quarantine_reason = ?, "
+                      "geometry_error = ?, risk_gate_reason = ? WHERE id = ?",
+                      (trade['protection_state'], trade['error'], reason[:300], trade.get('geometry_error'),
+                       trade.get('risk_gate_reason'), trade['id']))
+        self.alert(f"⛔ Демо {trade['symbol']}: post-fill contract breach ({reason}), позиция закрывается")
+        await self._close(trade, close_reason, None)
 
     async def _open(self, card_id: str, s) -> None:
         cfg = CONFIG.executor
@@ -891,19 +939,33 @@ class DemoExecutor:
             # review V05: the Turtles' stop is 2N from the position's OWN entry - BingX's price, not Binance's
             lv['sl'] = fill_est - d * 2 * n_turtle * ratio
         reject = None
+        geometry_code = None
+        risk_gate_reason = None
         if basis_reject(basis):
             reject = basis_reject(basis)
-        elif d * (fill_est - lv['sl']) <= 0:
+        else:
+            from strategies.base import geometry_error
+            geometry_code = geometry_error(lv, d, fill_est)
+            if geometry_code is not None:
+                reject = f'geometry_error: {geometry_code}'
+            else:
+                pre_reason, _, _ = self._actual_fill_geometry(
+                    getattr(s, 'plan', None) or {}, lv, fill_est, 1.0, d,
+                    (s.sig or {}).get('volume_24h'), s.symbol)
+                if pre_reason is not None:
+                    risk_gate_reason = 'low_rr' if pre_reason.startswith('low_rr') else pre_reason
+                    reject = f'pre_trade_gate: {pre_reason}'
+        if reject is None and d * (fill_est - lv['sl']) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"
         # eng-113 (the owner): no invented chase cap - the size is recomputed at BingX's price (stop_dist below), so the
         # risk stays 1 R; the trade is judged by the formula alone (TP1 ahead, positive expectancy at that price)
-        elif s.levels.get('rr_tp1') is None and self._chase(s, lv, fill_est, d, n_turtle, ratio):
+        elif reject is None and s.levels.get('rr_tp1') is None and self._chase(s, lv, fill_est, d, n_turtle, ratio):
             # eng-147 (the owner): a plan without targets has no R:R to re-check, so a run past the signal price is
             # capped: 0.5 N for the Turtles, 0.5 ATR of the working timeframe for the others
             reject = f"chase_limit: {self._chase(s, lv, fill_est, d, n_turtle, ratio)}"
-        elif d * (lv['tp1'] - fill_est) <= 0 and s.levels.get('rr_tp1') is not None:
+        elif reject is None and d * (lv['tp1'] - fill_est) <= 0 and s.levels.get('rr_tp1') is not None:
             reject = f"BingX {fill_est:.6g} already beyond TP1 {lv['tp1']:.6g}"
-        elif s.levels.get('rr_tp1') is not None:
+        elif reject is None and s.levels.get('rr_tp1') is not None:
             from strategies.geometry import cost_of
             fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'), s.symbol)
             risk = abs(fill_est - lv['sl'])
@@ -930,8 +992,12 @@ class DemoExecutor:
             logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {reject} (basis {basis:+.3%})")
             self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
                           'direction': d, 'opened_ms': int(time.time() * 1000), 'error': f"{reject}; basis {basis:+.3%}",
+                          'geometry_error': geometry_code,
+                          'risk_gate_reason': risk_gate_reason,
                           'closed_ms': int(time.time() * 1000),
-                          'close_reason': 'CHASE_LIMIT' if reject.startswith('chase_limit') else 'PRICE_GAP'})
+                          'close_reason': ('GEOMETRY_REJECT' if geometry_code else
+                                           'LOW_RR' if risk_gate_reason == 'low_rr' else
+                                           'CHASE_LIMIT' if reject.startswith('chase_limit') else 'PRICE_GAP')})
             return
         scale = ratio                      # every later conversion (pyramid / averaging stops) uses the same ratio
         ex = await self._exchange()
@@ -1067,7 +1133,10 @@ class DemoExecutor:
                  'latency_ms': int(time.time() * 1000 - float(getattr(s, 'entered_at', 0) or 0) * 1000)
                  if getattr(s, 'entered_at', None) else None,
                  'leverage': leverage, 'n_units': 1, 'units': int(self._is_unit_card(s)),
-                 'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed),
+                 'entry_order': str(order.get('id') or '') or None, 'client_order_id': cid,
+                 'fill_confirmed': int(confirmed),
+                 'geometry_error': geometry_reason if geometry_reason and not geometry_reason.startswith('low_rr') else None,
+                 'risk_gate_reason': 'low_rr' if geometry_reason and geometry_reason.startswith('low_rr') else None,
                  'demo_eligible': int((s.sig or {}).get('demo_eligible',
                                                        int(s.group_key not in CONFIG.executor.demo_off_setups))),
                  'trail': int(bool((getattr(s, 'plan', None) or {}).get('trail_after_tp1'))),
@@ -1205,10 +1274,26 @@ class DemoExecutor:
         # targets instead of multiplying them by the venue scale and turning a valid exit manager into a TypeError.
         lv = {k: (levels.get(k) * ratio if levels.get(k) is not None else None)
               for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')}
+        # Preserve the diagnostic fields needed by the post-fill gate; prices
+        # are translated to BingX while the contract metadata stays intact.
+        lv['rr_tp1'], lv['rr_reason'] = levels.get('rr_tp1'), levels.get('rr_reason')
         cfg = CONFIG.executor
         if basis_reject(ratio / scale - 1):
             # eng-169e: the resting limit of a coin whose BingX price is off the market is not placed either
             self.pending[key] = {'skip': True, 'reason': basis_reject(ratio / scale - 1)}
+            return
+        from strategies.base import geometry_error
+        geometry_code = geometry_error(lv, d, lv['entry'])
+        if geometry_code is not None:
+            self.pending[key] = {'skip': True, 'reason': f'geometry_error: {geometry_code}',
+                                 'geometry_error': geometry_code, 'card_id': key}
+            return
+        pre_reason, _, _ = self._actual_fill_geometry(
+            plan, lv, lv['entry'], 1.0, d, (s.sig or {}).get('volume_24h'), s.symbol)
+        if pre_reason is not None:
+            self.pending[key] = {'skip': True, 'reason': f'pre_trade_gate: {pre_reason}',
+                                 'risk_gate_reason': 'low_rr' if pre_reason.startswith('low_rr') else pre_reason,
+                                 'card_id': key}
             return
         ex = await self._exchange()
         balance = min(await self._balance(), cfg.account_usd)
@@ -1234,13 +1319,16 @@ class DemoExecutor:
             errors.report('executor._place_limit', e, f"Demo leverage {symbol}")
         price = float(ex.price_to_precision(symbol, lv['entry']))
         order = await ex.create_order(symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
-        self.pending[key] = {'order_id': order['id'], 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio, 'fee': fee,
+        self.pending[key] = {'order_id': order['id'], 'client_order_id': (order.get('clientOrderId') or
+                                                                          (order.get('info') or {}).get('clientOrderId')),
+                             'card_id': key, 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio, 'fee': fee,
                              'basis': ratio / scale - 1, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
                              'placed_ms': int(time.time() * 1000), 'risk_usd': qty * stop_dist,
                              'trail': bool(plan.get('trail_after_tp1')), 'no_tp': bool(plan.get('no_tp')),
                              'volume_24h': (s.sig or {}).get('volume_24h'),
                              'demo_eligible': int((s.sig or {}).get('demo_eligible',
                                                                    int(s.group_key not in CONFIG.executor.demo_off_setups))),
+                             'geometry_error': None, 'risk_gate_reason': None,
                              'geometry_plan': {k: plan.get(k) for k in
                                                ('symbol', 'strategy', 'tf', 'min_rr', 'min_rr_on_tp1',
                                                 'allow_no_targets', 'exit_manager', 'max_loss_pct', 'exit')}}
@@ -1412,9 +1500,11 @@ class DemoExecutor:
                  'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty, 'sl': lv['sl'], 'tp1': lv.get('tp1'),
                  'tp2': lv.get('tp2'), 'tp3': lv.get('tp3'),
                  'risk_usd': qty * (abs(fill - lv['sl']) + float(p.get('fee') or 0)),
-                 'entry_order': str(p.get('order_id') or '') or None, 'from_limit': 1,
+                 'entry_order': str(p.get('order_id') or '') or None,
+                 'client_order_id': p.get('client_order_id'), 'from_limit': 1,
                  'trail': int(bool(p.get('trail'))), 'no_tp': int(bool(p.get('no_tp'))), 'fill_confirmed': 1,
-                 'demo_eligible': int(p.get('demo_eligible', 1))}
+                 'demo_eligible': int(p.get('demo_eligible', 1)),
+                 'geometry_error': None, 'risk_gate_reason': None}
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, p['scale']
         self._set_scale(trade['id'], p['scale'])
@@ -1490,16 +1580,65 @@ class DemoExecutor:
         if released:
             self._save_unknown()
 
+    async def _restore_db_ownership(self, positions: List[Dict]) -> None:
+        """Rebind exchange positions to an open ledger row after a runtime restart.
+
+        The in-memory card book is intentionally ephemeral.  A single active
+        row for the same venue symbol and direction is enough to recover the
+        owner; ambiguous rows are left for the normal untracked guard instead
+        of being guessed.  ``card_id`` and ``client_order_id`` remain on the
+        restored row for later reconciliation.
+        """
+        slots = {(str(p.get('symbol') or ''), 1 if p.get('side') == 'long' else -1)
+                 for p in positions if _positive(p.get('contracts'))}
+        if not slots:
+            return
+        with self._db() as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute(
+                "SELECT * FROM demo_trades WHERE closed_ms IS NULL AND COALESCE(quarantined, 0) = 0 "
+                "AND entry_fill IS NOT NULL ORDER BY opened_ms"
+            ).fetchall()
+        candidates = {}
+        for row in rows:
+            trade = dict(row)
+            key = (str(trade.get('symbol') or ''), int(trade.get('direction') or 0))
+            if key in slots:
+                candidates.setdefault(key, []).append(trade)
+        async with self._lock:
+            for key, trades in candidates.items():
+                if len(trades) != 1:
+                    continue
+                trade = trades[0]
+                card_id = trade.get('card_id') or f"{trade['symbol']}|{trade.get('setup') or 'RESTORED'}|c{trade['id']}"
+                trade['card_id'] = card_id
+                if trade.get('close_pending_reason') is not None:
+                    trade['close_pending'] = [trade['close_pending_reason'], trade['close_pending_r']]
+                if self._protection_state(trade) == 'INVALID_GEOMETRY':
+                    continue
+                if card_id not in self.open:
+                    self.open[card_id] = trade
+                    with self._db() as c:
+                        c.execute("UPDATE demo_trades SET card_id = ?, protection_state = ? WHERE id = ?",
+                                  (card_id, self._protection_state(trade), trade['id']))
+                    logger.warning("Demo: restored exchange ownership for %s from ledger row %s", key[0], trade['id'])
+                    self.alert(f"⚠️ Демо {key[0]}: позиция восстановлена из ledger, card_id={card_id}")
+
     async def close_untracked(self) -> None:
-        """Safety net: a BingX position no trade or resting limit of ours owns (a lost fill) is closed at market."""
+        """Close only positions with no recoverable ledger owner.
+
+        A missing in-memory card after restart is not proof that the exchange
+        position is чужая: active rows are rebound from SQLite first.
+        """
         ex = await self._exchange()
+        positions = await ex.fetch_positions()
+        await self._restore_db_ownership(positions)
         async with self._lock:
             mine = {t['symbol'] for t in self.open.values()} | {p.get('symbol') for p in self.pending.values()
                                                                  if not p.get('skip')}
             mine_coins = {_coin(symbol) for symbol in mine if symbol} | {
                 item.get('coin') for item in getattr(self, '_inflight', {}).values() if item.get('coin')
             }
-        positions = await ex.fetch_positions()
         await self._release_unknown(ex, positions)
         for pos in positions:
             qty = float(pos.get('contracts') or 0)
@@ -1976,7 +2115,9 @@ class DemoExecutor:
             return None
         try:
             with self._db() as c:
-                rows = c.execute("SELECT r FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 AND strategy = ? AND r IS NOT NULL ORDER BY closed_ms DESC "
+                rows = c.execute("SELECT r FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 "
+                                 "AND COALESCE(close_reason, '') NOT IN ('ORPHAN', 'UNTRACKED') "
+                                 "AND strategy = ? AND r IS NOT NULL ORDER BY closed_ms DESC "
                                  "LIMIT ?", (strategy, cfg.strategy_kill_n)).fetchall()
         except sqlite3.Error:
             return None
@@ -1991,7 +2132,9 @@ class DemoExecutor:
             return c.execute(
                 "SELECT COALESCE(strategy, '?'), COUNT(*), SUM(r > 0), SUM(r), "
                 "AVG(CASE WHEN entry_plan > 0 AND entry_fill > 0 THEN direction * (entry_fill - entry_plan) / entry_plan * 1e4 END) "
-                "FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 AND r IS NOT NULL AND closed_ms >= ? AND closed_ms < ? GROUP BY 1 ORDER BY 4",
+                "FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 "
+                "AND COALESCE(close_reason, '') NOT IN ('ORPHAN', 'UNTRACKED') "
+                "AND r IS NOT NULL AND closed_ms >= ? AND closed_ms < ? GROUP BY 1 ORDER BY 4",
                 (day0_ms, day0_ms + 86_400_000)).fetchall()
 
     def usd_without_r(self, day0_ms: int) -> tuple:
@@ -2441,9 +2584,12 @@ class DemoExecutor:
                                 # stop and targets already rested on BingX (live SOL / DOGE PO3: closed -0.5R, then went
                                 # to TP3). A filled limit keeps its exchange stop / targets; only a stale one is closed
                                 pass
-                            elif not trade.get('no_stop') and age_ms < ORPHAN_EXCHANGE_HOLD_MS:
-                                # eng-144: no market close - the position keeps its stop / targets on BingX and ends
-                                # there (EXCHANGE); a market close of 30 orphans cost -9.2R on 11-21.10
+                            elif not trade.get('no_stop') and self._protection_state(trade) == 'PROTECTED':
+                                # P1: a valid stop-protected position stays
+                                # under its exchange exits while the runtime
+                                # card is absent.  Its ledger row is rebound by
+                                # close_untracked after a restart; age alone is
+                                # never a reason for a market ORPHAN close.
                                 if not trade.get('orphan_seen'):
                                     trade['orphan_seen'] = True
                                     logger.warning(f"Demo: {trade['symbol']} has no open card: left to its exchange stop")

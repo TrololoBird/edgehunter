@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 
 from sqlsafe import identifier
 from security import safe_urlopen
@@ -10,6 +11,7 @@ from levels import simulate
 from executor import credentials, DemoExecutor
 from fetcher import DataFetcher
 from core.quant_gate import scenario_gate
+from signal_book import SignalBook, TrackedSignal
 import pumps
 from iceberg import IcebergDetector
 
@@ -95,6 +97,76 @@ def test_executor_entry_intent_is_idempotent(tmp_path):
     assert demo._protection_state({'direction': 1, 'entry_fill': 100, 'sl': 95, 'no_stop': 0}) == 'PROTECTED'
     assert demo._protection_state({'direction': -1, 'entry_fill': 100, 'sl': 95, 'no_stop': 0}) == 'INVALID_GEOMETRY'
     assert demo._protection_state({'strategy': 'connors', 'no_stop': 1}) == 'NO_STOP_ALLOWED'
+
+
+def _market_signal(direction=-1, group_key='OI BUILD SHORT'):
+    return TrackedSignal(
+        symbol='TEST/USDT:USDT', group_key=group_key, direction=direction, mode='oi_build',
+        created=0.0, price_at_signal=100.0, sig={}, last_price=100.0,
+    )
+
+
+@pytest.mark.parametrize(
+    'btc_1d,mkt_1d,expected',
+    [
+        (0.01, 0.02, True),    # both positive: veto the short
+        (0.01, 0.0, False),    # boundary: neutral is allowed
+        (0.0, 0.02, False),    # boundary: neutral is allowed
+        (-0.01, -0.02, False), # falling market: short is allowed by this veto
+        (0.01, -0.02, False),  # mixed regime: no joint-bull veto
+    ],
+)
+def test_oi_short_market_up_is_a_blocking_veto(btc_1d, mkt_1d, expected):
+    book = SignalBook()
+    book.market_state_of = lambda: {'btc_1d': btc_1d, 'mkt_1d': mkt_1d}
+    assert book._market_up_veto(_market_signal()) is expected
+
+
+@pytest.mark.parametrize(
+    'btc_1d,mkt_1d,expected',
+    [
+        (-0.01, -0.02, True),  # both negative: veto the long
+        (-0.01, 0.0, False),   # boundary: neutral is allowed
+        (0.01, 0.02, False),   # rising market: long is allowed by this veto
+        (-0.01, 0.02, False),  # mixed regime: no joint-bear veto
+    ],
+)
+def test_market_down_remains_the_long_side_mirror(btc_1d, mkt_1d, expected):
+    book = SignalBook()
+    book.market_state_of = lambda: {'btc_1d': btc_1d, 'mkt_1d': mkt_1d}
+    assert book._market_down(_market_signal(direction=1, group_key='OI BUILD LONG')) is expected
+
+
+def _stored_trade(demo):
+    trade = {
+        'card_id': 'TEST|OI BUILD SHORT|c1', 'symbol': 'BTC/USDT:USDT', 'setup': 'OI BUILD SHORT',
+        'strategy': 'oi_build', 'direction': -1, 'opened_ms': 1, 'entry_plan': 100.0,
+        'entry_fill': 100.0, 'qty': 1.0, 'sl': 105.0, 'tp1': 95.0, 'tp2': 90.0, 'tp3': 85.0,
+    }
+    trade['id'] = demo._insert(trade)
+    return trade
+
+
+@pytest.mark.parametrize(
+    'breach,close_reason,field,value',
+    [
+        ('wrong_stop_side', 'INVALID_FILL_GEOMETRY', 'geometry_error', 'wrong_stop_side'),
+        ('low_rr: actual TP1 R:R 0.32 < 1', 'SLIPPAGE_ABORT', 'risk_gate_reason', 'low_rr'),
+    ],
+)
+def test_post_fill_contract_breach_is_flattened_with_reason(tmp_path, breach, close_reason, field, value):
+    demo = DemoExecutor(str(tmp_path / 'post_fill.sqlite'))
+    trade = _stored_trade(demo)
+    closed = []
+
+    async def close_stub(item, reason, journal_r, passive=False):
+        closed.append((reason, journal_r))
+
+    demo._close = close_stub
+    demo.alert = lambda message: None
+    asyncio.run(demo._close_invalid_fill(trade, breach))
+    assert closed == [(close_reason, None)]
+    assert trade[field] == value
 
 
 def test_virtual_tp_parts_are_bounded_and_deterministic():

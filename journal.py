@@ -425,6 +425,9 @@ EXTRA_COLUMNS = {
     'prem_1h': 'REAL', 'prem_z': 'REAL', 'funding_1h': 'REAL', 'oi_vol': 'REAL', 'er_1h': 'REAL', 'chop_1h': 'REAL',
     'rs_btc_z': 'REAL', 'event_risk': 'TEXT', 'near52': 'REAL', 'vol_rank': 'REAL', 'liq_proxy': 'REAL',
     'units': 'REAL', 'best_tp': 'INTEGER', 'trend_4h': 'REAL', 'trend_1d': 'REAL', 'rr_blend': 'REAL', 'rr_reason': 'TEXT',
+    # P0 execution contract: stable diagnostics for a rejected level payload or
+    # a risk gate that fired after plan/fill translation.
+    'geometry_error': 'TEXT', 'risk_gate_reason': 'TEXT',
     'weis_ratio': 'REAL', 'tp1_min': 'REAL', 'limit_entry': 'INTEGER',
     # audit 2026-10-18: the thirds-model expectancy at the entry (exp_model, exp_note when it was only a shadow) and the
     # nearest opposing level before TP1 (obstacle_r in R from the entry, its source): diagnostics, never a filter
@@ -786,14 +789,28 @@ class SignalJournal:
         # Historical rows were written before the shared contract gate.  Keep them for auditability, but remove
         # malformed entries from performance metrics instead of letting them masquerade as executable trades.
         self.conn.execute(
-            "UPDATE signals SET quarantined = 1, quarantine_reason = CASE "
-            "WHEN entry IS NOT NULL AND sl IS NOT NULL AND direction * (entry - sl) <= 0 THEN 'wrong stop side' "
-            "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= entry) OR (direction = -1 AND tp1 >= entry)) THEN 'wrong TP1 side' "
+            "UPDATE signals SET quarantined = 1, "
+            "geometry_error = CASE "
+            "WHEN (entry IS NOT NULL AND sl IS NOT NULL AND direction * (entry - sl) <= 0) OR "
+            "     (entry_fill IS NOT NULL AND sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) THEN 'wrong_stop_side' "
+            "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry)) OR "
+            "     (direction = -1 AND tp1 >= COALESCE(entry_fill, entry))) THEN 'wrong_tp1_side' "
+            "ELSE geometry_error END, "
+            "risk_gate_reason = CASE "
+            "WHEN rr_tp1 IS NOT NULL AND rr_tp1 < 1 AND COALESCE(low_rr, 0) = 0 AND COALESCE(vetoed, '') = '' THEN 'low_rr' "
+            "ELSE risk_gate_reason END, "
+            "quarantine_reason = CASE "
+            "WHEN (entry IS NOT NULL AND sl IS NOT NULL AND direction * (entry - sl) <= 0) OR "
+            "     (entry_fill IS NOT NULL AND sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) THEN 'wrong stop side' "
+            "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry)) OR "
+            "     (direction = -1 AND tp1 >= COALESCE(entry_fill, entry))) THEN 'wrong TP1 side' "
             "WHEN rr_tp1 IS NOT NULL AND rr_tp1 < 1 AND COALESCE(low_rr, 0) = 0 AND COALESCE(vetoed, '') = '' THEN 'low RR without veto' "
             "ELSE COALESCE(quarantine_reason, 'legacy malformed geometry') END "
             "WHERE kind = 'entry' AND ("
             "(entry IS NOT NULL AND sl IS NOT NULL AND direction * (entry - sl) <= 0) OR "
-            "(tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= entry) OR (direction = -1 AND tp1 >= entry))) OR "
+            "(entry_fill IS NOT NULL AND sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) OR "
+            "(tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry)) OR "
+            "                         (direction = -1 AND tp1 >= COALESCE(entry_fill, entry)))) OR "
             "(rr_tp1 IS NOT NULL AND rr_tp1 < 1 AND COALESCE(low_rr, 0) = 0 AND COALESCE(vetoed, '') = '')"
             ")")
 
@@ -917,6 +934,8 @@ class SignalJournal:
                     'contract_id': (tracked.plan or {}).get('contract_id') or tracked.group_key,
                     'contract_source': (tracked.plan or {}).get('contract_source'),
                     'geometry_source': lv.get('geometry_source'),
+                    'geometry_error': getattr(tracked, 'geometry_error', None) or lv.get('geometry_error') or tracked.sig.get('geometry_error'),
+                    'risk_gate_reason': getattr(tracked, 'risk_gate_reason', None) or lv.get('risk_gate_reason') or tracked.sig.get('risk_gate_reason'),
                     'planned_r': lv.get('rr_blend'),
                     'time_exit_policy': (tracked.plan or {}).get('time_exit') or tracked.mode,
                     'trail_policy': _policy_text((tracked.plan or {}).get('trail') or ((tracked.plan or {}).get('exit') or {}).get('tp')),

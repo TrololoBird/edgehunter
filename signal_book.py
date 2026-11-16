@@ -33,6 +33,7 @@ Statuses follow the futures price at each scan; the journal replays each entry o
 Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CONFIG.tier0.display_hold_sec.
 """
 import copy
+import math
 import re
 import logging
 import time
@@ -1571,6 +1572,27 @@ class SignalBook:
             elif not live_ok(now_ms):
                 # eng-168s (audit #6): fail-closed - no fresh macro calendar, no NEW entry (open trades are managed)
                 reason = 'macro_unknown'
+        # P0: validate the final payload immediately before it can become a
+        # card.  This catches stop/target mutations from playbook variants as
+        # well as a stale low-RR flag that was never converted into a veto.
+        from strategies.base import geometry_error
+        code = geometry_error(levels, s.direction)
+        if code is not None:
+            levels['geometry_error'] = code
+            s.sig['geometry_error'] = code
+            s.sig['quarantined'] = 1
+            s.sig['quarantine_reason'] = code
+            reason = 'geometry_error'
+        elif reason is None:
+            rr = levels.get('rr_tp1')
+            try:
+                low_rr = rr is not None and math.isfinite(float(rr)) and float(rr) < 1.0
+            except (TypeError, ValueError):
+                low_rr = True
+            if (low_rr or str(levels.get('rr_reason') or '').strip().lower() == 'costs exceed the risk'):
+                levels['risk_gate_reason'] = 'low_rr'
+                s.sig['risk_gate_reason'] = 'low_rr'
+                reason = 'low_rr'
         # Optional shadow vetoes are measured beside the traded rules (SHADOW_SETUPS); execution eligibility is a
         # separate explicit field so a signal status cannot be mistaken for a setup disable.
         if reason is None:
@@ -1592,6 +1614,17 @@ class SignalBook:
                 s.sig['shadow_veto'] = ','.join(sorted(have | {'market_down'}))
             else:
                 reason = 'market_down'
+        # This is a blocking predicate, parallel to _market_down: True means
+        # both 24h market moves are positive and the OI short must be vetoed.
+        if reason is None and self._market_up_veto(s):
+            reason = 'market_up'
+        # OI BUILD SHORT is the one live leak identified in the negative-entry
+        # audit.  Its missing flow confirmation had been converted to a shadow
+        # tag by the generic ``<confirmations>`` policy, so a buy-led move could
+        # still become a card.  Keep this setup fail-closed until the directional
+        # flow is present; the companion _market_up_veto gate handles the regime side.
+        if reason is None and s.group_key == 'OI BUILD SHORT' and (confirms or {}).get('flow') is not True:
+            reason = 'flow_entry'
         hb = (confirms or {}).get('_bias') or {}
         # the top-down bias decides the side before any lower-timeframe setup (strategies/bias.py). eng-168 (audit):
         # evaluated even after an earlier veto so its shadow tag is journaled on every row (no censoring by order)
@@ -2255,6 +2288,11 @@ class SignalBook:
     MARKET_DOWN_SHADOW = ('SWEEP LOW', 'SILVER BULLET LONG', 'SPRING', 'FLUSH REVERSAL', 'SD DEMAND', 'VA80 LONG',
                           'AUCTION LONG', 'BB W-BOTTOM')
 
+    # OI BUILD SHORT has no historical symmetric market filter.  This is a
+    # veto list, not an allow list: a short is blocked only in a jointly
+    # positive 24h BTC/market regime, until a broader short-regime study exists.
+    MARKET_UP_OI_SHORT = ('OI BUILD SHORT',)
+
     def _market_down(self, s: TrackedSignal) -> bool:
         if s.direction <= 0 or s.group_key in self.MARKET_DOWN_EXEMPT or self.market_state_of is None:
             return False
@@ -2262,6 +2300,17 @@ class SignalBook:
         # eng-146: the 24h moves only - requiring the 4h ones too let every 4h bounce inside a falling day through
         vals = [m.get(k) for k in ('btc_1d', 'mkt_1d')]
         return all(v is not None for v in vals) and all(v < 0 for v in vals)
+
+    def _market_up_veto(self, s: TrackedSignal) -> bool:
+        """Return True only when the OI short must be blocked by a bullish regime."""
+        if s.direction >= 0 or s.group_key not in self.MARKET_UP_OI_SHORT or self.market_state_of is None:
+            return False
+        m = self.market_state_of() or {}
+        btc_1d, mkt_1d = (m.get(k) for k in ('btc_1d', 'mkt_1d'))
+        # Equality to zero and a mixed-sign regime remain allowed.  The
+        # predicate is deliberately the mirror of _market_down's two-sided
+        # strict comparison, with the result consumed as a veto above.
+        return btc_1d is not None and mkt_1d is not None and btc_1d > 0 and mkt_1d > 0
 
     def crowded(self, mode: str, direction: int, now: float, limit: Optional[int] = None) -> bool:
         """eng-51: crowd_max open trades in this direction across all strategies (Turtles' correlated-markets limit);

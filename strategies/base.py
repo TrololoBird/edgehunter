@@ -54,41 +54,69 @@ class CardLevels(TypedDict, total=False):
     limit_entry: Optional[float]
     volume_24h: Optional[float]
     geometry_source: str
+    geometry_error: Optional[str]
+    risk_gate_reason: Optional[str]
 
 
-def validate_card_levels(levels: Optional[CardLevels], direction: int) -> bool:
-    """Fail-closed validation for executable stop/target geometry.
+def geometry_error(levels: Optional[CardLevels], direction: int, entry_fill: Optional[float] = None) -> Optional[str]:
+    """Return a stable error code for executable stop/target geometry.
 
-    Target-less contracts (Turtles, Connors, ORB) are valid when they provide a
-    finite entry and stop; contracts that provide targets must keep every target
-    on the trade side and in monotone order.  This check is deliberately small
-    and side-effect free so all playbooks and the executor share the same rule.
+    ``entry`` is the planned entry.  When ``entry_fill`` is supplied, the same
+    stop and TP1 are checked against the exchange fill as well.  Keeping the
+    code here makes the strategy, card and executor paths use one strict
+    contract; callers can store the code as ``geometry_error`` instead of
+    parsing a free form log message.
     """
     if not levels or direction not in (-1, 1):
-        return False
+        return 'invalid_direction_or_levels'
     try:
         entry = float(levels.get('entry'))
         stop = float(levels.get('sl'))
     except (TypeError, ValueError):
-        return False
-    if not all(math.isfinite(x) for x in (entry, stop)) or entry <= 0:
-        return False
+        return 'non_numeric_entry_or_stop'
+    if not all(math.isfinite(x) for x in (entry, stop)) or entry <= 0 or stop <= 0:
+        return 'non_finite_entry_or_stop'
     if direction * (entry - stop) <= 0:
-        return False
+        return 'wrong_stop_side'
+
     targets = [levels.get(f'tp{k}') for k in (1, 2, 3)]
-    if all(t is None for t in targets):
-        return True
-    if any(t is None for t in targets):
-        return False
-    try:
-        values = [float(t) for t in targets]
-    except (TypeError, ValueError):
-        return False
-    if not all(math.isfinite(t) and t > 0 for t in values):
-        return False
-    if any(direction * (t - entry) <= 0 for t in values):
-        return False
-    return all(direction * (values[i + 1] - values[i]) >= 0 for i in range(2))
+    if any(t is None for t in targets) and not all(t is None for t in targets):
+        return 'partial_target_set'
+    if any(t is not None for t in targets):
+        try:
+            values = [float(t) for t in targets]
+        except (TypeError, ValueError):
+            return 'non_numeric_target'
+        if not all(math.isfinite(t) and t > 0 for t in values):
+            return 'non_finite_target'
+        # TP1 must be strictly on the reward side of the entry.  TP2/TP3 may
+        # coincide when a contract has only one real map level and the shared
+        # geometry layer repeats it to fill the three execution slots.
+        if any(direction * (t - entry) <= 0 for t in values):
+            return 'wrong_tp_side'
+        if not all(direction * (values[i + 1] - values[i]) >= 0 for i in range(2)):
+            return 'non_monotone_targets'
+        tp1 = values[0]
+    else:
+        tp1 = None
+
+    if entry_fill is not None:
+        try:
+            fill = float(entry_fill)
+        except (TypeError, ValueError):
+            return 'non_numeric_entry_fill'
+        if not math.isfinite(fill) or fill <= 0:
+            return 'non_finite_entry_fill'
+        if direction * (fill - stop) <= 0:
+            return 'wrong_stop_side'
+        if tp1 is not None and direction * (tp1 - fill) <= 0:
+            return 'wrong_tp1_side'
+    return None
+
+
+def validate_card_levels(levels: Optional[CardLevels], direction: int) -> bool:
+    """Fail-closed validation for executable stop/target geometry."""
+    return geometry_error(levels, direction) is None
 
 
 def finalize_card_levels(plan: Dict, levels: Optional[CardLevels], direction: int) -> Optional[CardLevels]:
@@ -146,6 +174,11 @@ def finalize_card_levels(plan: Dict, levels: Optional[CardLevels], direction: in
     except (TypeError, ValueError, KeyError):
         return None
     if out is None:
+        return None
+    # ``finish_levels`` can move a target past the actual entry while applying
+    # pierce/step rules.  Revalidate the returned payload, not only the raw
+    # strategy levels, before it reaches a card or an executor.
+    if geometry_error(out, direction) is not None:
         return None
     # finish_levels owns the decision fields; preserve transport/management metadata supplied by the playbook.
     for key in ('zone_src', 'range_pos', 'limit_entry', 'volume_24h', 'contract_source'):
