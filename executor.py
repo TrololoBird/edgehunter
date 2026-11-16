@@ -207,24 +207,36 @@ class DemoExecutor:
                 tuple(UNIT_SETUPS),
             )
             self._schema_cols = {r[1] for r in c.execute("PRAGMA table_info(demo_trades)")}
+            # A filled exchange price is the executable contract.  ``entry_plan`` is only the requested quote and can
+            # legitimately be on the other side of a stop after a limit crosses the zone.  The old migration checked
+            # both values with OR, quarantining valid fills (OPG/USDT id=2099) and making restart recovery create an
+            # UNTRACKED child.  Prefer the fill whenever it exists; use the plan only for a legacy row without one.
+            c.execute(
+                "UPDATE demo_trades SET quarantined = 0, geometry_error = NULL, quarantine_reason = NULL "
+                "WHERE closed_ms IS NULL AND COALESCE(quarantined, 0) = 1 "
+                "AND COALESCE(quarantine_reason, '') = 'wrong stop side' "
+                "AND entry_fill IS NOT NULL AND sl IS NOT NULL "
+                "AND direction * (entry_fill - sl) > 0 "
+                "AND (tp1 IS NULL OR direction * (tp1 - entry_fill) > 0)"
+            )
             # Quarantine legacy malformed geometry before restoring open ownership.  The rows remain available for
             # incident review, while risk limits and demo reports exclude them via COALESCE(quarantined, 0) = 0.
             c.execute(
                 "UPDATE demo_trades SET quarantined = 1, "
                 "geometry_error = CASE "
-                "WHEN (entry_plan IS NOT NULL AND sl IS NOT NULL AND direction * (entry_plan - sl) <= 0) OR "
-                "     (entry_fill IS NOT NULL AND sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) THEN 'wrong_stop_side' "
+                "WHEN COALESCE(entry_fill, entry_plan) IS NOT NULL AND sl IS NOT NULL "
+                "     AND direction * (COALESCE(entry_fill, entry_plan) - sl) <= 0 THEN 'wrong_stop_side' "
                 "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
                 "     (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))) THEN 'wrong_tp1_side' "
                 "ELSE geometry_error END, quarantine_reason = CASE "
-                "WHEN (entry_plan IS NOT NULL AND sl IS NOT NULL AND direction * (entry_plan - sl) <= 0) OR "
-                "     (entry_fill IS NOT NULL AND sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) THEN 'wrong stop side' "
+                "WHEN COALESCE(entry_fill, entry_plan) IS NOT NULL AND sl IS NOT NULL "
+                "     AND direction * (COALESCE(entry_fill, entry_plan) - sl) <= 0 THEN 'wrong stop side' "
                 "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
                 "     (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))) THEN 'wrong TP1 side' "
                 "ELSE COALESCE(quarantine_reason, 'legacy malformed geometry') END "
                 "WHERE ("
-                "(entry_plan IS NOT NULL AND sl IS NOT NULL AND direction * (entry_plan - sl) <= 0) OR "
-                "(sl IS NOT NULL AND direction * (entry_fill - sl) <= 0) OR "
+                "(COALESCE(entry_fill, entry_plan) IS NOT NULL AND sl IS NOT NULL "
+                " AND direction * (COALESCE(entry_fill, entry_plan) - sl) <= 0) OR "
                 "(tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
                 "                         (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))))"
                 ")")
@@ -365,7 +377,9 @@ class DemoExecutor:
         try:
             from strategies.base import geometry_error
             level_view = dict(trade)
-            level_view['entry'] = trade.get('entry_plan') or trade.get('entry_fill')
+            # The exchange fill defines risk.  A plan can be outside the final filled zone and must never invalidate a
+            # live position whose actual entry has a valid stop/target side.
+            level_view['entry'] = trade.get('entry_fill') or trade.get('entry_plan')
             if geometry_error(level_view, int(trade.get('direction')), trade.get('entry_fill')) is not None:
                 return 'INVALID_GEOMETRY'
         except (TypeError, ValueError):
@@ -1198,7 +1212,7 @@ class DemoExecutor:
         limits (sweep CE, continuation OTE) rest only inside the London / New York kill zones - outside them the card
         would veto the fill ('killzone'), so the limit is cancelled there (the setup lives within its session).
         """
-        if CONFIG.executor.touch_confirm_close:
+        if CONFIG.executor.touch_confirm_close and not (bool(s.plan) and s.plan.get('prizrak_first_touch')):
             return False                 # eng-105: touch plans enter at a confirming close (market), no resting limit
         if not (bool(s.plan) and s.plan.get('trigger') == 'touch'):
             return False
@@ -1683,7 +1697,7 @@ class DemoExecutor:
                      'setup': 'UNTRACKED', 'strategy': None, 'direction': d,
                      'opened_ms': int(time.time() * 1000),        # only the closing fill counts (older fills of the coin are other trades)
                      'entry_plan': entry, 'entry_fill': entry, 'qty': qty,
-                     'error': 'a BingX position no card owned (lost limit fill): closed at market'}
+                     'error': 'a BingX position had no recoverable ledger owner after restart reconciliation; closed at market'}
             trade['id'] = self._insert(trade)
             logger.warning(f"Demo: untracked BingX position {pos['symbol']} {pos.get('side')} {qty}: closed at market")
             self.alert(f"⚠️ Демо: чужая позиция {pos['symbol']} {pos.get('side')} {qty} без карточки, закрыта рынком")
@@ -1866,6 +1880,12 @@ class DemoExecutor:
                     scale = float(trade['entry_plan']) / float(s.levels['entry'])
                     trade['scale'] = scale
                 scale = scale or 1.0
+                new_sl = float(s.levels['sl']) * scale
+                # A Prizrak trap is an exchange-fill contract: the BE stop is derived from the actual filled entry,
+                # never from the stale/requested plan quote.  This is what prevents a limit crossing the zone from
+                # leaving the remainder below real BE on the venue.
+                if (getattr(s, 'plan', None) or {}).get('trap_detected') and trade.get('entry_fill'):
+                    new_sl = float(trade['entry_fill']) * (1 + d * CONFIG.strategies.be_cost)
                 ex = await self._exchange()
                 old_stop = trade.get('stop_order_id') or trade.get('stop_id')
                 # Prefer an atomic exchange edit when available: placing a second
@@ -1873,22 +1893,22 @@ class DemoExecutor:
                 if old_stop and hasattr(ex, 'edit_order'):
                     edited = await ex.edit_order(old_stop, symbol, 'STOP_MARKET',
                                                  'sell' if d > 0 else 'buy', left,
-                                                 s.levels['sl'] * scale,
+                                                 new_sl,
                                                  {'reduceOnly': True, 'closePosition': True,
                                                   'workingType': 'MARK_PRICE'})
-                    trade['sl'] = s.levels['sl'] * scale
+                    trade['sl'] = new_sl
                     with self._db() as c:
                         c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
                     logger.info(f"Demo RESTOP {symbol}: atomically edited stop {edited.get('id', old_stop)}")
                     return
                 # eng-85: the new stop first, then the old stop(s) by id - the cancel-all first left the position naked
                 # whenever the new stop failed, and took TP2 / TP3 of the thirds plans with it for good
-                new = await self._place_stop(symbol, d, left, s.levels['sl'] * scale)
+                new = await self._place_stop(symbol, d, left, new_sl)
                 await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
-                trade['sl'] = s.levels['sl'] * scale
+                trade['sl'] = new_sl
                 with self._db() as c:     # the stop guard restores THIS stop after a restart
                     c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
-                logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
+                logger.info(f"Demo RESTOP {symbol}: stop {new_sl:.6g} for {left}")
             except Exception as e:
                 # eng-169c (audit: COMP 325, FET 302 - BingX 110412, the new stop already on the wrong side of the
                 # price): the old stop stays (placed-first order), but a stop the price already passed is a stop hit -
@@ -1901,6 +1921,8 @@ class DemoExecutor:
         try:
             scale = float(trade.get('scale') or 1.0)
             new_sl = float(s.levels['sl']) * scale
+            if (getattr(s, 'plan', None) or {}).get('trap_detected') and trade.get('entry_fill'):
+                new_sl = float(trade['entry_fill']) * (1 + d * CONFIG.strategies.be_cost)
             ex = await self._exchange()
             ticker = await ex.fetch_ticker(symbol) or {}
             mark = _positive(ticker.get('markPrice') or (ticker.get('info') or {}).get('markPrice') or (ticker.get('info') or {}).get('mark') or ticker.get('mark'))

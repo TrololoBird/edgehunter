@@ -96,6 +96,17 @@ def _near(zone: Zone, direction: int) -> float:
     return zone.lo if direction > 0 else zone.hi
 
 
+def _target_in_zones(price: float, zones: Sequence[Zone]) -> bool:
+    """Whether a persisted target is actually represented by an allowed timeframe zone."""
+    tol = 1e-9 * max(abs(float(price)), 1.0)
+    for zone in zones:
+        if zone.lo - tol <= price <= zone.hi + tol:
+            return True
+        if any(abs(float(part[1]) - price) <= tol for part in (zone.parts or ())):
+            return True
+    return False
+
+
 TF_RANK = {'5m': 0, '15m': 1, '1h': 2, '4h': 3, '1d': 4, '1w': 5}
 
 
@@ -951,6 +962,18 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
         ltf = _ltf_prices(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'), direction)
         ahead = [(t, s) for t, s in zip(plan['targets'], plan['target_src']) if direction * (t - entry) > 0
                  and not any(abs(t - p) <= 1e-9 * max(abs(t), 1.0) for p in ltf)]
+        if plan.get('prizrak_target_tf_enforced'):
+            # Sweep targets are redrawn from the entry using only same-TF/higher liquidity.  This removes a persisted
+            # 15m/5m target that happened to be near the signal before the structural stop was applied.
+            allowed = htf_zones(plan.get('zones') or [], plan.get('target_tf') or plan.get('tf'))
+            if plan.get('intent') in ('draw_liquidity', 'opposite_liquidity'):
+                rebuilt, rebuilt_src = select_targets(
+                    allowed, entry, direction, atr, plan.get('intent') or 'opposite_liquidity',
+                    plan.get('fillers') or (), plan.get('fill_label') or 'liquidity')
+                ahead = [(t, src) for t, src in zip(rebuilt, rebuilt_src)
+                         if direction * (t - entry) > 0]
+            else:
+                ahead = [(t, src) for t, src in ahead if _target_in_zones(float(t), allowed)]
         kept: List[Tuple[float, str]] = []
         for t, s in ahead:
             if not kept or direction * (t - kept[-1][0]) > 0:

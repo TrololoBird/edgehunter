@@ -87,7 +87,7 @@ from strategies import bias as htf_bias, confirm, profiles
 # +1R (the EMA trail after TP1 stays off globally: ema_trail_after_tp1)
 MANAGE_EXEMPT = ('breakout', 'bollinger_method1', 'connors', 'cup_handle')
 # break-even + the round trip's costs (taker 0.05% x 2 + slippage ~0.05%): a break-even stop that fills is ~0, not -costs
-BE_COST = 0.0015
+BE_COST = CONFIG.strategies.be_cost
 # eng-84: the regime each method needs (ADX(14) of 4h): trend-following methods / mean-reversion methods
 REGIME_TREND = ('continuation', 'pump_start', 'dump_start', 'pump_top', 'dump_bounce', 'oi_build')
 REGIME_RANGE = ('bollinger_wm', 'bollinger_method3', 'value_area', 'auction')
@@ -720,6 +720,34 @@ class SignalBook:
             # the strategy says why there is no plan ('no_level'): kept per card, the plan cache holds None
             self._skip_reason[(s.symbol, s.group_key)] = plan['skip']
             plan = None
+        if plan is not None and s.group_key in CONFIG.strategies.prizrak_structural_setups:
+            # Prizrak's structural policy is explicit metadata on the plan. The playbook still owns its anchor/zone;
+            # the shared lifecycle supplies the two-body PP, same-TF target floor, and trap telemetry.
+            plan['prizrak_pp'] = True
+            plan['prizrak_body_confirmations'] = max(2, int(CONFIG.strategies.prizrak_body_confirmations))
+            plan['prizrak_entry_tf'] = plan.get('tf') or '15m'
+            plan['prizrak_target_tf_enforced'] = True
+            from strategies.prizrak import TF_MINUTES
+            requested_target = plan.get('target_tf') or plan['prizrak_entry_tf']
+            if TF_MINUTES.get(str(requested_target), 0) < TF_MINUTES.get(str(plan['prizrak_entry_tf']), 0):
+                plan['target_tf'] = plan['prizrak_entry_tf']
+            # A first-touch limit is only safe when the detector has established freshness.  Existing single-touch
+            # playbooks already carry that fact; a sweep supplies it from the pool's post-formation wick count.
+            plan['prizrak_first_touch'] = bool(
+                plan.get('single_touch') or (s.group_key.startswith('SWEEP ') and s.sig.get('pool_fresh')))
+            if s.group_key.startswith('SWEEP '):
+                level = (plan.get('anchor') or {}).get('level')
+                if plan['prizrak_first_touch'] and level is not None:
+                    # Replace the old 15m FVG-CE close with a limit at the fresh swept level.  A non-fresh pool keeps
+                    # the zone and waits for the shared two-body PP path below.
+                    plan.update(trigger='touch', entry='pullback', entry_mode='limit', single_touch=True,
+                                zone_lo=float(level), zone_hi=float(level),
+                                zone_src='Prizrak fresh pool/POC first-touch limit',
+                                prizrak_target_tf_enforced=True)
+                else:
+                    plan.update(trigger='shift', entry='pullback', entry_mode='confirm', single_touch=False,
+                                zone_src='Prizrak repeated pool touch: lower-TF PP confirmation',
+                                prizrak_target_tf_enforced=True)
         if plan is not None and strategy.name not in MANAGE_EXEMPT and not plan.get('trail_days'):
             # eng-84, trade management for every intraday method (the owner's review: W +43%, MAGIC +16%, ZEC at a 4h
             # order block all went back to the stop; the ICT / SMC sources: half at TP1, the rest at break-even): with
@@ -1213,7 +1241,8 @@ class SignalBook:
         if invalid is not None and plan.get('invalid_close_min'):
             # the system invalidates on a CLOSE beyond (a wick through is allowed): the last final candle of that tf
             check = self._last_close(s.symbol, candles_of, plan['invalid_close_min'])
-        if invalid is not None and check is not None and d * (check - invalid) <= 0:
+        if invalid is not None and check is not None and d * (check - invalid) <= 0 \
+                and not plan.get('prizrak_pp'):
             self._pool2_on_invalid(s, candles_of, now_ms)
             self._finish(s, 'INVALID', now, self._invalid_reason(s, price, invalid))
             return None
@@ -1349,10 +1378,15 @@ class SignalBook:
                 s.zone_since_ms = setup['time']
             return shadow
         elif kind == 'touch':
-            touch = touch_confirm if CONFIG.executor.touch_confirm_close else touch_trigger
+            touch = touch_trigger if s.plan.get('prizrak_first_touch') else \
+                (touch_confirm if CONFIG.executor.touch_confirm_close else touch_trigger)
             trigger = touch(ltf, d, s.zone_since_ms, interval_ms, s.plan['zone_lo'], s.plan['zone_hi'])
         else:
-            trigger = ltf_trigger(ltf, d, s.zone_since_ms, interval_ms)
+            trigger = ltf_trigger(
+                ltf, d, s.zone_since_ms, interval_ms,
+                body_confirmations=(s.plan.get('prizrak_body_confirmations', 1)
+                                     if s.plan.get('prizrak_pp') else 1),
+            )
         if not trigger:
             return shadow
         if now_ms - trigger['time'] > interval_ms + 2 * MINUTE_MS:
@@ -1441,10 +1475,21 @@ class SignalBook:
             k -= 1
         minutes = list(allm[k:])
         if close_min:
+            if (s.plan or {}).get('prizrak_pp'):
+                from strategies.prizrak import body_break_since
+                bars = _resample(s.symbol, minutes, int(close_min), done)
+                return body_break_since(bars, start, invalid, -d,
+                                        (s.plan or {}).get('prizrak_body_confirmations', 2))
             for b in _resample(s.symbol, minutes, int(close_min), done):
                 if b[0] + size > start and d * (b[4] - invalid) <= 0:
                     return float(b[4])
             return None
+        if (s.plan or {}).get('prizrak_pp'):
+            from strategies.prizrak import TF_MINUTES, body_break_since
+            tf = TF_MINUTES.get(str((s.plan or {}).get('prizrak_entry_tf') or '15m'), 15)
+            bars = _resample(s.symbol, minutes, tf, done)
+            return body_break_since(bars, start, invalid, -d,
+                                    (s.plan or {}).get('prizrak_body_confirmations', 2))
         for c in minutes:
             if c[0] >= start and ((c[3] <= invalid) if d > 0 else (c[2] >= invalid)):
                 return float(c[3] if d > 0 else c[2])
@@ -2165,6 +2210,22 @@ class SignalBook:
                 fav, adv = d * ((hi if d > 0 else lo) - lv['entry']) / risk0, d * ((lo if d > 0 else hi) - lv['entry']) / risk0
                 s.trade_mfe_r = fav if s.trade_mfe_r is None else max(s.trade_mfe_r, fav)
                 s.trade_mae_r = adv if s.trade_mae_r is None else min(s.trade_mae_r, adv)
+            # Prizrak trap: two complete bodies accepted beyond the entry level against the position arm an immediate
+            # break-even stop. A wick / one noisy candle is a probe and leaves the original structural stop intact.
+            plan = s.plan or {}
+            if CONFIG.strategies.prizrak_trap_be and candles_of and plan.get('prizrak_pp') and not plan.get('trap_detected') \
+                    and int(c[0]) + MINUTE_MS > entry_ms:
+                from strategies.prizrak import TF_MINUTES, trap_detected
+                tf = TF_MINUTES.get(str(plan.get('prizrak_entry_tf') or plan.get('tf') or '15m'), 15)
+                full = [b for b in _resample(s.symbol, list(candles_of(s.symbol)), tf, int(c[0]) + MINUTE_MS)
+                        if int(b[0]) >= entry_ms]
+                if trap_detected(full, float(lv['entry']), d, plan.get('prizrak_body_confirmations', 2)):
+                    be = lv['entry'] * (1 + d * BE_COST)
+                    if d * (be - lv['sl']) > 0:
+                        lv['sl'], lv['sl_src'] = be, 'Prizrak trap: break-even + costs on opposite retest'
+                        plan['trap_detected'] = True
+                        plan['trap_detected_ms'] = int(c[0]) + MINUTE_MS
+                        self.events.append((s, 'RESTOP'))
             stop_hit = not (s.plan or {}).get('no_stop') and ((lo <= lv['sl']) if d > 0 else (hi >= lv['sl']))
             chan_hit = channel is not None and ((lo < channel) if d > 0 else (hi > channel))
             # audit C06: both against the position - the level nearer the open is crossed first (a channel above a

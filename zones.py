@@ -118,6 +118,10 @@ class RawLevel:
     body: Optional[float] = None
     # audit D09: a swing a later WICK traded through (no close beyond: still an S/R level, but its stops were taken)
     swept: bool = False
+    # Prizrak telemetry: a POC may be used as a fresh first-touch limit only when this count is >= 4 and no reaction
+    # has been recorded.  Existing sources leave these fields at their conservative defaults.
+    touch_count: int = 0
+    fresh: bool = False
 
 
 @dataclass
@@ -417,7 +421,9 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
         return []
     center = lambda k: lo + (k + 0.5) * step  # noqa: E731
     poc = max(range(n), key=vol.__getitem__)
-    out = [RawLevel(center(poc), 'poc', f"POC {tag}")]
+    poc_level = RawLevel(center(poc), 'poc', f"POC {tag}")
+    poc_level.touch_count = sum(1 for c in candles if c[3] <= poc_level.price <= c[2])
+    out = [poc_level]
 
     a = b = poc
     inside = vol[poc]
@@ -458,6 +464,23 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
     for k in sorted(lvns, key=smooth.__getitem__)[:4]:
         out.append(RawLevel(center(k), 'lvn', f"LVN {tag}"))
     return out
+
+
+def accumulation_poc(candles: Sequence[Sequence[float]], base_lo: float, base_hi: float, atr: float,
+                     min_touches: int = 4) -> Optional[RawLevel]:
+    """Return a Prizrak POC only after a four-touch base and a full-body exit from it.
+
+    The profile arithmetic lives in ``strategies.prizrak`` so replay and live map builders share the same definition.
+    This helper returns a normal ``RawLevel`` and therefore remains compatible with the existing merge/zone contract;
+    callers decide whether the level is still fresh before allowing a limit entry.
+    """
+    from strategies.prizrak import accumulation_poc as _accumulation_poc
+    result = _accumulation_poc(candles, base_lo, base_hi, atr, min_touches=min_touches)
+    if not result:
+        return None
+    return RawLevel(result['poc'], 'poc', 'Prizrak accumulation POC',
+                    ts=int(result['exit_ts']), touch_count=int(result['touch_count']),
+                    fresh=bool(result.get('fresh')))
 
 
 def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequence[Tuple[int, float]],

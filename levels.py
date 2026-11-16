@@ -304,11 +304,12 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
 
 
 def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: int,
-                interval_ms: int = MINUTE_MS) -> Optional[Dict[str, float]]:
+                interval_ms: int = MINUTE_MS, body_confirmations: int = 1) -> Optional[Dict[str, float]]:
     """
     Market structure shift on closed LTF candles [open_time, open, high, low, close, quote_vol, taker_buy_quote].
     Zone candles are those still open at or after `since_ms` (the minute price entered the zone). Returns
-    {'entry', 'extreme', 'time', 'extreme_time'} for the first trigger, else None.
+    {'entry', 'extreme', 'time', 'extreme_time'} for the first trigger, else None.  ``body_confirmations`` keeps the
+    legacy one-close trigger at 1; Prizrak structural plans pass 2 so a wick / one noisy close is not a PP.
     """
     cfg = CONFIG.levels
     # 4 x the lookback before the zone: room for the swing the shift breaks (the zone's own candles decide the extreme)
@@ -340,10 +341,17 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
     if level is None:
         return None                 # eng-119: no swing, no structure shift (the 5-candle fallback was ours)
 
+    confirmations = max(1, int(body_confirmations or 1))
     for i in range(extreme_idx + 1, len(usable)):
         close = usable[i][4]
         if direction * (close - level) <= 0:
             continue
+        if confirmations > 1:
+            from strategies.prizrak import full_body_beyond
+            start = i - confirmations + 1
+            if start < extreme_idx + 1 or not all(full_body_beyond(usable[j], level, direction)
+                                                   for j in range(start, i + 1)):
+                continue
         # The flow of the shift itself: candles after the extreme (the selling INTO a low is what was absorbed there)
         # eng-119: the taker-flow requirement was ours (ICT's shift is the close beyond the swing) - journaled only
         recent = usable[max(extreme_idx + 1, i - cfg.ltf_flow_candles + 1):i + 1]

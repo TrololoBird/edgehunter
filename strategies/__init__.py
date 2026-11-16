@@ -27,8 +27,8 @@ registry as it stands (eng-145; one methodology = one strategy name, several pla
     po3             PO3 LONG / SHORT                         po3.py               ICT power of three, Asian range
     oi_build        OI BUILD LONG / SHORT                    oi_build.py          demo-eligible; outcomes remain journaled
 
-All registered setups are eligible on the demo account. CONFIG.executor.demo_off_setups and
-CONFIG.strategies.disabled_setups are intentionally empty; archive and regime results are telemetry only. Detection:
+Registered setups remain queryable in the journal.  ``CONFIG.strategies.disabled_setups`` archives measured dead
+branches before card creation; ``CONFIG.executor.demo_off_setups`` is the separate execution gate. Detection:
 Tier-0 (impulse), structure.build_context (15m closes, worker process), loopside.py (1m / daily candles on the loop).
 """
 from typing import Dict, Optional, Tuple

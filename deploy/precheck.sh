@@ -37,7 +37,7 @@ PY
 # bias/regime classification, OI expectation table and statistics nature table.
 $PY - <<'PY'
 from config import CONFIG
-from strategies import STRATEGIES
+from strategies import STRATEGIES, SETUPS
 from strategies import bias, confirm, regime
 from stats import NATURE
 
@@ -58,12 +58,13 @@ missing = {name: sorted(values) for name, values in expected.items() if values}
 if missing:
     raise SystemExit(f'incomplete strategy tables: {missing}')
 
-# Demo policy: every registered playbook must stay enabled.  Refuse a start if a local override or a future edit
-# reintroduces a strategy/demo-off list, regime auto-veto, or performance kill switch.
+# Demo policy: every registered playbook remains in the registry.  Explicit setup-level archives are allowed and are
+# enforced by SignalBook before card creation; reject only misspelled archive names or a separate demo-off list.
 if set(STRATEGIES) - enabled:
     raise SystemExit(f'disabled registered strategies: {sorted(set(STRATEGIES) - enabled)}')
-if CONFIG.strategies.disabled_setups:
-    raise SystemExit(f'demo strategy shutdowns are not allowed: {CONFIG.strategies.disabled_setups!r}')
+unknown_disabled = set(CONFIG.strategies.disabled_setups) - set(SETUPS)
+if unknown_disabled:
+    raise SystemExit(f'unknown disabled setups: {sorted(unknown_disabled)}')
 if CONFIG.executor.demo_off_setups:
     raise SystemExit(f'demo-off setups are not allowed: {CONFIG.executor.demo_off_setups!r}')
 if CONFIG.ml.regime_veto:

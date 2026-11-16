@@ -148,14 +148,17 @@ def liquidity_pools(h1_before: Sequence[Sequence[float]], c15_hour: Sequence[Seq
             crossed = [c for c in hourly if c[3] <= price <= c[2]]
             formed = int(crossed[-1][0]) + HOUR_MS if crossed else int(hourly[0][0])
             pools.append((price, +1 if price > last else -1, f"round {price:g}", formed))
-    # Taken since it formed: any later candle traded beyond it (a wick through is a sweep: the stops are gone)
-    history = list(h1_before) + list(c15_hour)
+    # A wick through a pool is a probe and keeps the level alive for a reaction.  Drop it only after two complete
+    # working-TF bodies have accepted beyond the level (Prizrak PP); this prevents a one-bar spike from turning the
+    # same level into an INVALID setup on the next scan.
+    # Pools are levels of the closed 1h map.  The current 15m fragments are not interchangeable 1h bodies: mixing them
+    # made one 1h body plus one 15m body look like a two-body PP and invalidated a live level prematurely.
+    history = list(h1_before)
     out = []
     for price, side, label, formed in pools:
         later = [c for c in history if c[0] >= formed]
-        if side > 0 and any(c[2] > price for c in later):
-            continue
-        if side < 0 and any(c[3] < price for c in later):
+        from strategies.prizrak import body_break_since
+        if body_break_since(later, formed, price, +1 if side > 0 else -1, 2) is not None:
             continue
         out.append((price, side, label, formed))
     return out

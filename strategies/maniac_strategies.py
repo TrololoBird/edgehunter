@@ -20,10 +20,16 @@ def _anchor(sig: Dict, tf: str) -> Dict:
             'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
 
 
-def _maniac_map_targets(raw_levels, ref: float, direction: int, atr: float):
-    """Local map target selection for the trendline playbooks."""
+def _maniac_map_targets(raw_levels, ref: float, direction: int, atr: float, tf: str = '1h'):
+    """Local map target selection for the trendline playbooks.
+
+    Prizrak's target contract is explicit here: a 1h trendline may not use a 15m swing/FVG as TP1.  The shared
+    geometry layer already applies this rule; this local selector now does the same before choosing its first level.
+    """
     gap = CONFIG.zones.min_target_atr * atr
     zones = merge(list(raw_levels or []), atr)
+    from strategies.geometry import htf_zones
+    zones = htf_zones(zones, tf)
     out, src = [], []
     for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
         price = zone.lo if direction > 0 else zone.hi
@@ -305,7 +311,7 @@ class TrendlineStrategy(_System):
             stop = min(edge, sig['anchor_extreme']) - pad if d > 0 else max(edge, sig['anchor_extreme']) + pad
             exit = {'stop': ['price', stop], 'stop_src': 'beyond the trendline band + measured pierce',
                     'tp': ['map', 1.0], 'atr': x.atr, 'no_atr_steps': True}
-            ct, cs = _maniac_map_targets(x.raw_levels, sig['line_value'], d, x.atr or 0.0)
+            ct, cs = _maniac_map_targets(x.raw_levels, sig['line_value'], d, x.atr or 0.0, '1h')
             return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch', contract_targets=ct,
                                  contract_target_src=cs)
         if sig.get('target_price') is None or not x.minutes:
@@ -332,7 +338,7 @@ class TrendlineStrategy(_System):
         # the line's first anchor (his robot's target, kept in the setup note)
         exit = {'stop': ['price', stop], 'stop_src': '1h structure beyond the line + measured pierce', 'tp': ['map', 1.0],
                 'atr': x.atr, 'no_atr_steps': True}
-        ct, cs = _maniac_map_targets(x.raw_levels, line, d, x.atr or 0.0)
+        ct, cs = _maniac_map_targets(x.raw_levels, line, d, x.atr or 0.0, '1h')
         plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)', contract_targets=ct,
                              contract_target_src=cs)
         if plan and not plan.get('skip'):

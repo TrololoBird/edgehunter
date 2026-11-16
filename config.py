@@ -22,6 +22,16 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Structural rotation used by reports.  These labels are telemetry only: Group B remains enabled while its trigger or
+# exit is redesigned against the POC / PP contract; the router's explicit archive list below is the execution policy.
+STRUCTURAL_GROUP_A = frozenset({
+    'BB M-TOP', 'IMPULSE DOWN', 'BB3 SELL', 'SD SUPPLY', 'ORB DOWN', 'OI BUILD SHORT', 'BREAKOUT DOWN',
+})
+STRUCTURAL_GROUP_B = frozenset({
+    'SWEEP HIGH', 'SWEEP LOW', 'SD DEMAND', 'PO3 LONG', 'PO3 SHORT', 'SPRING', 'UTAD', 'AUCTION LONG',
+    'AUCTION SHORT', 'VA80 LONG', 'VA80 SHORT',
+})
+
 
 @dataclass(frozen=True)
 class ExchangeConfig:
@@ -719,8 +729,9 @@ class StrategiesConfig:
                             'htf_bias', 'htf_conflict', 'htf_range', 'rg_breakout_in_range', 'rg_countertrend',
                             'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day',
                             'sweep_no_htf_bias', 'market_up', 'oi_short_no_flow')   # eng-151 / eng-170c: OI short diagnostics stay shadow
-    # Demo policy: every registered setup is on. Keep this empty; an entry here would be an explicit strategy shutdown.
-    disabled_setups: tuple = ()
+    # Archive branches with measured zero/negative crypto expectancy.  They remain in the registry and journal so
+    # historical rows stay queryable, but the live card router marks new candidates ``disabled`` before execution.
+    disabled_setups: tuple = ('CUP HANDLE', 'DUMP START', 'TL TOUCH UP', 'TL TOUCH DOWN')
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
     # Lost net of costs on the archive card replay (research-findings skill: cards_6m / phases_6m / cards_fixed_12m):
@@ -829,7 +840,15 @@ class StrategiesConfig:
     # eng-155 (the owner, live: 18 trendline shorts at +1..+3R with their stops untouched): break-even + costs after +1R
     # for every plan again, open cards included (SignalBook._trail)
     be_after_1r: bool = True
+    be_cost: float = 0.0015       # round-trip fee/slippage cushion used when a trap or +1R moves the stop to BE
     ema_trail_after_tp1: bool = False
+    # Prizrak Trade structural contract.  These gates apply only to plans explicitly marked by SignalBook; ordinary
+    # legacy playbooks retain their historical trigger until their replay is migrated.  A break needs two complete
+    # bodies beyond the working-TF level; wicks remain probes and can be retested.
+    prizrak_body_confirmations: int = 2
+    prizrak_structural_setups: tuple = ('SWEEP HIGH', 'SWEEP LOW', 'SD DEMAND', 'SD SUPPLY', 'PO3 LONG', 'PO3 SHORT',
+                                        'SPRING', 'UTAD', 'VA80 LONG', 'VA80 SHORT', 'AUCTION LONG', 'AUCTION SHORT')
+    prizrak_trap_be: bool = True
     time_stop_bars: int = 24
     # eng-51: at most crowd_max OPEN trades in one direction across all strategies (the rest journaled vetoed
     # 'crowded'). The Turtles allowed 6 units in closely correlated markets (Faith, Original Turtle Rules); alts move

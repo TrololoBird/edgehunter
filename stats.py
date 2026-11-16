@@ -36,12 +36,24 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from config import CONFIG
+from config import CONFIG, STRUCTURAL_GROUP_A, STRUCTURAL_GROUP_B
 from journal import BENCHMARK_REASONS, HORIZONS
 from strategies import SETUPS
 
 MIN_SAMPLE = 30
 BOOTSTRAP = 1000
+
+
+def rotation_group(name: Optional[str]) -> str:
+    """Stable telemetry bucket for the structural rotation report."""
+    name = str(name or '')
+    if name in STRUCTURAL_GROUP_A:
+        return 'A: confirmed structural edge'
+    if name in STRUCTURAL_GROUP_B:
+        return 'B: structural redesign'
+    if name in CONFIG.strategies.disabled_setups:
+        return 'ARCHIVE: disabled'
+    return 'OTHER'
 
 
 def pct(value: Optional[float], digits: int = 2, colored: bool = True) -> Text:
@@ -1286,9 +1298,9 @@ def demo_table(console: Console, db: str = 'demo_trades.db', journal_db: str = C
             jconn.close()
     if not rows:
         return
-    table = Table(title="BingX demo vs the card's own net R (closed trades; ERROR / NO_MARKET / EARLY_CLOSE apart)",
+    table = Table(title="BingX demo vs the card's own net R (closed trades; structural rotation groups)",
                   header_style="bold magenta", border_style="blue")
-    for name in ("Strategy", "Trades", "Demo R", "Card R", "Both", "Diff", "Not traded"):
+    for name in ("Group", "Strategy", "Trades", "Demo R", "Card R", "Both", "Diff", "Not traded"):
         table.add_column(name, justify="left" if name == "Strategy" else "right", no_wrap=True)
     groups: Dict[str, List] = {}
     for r in rows:
@@ -1300,7 +1312,7 @@ def demo_table(console: Console, db: str = 'demo_trades.db', journal_db: str = C
         both = [(r[2], r[3]) for r in done if r[3] is not None]
         fmt = lambda v: Text(f"{statistics.fmean(v):+.2f}R") if v else Text("—", style="dim")  # noqa: E731
         diff = Text(f"{statistics.fmean(a - b for a, b in both):+.2f}R") if both else Text("—", style="dim")
-        table.add_row(strategy, str(len(done)), fmt(demo), fmt(jr), str(len(both)), diff,
+        table.add_row(rotation_group(strategy), strategy, str(len(done)), fmt(demo), fmt(jr), str(len(both)), diff,
                       str(len(members) - len(done)))
     console.print(table)
 
