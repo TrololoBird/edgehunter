@@ -1787,6 +1787,14 @@ class DemoExecutor:
             if not stops:
                 await self._restore_stop(trade)
                 continue
+            # A position can have a valid venue stop while the ledger lost its
+            # identity (the historical limit-fill bug).  Rebind the canonical
+            # stop even when there is only one order; dedupe must repair the
+            # database, not only cancel duplicates.
+            ref = float(trade.get('sl') or 0)
+            px = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice') or o.get('triggerPrice') or 0)  # noqa: E731
+            keep = min(stops, key=lambda o: abs(px(o) - ref)) if ref else max(stops, key=lambda o: o.get('timestamp') or 0)
+            self._record_stop(trade, keep, px(keep) or ref, attempt=False)
             # audit B02: a stop that exists is not a stop that covers the position (a grown position kept the old size)
             if not (trade.get('no_stop') or trade.get('strategy') == 'connors' or not trade.get('sl')):
                 try:
@@ -1802,11 +1810,7 @@ class DemoExecutor:
                     trade['qty'] = left
                     with self._db() as c:
                         c.execute("UPDATE demo_trades SET qty = ? WHERE id = ?", (left, trade['id']))
-                ref0 = float(trade.get('sl') or 0)
-                spx = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice')  # noqa: E731
-                                      or o.get('triggerPrice') or 0)
-                stays = min(stops, key=lambda o: abs(spx(o) - ref0)) if ref0 else \
-                    max(stops, key=lambda o: o.get('timestamp') or 0)
+                stays = keep
                 # audit V02: the coverage of the stop that STAYS after the dedupe below (two stops of 1 'covered' a
                 # position of 2, then one was cancelled)
                 covered = float((stays.get('info') or {}).get('origQty') or stays.get('amount') or 0)
@@ -1822,9 +1826,6 @@ class DemoExecutor:
                     continue
             if len(stops) < 2:
                 continue
-            ref = float(trade.get('sl') or 0)
-            px = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice') or o.get('triggerPrice') or 0)  # noqa: E731
-            keep = min(stops, key=lambda o: abs(px(o) - ref)) if ref else max(stops, key=lambda o: o.get('timestamp') or 0)
             for o in stops:
                 if o is keep:
                     continue
