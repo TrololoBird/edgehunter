@@ -187,6 +187,9 @@ class DemoExecutor:
                               ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER'),
                               ('source_commit', 'TEXT'), ('implementation_hash', 'TEXT'), ('config_logic_version', 'TEXT'),
                               ('source_dirty', 'INTEGER'), ('protection_state', 'TEXT'),
+                              ('desired_stop', 'REAL'), ('exchange_stop', 'REAL'), ('stop_order_id', 'TEXT'),
+                              ('protection_updated_ms', 'INTEGER'), ('protection_attempts', 'INTEGER'),
+                              ('protection_error', 'TEXT'), ('protection_alerted_ms', 'INTEGER'),
                               ('quarantined', 'INTEGER'), ('quarantine_reason', 'TEXT'),
                               ('demo_eligible', 'INTEGER'), ('client_order_id', 'TEXT'),
                               ('geometry_error', 'TEXT'), ('risk_gate_reason', 'TEXT')):
@@ -196,7 +199,9 @@ class DemoExecutor:
                         'close_pending_reason', 'close_pending_r', 'from_limit', 'trail', 'no_tp', 'slip_bps',
                         'latency_ms', 'leverage', 'logic_version', 'partial_done', 'n_units', 'r_unit', 'exit_via',
                         'virt', 'tp_done', 'units', 'source_commit', 'implementation_hash',
-                        'config_logic_version', 'source_dirty', 'protection_state', 'quarantined', 'quarantine_reason',
+                        'config_logic_version', 'source_dirty', 'protection_state', 'desired_stop', 'exchange_stop',
+                        'stop_order_id', 'protection_updated_ms', 'protection_attempts', 'protection_error',
+                        'protection_alerted_ms', 'quarantined', 'quarantine_reason',
                         'demo_eligible', 'client_order_id', 'geometry_error', 'risk_gate_reason',
                     })
                     c.execute(f"ALTER TABLE demo_trades ADD COLUMN {safe_col} {kind}")
@@ -556,6 +561,41 @@ class DemoExecutor:
             except Exception as e:
                 if '110206' not in str(e) or attempt == 2 or not await self._free_tp_slot(symbol):
                     raise
+
+    @staticmethod
+    def _stop_fields(order: Optional[Dict], fallback: Optional[float] = None) -> tuple[Optional[str], Optional[float]]:
+        """Extract the venue stop identity/price from both ccxt and BingX raw order shapes."""
+        order = order or {}
+        info = order.get('info') or {}
+        oid = order.get('id') or info.get('orderId')
+        raw = order.get('stopPrice') or order.get('triggerPrice') or info.get('stopPrice') or info.get('triggerPrice')
+        try:
+            stop = float(raw if raw not in (None, '') else fallback) if raw not in (None, '') or fallback is not None else None
+        except (TypeError, ValueError):
+            stop = float(fallback) if fallback is not None else None
+        return (str(oid) if oid not in (None, '') else None), stop
+
+    def _record_stop(self, trade: Dict, order: Optional[Dict], desired: Optional[float], *, attempt: bool = True) -> None:
+        """Persist the actual exchange stop as soon as the create/edit call succeeds.
+
+        A protected position without this ledger identity cannot be rebound safely after a restart.  The old limit-fill
+        path placed the order but discarded its response, which left exactly that gap for AT/USDT:USDT.
+        """
+        order_id, exchange_stop = self._stop_fields(order, desired)
+        if order_id is None and not trade.get('stop_order_id'):
+            return
+        order_id = order_id or trade.get('stop_order_id')
+        exchange_stop = exchange_stop if exchange_stop is not None else trade.get('exchange_stop') or desired
+        trade.update(stop_order_id=order_id, exchange_stop=exchange_stop, desired_stop=desired,
+                     protection_updated_ms=int(time.time() * 1000), protection_error=None)
+        if attempt:
+            trade['protection_attempts'] = int(trade.get('protection_attempts') or 0) + 1
+        if trade.get('id'):
+            with self._db() as c:
+                c.execute("UPDATE demo_trades SET stop_order_id = ?, exchange_stop = ?, desired_stop = ?, "
+                          "protection_updated_ms = ?, protection_error = NULL, protection_attempts = ? WHERE id = ?",
+                          (order_id, exchange_stop, desired, trade['protection_updated_ms'],
+                           int(trade.get('protection_attempts') or 0), trade['id']))
 
     def _is_plain_tp3(self, exchange_symbol: str, price: float) -> bool:
         """eng-172: a coin with only TWO resting targets gives up the farther one only when it is the TRADE'S OWN TP3 of
@@ -1170,8 +1210,11 @@ class DemoExecutor:
             return
         try:
             self._set_inflight(card_id, 'STOP_PENDING')
+            stop_order = None
+            desired_stop = None
             if not no_stop:
-                await self._place_stop(symbol, d, qty, lv['sl'])
+                desired_stop = lv['sl']
+                stop_order = await self._place_stop(symbol, d, qty, desired_stop)
             elif lv.get('sl'):
                 # Legacy no-stop cards are still protected, but the stop distance is the explicit contract distance
                 # carried in ``lv['sl']``.  Do not silently turn a one-unit R into a hard-coded 3R loss.  New Connors
@@ -1179,7 +1222,10 @@ class DemoExecutor:
                 distance = abs(float(fill) - float(lv['sl'])) if lv.get('sl') else None
                 far = fill - d * distance if distance else None
                 if far and far > 0:
-                    await self._place_stop(symbol, d, qty, far)
+                    desired_stop = far
+                    stop_order = await self._place_stop(symbol, d, qty, desired_stop)
+            if stop_order is not None:
+                self._record_stop(trade, stop_order, desired_stop)
         except Exception as e:
             # never an unprotected position: recorded and closed at market
             logger.warning(f"Demo ENTRY {symbol}: stop not placed ({e!r}): closed at market")
@@ -1556,7 +1602,8 @@ class DemoExecutor:
             await self._close_invalid_fill(trade, geometry_reason)
             return
         try:
-            await self._place_stop(symbol, d, qty, lv['sl'])
+            stop_order = await self._place_stop(symbol, d, qty, lv['sl'])
+            self._record_stop(trade, stop_order, lv['sl'])
         except Exception as e:
             # found filled only after price ran through the stop (live CAP 2026-10-02): out at market, never unprotected
             logger.warning(f"Demo LIMIT FILLED {symbol}: stop not placed ({e!r}): closed at market")
@@ -1722,7 +1769,8 @@ class DemoExecutor:
             self.alert(f"⛔ Демо {symbol}: стопа на бирже не было, цена уже за стопом, закрыта рынком")
             await self._close(trade, 'SL', None)
             return
-        await self._place_stop(symbol, d, left, sl)
+        stop_order = await self._place_stop(symbol, d, left, sl)
+        self._record_stop(trade, stop_order, sl)
         logger.warning(f"Demo {symbol}: the position {left} had no stop on BingX: re-placed at {sl:.6g}")
         self.alert(f"⚠️ Демо {symbol}: у позиции не было стопа на бирже, поставлен заново ({sl:.6g})")
 
@@ -1767,6 +1815,7 @@ class DemoExecutor:
                     self.alert(f"⚠️ Демо {trade['symbol']}: стоп покрывал {covered} из {left}, переставлен")
                     try:
                         new = await self._place_stop(trade['symbol'], trade['direction'], left, float(trade['sl']))
+                        self._record_stop(trade, new, float(trade['sl']))
                         await self._cancel_orders(trade['symbol'], keep=new.get('id'), stops_only=True)
                     except Exception as e:
                         errors.report('executor._dedupe_stops', e, f"Demo stop re-place {trade['symbol']}")
@@ -1897,6 +1946,8 @@ class DemoExecutor:
                                                  {'reduceOnly': True, 'closePosition': True,
                                                   'workingType': 'MARK_PRICE'})
                     trade['sl'] = new_sl
+                    self._record_stop(trade, edited or {'id': old_stop, 'stopPrice': new_sl}, new_sl,
+                                      attempt=False)
                     with self._db() as c:
                         c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
                     logger.info(f"Demo RESTOP {symbol}: atomically edited stop {edited.get('id', old_stop)}")
@@ -1904,6 +1955,7 @@ class DemoExecutor:
                 # eng-85: the new stop first, then the old stop(s) by id - the cancel-all first left the position naked
                 # whenever the new stop failed, and took TP2 / TP3 of the thirds plans with it for good
                 new = await self._place_stop(symbol, d, left, new_sl)
+                self._record_stop(trade, new, new_sl)
                 await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
                 trade['sl'] = new_sl
                 with self._db() as c:     # the stop guard restores THIS stop after a restart
@@ -2049,6 +2101,7 @@ class DemoExecutor:
                     trade['add_unknown'] = True
                     try:
                         new = await self._place_stop(symbol, d, worst, float(trade['sl']))
+                        self._record_stop(trade, new, float(trade['sl']))
                         await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
                     except Exception as e:
                         errors.report('executor.on_add', e, f"Demo protective stop after an unknown add {symbol}")
@@ -2083,6 +2136,7 @@ class DemoExecutor:
                     self.alert(f"⛔ Демо {symbol}: стоп после добора не поставлен, закрыта рынком")
                     await self._close(trade, 'NO_STOP', None)
                     return
+                self._record_stop(trade, new, s.levels['sl'] * scale)
                 await self._cancel_orders(symbol, keep=new.get('id'))
                 trade['sl'] = s.levels['sl'] * scale
                 if not ((getattr(s, 'plan', None) or {}).get('no_tp')):
