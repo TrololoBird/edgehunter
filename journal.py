@@ -812,6 +812,18 @@ class SignalJournal:
             "AND COALESCE(is_benchmark_variant, 0) = 0",
             tuple(BENCHMARK_REASONS),
         )
+        # eng-170c migration repair: before the OI SHORT hard gate was removed, it reused the benchmark reason
+        # ``flow_entry`` when flow confirmation was absent.  Do not let that one legacy primary veto become a
+        # benchmark merely because its reason string collides with the real flow benchmark.  The old primary rows
+        # are unambiguous in the journal: OI SHORT + flow=false + no order-flow confirmation; real flow benchmarks
+        # carry flow=true and a non-null ``of_confirm``.  The predicate is intentionally narrow and idempotent.
+        self.conn.execute(
+            "UPDATE signals SET is_benchmark_variant = 0 WHERE kind = 'entry' "
+            "AND group_key = 'ENTRY OI BUILD SHORT' AND vetoed = 'flow_entry' "
+            "AND of_confirm IS NULL AND "
+            "CASE WHEN json_valid(confirms) THEN COALESCE(json_extract(confirms, '$.flow'), 0) "
+            "ELSE 0 END <> 1"
+        )
         # Historical rows were written before the shared contract gate.  Keep them for auditability, but remove
         # malformed entries from performance metrics instead of letting them masquerade as executable trades.
         self.conn.execute(
