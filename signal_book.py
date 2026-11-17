@@ -720,6 +720,11 @@ class SignalBook:
             # the strategy says why there is no plan ('no_level'): kept per card, the plan cache holds None
             self._skip_reason[(s.symbol, s.group_key)] = plan['skip']
             plan = None
+        if plan is not None and s.sig.get('session_end_ms'):
+            # Keep the detector's exact session close with the plan as well as
+            # the signal.  Restored cards may have a reduced signal payload;
+            # their time exit must not fall back to a UTC midnight.
+            plan['session_end_ms'] = int(s.sig['session_end_ms'])
         if plan is not None and s.group_key in CONFIG.strategies.prizrak_structural_setups:
             # Prizrak's structural policy is explicit metadata on the plan. The playbook still owns its anchor/zone;
             # the shared lifecycle supplies the two-body PP, same-TF target floor, and trap telemetry.
@@ -2431,7 +2436,7 @@ class SignalBook:
         mode = getattr(strategy, 'time_exit', 'bars')
         if mode == 'session':
             # eng-93: a card that knows its own session's close (the session ORB) ends there
-            end_ms = (s.sig or {}).get('session_end_ms')
+            end_ms = (s.sig or {}).get('session_end_ms') or (s.plan or {}).get('session_end_ms')
             end = end_ms / 1000 if end_ms else strategy.session_end(s.entered_at)
             if end is not None:
                 # the session's end IS the method's exit: a shorter cap closed ORB / VA80 days before it (ZEC

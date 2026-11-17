@@ -4,7 +4,7 @@ Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
 
 - a prior advance of >= 30% into the left rim (the lowest low of the 2x cup-length before it to the rim);
 - the cup: 12-33% deep (O'Neil; eng-58, was up to 50%), 49..420 daily candles (7 .. 60 calendar weeks in the retained 898-bar window);
-- the handle after the right rim: 5 days (O'Neil: at least one to two weeks) .. cup/4 candles, drifting in the cup's UPPER half and no deeper than 12% of the
+- the handle after the right rim: 7 .. 56 calendar days, drifting in the cup's UPPER half and no deeper than 12% of the
   rim, on lower volume than the cup's;
 - the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
 - stop below the handle's low; TP1 the pivot + 61% of the depth, TP2 + the full depth (Bulkowski's measure rule); O'Neil's own rule
@@ -44,6 +44,17 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
     pivots = _pivots_high(h[:-1])
     for r in reversed(pivots):                       # the right rim: the handle starts after it
         handle = list(range(r + 1, last))
+        if len(handle) > 56:
+            break
+        if len(handle) < 7:
+            continue
+        h_lo = min(l[i] for i in handle)
+        pivot = max(h[i] for i in [r] + handle)
+        handle_volume = sum(v[i] for i in handle) / len(handle)
+        # These checks depend on the right rim / handle only.  They must not
+        # abort the search for a different right rim or a wider left rim.
+        if not (c[last] > pivot >= c[last - 1]) or c[last] > pivot * 1.05:
+            continue
         for left in reversed([p for p in pivots if p < r]):
             cup_len = r - left
             # audit: O'Neil's 7-65 WEEKS are calendar time; the crypto daily chart has 7 candles a week.  The
@@ -62,19 +73,11 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
             low_third = bottom + (rim - bottom) / 3
             if sum(1 for i in range(left, r + 1) if l[i] <= low_third) <= 0.4 * (cup_len + 1):
                 continue
-            if not 7 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks: 7-56 calendar days
-                break
-            h_lo = min(l[i] for i in handle)
-            pivot = max(h[i] for i in [r] + handle)
             if h_lo < (rim + bottom) / 2 or (pivot - h_lo) / pivot > 0.12:
-                break                                # the handle fell into the lower half / too deep
+                continue                             # this left rim's cup is invalid; try a wider cup
             cup_vol = sum(v[left:r + 1]) / (cup_len + 1)
-            if sum(v[i] for i in handle) / len(handle) >= cup_vol:
-                break                                # volume did not dry up in the handle
-            if not (c[last] > pivot >= c[last - 1]):
-                break                                # not this rim's breakout: an older right rim may be
-            if c[last] > pivot * 1.05:
-                break                          # O'Neil: 5% past the pivot the buy point is missed - no chase
+            if handle_volume >= cup_vol:
+                continue                             # volume did not dry up for this cup
             if left < 2 * cup_len:
                 # eng-132: the prior advance is measured over 2x the cup's length before the left rim; a shorter history
                 # measured it on a cut window (a rise looked smaller or bigger than it was): skipped, and said so

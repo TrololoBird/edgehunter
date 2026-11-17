@@ -166,7 +166,8 @@ def htf_zones(zones: List[Zone], tf: Optional[str]) -> List[Zone]:
 def _ltf_prices(zones: List[Zone], tf: Optional[str], direction: int) -> List[float]:
     keep = {z.origin or id(z) for z in htf_zones(zones, tf)}
     # both prices a zone can be targeted at: the near edge and (liquidity intents) the swing's extreme
-    return [px for z in zones if id(z) not in keep for px in {_near(z, direction), _liq_price(z, direction)}]
+    return [px for z in zones if (z.origin or id(z)) not in keep
+            for px in {_near(z, direction), _liq_price(z, direction)}]
 
 
 def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: float, direction: int,
@@ -303,6 +304,11 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
                 real[k] = False
                 sources[k] = f"{sources[k]} (beyond reach)"
     blend = []
+    # Keep the actual map label that stopped a projected target.  Once the
+    # source is rendered as ``before <label>`` / ``repeat (opposing <label>)``
+    # the source text is no longer equal to the zone label, and TP3 could
+    # otherwise test the same obstacle again.
+    obstacle_labels: List[Optional[str]] = [None, None, None]
     last_real = None
     for k in range(3):
         repeat = k > 0 and direction * (targets[k] - targets[k - 1]) <= 0
@@ -318,7 +324,10 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
             # eng-150 (plan 4.7): the 1R step never runs through an opposing map zone - the previous target repeats
             # the previous target's own zone (it sits in front of it by the pierce) and estimated liquidations
             # (confluence only, plan 4.6) do not block
-            path = [z for z in zones if not liq_only(z) and z.label != sources[k - 1]]
+            excluded = {sources[k - 1]}
+            if obstacle_labels[k - 1]:
+                excluded.add(obstacle_labels[k - 1])
+            path = [z for z in zones if not liq_only(z) and z.label not in excluded]
             gap_r, block = obstacle_before(path, targets[k - 1], step, direction, risk)
             if sources[k - 1].startswith('before '):
                 # review eng-151: the previous target already stands at an opposing zone - the next one repeats it
@@ -332,10 +341,12 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
                 targets[k] = targets[k - 1] + direction * (gap_r - 0.01) * risk
                 rrs[k] = (direction * (targets[k] - entry) - fee) / (risk + fee)
                 sources[k] = f"before {block}"
+                obstacle_labels[k] = block
                 last_real = rrs[k]
             elif block is not None:
                 targets[k], rrs[k] = targets[k - 1], rrs[k - 1]
                 sources[k] = f"repeat (opposing {block})"
+                obstacle_labels[k] = block
             else:
                 targets[k] = step
                 rrs[k] = (direction * (targets[k] - entry) - fee) / (risk + fee)

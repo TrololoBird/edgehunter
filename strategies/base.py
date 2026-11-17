@@ -20,7 +20,7 @@ The strategy interface. A strategy turns a setup (a detected event or a scored p
 Lifecycle and journal transport are shared; trade decisions belong to each
 playbook contract and are dispatched by the owning Strategy instance.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypedDict
 
@@ -278,7 +278,10 @@ class Strategy:
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
         """The anchor's identity before a card exists (None: no anchor -> not a card, vetoed 'no_leg')."""
-        plan = self.plan(x)
+        # ``plan`` may add shadow telemetry to its signal.  Gate-key lookup is
+        # a read-only preflight and must not mutate the live signal before the
+        # actual entry evaluation.
+        plan = self.plan(replace(x, sig=dict(x.sig)))
         return plan['key'] if plan else None
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:

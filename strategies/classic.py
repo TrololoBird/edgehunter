@@ -21,7 +21,7 @@ Classic published methods added as their authors define them (eng-29), on the se
               after each daily close (strategies.loopside.LoopDetectors._connors_daily).
 """
 import math
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Union
 from zoneinfo import ZoneInfo
 
 from config import CONFIG
@@ -39,8 +39,29 @@ def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets:
     TPO value area (Dalton - eng-58): the candles are merged into 30-minute brackets and every price row a bracket
     visited gets ONE mark (audit C03: a wide candle's single unit was spread thinly over its rows, so a few narrow
     bars at one price made a 70% 'profile' there)."""
-    if not candles:
+    try:
+        buckets = int(buckets)
+        share = float(share)
+    except (TypeError, ValueError):
         return None
+    if not candles or buckets <= 0 or not math.isfinite(share) or not 0 < share <= 1:
+        return None
+    # A corrupt OHLC row must invalidate the profile as a whole.  Silently
+    # letting a low above a high produce an empty range would either divide by
+    # zero or write volume into a negative Python list index.
+    clean = []
+    for row in candles:
+        try:
+            if len(row) < 5:
+                return None
+            values = [float(row[i]) for i in range(5)]
+            volume = float(row[5]) if len(row) > 5 and row[5] is not None else 0.0
+        except (TypeError, ValueError, IndexError):
+            return None
+        if not all(math.isfinite(v) for v in values + [volume]) or volume < 0 or values[3] > values[2]:
+            return None
+        clean.append([*values, volume, *list(row[6:])])
+    candles = clean
     if tpo:
         brackets: Dict[int, list] = {}
         for c in candles:
@@ -55,8 +76,8 @@ def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets:
     size = (hi - lo) / buckets
     vol = [0.0] * buckets
     for c in candles:
-        a = min(buckets - 1, int((c[3] - lo) / size))
-        b = min(buckets - 1, int((c[2] - lo) / size))
+        a = max(0, min(buckets - 1, int((c[3] - lo) / size)))
+        b = max(a, min(buckets - 1, int((c[2] - lo) / size)))
         part = 1.0 if tpo else (c[5] or 0.0) / (b - a + 1)
         for k in range(a, b + 1):
             vol[k] += part
@@ -365,7 +386,7 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
         if b[2] >= hi and b[3] <= lo:
             fired.add((symbol, open_ms))           # both stops in one minute: the order is unknown - no trade
             continue
-        if b is not minutes[-1]:
+        if int(b[0]) != int(minutes[-1][0]):
             fired.add((symbol, open_ms))           # the first touch was earlier: the first break only
             continue
         level, other = (hi, lo) if side > 0 else (lo, hi)
@@ -399,11 +420,11 @@ def rsi(closes: Sequence[float], period: int) -> Optional[float]:
     return 100 - 100 / (1 + avg_g / avg_l)
 
 
-def connors_event(d1: Sequence[Sequence[float]], first: bool = True) -> Optional[Dict]:
+def connors_event(d1: Sequence[Sequence[float]], first: Union[bool, str] = True) -> Optional[Dict]:
     """
     Connors on DAILY candles (his system; the 1h version of eng-29's first draft was another system): the day that
-    closed with RSI(2) in the extreme (`first`: not already there the day before - he is in until the SMA5 exit, a
-    run of oversold days is one trade).
+    closed with RSI(2) in the extreme (`first=True`: not already there the day before; `first='orig'`: the original
+    close-in rule - he is in until the SMA5 exit, and a run of oversold days is one trade).
     """
     cfg = CONFIG.strategies
     h1 = d1

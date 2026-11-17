@@ -4,6 +4,7 @@ its own stop and target where the method defines one; the lifecycle, R:R rule an
 """
 from typing import Dict, Optional
 
+from config import CONFIG
 from strategies.base import CardLevels, PlanInput
 from strategies.maniac_strategies import _System, _confirm_plan
 
@@ -22,14 +23,41 @@ class ValueAreaStrategy(_System):
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
         ex, stop, targets = plan.get('exit') or {}, (plan.get('exit') or {}).get('stop') or [], list(plan.get('targets') or ())[:3]
         if len(stop) < 2 or not targets or not entry: return None
-        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        edge = float(stop[1])
+        anchor = plan.get('anchor') or {}
+        probe = anchor.get('extreme', extreme)
+        try:
+            probe = float(probe) if probe is not None else None
+        except (TypeError, ValueError):
+            probe = None
+        # The stop belongs beyond the edge that was re-entered, or beyond the
+        # probe extreme when the session recorded one.  A volatility pad and
+        # the shared stop floor prevent a close exactly at VAL/VAH from
+        # creating a zero/tick-sized risk contract.
+        ref = probe if probe is not None and direction * (edge - probe) > 0 else edge
+        atr = max(float(plan.get('atr') or 0.0), float(plan.get('tf_atr') or 0.0))
+        recent = float(plan.get('recent_atr') or 0.0)
+        pad = CONFIG.levels.stop_buffer_atr * max(atr, recent)
+        sl = ref - direction * pad if pad > 0 else ref
+        floor = CONFIG.levels.min_stop_atr * max(atr, recent)
+        if floor > 0 and direction * (entry - sl) < floor:
+            sl = entry - direction * floor
+        risk = direction * (entry - sl)
         if sl <= 0 or risk <= 0: return None
         targets += [targets[-1]] * (3-len(targets)); rr=[direction*(t-entry)/risk for t in targets]
         src=list(plan.get('target_src') or ())+['value area far edge']*3; plan['contract_source']='value_area_dalton'
-        return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':ex.get('stop_src') or 'value area edge','tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
+        stop_src = ex.get('stop_src') or 'value area edge'
+        if probe is not None and ref == probe:
+            stop_src = f'{stop_src}: probe extreme + {CONFIG.levels.stop_buffer_atr:g} ATR'
+        elif pad > 0:
+            stop_src = f'{stop_src} + {CONFIG.levels.stop_buffer_atr:g} ATR'
+        if floor > 0 and risk == floor:
+            stop_src = f'{stop_src}, widened to {CONFIG.levels.min_stop_atr:g} ATR floor'
+        return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':stop_src,'tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
 
     def session_end(self, entered_at: float) -> Optional[float]:
-        # Dalton: the 80% rule trades the day whose value area price re-entered - out at the UTC day's close
+        # Legacy fallback only.  New signals carry session_end_ms and
+        # SignalBook uses that exact session close before reaching here.
         return (int(entered_at) // 86400 + 1) * 86400
 
     def plan(self, x: PlanInput) -> Optional[Dict]:
