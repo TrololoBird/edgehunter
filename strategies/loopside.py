@@ -292,6 +292,8 @@ class LoopDetectors:
             return None
         self._connors_checked[symbol] = day_close
         from strategies.classic import connors_event
-        found = [e for e in (connors_event(md.d1), connors_event(md.d1, first='orig')) if e]
-        return found or None
+        # The registry exposes RSI2X LONG (the original first-cross contract).  The mirrored RSI2/RSI2 SHORT
+        # research variants were never registered and therefore became dead setup names in SignalBook.
+        found = connors_event(md.d1, first='orig')
+        return found if found and found.get('setup') == 'RSI2X LONG' else None
 

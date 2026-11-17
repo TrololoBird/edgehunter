@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Sequence
 from config import CONFIG
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.structure import Pool
-from zones import merge, stop_beyond
+from zones import liq_only, merge, stop_beyond
 
 
 def _contract_pad(measured: Optional[float], work_atr: Optional[float], moved: bool):
@@ -39,6 +39,8 @@ def _sweep_targets(zones, start: float, direction: int, atr: float):
     gap = CONFIG.zones.min_target_atr * atr
     candidates = []
     for zone in zones:
+        if liq_only(zone):
+            continue
         price = zone.lo if direction > 0 else zone.hi
         if direction * (price - start) >= gap:
             candidates.append((direction * (price - start), price, zone.label))

@@ -74,7 +74,11 @@ def features(minutes: Sequence[Sequence[float]], m15: Sequence[Sequence[float]],
     # (1-4 minutes stale) - the evaluated bar is then the rolling 5 minutes up to the signal minute
     if minutes and bars and len(minutes) >= 5:
         last5 = list(minutes[-5:])
-        if int(last5[-1][0]) - int(last5[0][0]) == 4 * MINUTE_MS and int(last5[-1][0]) > int(bars[-1][0]) + 4 * MINUTE_MS:
+        last_ts = [int(c[0]) for c in last5]
+        contiguous = last_ts == list(range(last_ts[0], last_ts[0] + 5 * MINUTE_MS, MINUTE_MS))
+        # The rolling bucket must start after the complete bar already in `bars`; otherwise :02..:04
+        # are counted once in that bar and again in the synthetic one.
+        if contiguous and last_ts[0] >= int(bars[-1][0]) + 5 * MINUTE_MS:
             bars = bars + [[int(last5[0][0]), last5[0][1], max(c[2] for c in last5), min(c[3] for c in last5),
                             last5[-1][4], sum(c[5] for c in last5),
                             sum((c[6] if len(c) > 6 else 0.0) for c in last5)]]

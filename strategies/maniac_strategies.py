@@ -12,7 +12,7 @@ from config import CONFIG
 from levels import MINUTE_MS, resample
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.maniac import find_pivots
-from zones import merge
+from zones import liq_only, merge
 
 
 def _anchor(sig: Dict, tf: str) -> Dict:
@@ -20,18 +20,20 @@ def _anchor(sig: Dict, tf: str) -> Dict:
             'extreme': sig['anchor_extreme'], 'ts': sig['anchor_ts']}
 
 
-def _maniac_map_targets(raw_levels, ref: float, direction: int, atr: float, tf: str = '1h'):
+def _maniac_map_targets(raw_levels, ref: float, direction: int, atr: float, tf: str = '1h',
+                        symbol: Optional[str] = None):
     """Local map target selection for the trendline playbooks.
 
     Prizrak's target contract is explicit here: a 1h trendline may not use a 15m swing/FVG as TP1.  The shared
     geometry layer already applies this rule; this local selector now does the same before choosing its first level.
     """
     gap = CONFIG.zones.min_target_atr * atr
-    zones = merge(list(raw_levels or []), atr)
+    zones = merge(list(raw_levels or []), atr, symbol=symbol)
     from strategies.geometry import htf_zones
     zones = htf_zones(zones, tf)
     out, src = [], []
-    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
+    for zone in sorted((z for z in zones if not liq_only(z)),
+                       key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
         price = zone.lo if direction > 0 else zone.hi
         if direction * (price - (out[-1] if out else ref)) >= gap:
             out.append(price); src.append(zone.label)
@@ -129,11 +131,18 @@ class SupplyDemandStrategy(_System):
         """Seiden supply/demand contract: distal zone stop and opposing fresh-zone target."""
         ex, stop, targets = plan.get('exit') or {}, (plan.get('exit') or {}).get('stop') or [], list(plan.get('targets') or ())[:3]
         if len(stop) < 2 or not targets or not entry: return None
-        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        # The plan stores the distal line as a reference.  Apply the shared structural buffer / volatility
+        # floor here; treating the reference as the final exchange stop recreates the zero/tick-risk SD cards.
+        from strategies.geometry import stop_levels
+        try:
+            sl, sl_src = stop_levels(plan, float(entry), extreme, direction)
+        except (TypeError, ValueError, KeyError):
+            return None
+        risk = direction * (entry - sl)
         if sl <= 0 or risk <= 0: return None
         targets += [targets[-1]] * (3-len(targets)); rr=[direction*(t-entry)/risk for t in targets]
         src=list(plan.get('target_src') or ())+['opposing fresh zone']*3; plan['contract_source']='supply_demand_seiden'
-        return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':ex.get('stop_src') or 'distal supply/demand line','tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
+        return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':sl_src or ex.get('stop_src') or 'distal supply/demand line','tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
 
     @staticmethod
     def arrival(h1, since_ms: int, d: int) -> int:
@@ -157,6 +166,8 @@ class SupplyDemandStrategy(_System):
         big = (1 if trend == d else 0) + (1 if curve is not None and (curve <= 0.5 if d > 0 else curve >= 0.5) else 0)
         arrival = self.arrival(x.h1 or [], int(sig.get('departure_ts') or sig['anchor_ts']), d)
         score = int(sig.get('sd_strength') or 0) + int(sig.get('sd_time') or 0) + 2 + 2 + big + arrival
+        if score < 8:
+            return {'skip': 'sd_score'}
         lo, hi = sig['zone_lo'], sig['zone_hi']
         far = lo if d > 0 else hi
         zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
@@ -184,7 +195,10 @@ class SupplyDemandStrategy(_System):
                                   f"{big}, arrival {arrival})",
                          invalid=far, fix_invalid=True, missable=False, stop_ref=far,
                          # the opposing zones only (own_targets): TP1 the nearest, TP2 the next (the last repeats)
-                         exit={'stop': ['ref', far], 'tp': ['level', targets[0], 0.0, None],
+                         # `entry_levels` owns the structural stop and applies the measured/ATR buffer; keep the
+                         # serialized stop explicitly price-shaped so a generic geometry reader cannot treat `far`
+                         # as an ATR multiplier.
+                         exit={'stop': ['price', far], 'tp': ['level', targets[0], 0.0, None],
                                'tp2': ['level', targets[1], 0.0, None], 'own_targets': True, 'atr': atr,
                                'stop_src': 'beyond the distal line', 'tp_src': 'the opposing 4h supply / demand zone (Seiden)'},
                          intent='opposite_liquidity', targets=targets, target_src=sources, zones=zones,
@@ -311,7 +325,7 @@ class TrendlineStrategy(_System):
             stop = min(edge, sig['anchor_extreme']) - pad if d > 0 else max(edge, sig['anchor_extreme']) + pad
             exit = {'stop': ['price', stop], 'stop_src': 'beyond the trendline band + measured pierce',
                     'tp': ['map', 1.0], 'atr': x.atr, 'no_atr_steps': True}
-            ct, cs = _maniac_map_targets(x.raw_levels, sig['line_value'], d, x.atr or 0.0, '1h')
+            ct, cs = _maniac_map_targets(x.raw_levels, sig['line_value'], d, x.atr or 0.0, '1h', x.symbol)
             return _confirm_plan(x, self.name, '1h', exit, 'trendline third touch', contract_targets=ct,
                                  contract_target_src=cs)
         if sig.get('target_price') is None or not x.minutes:
@@ -338,7 +352,7 @@ class TrendlineStrategy(_System):
         # the line's first anchor (his robot's target, kept in the setup note)
         exit = {'stop': ['price', stop], 'stop_src': '1h structure beyond the line + measured pierce', 'tp': ['map', 1.0],
                 'atr': x.atr, 'no_atr_steps': True}
-        ct, cs = _maniac_map_targets(x.raw_levels, line, d, x.atr or 0.0, '1h')
+        ct, cs = _maniac_map_targets(x.raw_levels, line, d, x.atr or 0.0, '1h', x.symbol)
         plan = _confirm_plan(x, self.name, '1h', exit, 'trendline break (2 closes)', contract_targets=ct,
                              contract_target_src=cs)
         if plan and not plan.get('skip'):
@@ -416,6 +430,26 @@ class BollingerStrategy(_System):
         return plan
 
 
+def _padded_bollinger_stop(plan: Dict, entry: float, direction: int, raw_stop: float):
+    """Apply the same measured-pierce / volatility-floor contract as geometry.system_levels' trail branch."""
+    from pierce import overshoot
+    from strategies.geometry import stop_floor, zone_pad
+
+    stop = float(raw_stop)
+    src = (plan.get('exit') or {}).get('stop_src') or 'Bollinger retest'
+    measured = overshoot(plan.get('symbol'), 'swing_15m', stop)
+    pad, how = zone_pad(plan, measured)
+    if pad:
+        stop -= direction * pad
+        src = f'{src} + {how}'
+    atr = max(float(plan.get('atr') or 0.0), float(plan.get('tf_atr') or 0.0))
+    floor = stop_floor(atr, plan.get('recent_atr'))
+    if 0 < direction * (entry - stop) < floor:
+        stop = entry - direction * floor
+        src = f'{src}, widened to {CONFIG.levels.min_stop_atr:g} ATR'
+    return stop, src
+
+
 class BollingerWMStrategy(BollingerStrategy):
     name = 'bollinger_wm'
     setups = {'BB W-BOTTOM': 1, 'BB M-TOP': -1}
@@ -425,7 +459,8 @@ class BollingerWMStrategy(BollingerStrategy):
         target = (plan.get('exit') or {}).get('tp1_price')
         if len(stop) < 2 or target is None or not entry:
             return None
-        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        sl, sl_src = _padded_bollinger_stop(plan, float(entry), direction, float(stop[1]))
+        risk = direction * (entry - sl)
         if sl <= 0 or risk <= 0 or direction * (float(target) - entry) <= 0:
             return None
         rr = direction * (float(target) - entry) / risk
@@ -433,7 +468,7 @@ class BollingerWMStrategy(BollingerStrategy):
         return {'entry': float(entry), 'sl': sl, 'tp1': float(target), 'tp2': float(target), 'tp3': float(target),
                 'rr_tp1': rr, 'rr_tp2': rr, 'rr_blend': rr, 'low_rr': False, 'rr_reason': None,
                 'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
-                'sl_src': ex.get('stop_src') or 'W/M retest', 'tp1_src': 'opposite Bollinger band',
+                'sl_src': sl_src or ex.get('stop_src') or 'W/M retest', 'tp1_src': 'opposite Bollinger band',
                 'tp2_src': 'live band trail', 'tp3_src': 'live band trail', 'zone_src': plan.get('zone_src'),
                 'range_pos': None, 'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
 
@@ -447,7 +482,8 @@ class BollingerMethod3Strategy(BollingerStrategy):
         target = (plan.get('exit') or {}).get('tp1_price')
         if len(stop) < 2 or target is None or not entry:
             return None
-        sl, risk = float(stop[1]), direction * (entry - float(stop[1]))
+        sl, sl_src = _padded_bollinger_stop(plan, float(entry), direction, float(stop[1]))
+        risk = direction * (entry - sl)
         if sl <= 0 or risk <= 0 or direction * (float(target) - entry) <= 0:
             return None
         rr = direction * (float(target) - entry) / risk
@@ -455,7 +491,7 @@ class BollingerMethod3Strategy(BollingerStrategy):
         return {'entry': float(entry), 'sl': sl, 'tp1': float(target), 'tp2': float(target), 'tp3': float(target),
                 'rr_tp1': rr, 'rr_tp2': rr, 'rr_blend': rr, 'low_rr': False, 'rr_reason': None,
                 'risk_units': 1.0, 'risk0': risk, 'stop_pierce': None,
-                'sl_src': ex.get('stop_src') or 'Method III retest', 'tp1_src': 'opposite Bollinger band',
+                'sl_src': sl_src or ex.get('stop_src') or 'Method III retest', 'tp1_src': 'opposite Bollinger band',
                 'tp2_src': 'live band trail', 'tp3_src': 'live band trail', 'zone_src': plan.get('zone_src'),
                 'range_pos': None, 'limit_entry': None, 'volume_24h': plan.get('volume_24h')}
 

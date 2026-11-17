@@ -15,7 +15,7 @@ from typing import Dict, Optional, Sequence
 
 from config import CONFIG
 from strategies.base import CardLevels, PlanInput, Strategy
-from zones import merge
+from zones import liq_only, merge
 
 MINUTE_MS = 60_000
 OI_TARGET_MIN_NET_RR = 1.0
@@ -43,7 +43,8 @@ def _oi_targets(x: PlanInput, direction: int):
     gap = CONFIG.zones.min_target_atr * atr
     zones = merge(list(x.raw_levels or []), atr, symbol=x.symbol)
     targets, sources = [], []
-    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
+    for zone in sorted((z for z in zones if not liq_only(z)),
+                       key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
         price = zone.lo if direction > 0 else zone.hi
         distance = direction * (price - ref)
         net_rr = ((distance - fee) / (risk + fee)) if risk > 0 else -float('inf')
@@ -109,7 +110,7 @@ def oi_build(minutes: Sequence[Sequence[float]], oi_5m: Sequence, now_ms: int, o
         return None
     if now_ms - oi[-1][0] > 10 * MINUTE_MS:
         return None                            # the OI feed stalled: no reading
-    changes = [oi[k][1] / oi[k - 12][1] - 1 for k in range(12, len(oi) - 12)
+    changes = [oi[k][1] / oi[k - 12][1] - 1 for k in range(12, len(oi))
                if 55 * MINUTE_MS <= oi[k][0] - oi[k - 12][0] <= 65 * MINUTE_MS]
     if len(changes) < 12:
         return None
@@ -196,7 +197,7 @@ class OiBuildStrategy(Strategy):
         from strategies.maniac_strategies import _confirm_plan
         if x.sig.get('oi_build_oi60') is None:
             return None
-        exit = {'stop': ['ref', x.sig['anchor_extreme']], 'tp': ['map', 0.0], 'atr': x.atr,
+        exit = {'stop': ['price', x.sig['anchor_extreme']], 'tp': ['map', 0.0], 'atr': x.atr,
                 'stop_src': "beyond the hour's extreme", 'tp_src': 'the opposite liquidity'}
         targets, sources = _oi_targets(x, x.direction)
         return _confirm_plan(x, self.name, '15m', exit, "Pring: price and OI (faster than its average) together",

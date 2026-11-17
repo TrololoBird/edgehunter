@@ -65,15 +65,44 @@ def rolling_std(x: np.ndarray, n: int) -> np.ndarray:
 
 def rolling_max(x, n):
     from numpy.lib.stride_tricks import sliding_window_view
-    out = np.full_like(x, np.nan)
-    out[n - 1:] = sliding_window_view(x, n).max(axis=1)
+    values = np.asarray(x, dtype=float)
+    out = np.full(values.shape, np.nan, dtype=float)
+    if len(values) < n:
+        return out
+    windows = sliding_window_view(values, n)
+    valid = np.isfinite(windows).all(axis=1)
+    values = np.full(len(windows), np.nan)
+    values[valid] = windows[valid].max(axis=1)
+    out[n - 1:] = values
     return out
 
 
 def rolling_min(x, n):
     from numpy.lib.stride_tricks import sliding_window_view
-    out = np.full_like(x, np.nan)
-    out[n - 1:] = sliding_window_view(x, n).min(axis=1)
+    values = np.asarray(x, dtype=float)
+    out = np.full(values.shape, np.nan, dtype=float)
+    if len(values) < n:
+        return out
+    windows = sliding_window_view(values, n)
+    valid = np.isfinite(windows).all(axis=1)
+    values = np.full(len(windows), np.nan)
+    values[valid] = windows[valid].min(axis=1)
+    out[n - 1:] = values
+    return out
+
+
+def sma_valid(x: np.ndarray, n: int) -> np.ndarray:
+    """Simple moving average only when every value in the window is finite."""
+    from numpy.lib.stride_tricks import sliding_window_view
+    values = np.asarray(x, dtype=float)
+    out = np.full_like(values, np.nan)
+    if len(values) < n:
+        return out
+    windows = sliding_window_view(values, n)
+    valid = np.isfinite(windows).all(axis=1)
+    means = np.full(len(windows), np.nan)
+    means[valid] = windows[valid].mean(axis=1)
+    out[n - 1:] = means
     return out
 
 
@@ -146,8 +175,8 @@ def indicators(k: np.ndarray) -> dict:
     rng = hi14 - lo14
     with np.errstate(divide='ignore', invalid='ignore'):
         k_raw = np.where(rng > tiny, 100 * (c - lo14) / rng, np.nan)
-    stoch_k = sma(np.nan_to_num(k_raw, nan=50.0), 3)
-    stoch_d = sma(np.nan_to_num(stoch_k, nan=50.0), 3)
+    stoch_k = sma_valid(k_raw, 3)
+    stoch_d = sma_valid(stoch_k, 3)
     mid, sd = sma(c, 20), rolling_std(c, 20)
     with np.errstate(divide='ignore', invalid='ignore'):
         pctb = np.where(4 * sd > tiny, (c - (mid - 2 * sd)) / (4 * sd), np.nan)
@@ -197,9 +226,9 @@ def rules(ind: dict, d: int) -> dict:
     e50_slope = ind['e50'] - lag(ind['e50'], 10)
     lo14, hi14 = rolling_min(ind['l'], 14), rolling_max(ind['h'], 14)
     prev_lo, prev_hi = lag(rolling_min(ind['l'], 14), 14), lag(rolling_max(ind['h'], 14), 14)
-    rsi_prev_lo = lag(rolling_min(np.nan_to_num(rsi, nan=50), 14), 14)
-    rsi_prev_hi = lag(rolling_max(np.nan_to_num(rsi, nan=50), 14), 14)
-    rsi_lo, rsi_hi = rolling_min(np.nan_to_num(rsi, nan=50), 14), rolling_max(np.nan_to_num(rsi, nan=50), 14)
+    rsi_prev_lo = lag(rolling_min(rsi, 14), 14)
+    rsi_prev_hi = lag(rolling_max(rsi, 14), 14)
+    rsi_lo, rsi_hi = rolling_min(rsi, 14), rolling_max(rsi, 14)
     k, dd = ind['stoch_k'], ind['stoch_d']
     cross_up = (k > dd) & (lag(k, 1) <= lag(dd, 1))
     cross_dn = (k < dd) & (lag(k, 1) >= lag(dd, 1))
