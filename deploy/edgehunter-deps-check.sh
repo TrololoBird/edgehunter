@@ -53,9 +53,12 @@ if [ -n "$NEW" ] && [ "$CUR" != "$NEW" ]; then
   MSG="$MSG — требуется обновление ccxt"
 fi
 if [ -n "$OUT" ]; then
-  MSG="$MSG\nОбновления, совместимые с requirements.txt:\n$OUT"
+  MSG="$MSG
+Обновления, совместимые с requirements.txt:
+$OUT"
 else
-  MSG="$MSG\nНет безопасных обновлений в пределах текущих constraints.txt/requirements.txt; pip check clean."
+  MSG="$MSG
+Нет безопасных обновлений в пределах текущих constraints.txt/requirements.txt; pip check clean."
 fi
 curl -s -m 15 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
   --data-urlencode "chat_id=$GROUP" --data-urlencode "message_thread_id=$TOPIC" \
