@@ -30,6 +30,10 @@ fi
 
 bash "$APP/deploy/web_access.sh"
 
+# Keep the weekly dependency report in sync with the checked-out release. It
+# filters out ccxt's transitive pins and upgrades that violate constraints.txt.
+install -o root -g root -m 755 "$APP/deploy/edgehunter-deps-check.sh" /usr/local/bin/edgehunter-deps-check.sh
+
 chown -R edgehunter:edgehunter "$APP"
 systemctl restart edgehunter-bot
 sleep 20

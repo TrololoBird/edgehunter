@@ -50,6 +50,7 @@ NY = ZoneInfo('America/New_York')
 _CAL = (None, set(), set())
 UPBIT = 'https://api.upbit.com/v1'
 UPBIT_MAX_AGE_S = 180
+UPBIT_TICKER_BATCH = 80        # Upbit documents a maximum of 100 market codes per ticker request.
 _CAL_CHECKED = 0.0
 ETF_LAG_H = 32
 ETF_MAX_AGE_D = 6        # a last visible day older than this (Farside timer dead) is NULL, not a stale value
@@ -248,28 +249,65 @@ class ExternalData:
         return self.coin.get(symbol, {})
 
     # ------------------------------------------------------------------ eng-134: Upbit (kimchi premium)
+    async def _upbit_ticker_chunk(self, markets: list[str], invalid: list[str]) -> list:
+        """Fetch one ticker batch, isolating a stale/delisted code without dropping all KRW prices."""
+        payload = await self._json(f"{UPBIT}/ticker?markets={','.join(markets)}")
+        if isinstance(payload, list):
+            return payload
+        error = payload.get('error') if isinstance(payload, dict) else None
+        name = str(error.get('name', '') if isinstance(error, dict) else '').lower()
+        message = str(error.get('message', '') if isinstance(error, dict) else '').lower()
+        unknown_market = name in {'404', 'not found'} or 'code not found' in message
+        if unknown_market and len(markets) > 1:
+            middle = len(markets) // 2
+            return (await self._upbit_ticker_chunk(markets[:middle], invalid)
+                    + await self._upbit_ticker_chunk(markets[middle:], invalid))
+        if unknown_market and len(markets) == 1:
+            invalid.append(markets[0])
+            return []
+        raise ValueError(f"Upbit ticker answered {str(payload)[:150]}")
+
+    async def _upbit_tickers(self, markets: list[str]) -> tuple[list, list[str]]:
+        rows, invalid = [], []
+        for start in range(0, len(markets), UPBIT_TICKER_BATCH):
+            rows.extend(await self._upbit_ticker_chunk(markets[start:start + UPBIT_TICKER_BATCH], invalid))
+        return rows, invalid
+
     async def upbit_loop(self, running):
         markets, listed_at = [], 0.0
+        retry_delay = 60
         while running():
             try:
                 if not markets or time.time() - listed_at > 3600:
                     rows = await self._json(f"{UPBIT}/market/all")
                     if not isinstance(rows, list):
                         raise ValueError(f"Upbit market/all answered {str(rows)[:150]}")
-                    markets = [x['market'] for x in rows if str(x.get('market', '')).startswith('KRW-')]
+                    markets = [x['market'] for x in rows if isinstance(x, dict)
+                               and str(x.get('market', '')).startswith('KRW-')]
+                    if not markets:
+                        raise ValueError('Upbit market/all returned no KRW markets')
                     listed_at = time.time()
-                rows = await self._json(f"{UPBIT}/ticker?markets={','.join(markets)}")
-                if not isinstance(rows, list):
-                    # eng-169b: an error object ({'error': {...}}, e.g. a delisted market / rate limit) was iterated
-                    # as keys -> "'str' object has no attribute 'get'"
-                    raise ValueError(f"Upbit ticker answered {str(rows)[:150]}")
-                self._upbit = {x['market'][4:]: (float(x['trade_price']), float(x.get('trade_timestamp') or 0) / 1000)
-                               for x in rows if x.get('trade_price')}
+                rows, invalid = await self._upbit_tickers(markets)
+                markets = [market for market in markets if market not in set(invalid)]
+                parsed = {}
+                for row in rows:
+                    try:
+                        market = str(row.get('market', ''))
+                        price = float(row.get('trade_price'))
+                        traded = float(row.get('trade_timestamp') or 0) / 1000
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+                    if market.startswith('KRW-') and price > 0:
+                        parsed[market[4:]] = (price, traded)
+                if not parsed:
+                    raise ValueError(f"Upbit ticker returned no usable rows ({len(rows)} received)")
+                self._upbit = parsed
                 self._upbit_t = time.time()
+                retry_delay = 60
             except Exception as e:
-                markets = []                         # a delisted market fails the whole call: re-list next time
                 errors.report('extdata.upbit_loop', e, "Upbit KRW tickers")
-            await asyncio.sleep(60)
+                retry_delay = min(600, max(120, retry_delay * 2))
+            await asyncio.sleep(retry_delay)
 
     def kimchi(self, symbol: str, price: Optional[float]) -> Optional[float]:
         """Upbit premium % of a coin over its Binance futures price; None when stale / not listed."""

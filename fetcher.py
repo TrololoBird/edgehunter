@@ -1706,21 +1706,38 @@ class DataFetcher:
         together = money into altcoins (practice, not a measured rule: journaled as `_dom` on every entry until the
         journal can judge it; the archive has no dominance history).
         """
+        import urllib.error
         import urllib.request
         url = 'https://api.coingecko.com/api/v3/global'
+        backoff = 0
         while self._running:
             try:
                 def fetch():
                     req = urllib.request.Request(url, headers={'User-Agent': 'edgehunter'})
                     with safe_urlopen(req, timeout=CONFIG.rest.total_timeout_sec) as resp:
                         return json.load(resp)
-                data = (await asyncio.to_thread(fetch)).get('data') or {}
+                payload = await asyncio.to_thread(fetch)
+                if not isinstance(payload, dict):
+                    raise ValueError(f'CoinGecko /global answered {str(payload)[:150]}')
+                data = payload.get('data') or {}
                 pct = data.get('market_cap_percentage') or {}
                 if 'btc' in pct and 'usdt' in pct:
                     self.dominance.append((time.time(), float(pct['btc']), float(pct['usdt'])))
+                backoff = 0
+            except urllib.error.HTTPError as e:
+                # CoinGecko's free endpoint returns 429 when a restart wave or
+                # another caller shares the IP.  Honour Retry-After and stop
+                # retrying every five minutes until the window expires.
+                try:
+                    retry_after = int(e.headers.get('Retry-After', '0') or 0)
+                except (TypeError, ValueError):
+                    retry_after = 0
+                backoff = min(3600, max(300, retry_after, backoff * 2 or 300))
+                errors.report('fetcher.dominance', e, f'cooldown {backoff}s')
             except Exception as e:
-                errors.report('fetcher.dominance', e)
-            await asyncio.sleep(300)
+                backoff = 300
+                errors.report('fetcher.dominance', e, f'retry in {backoff}s')
+            await asyncio.sleep(backoff or 300)
 
     async def _external_loop(self):
         """

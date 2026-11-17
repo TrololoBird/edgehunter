@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 
 import errors
 from config import CONFIG
+from memory_guard import snapshot as memory_snapshot
 from scenario_snapshot import ScenarioSnapshot
 
 logger = logging.getLogger(__name__)
@@ -1759,15 +1760,29 @@ class Briefing:
             self._post(f"🛠 Бот: проверки сетапов ограничены глубиной истории (включая историю до паттерна) — {blind}",
                        key='health|blind', every_sec=3600, topic='service')
         rss = (getattr(self.sc, 'health', None) or {}).get('rss_mb')
+        memory = memory_snapshot()
         try:
             import psutil
             total_mb = psutil.virtual_memory().total / 2**20
         except Exception as e:
             errors.report('briefing.memory', e)
             total_mb = 0.0
-        if rss and total_mb and rss > 0.55 * total_mb:
-            self._post(f"🛠 Бот: память {rss:.0f} МБ из {total_mb:.0f} МБ — ядро может убить процесс (OOM), "
-                       f"перезапуск сбросит рост", key='health|memory', every_sec=2 * 3600, topic='service')
+        current_mb = (memory.get('current') or 0) / 2**20
+        limit_bytes = memory.get('high') or memory.get('max')
+        limit_mb = limit_bytes / 2**20 if limit_bytes and limit_bytes > 0 else 0.0
+        if current_mb and limit_mb:
+            # MemoryHigh is the service's actionable budget.  55% of host RAM
+            # was a false alarm on this 3.9 GB host while the unit still had
+            # ~0.8 GB before shedding heavy passes at 90% of MemoryHigh.
+            memory_risk = current_mb >= 0.80 * limit_mb
+            detail = f"cgroup {current_mb:.0f}/{limit_mb:.0f} МБ"
+        else:
+            memory_risk = bool(rss and total_mb and rss > 0.70 * total_mb)
+            detail = f"хост {total_mb:.0f} МБ"
+        if rss and memory_risk:
+            self._post(f"🛠 Бот: память процесса {rss:.0f} МБ ({detail}) — близко к лимиту, "
+                       f"тяжёлый проход будет временно пропущен", key='health|memory', every_sec=2 * 3600,
+                       topic='service')
         ex = (self.sc.demo if self.sc.demo.enabled else None)
         if ex is not None:
             try:

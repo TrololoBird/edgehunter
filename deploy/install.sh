@@ -42,6 +42,7 @@ ufw --force enable
 
 # 6. the service
 cp "$APP/deploy/edgehunter-bot.service" /etc/systemd/system/edgehunter-bot.service
+install -o root -g root -m 755 "$APP/deploy/edgehunter-deps-check.sh" /usr/local/bin/edgehunter-deps-check.sh
 systemctl daemon-reload
 systemctl enable edgehunter-bot
 echo
