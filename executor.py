@@ -1017,7 +1017,7 @@ class DemoExecutor:
             # eng-147 (the owner): a plan without targets has no R:R to re-check, so a run past the signal price is
             # capped: 0.5 N for the Turtles, 0.5 ATR of the working timeframe for the others
             reject = f"chase_limit: {self._chase(s, lv, fill_est, d, n_turtle, ratio)}"
-        elif reject is None and d * (lv['tp1'] - fill_est) <= 0 and s.levels.get('rr_tp1') is not None:
+        elif reject is None and s.levels.get('rr_tp1') is not None and d * (lv['tp1'] - fill_est) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond TP1 {lv['tp1']:.6g}"
         elif reject is None and s.levels.get('rr_tp1') is not None:
             from strategies.geometry import cost_of
