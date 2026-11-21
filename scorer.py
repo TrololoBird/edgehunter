@@ -1,4 +1,5 @@
 import logging
+import math
 import polars as pl
 from typing import Dict, List, Optional, Tuple, Union
 from config import CONFIG
@@ -24,17 +25,14 @@ LONG_PHASES, SHORT_PHASES = 'ABEF', 'CD'
 
 class PhaseScorer:
     """
-    Asymmetrical scoring of five market phases on CLOSED 15m candles, vectorized with pl.when().then().otherwise().
-    Each condition adds points independently; long = A + B + E (bullish), short = C + D (bearish).
+    Legacy phase-scoring container retained only for forensic comparison.
 
-    The conditions follow the standard crypto order-flow reading:
-    - price/OI matrix: price up + OI up = new longs (strong), price up + OI down = short covering (fades),
-      price down + OI up = new shorts (strong), price down + OI down = long liquidation (exhaustion, near bottoms);
-    - CVD: net taker selling absorbed while price is flat = accumulation, a new high on net taker selling =
-      bearish divergence (distribution); spot-led flow is sturdier than perp-led flow;
-    - funding: extreme positive = crowded longs, extreme negative = crowded shorts.
-    The weights are hand-set hypotheses; the journal (stats.py) measures them live.
-    All frames carry a 'symbol' column (see indicators.compute_indicators_batch), so one call scores every symbol.
+    The former implementation assigned Wyckoff names and directional position
+    intent to indirect price/OI/CVD patterns. That mapping is not a verified
+    published method and is disabled by default. ``calculate_scores`` fails
+    closed if a caller attempts to re-enable it; v2 exposes observed features
+    without converting them into accumulation, distribution, liquidation, or
+    new-position claims.
     """
 
     def __init__(self):
@@ -81,12 +79,27 @@ class PhaseScorer:
         needed = ['oi_change_pct', 'oi_change_short', 'oi_change_flat', 'rvol', 'fut_delta_1h', 'fut_flow_1h']
         missing = [c for c in needed if c not in df.columns]
         if missing:
-            df = df.with_columns([pl.lit(0.0, dtype=pl.Float64).alias(c) for c in missing])
+            # Missing OI/flow is unknown, not a measured zero.  The legacy
+            # phase path is disabled, so no fallback value may manufacture a
+            # confirmation or a neutral-looking market state.
+            df = df.with_columns([pl.lit(None, dtype=pl.Float64).alias(c) for c in missing])
 
         df = self._join_live(df, tier0, extras)
         # Tier-0 flags first: phase E reads the liquidation-cascade flag
         df = self.flag_tier_0_anomaly(df)
         df = self._spot_perp(df)
+        if self.sc.phase_scoring_enabled:
+            raise RuntimeError("legacy phase scorer is quarantined; no source-verified v2 phase contract exists")
+        if not self.sc.phase_scoring_enabled:
+            # The legacy A-F scorer attached Wyckoff phase names to indirect
+            # price/OI/CVD patterns. Those names are not a verified method and
+            # therefore cannot be emitted by the v2 working pipeline. Preserve
+            # the observable columns as neutral values for diagnostics.
+            neutral = []
+            for phase in 'abcdef':
+                neutral.extend((pl.lit(0).alias(f'score_phase_{phase}'),
+                                pl.lit(False).alias(f'phase_{phase}_active')))
+            return self._calculate_total_scores(df.with_columns(neutral))
         df = self._score_phase_a_accumulation(df)
         df = self._score_phase_b_spring(df)
         df = self._score_phase_c_distribution(df)
@@ -106,9 +119,10 @@ class PhaseScorer:
                 if value is None:
                     return None
                 try:
-                    return float(value)
+                    number = float(value)
                 except (TypeError, ValueError):
                     return None
+                return number if math.isfinite(number) else None
             df = df.with_columns([pl.lit(live_value(c), dtype=pl.Float64).alias(c) for c in TIER0_COLUMNS])
         if extras is not None and not extras.is_empty():
             df = df.join(extras, on='symbol', how='left', maintain_order='left')
@@ -119,9 +133,9 @@ class PhaseScorer:
 
     def _spot_perp(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Spot vs perp net flow over the last hour. Perp-led: the perp side drives the move while spot disagrees or
-        barely participates (spot net flow < perp_led_spot_share of the perp net flow); such moves fade more often.
-        The perp side uses the multi-venue aggregate once enough candles were accumulated (agg_ready).
+        Compute spot and perpetual flow observations on a common scale.  A
+        disagreement is recorded as a feature; it is not a claim about which
+        market leads price or about future decay of the move.
         """
         share = CONFIG.orderflow.perp_led_spot_share
         agg = pl.col('agg_ready').fill_null(0) > 0
@@ -141,7 +155,10 @@ class PhaseScorer:
 
     def flag_tier_0_anomaly(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Tier-0: raw impulse, independent of Score and phases. Any single condition is enough:
+        Produce raw anomaly flags for telemetry only.  A flag is not a trade
+        signal, market-intent classification or liquidation estimate.  The
+        configured OR conditions are retained as diagnostics until a v2
+        detection contract supplies measured false-positive controls:
         - RVOL_1m above the threshold on a minute of real size, except in the first seconds after a quarter-hour
           boundary (algo bursts);
         - |price 5m| / |OI 5m| above BOTH the absolute floor and the coin's own z-score threshold;
@@ -153,8 +170,12 @@ class PhaseScorer:
         venues = CONFIG.venues
         missing = [c for c in TIER0_COLUMNS if c not in df.columns]
         if missing:
-            df = df.with_columns([pl.lit(0.0, dtype=pl.Float64).alias(c) for c in missing])
-        df = df.with_columns([pl.col(c).fill_null(0.0) for c in TIER0_COLUMNS])
+            df = df.with_columns([pl.lit(None, dtype=pl.Float64).alias(c) for c in missing])
+        # NaN is not an ordinary number: Polars orders it above finite values,
+        # so comparisons such as NaN >= threshold would flag missing data.
+        # Normalize non-finite metrics to NULL and let rule predicates fail
+        # closed; preserve those NULLs in the returned observation frame.
+        df = df.with_columns([pl.col(c).fill_nan(None).alias(c) for c in TIER0_COLUMNS])
 
         rvol = ((pl.col('rvol_1m') > t0.rvol_1m_threshold) & (pl.col('minute_usd') >= t0.rvol_min_minute_usd) &
                 (pl.col('sec_into_quarter') >= t0.quarter_boundary_ignore_sec))
@@ -181,17 +202,19 @@ class PhaseScorer:
         for name in t0.flag_rules:
             rule = rule | parts[name]
         rule = rule.fill_null(False)
-        # Once the IsolationForest is fitted it decides (an unusual COMBINATION of the coin's features); the
-        # rules only label the event and serve as the fallback before the first fit
-        ml = pl.col('ml_anomaly') > 0
-        is_anomaly = pl.when(pl.col('ml_ready') > 0).then(ml).otherwise(rule).fill_null(False)
-        return df.with_columns(
+        # ML anomaly decisions are quarantined in v2.  Even if a caller passes
+        # stale model columns, raw rules remain telemetry and cannot be
+        # replaced by an unproven artifact.
+        ml = pl.lit(False)
+        is_anomaly = rule.fill_null(False)
+        flags = df.select(
             is_anomaly.alias('is_tier_0_anomaly'), rule.alias('rule_anomaly'), cascade.fill_null(False).alias('liq_cascade'),
             # Which condition fired (logs / debugging): one boolean column per trigger
             *[c.fill_null(False).alias(f"t0_{name}") for name, c in (
                 ('rvol', rvol), ('price', price), ('oi', oi), ('whales', whales), ('cluster', cluster),
                 ('liq', cascade), ('venue', one_venue), ('ml', ml & (pl.col('ml_ready') > 0)))],
         )
+        return df.hstack(flags)
 
     def _oi_building(self) -> pl.Expr:
         """OI rising over the last hour in the coin's own terms (z >= trend_oi_z of its 1h change, floor), else fixed."""
@@ -206,7 +229,8 @@ class PhaseScorer:
 
     def _score_phase_a_accumulation(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Phase A: accumulation (bullish) - a tight range where aggressive selling is absorbed by resting bids.
+        Legacy, unreachable classifier. It must not be described as Wyckoff
+        Phase A or used by v2.
         - Bollinger width near its lookback minimum (squeeze) (+1)
         - Range over the window within flat_range_atr ATRs while taker SELLERS dominate its volume: the sells are
           absorbed, price does not break down (+2)
@@ -229,8 +253,8 @@ class PhaseScorer:
 
     def _score_phase_b_spring(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Phase B: Wyckoff spring (bullish) - a shallow sweep below an established trading range that sellers could
-        not hold.
+        Legacy, unreachable classifier. It must not be described as an
+        original Wyckoff Spring implementation.
         - The prior 20 candles form a range (high - low within spring_range_atr ATRs) that drifted sideways (net move
           <= spring_max_drift of that span), not a downtrend channel
         - The low pierces that range's low by at most spring_max_depth_atr ATRs and the candle closes back above it
@@ -259,7 +283,8 @@ class PhaseScorer:
 
     def _score_phase_c_distribution(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Phase C: distribution / bull trap (bearish), all at a new 50-candle high.
+        Legacy, unreachable classifier. Price/flow divergence is an
+        observation and does not establish Wyckoff distribution.
         - Net taker flow over the last 20 candles clearly negative (buyers <= 47.5%): price up on selling =
           bearish CVD divergence, someone sells into strength (+2)
         - Funding above the extreme: longs pay heavily at the top (+1)
@@ -288,7 +313,8 @@ class PhaseScorer:
 
     def _score_phase_d_dump(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Phase D: breakdown continuation (bearish) - price down + OI up = new shorts with conviction.
+        Legacy, unreachable classifier. Price/OI expansion cannot identify new
+        shorts or an original Wyckoff phase.
         - Close below the lower Bollinger band out of a squeeze (Bollinger's method I)
         - Taker sells dominate the candle (delta_ratio < dump_delta_ratio)
         - OI up at least dump_oi_min over the short window (new shorts opening, not just longs closing)
@@ -310,7 +336,8 @@ class PhaseScorer:
 
     def _score_phase_e_capitulation(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Phase E: capitulation / selling climax (bullish reversal candidate).
+        Legacy, unreachable classifier. Volume/OI changes are indirect
+        observations and do not identify forced liquidation.
         - Volume climax (RVOL > rvol_anomaly_threshold) after a real decline (>= capitulation_min_drop over the
           window), with OI dropping sharply over the short window: forced long liquidation (+2)
         - Funding below the negative extreme: shorts crowded after the flush (+1)
@@ -349,8 +376,8 @@ class PhaseScorer:
 
     def _score_phase_f_markup(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Phase F: markup breakout continuation (bullish), the mirror of phase D - price up + OI up = new longs with
-        conviction.
+        Legacy, unreachable classifier. Price/OI expansion cannot identify new
+        longs or an original Wyckoff markup phase.
         - Close above the upper Bollinger band out of a squeeze (Bollinger's method I: the band break counts only after
           the bands narrowed to their lookback minimum; a tag of a wide band is not a signal)
         - Taker buys dominate the candle (delta_ratio > markup_delta_ratio)
@@ -465,15 +492,15 @@ class PhaseScorer:
 
 def _tier0_frame(tier0: Dict[str, Dict[str, float]]) -> pl.DataFrame:
     symbols = list(tier0)
-    quality_columns = {'data_quality_ok', 'flow_quality_ok', 'oi_quality_ok'}
     def value(symbol, c):
         v = (tier0[symbol] or {}).get(c)
-        if v is None and c in quality_columns:
+        if v is None:
             return None
         try:
-            return float(v) if v is not None else 0.0
-        except (TypeError, ValueError):
-            return None if c in quality_columns else 0.0
+            number = float(v)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) else None
     return pl.DataFrame(
         {'symbol': symbols, **{c: [value(s, c) for s in symbols] for c in TIER0_COLUMNS}},
         schema={'symbol': pl.String, **{c: pl.Float64 for c in TIER0_COLUMNS}},

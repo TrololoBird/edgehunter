@@ -1,31 +1,4 @@
-"""
-Entry confirmations: independent evidence, measured at the entry, that the market backs the trade. The trigger itself
-(a structure shift with agreeing taker flow, an accepted breakout, a confirmed phase) is the entry; these are the
-readings order-flow traders check before taking it, each recorded for every entry (journal `confirms`):
-
-- flow       futures taker delta since the extreme (at most the last hour) agrees with the trade;
-- spot       spot taker delta over the same window agrees: real buying / selling of the coin, not only leverage
-             (spot-led moves hold, perp-led ones get squeezed); 'n/a' for a coin without a spot pair;
-- oi         open interest over the last hour (OI-weighted across venues when >= 2 report, else Binance): RISING for
-             continuations (trend, momentum, breakout: new positions back the move - price and OI together), FALLING
-             for sweeps and cascade exhaustion (the stops / liquidations were flushed); 'n/a' for Wyckoff (its phases
-             score OI themselves) and absorption (absorbed market orders open positions on both sides);
-- orderflow  at the extreme: stacked footprint imbalances, absorption (a heavy 1m delta against the trade that barely
-             moved price), a finished auction (the footprint's extreme price traded only by the side that was pushing:
-             nobody left to trade there, ATAS / Market Profile) or, for reversals, a CVD divergence (price made a new
-             extreme beyond the previous swing, cumulative delta did not: the aggressive side is exhausted); False
-             when none of them happened;
-- vsa        Volume Spread Analysis on the 5m bars since the extreme (strategies/vsa.py, Tom Williams): no supply /
-             stopping volume / reverse upthrust for longs, no demand / buying climax / upthrust for shorts.
-
-Keys starting with '_' are metadata ('_window' = [since, until, extreme] ms, set by fetcher.confirmations), not readings.
-Values: True / False, the order-flow kind (a string = present), NA ('n/a') where the reading cannot exist for this
-coin / strategy. The inputs (1m candles of futures and spot, OI) are seeded from REST at start-up, so a reading is
-never missing after a restart; if one still is (a REST failure), it is None and never vetoes.
-Which confirmations an entry needs: CONFIG.orderflow.required_confirmations (by rule: a breakout needs rising OI,
-like the D / F phases and directional impulses) plus those PROMOTED by the journal once entries without them show a
-negative Edge (journal.refresh_confirm_stats). The rest are recorded and shown until stats.py proves them.
-"""
+'Records configured entry-confirmation readings (flow, spot, OI, order-flow and volume/spread\nconditions). The readings are not assumed independent, and their predictive value, source\nfidelity and promotion rules are not established by this docstring.'
 from typing import Dict, Optional, Sequence, Set, Tuple
 
 from config import CONFIG
@@ -51,12 +24,12 @@ PROMOTED: Set[Tuple[str, str]] = set()
 
 
 def positive(value) -> bool:
-    """A confirmation that is present (True or an order-flow kind), not 'n/a' / False / None."""
+    'Returns whether a confirmation value is present under the configured missing/NA convention.'
     return value is True or (isinstance(value, str) and value != NA)
 
 
 def required(strategy: str) -> Tuple[str, ...]:
-    """Confirmations an entry of `strategy` needs."""
+    'Returns the confirmation names configured for a strategy.'
     cfg = CONFIG.orderflow
     out = [item.split(':', 1)[1] for item in cfg.required_confirmations if item.split(':', 1)[0] in (strategy, '*')]
     if cfg.require_orderflow_confirm:
@@ -66,7 +39,7 @@ def required(strategy: str) -> Tuple[str, ...]:
 
 
 def required_names() -> Set[str]:
-    """Every confirmation name some strategy may require (configured, order flow, journal-promoted)."""
+    'Returns the union of configured and promoted confirmation names.\nPromotion is a project rule; no statistical proof is claimed.'
     out = {item.split(':', 1)[1] for item in CONFIG.orderflow.required_confirmations}
     out.add('orderflow')
     out.update(name for _, name in PROMOTED)
@@ -88,7 +61,7 @@ def liq_flow_missing(strategy: str, confirms: Dict, setup: str = '') -> bool:
 
 
 def missing(strategy: str, confirms: Dict, setup: str = '') -> Optional[str]:
-    """The veto reason of the first required confirmation that is negative ('no_<name>')."""
+    'Returns the first missing required confirmation reason under the configured veto convention.'
     # An OI-dependent playbook cannot make a valid entry decision without a
     # fresh OI window.  Missing OI is a data-quality veto, never a neutral
     # reading that can silently pass when the confirmation is not promoted.
@@ -111,15 +84,12 @@ def missing(strategy: str, confirms: Dict, setup: str = '') -> Optional[str]:
 
 
 def delta(minutes: Sequence[Sequence[float]], since_ms: int, until_ms: int) -> float:
-    """Taker delta (buy - sell quote) of the 1m candles opened in [since_ms, until_ms); 0 without trades."""
+    'Computes taker buy-minus-sell quote delta for the supplied minute window.'
     return sum(2 * c[6] - c[5] for c in minutes if since_ms <= c[0] < until_ms)
 
 
 def covered_delta(minutes: Optional[Sequence[Sequence[float]]], since_ms: int, until_ms: int) -> Optional[float]:
-    """eng-169d (audit P2: missing data is not a negative reading): the taker delta of [since_ms, until_ms) when the 1m
-    candles cover it - at least one candle in the window and the last one opened at most 3 minutes before until_ms
-    (the oi_change rule); None otherwise. delta() of a stalled / empty stream was 0 -> 'flow' / 'spot' False, journaled
-    as an absent confirmation, counted by the promotion of required confirmations and by min_confirmations."""
+    'Returns delta only when the supplied minute window is covered by recent data; otherwise returns\nno reading. Missing data are not recoded as a negative confirmation.'
     window = [c for c in (minutes or ()) if since_ms <= c[0] < until_ms]
     if not window or until_ms - window[-1][0] > 3 * MINUTE_MS:
         return None
@@ -127,10 +97,7 @@ def covered_delta(minutes: Optional[Sequence[Sequence[float]]], since_ms: int, u
 
 
 def oi_change(samples: Sequence[Tuple[float, float]], since_ms: int, until_ms: int) -> Optional[float]:
-    """
-    Relative OI change from the first sample at / after since_ms to the last at / before until_ms (a listing younger
-    than the window: over its available history, at least 5 minutes). None without two such samples.
-    """
+    'Computes relative OI change between the first and last available samples in the supplied window;\nno directional position inference is claimed.'
     window = [(t, v) for t, v in samples if since_ms <= t <= until_ms and v]
     if len(window) < 2 or window[-1][0] - window[0][0] < 5 * MINUTE_MS \
             or until_ms - window[-1][0] > 3 * MINUTE_MS:
@@ -139,11 +106,8 @@ def oi_change(samples: Sequence[Tuple[float, float]], since_ms: int, until_ms: i
 
 
 def cvd_divergence(minutes: Sequence[Sequence[float]], extreme_ms: int, direction: int) -> bool:
-    """
-    Price made its extreme beyond the previous swing of the lookback while cumulative delta did not (long: a lower
-    low on a higher CVD low). The previous swing = the most extreme candle closing at least 5 minutes before the
-    extreme's candle. False when there is no such swing (nothing to diverge from).
-    """
+    """Compare candle taker-buy aggregates around an extreme; this is OHLCV-derived delta, not event-level CVD."""
+    'Flags a configured price/CVD divergence condition. It is a descriptive pattern, not proof of\nexhaustion or participant intent.'
     lookback = CONFIG.orderflow.divergence_lookback_min * MINUTE_MS
     window = [c for c in minutes if extreme_ms - lookback <= c[0] <= extreme_ms]
     cvd, total = [], 0.0
@@ -165,10 +129,7 @@ def evaluate(strategy: str, direction: int, minutes: Sequence[Sequence[float]],
              spot_minutes: Optional[Sequence[Sequence[float]]], oi: Optional[float],
              since_ms: int, until_ms: int, extreme_ms: Optional[int], orderflow: Optional[str],
              flow_usd: Optional[float] = None, spot_usd: Optional[float] = None) -> Dict:
-    """
-    All confirmations of one entry (see the module docstring). `spot_minutes` None = the coin has no spot pair;
-    `oi` = the relative OI change over the last hour.
-    """
+    'Evaluates the configured confirmation set for one entry.'
     # Flows since the extreme, at most the last hour (a 1h / 4h leg's end can be hours back: its flow would be the
     # whole pullback)
     start = max(extreme_ms if extreme_ms is not None else since_ms, until_ms - HOUR_MS)

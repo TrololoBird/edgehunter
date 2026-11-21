@@ -1,21 +1,9 @@
-"""
-B9 (eng-59): the archive replay of the LIVE card lifecycle for every strategy - the live SignalBook stepped minute by
-minute over the Binance public archive, fed by the live detectors (strategies.structure.build_maps / build_context and
-LiveDetector for the 15m-close events, strategies.loopside.LoopDetectors for the loop-side ones, the scorer's phases and
-Tier-0 rules for the continuation), with the scanner's hooks rebuilt from history. Its output is what pretraining /
-meta-labeling and the per-strategy archive studies (plan 2.3-2.9, 3.1) need: every card and every entry (passed and
-vetoed) with the card's own net result (`final_r`, eng-58: fees, slippage by liquidity, funding).
+"""Quarantined historical replay utility.
 
-What the archive cannot give (the live bot has it, the replay runs without - an estimate, not the live result):
-- other venues' flows / OI / funding, liquidations (so no liquidation-cascade setups: FLUSH / SQUEEZE REVERSAL), order
-  books (no walls / liquidity bands / book confirmations), Hyperliquid accounts, Coinbase premium, whale sweeps;
-- confirmations are Binance-only (futures / spot taker delta from the 1m candles, OI from the 5-minute metrics, VSA,
-  CVD divergence); the footprint order-flow reading does not exist;
-- pools / the crowd limit / BTC's bias across coins hold only for the coins replayed together (one SignalBook);
-- prices are final 1m candles (the live bot sees each trade); a scan runs once per minute (live: every few seconds).
-
-Run:  .venv\\Scripts\\python replay.py --months 6 --coins 20 [--workers 1] [--days N for a smoke test]
-Writes data/replay/<run>/cards.parquet and entries.parquet (resumable per coin group).
+This module is not a live-equivalent replay: public OHLCV does not contain
+queue position, order-book history, complete liquidation flow, venue state, or
+release-time revisions. It is disabled while the v2 strategy registry is empty
+and must not write working journal rows or train models.
 """
 import argparse
 import logging
@@ -550,6 +538,9 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
 
 
 def main():
+    from strategies import STRATEGIES
+    if not STRATEGIES:
+        raise SystemExit("v2 historical replay is disabled; public OHLCV is not a live-equivalent execution source")
     from history import Archive
     from pretrain import _spot_pair
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', datefmt='%H:%M:%S')

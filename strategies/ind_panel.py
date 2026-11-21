@@ -1,17 +1,9 @@
-"""
-Classic indicator panel of one coin at one moment (strategies.confirm journals it on every entry as `_ind`; the archive
-study research_indicator_confirms.py uses the same functions): EMA 20 / 50 / 200 and the EMA50 slope (Murphy, Elder),
-RSI 14 (Wilder), MACD 12 / 26 / 9 (Appel), ADX 14 with +DI / -DI (Wilder), stochastic 14 / 3 (Lane), Bollinger %B and
-band width (Bollinger), MFI 14 (Quong & Soudack), OBV (Granville), CCI 20 (Lambert), ATR rank, relative volume.
-`rules(ind, d)` turns them into booleans "the indicator agrees with a trade in direction d"; which of them CONFIRM an
-entry is decided by research/indicator_confirms.md (pre-registered), not by this module.
-"""
+'Computes the configured indicator panel (moving averages, RSI, MACD, ADX/DI, stochastic,\nvolatility bands, MFI, OBV, CCI, ATR rank and relative volume). Indicator names are descriptive; no\nauthor fidelity, pre-registration or predictive-confirmation claim is made.'
 import numpy as np
 
 
 def ema(x: np.ndarray, n: int) -> np.ndarray:
-    """EMA seeded with the SMA of the first n values (TA-Lib / Appel; NaN before). Seeding with x[0] left EMA200 on the
-    panel's 499 candles up to 0.4% off (research/talib_check.md). Shorter than n: seeded with x[0] (best effort)."""
+    'Computes an EMA using the configured seed and period; short histories use the documented fallback.\nNo named-method or library-fidelity claim and no research result are asserted.'
     x = np.asarray(x, dtype=float)
     a = 2.0 / (n + 1)
     if len(x) < n:
@@ -33,7 +25,7 @@ def ema(x: np.ndarray, n: int) -> np.ndarray:
 
 
 def rma(x: np.ndarray, n: int) -> np.ndarray:
-    """Wilder's smoothing (RSI, ADX, ATR as their authors define them)."""
+    'Computes the configured RMA-style smoothing used by the panel. No named-author attribution or strategy claim is asserted.'
     x = np.asarray(x, dtype=float)
     out = np.full_like(x, np.nan)
     finite = np.flatnonzero(np.isfinite(x))
@@ -54,8 +46,7 @@ def sma(x: np.ndarray, n: int) -> np.ndarray:
 
 
 def rolling_std(x: np.ndarray, n: int) -> np.ndarray:
-    """Population std of each n-window from the deviations from its own mean (audit F01: sqrt(E[x^2] - E[x]^2)
-    cancelled catastrophically at large prices - std 10.5 for 0.0009, false zeros at 1e8)."""
+    "Computes population standard deviation around each window's own mean. Numerical-stability and audit\nclaims are omitted; they require a separate reproducible test."
     out = np.full_like(x, np.nan, dtype=np.float64)
     if len(x) >= n:
         from numpy.lib.stride_tricks import sliding_window_view

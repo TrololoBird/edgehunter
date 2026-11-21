@@ -1,36 +1,10 @@
-"""
-Signal lifecycle and anomaly memory for the dashboard.
+"""Signal state container with a source-gated strategy boundary.
 
-A directional setup belongs to a strategy (strategies/): the strategy turns it into a PLAN (its anchor - a leg, a
-level or a range -, entry style, zone, invalidation, stop reference and targets by intent); this module runs the same
-lifecycle for every plan:
-
-    BIAS    the coin's history / level map is still loading (at most plan_wait_sec for 1h-dependent strategies), or
-            the plan stopped existing later; a setup without an anchor never becomes a card (vetoed 'no_leg')
-    WATCH   waiting for price to reach the plan's zone
-    ZONE    price is in the zone: waiting for the structure-shift trigger on the plan's trigger timeframe
-    ENTRY   entry / SL / TP set: at the confirmation (plan entry 'confirm') when R:R to TP1 allows it, else on the
-            trigger in the zone
-    TP1/TP2 targets reached, trade still managed;  final: TP3, SL, CLOSED (time / opposite setup), INVALID, MISSED,
-            EXPIRED
-
-Shared rules: INVALID beyond the plan's invalidation (fixed at the card's start when the extreme was known at the
-confirmation); MISSED when TP1 (fixed beyond the furthest price reached since the anchor) is reached before an entry;
-a continuation whose leg makes a new extreme goes back to waiting and is re-measured; a new card closes the open card
-of the opposite direction when its structure timeframe is the same or higher; a card that finished blocks a new one
-on the same anchor; every setup carries its market crowd (CONFIG.market) and context (trend, volatility) for the
-journal / stats / ML - no limit on the number of cards.
-
-Filters (each journaled with its reason instead of silently dropped, so stats.py can measure it):
-- a perp-led continuation (spot disagrees) never becomes a card (journal.veto_reason);
-- a strategy's context policy (a sweep against the coin's 1h trend: 'against_trend'), a disabled strategy;
-- a spring's entry needs its "test": the pullback trades on lower volume than the spring candle;
-- every entry carries its confirmations (strategies/confirm.py: taker flow, spot flow, OI, order flow at the
-  extreme); a required one that is negative vetoes it ('no_oi', 'no_orderflow', ...: journaled as a vetoed entry,
-  the card keeps waiting for the next trigger).
-
-Statuses follow the futures price at each scan; the journal replays each entry on 1m candles with a manual fill.
-Partial phases go to the watchlist; other Tier-0 anomalies are remembered for CONFIG.tier0.display_hold_sec.
+The v2 working registry is empty until a strategy has a primary-source
+contract. This module may retain old state-machine code for forensic inspection,
+but it cannot create a directional card for an unregistered setup. Reference
+prices and replay estimates are not exchange fills; actual execution belongs to
+the reconciled executor state machine.
 """
 import copy
 import math
@@ -75,9 +49,10 @@ def _resample(symbol: str, minutes, tf: int, until_ms) -> List[List[float]]:
     return [list(b) for b in bars]
 HOUR_MS, DAY_MS = 3_600_000, 86_400_000
 from strategies.maniac import in_session
-from strategies.maniac_strategies import MANIAC_STRATEGIES
 
-MANIAC_NAMES = frozenset(s.name for s in MANIAC_STRATEGIES)
+# Legacy strategy objects are deliberately not imported into the v2 working
+# router. Their source files remain available only for forensic inspection.
+MANIAC_NAMES = frozenset()
 from strategies import PlanInput, Strategy, strategy_of
 from strategies import bias as htf_bias, confirm, profiles
 
@@ -85,22 +60,21 @@ from strategies import bias as htf_bias, confirm, profiles
 # move): no break-even / partial management
 # eng-169l: oi_build out - it has no own exit beyond the fixed time stop, so its second half kept the full stop after
 # +1R (the EMA trail after TP1 stays off globally: ema_trail_after_tp1)
-MANAGE_EXEMPT = ('breakout', 'bollinger_method1', 'connors', 'cup_handle')
+MANAGE_EXEMPT = ()
 # break-even + the round trip's costs (taker 0.05% x 2 + slippage ~0.05%): a break-even stop that fills is ~0, not -costs
 BE_COST = CONFIG.strategies.be_cost
 # eng-84: the regime each method needs (ADX(14) of 4h): trend-following methods / mean-reversion methods
-REGIME_TREND = ('continuation', 'pump_start', 'dump_start', 'pump_top', 'dump_bounce', 'oi_build')
-REGIME_RANGE = ('bollinger_wm', 'bollinger_method3', 'value_area', 'auction')
+REGIME_TREND = ()
+REGIME_RANGE = ()
 
 logger = logging.getLogger(__name__)
 
 def ict_gated(mode: str, setup: str) -> bool:
     """
-    ICT's sweep / continuation models trade inside the London / New York kill zones only (eng-58). The Silver Bullet
-    shares the 'sweep' name but has its own windows (03-04, 10-11, 14-15 New York): eng-58 vetoed two of its three.
+    Legacy ICT/kill-zone gating is unavailable in v2. A time window is not a
+    source-backed strategy contract and cannot enable a setup.
     """
-    return (mode in ('sweep', 'continuation') and not str(setup or '').startswith('SILVER BULLET')
-            and bool(CONFIG.strategies.smt_session))
+    return False
 
 
 FINAL_STATUSES = {'TP3', 'SL', 'CLOSED', 'INVALID', 'MISSED', 'EXPIRED'}
@@ -139,9 +113,11 @@ def _frame_for(frames, symbol: str, strategy: Optional[Strategy] = None):
 
 # Which anomaly label a coin's row shows when several readings of one event arrive (higher = more significant)
 ANOMALY_PRIORITY = {
-    'IMPULSE UP': 10, 'IMPULSE DOWN': 10, 'LIQ CASCADE': 9, 'SHORT SQUEEZE': 8, 'LONG FLUSH': 8,
+    'PRICE_OI_EXPANSION_UP': 10, 'PRICE_OI_EXPANSION_DOWN': 10, 'LIQ CASCADE': 9,
+    'FORCE_ORDER_ACTIVITY': 8, 'PRICE_UP_OI_DOWN': 7, 'PRICE_DOWN_OI_DOWN': 7,
     'WHALES BUY': 7, 'WHALES SELL': 7, 'ALGO BUY': 6, 'ALGO SELL': 6, 'OI SURGE': 5, 'OI FLUSH': 5,
-    'ONE-VENUE': 4, 'UNUSUAL': 3, 'IMPULSE UNCONFIRMED': 2, 'ABSORPTION': 1, 'VOLUME SPIKE': 1,
+    'ONE-VENUE': 4, 'UNUSUAL': 3, 'PRICE_MOVE_WITHOUT_POSITION_INFERENCE': 2,
+    'FLOW_PRICE_RESPONSE_LOW': 1, 'VOLUME SPIKE': 1,
 }
 
 
@@ -1521,9 +1497,9 @@ class SignalBook:
         for c in allm[k:]:
             if edge is not None and not CONFIG.executor.touch_confirm_close and \
                     ((c[3] <= edge) if s.direction > 0 else (c[2] >= edge)):
-                # the resting limit filled there; with touch_confirm_close a touch is no entry (it waits for a close
-                # back), so a run to TP1 after the touch still ends the card - the batch's later minutes are read
-                return None              # the limit's line traded first (or in the same minute): the touch rules decide
+                # Legacy touch metadata is not a v2 fill. Queue position and
+                # traded volume are unavailable from this candle alone.
+                return None
             if (c[2] >= tp1) if s.direction > 0 else (c[3] <= tp1):
                 return float(c[2] if s.direction > 0 else c[3])
         return None
@@ -1540,8 +1516,9 @@ class SignalBook:
     def _confirmation_entry(self, s: TrackedSignal, price: float, now_ms: int,
                             confirm_of: Optional[ConfirmCheck]) -> Optional[TrackedSignal]:
         """
-        Entry at the immutable close of the setup's confirmation candle.  The current quote is only a safety check:
-        it may invalidate a stale signal, but it must not redraw the levels or the journaled decision price.
+        Legacy confirmation-entry path retained for forensic compatibility.
+        A closed-candle close is a reference price only; v2 does not turn it
+        into an exchange fill and no unregistered setup reaches this method.
         """
         self._new_attempt(s)
         plan = s.plan or {}
@@ -1889,10 +1866,9 @@ class SignalBook:
 
     def _limit_variants(self, s: TrackedSignal, ltf, interval_ms: int, now_ms: int, price: float):
         """
-        eng-149 (plan eng-148 stage 3.1, audit 13 / 34): once a sweep is armed (MSS + FVG), resting limits at the CE
-        ('variant_ce_limit') and at the gap's near edge ('variant_fvg_edge'), filled on the touch at the limit price,
-        the plan's own stop / targets - on the same armed cards as the live touch -> close entry, low_rr or not.
-        stats.py reads the 50/50 split (edge + CE, one stop) from the pair.
+        Legacy counterfactual limit variants retained for forensic comparison.
+        A touch at CE or a gap edge is not a fill without queue and traded-volume
+        evidence, so these variants cannot enter the v2 journal or executor.
         """
         fvg = s.plan.get('fvg')
         if s.mode != 'sweep' or not fvg or s.plan.get('trigger') != 'touch' or not s.zone_since_ms:

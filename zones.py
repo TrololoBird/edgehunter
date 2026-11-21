@@ -1,28 +1,12 @@
-"""
-Level map of one coin: where price is likely to stall or where stops / liquidations sit, from several independent
-sources, merged into zones weighted by confluence. levels.py builds entry zones, stops and targets from it.
+"""Price-level observations used for diagnostics.
 
-Sources (CONFIG.zones.weights):
-- swing_15m / swing_1h: fractal highs and lows (a high with `width` lower highs on each side);
-- equal: equal highs / lows (>= 2 swings within equal_tolerance_atr) that were not swept since: stop pools;
-- pdhl: previous UTC day's / week's high and low, the current day's high / low and the last completed sessions'
-  (Asia / London / New York, the exchanges' local hours in CONFIG.strategies.sweep_sessions) highs / lows: where stops rest;
-- book: order-book liquidity that stayed (heatmap bands, depth.py);
-- poc / va / hvn: volume profile of 5m candles over ~4 days and of 15m candles over ~24h, each candle's volume spread evenly over its
-  range: point of control, value-area edges (CBOT method), high-volume nodes;
-- liq_est: ESTIMATED liquidation clusters: every 1h OI increase at price P opened as many longs as shorts (each
-  contract has both sides); each side is spread over leverage tiers, the aggressive (taker) side of the candle is
-  assumed to use more leverage (its weight shifts towards the high tiers); a position at leverage L is liquidated around
-  P * (1 -+ 1/L +- maintenance). OI decreases remove positions proportionally; clusters price already crossed are
-  gone. A model (like the public liquidation heatmaps), not data;
-- liq_hit: prices where liquidations were actually observed in the last 24h (a pool already swept);
-- wall: persistent order-book walls (hot coins only, depth.py);
-- liq_hl: REAL liquidation prices of large Hyperliquid accounts (positioning.py), summed per price bucket;
-- vwap: VWAP of the current UTC day and VWAP anchored at the measured leg's start;
-- fib / range: Fibonacci levels of a leg and a trading range's edges (added by the strategies' plans).
+This module combines candle-derived levels, current book snapshots and modelled
+clusters.  A level is not a forecast, a stop pool, a liquidation guarantee or
+an execution price.  Candle volume spread across a range is only an
+approximation; public order books have no order identity; and Hyperliquid
+prices belong only to the selected accounts and are platform estimates.
 
-Everything is a hypothesis: the journal stores which sources each target and stop came from, and stats.py measures
-how often each kind was reached.
+No level map is admitted as a v2 strategy contract by this module.
 """
 from dataclasses import dataclass, field
 import json
@@ -33,10 +17,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from config import CONFIG
 
-# Data behind the liquidation estimate (written by positioning.py, read here by the maps worker process too):
-# models/leverage_mix.json - the notional-weighted leverage of the tracked Hyperliquid accounts' real positions;
-# models/maintenance.json  - each contract's lowest-tier maintenance margin and max leverage (Bybit's public risk
-# limits; Binance publishes its brackets only to signed requests). Both replace guessed constants (eng-57).
+# Optional inputs for a modelled exposure cluster.  They are not exchange
+# liquidation data and are never treated as a guaranteed future level.
 LEVERAGE_MIX_PATH = os.path.join('models', 'leverage_mix.json')
 MAINTENANCE_PATH = os.path.join('models', 'maintenance.json')
 _FILE_CACHE: Dict[str, Tuple[float, object]] = {}
@@ -58,7 +40,7 @@ def _json_file(path: str):
 
 
 def leverage_mix() -> List[Tuple[float, float]]:
-    """(leverage, share of notional) of real positions; the configured guess only until the first measurement."""
+    """Return the configured/modelled leverage mixture, if one is available."""
     data = _json_file(LEVERAGE_MIX_PATH)
     mix = [(float(l), float(w)) for l, w in (data or {}).get('mix', []) if float(l) >= 1 and float(w) > 0]
     if mix:
@@ -68,7 +50,7 @@ def leverage_mix() -> List[Tuple[float, float]]:
 
 
 def maintenance_of(symbol: Optional[str]) -> Tuple[float, Optional[float]]:
-    """(maintenance margin rate, max leverage) of the contract's lowest risk tier; the configured rate without data."""
+    """Return model inputs for a contract; absence is not a measured liquidation rule."""
     data = _json_file(MAINTENANCE_PATH) or {}
     row = data.get((symbol or '').split('/')[0] + 'USDT') if symbol else None
     if row:
@@ -168,11 +150,17 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
     min_after = [float('inf')] * (n + 1)
     hi_after = [float('-inf')] * (n + 1)
     lo_after = [float('inf')] * (n + 1)
+    hi_after_idx = [None] * (n + 1)
+    lo_after_idx = [None] * (n + 1)
     for i in range(n - 1, -1, -1):
         max_after[i] = max(max_after[i + 1], candles[i][4])
         min_after[i] = min(min_after[i + 1], candles[i][4])
         hi_after[i] = max(hi_after[i + 1], candles[i][2])
         lo_after[i] = min(lo_after[i + 1], candles[i][3])
+        # On equal extrema, retain the earlier candle: that is when this
+        # price level first existed, which is the timestamp a level needs.
+        hi_after_idx[i] = i if candles[i][2] >= hi_after[i + 1] else hi_after_idx[i + 1]
+        lo_after_idx[i] = i if candles[i][3] <= lo_after[i + 1] else lo_after_idx[i + 1]
     for i in range(width, n - width):
         h, l = candles[i][2], candles[i][3]
         around = candles[i - width:i] + candles[i + 1:i + 1 + width]
@@ -183,7 +171,9 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
                 if hi_after[i + 1] > h and (hi_after[i + 1], +1) not in pierced:
                     pierced.add((hi_after[i + 1], +1))
                     # eng-150 (plan 4.5): a false pierce's extreme holds the new stops
-                    out.append(RawLevel(hi_after[i + 1], kind, f"{tf} high (pierce)", +1, ts=int(candles[i][0])))
+                    extreme_idx = hi_after_idx[i + 1]
+                    out.append(RawLevel(hi_after[i + 1], kind, f"{tf} high (pierce)", +1,
+                                        ts=int(candles[extreme_idx][0]) if extreme_idx is not None else 0))
             elif flip and last > h:
                 # eng-150 (plan 4.5): closed through and still above = the old resistance is support (S/R flip)
                 out.append(RawLevel(h, f"flip_{tf}", f"{tf} S/R flip", -1, ts=int(candles[i][0]),
@@ -194,7 +184,9 @@ def swings(candles: Sequence[Sequence[float]], width: int, kind: str, tf: str) -
                                     body=min(candles[i][1], candles[i][4]), swept=lo_after[i + 1] < l))
                 if lo_after[i + 1] < l and (lo_after[i + 1], -1) not in pierced:
                     pierced.add((lo_after[i + 1], -1))
-                    out.append(RawLevel(lo_after[i + 1], kind, f"{tf} low (pierce)", -1, ts=int(candles[i][0])))
+                    extreme_idx = lo_after_idx[i + 1]
+                    out.append(RawLevel(lo_after[i + 1], kind, f"{tf} low (pierce)", -1,
+                                        ts=int(candles[extreme_idx][0]) if extreme_idx is not None else 0))
             elif flip and last < l:
                 out.append(RawLevel(l, f"flip_{tf}", f"{tf} S/R flip", +1, ts=int(candles[i][0]),
                                     body=min(candles[i][1], candles[i][4])))
@@ -336,19 +328,35 @@ def day_levels(candles_1h: Sequence[Sequence[float]], now_ms: float, with_ts: bo
             out.append((RawLevel(lo[3], 'pdhl', label_lo, -1, body=min(lo[1], lo[4])),
                         formed if formed else int(lo[0]) + HOUR_MS))
 
-    # a period the 1h history does not cover in full takes its extremes from the daily candles (eng-74: 200 1h
-    # candles hold ~8 days, the previous week needs up to 14 - ETH's PWL read 2 645 where it was 2 634)
-    first = candles_1h[0][0] if len(candles_1h) else None
+    def complete_period(rows: Sequence[Sequence[float]], start: int, end: int, step: int) -> List:
+        selected, actual = [], []
+        for candle in rows:
+            try:
+                raw_ts = float(candle[0])
+            except (TypeError, ValueError, OverflowError, IndexError):
+                return []
+            if not math.isfinite(raw_ts) or not raw_ts.is_integer():
+                return []
+            ts = int(raw_ts)
+            if start <= ts < end:
+                selected.append(candle)
+                actual.append(ts)
+        expected = list(range(start, end, step))
+        return selected if actual == expected else []
+
+    # Prefer complete 1h coverage. Daily source candles are the fallback for
+    # instruments with scheduled intraday breaks. No calendar is inferred:
+    # when neither source proves the whole UTC interval, the level is absent.
     for start, end, hi_lb, lo_lb in ((today - DAY_MS, today, 'PDH', 'PDL'), (week - WEEK_MS, week, 'PWH', 'PWL')):
-        if first is not None and first <= start:
-            span([c for c in candles_1h if start <= c[0] < end], hi_lb, lo_lb, end)
-        elif candles_1d:
-            days = [c for c in candles_1d if start <= c[0] < end]
-            if len(days) * DAY_MS >= end - start:
-                # the body of the extreme day, as the 1h path (a wick-to-body zone, not a line)
-                top, bot = max(days, key=lambda c: c[2]), min(days, key=lambda c: c[3])
-                out.append((RawLevel(top[2], 'pdhl', hi_lb, +1, body=max(top[1], top[4])), end))
-                out.append((RawLevel(bot[3], 'pdhl', lo_lb, -1, body=min(bot[1], bot[4])), end))
+        hourly = complete_period(candles_1h, start, end, HOUR_MS)
+        daily = complete_period(candles_1d if candles_1d is not None else (), start, end, DAY_MS)
+        if hourly:
+            span(hourly, hi_lb, lo_lb, end)
+        elif daily:
+            # Use the body of the extreme daily candle for the same wick/body zone.
+            top, bot = max(daily, key=lambda c: c[2]), min(daily, key=lambda c: c[3])
+            out.append((RawLevel(top[2], 'pdhl', hi_lb, +1, body=max(top[1], top[4])), end))
+            out.append((RawLevel(bot[3], 'pdhl', lo_lb, -1, body=min(bot[1], bot[4])), end))
     cur = [c for c in candles_1h if c[0] >= today]
     if len(cur) >= 3:
         span(cur, 'day high', 'day low', 0)
@@ -391,15 +399,11 @@ def swept_zone(z: 'Zone', kinds) -> bool:
 
 def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> List[RawLevel]:
     """
-    Volume profile of [ts, o, h, l, c, quote_vol, ...] candles, each candle's quote volume spread evenly over its
-    range (no tick data), so the candles must be short relative to the window: the 24h profile of 15m candles matched
-    one built from 1m candles within one bucket, while 1h candles put a 4-day POC 3% off (the 4-day profile uses 5m).
-    - POC: the bucket with the most volume;
-    - value area (CBOT method): from the POC, repeatedly add the two buckets above or the two below, whichever pair
-      holds more volume, until `value_area` of the volume is inside; VAH / VAL = the area's outer edges;
-    - HVN: peaks of the 3-bucket smoothed profile (the highest within +-2 buckets) with >= hvn_ratio x the median;
-    - LVN: valleys of it (the lowest within +-2 buckets) at <= lvn_ratio x the lower of the nodes on both sides
-      (the highest on each side, each >= the median).
+    Approximate volume profile of OHLCV candles. Quote volume is spread
+    uniformly over each candle's high/low range because tick-level trades are
+    unavailable. The output is therefore an OHLC estimate, not a Dalton/Market
+    Profile reconstruction and not evidence of time-at-price or queue volume.
+    POC/value-area/HVN/LVN are descriptive buckets only.
     """
     cfg = CONFIG.zones
     if len(candles) < 10 or not atr:
@@ -448,8 +452,8 @@ def volume_profile(candles: Sequence[Sequence[float]], atr: float, tag: str) -> 
              and smooth[k] == max(smooth[max(0, k - 2):k + 3])]
     for k in sorted(nodes, key=smooth.__getitem__, reverse=True)[:4]:
         out.append(RawLevel(center(k), 'hvn', f"HVN {tag}"))
-    # LVN (Dalton / volume-profile practice): a valley between two volume nodes - price spent little time there, so it
-    # passes through it fast and a rejection there returns it to the node it came from; a target / edge, not support
+    # LVN estimate: a low bucket in the approximate profile. It does not prove
+    # fast passage, support or a reaction level.
     # running maxima from each side: max(smooth[:k]) per bucket was quadratic (profiles go up to 5000 buckets)
     pre, suf = [0.0] * (n + 1), [0.0] * (n + 1)
     for k in range(n):
@@ -493,22 +497,71 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
     cfg = CONFIG.zones
     if len(candles_1h) < 10 or len(oi_1h) < 10 or not atr:
         return []
-    # openInterestHist timestamps are period END times: OI at the close of the candle opened one hour earlier
-    oi_at = {ts - HOUR_MS: v for ts, v in oi_1h}
-    # the leverage mix of real positions, without the tiers this contract does not allow; its own maintenance margin
+    # openInterestHist timestamps are period END times: OI at the close of the candle opened one hour earlier.
+    # Reject ambiguous duplicate period observations rather than letting the last row win silently.
+    oi_at: Dict[int, float] = {}
+    ambiguous: set = set()
+    for sample_ts, sample_oi in oi_1h:
+        try:
+            raw_ts = float(sample_ts)
+            sample_oi = float(sample_oi)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(raw_ts) or not raw_ts.is_integer() or not math.isfinite(sample_oi) or sample_oi <= 0:
+            continue
+        sample_ts = int(raw_ts)
+        candle_ts = sample_ts - HOUR_MS
+        if candle_ts in oi_at:
+            ambiguous.add(candle_ts)
+        else:
+            oi_at[candle_ts] = sample_oi
+    for candle_ts in ambiguous:
+        oi_at.pop(candle_ts, None)
+    # Apply only model inputs; without account-level positions this cannot
+    # reconstruct real liquidation levels.
     mmr, max_lev = maintenance_of(symbol)
     mix = [(lev, w) for lev, w in leverage_mix() if max_lev is None or lev <= max_lev] or leverage_mix()[:1]
     levs, weights = [m[0] for m in mix], [m[1] for m in mix]
     step = max(atr / 2, candles_1h[-1][4] * cfg.liq_bucket)
     clusters: Dict[Tuple[int, int], float] = {}   # (bucket, side liquidated: +1 longs, -1 shorts) -> USD
+    candle_times = []
+    for candle in candles_1h:
+        try:
+            raw_ts = float(candle[0])
+        except (TypeError, ValueError, OverflowError, IndexError):
+            return []
+        if not math.isfinite(raw_ts) or not raw_ts.is_integer():
+            return []
+        candle_times.append(int(raw_ts))
+    if any(b <= a for a, b in zip(candle_times, candle_times[1:])):
+        return []
+
     prev_oi = None
+    prev_candle_ts = None
     for c in candles_1h:
-        oi = oi_at.get(c[0])
-        if oi is None:
+        try:
+            candle_ts = int(c[0])
+        except (TypeError, ValueError, OverflowError, IndexError):
+            prev_oi = None
+            prev_candle_ts = None
             continue
-        # Positions whose liquidation price this candle traded through are gone
-        for key in [k for k in clusters if (k[1] > 0 and c[3] <= (k[0] + 1) * step) or (k[1] < 0 and c[2] >= k[0] * step)]:
+        if prev_candle_ts is not None and candle_ts != prev_candle_ts + HOUR_MS:
+            # A missing/repeated/out-of-order hour breaks the ΔOI comparison.
+            prev_oi = None
+            clusters.clear()
+        prev_candle_ts = candle_ts
+        oi = None if candle_ts in ambiguous else oi_at.get(candle_ts)
+        # Price-based invalidation remains observable even when OI itself is
+        # absent for this candle.
+        for key in [k for k in clusters if (k[1] > 0 and c[3] <= (k[0] + 1) * step) or
+                    (k[1] < 0 and c[2] >= k[0] * step)]:
             del clusters[key]
+        if oi is None:
+            # A later observation becomes the new baseline. Never allocate an
+            # unknown multi-hour change to the one candle that follows a gap.
+            prev_oi = None
+            clusters.clear()
+            continue
         if prev_oi:
             change = oi - prev_oi
             if change > 0:
@@ -539,8 +592,12 @@ def estimated_liquidations(candles_1h: Sequence[Sequence[float]], oi_1h: Sequenc
             [kv for kv in ranked if kv[0][1] < 0][:cfg.liq_max_per_side]:
         if coins >= floor:
             usd = coins * last_price
-            who = 'longs' if side > 0 else 'shorts'
-            out.append(RawLevel((bucket + 0.5) * step, 'liq_est', f"liq est {who} {_usd(usd)}", -side, usd))
+            # The leverage mix and maintenance margin are assumptions.  The
+            # resulting bucket is not an observed liquidation level and does
+            # not identify whether long or short accounts will liquidate.
+            who = 'positive-side' if side > 0 else 'negative-side'
+            out.append(RawLevel((bucket + 0.5) * step, 'liq_est',
+                                f"estimated exposure cluster {who} {_usd(usd)} (model)", 0, usd))
     return out
 
 
@@ -548,7 +605,7 @@ BANKRUPTCY_PRICE_VENUES = ('bybit', 'okx')
 
 
 def observed_liquidations(events: Iterable[Tuple[float, float, float, int]], atr: float, now_ms: float) -> List[RawLevel]:
-    """Price buckets where >= liq_observed_min_usd was actually liquidated in the last 24h."""
+    """Price buckets containing partial public force-order observations in the last 24h."""
     if not atr:
         return []
     step = atr / 2
@@ -690,33 +747,64 @@ def balanced_ranges(candles: Sequence[Sequence[float]], tf: str, keep: int = 2) 
     overlap - price was delivered both ways through the same area, the overlap is a strong reaction zone. Kept while
     no later close went through it; the side by the later gap (a bullish one: support). Kind 'bpr_<tf>'.
     """
-    n = len(candles)
-    if n < 10:
+    step_by_tf = {'15m': 15 * 60_000, '1h': HOUR_MS, '4h': 4 * HOUR_MS,
+                  '1d': DAY_MS, '1w': 7 * DAY_MS}
+    step_ms = step_by_tf.get(tf)
+    if step_ms is None or len(candles) < 10:
         return []
-    h = [c[2] for c in candles]
-    l = [c[3] for c in candles]
-    cl = [c[4] for c in candles]
-    gaps = []
-    for i in range(2, n):
-        if h[i - 2] < l[i]:
-            gaps.append((i, 1, h[i - 2], l[i]))
-        elif l[i - 2] > h[i]:
-            gaps.append((i, -1, h[i], l[i - 2]))
+    timestamps = []
+    for candle in candles:
+        try:
+            ts = float(candle[0])
+        except (TypeError, ValueError, OverflowError, IndexError):
+            return []
+        if not math.isfinite(ts) or not ts.is_integer():
+            return []
+        timestamps.append(int(ts))
+    if any(b <= a for a, b in zip(timestamps, timestamps[1:])):
+        return []
+
+    # Missing intervals split the source into independent runs. Only the final
+    # run can produce current levels: a later gap means that subsequent fills
+    # or invalidation of an older pattern cannot be confirmed.
+    runs: List[Tuple[int, int]] = []
+    run_start = 0
+    for i in range(1, len(timestamps)):
+        if timestamps[i] - timestamps[i - 1] != step_ms:
+            if i - run_start >= 3:
+                runs.append((run_start, i))
+            run_start = i
+    if len(timestamps) - run_start >= 3:
+        runs.append((run_start, len(timestamps)))
+    runs = runs[-1:]
+
     out: List[Tuple[float, RawLevel]] = []
-    last = cl[-1]
-    for a in gaps:
-        for b in gaps:
-            if not (0 < b[0] - a[0] <= 20) or a[1] == b[1]:
-                continue
-            lo, hi = max(a[2], b[2]), min(a[3], b[3])
-            if lo >= hi:
-                continue
-            side = b[1]
-            if any((x < lo) if side > 0 else (x > hi) for x in cl[b[0] + 1:]):
-                continue
-            edge = hi if side > 0 else lo
-            out.append((abs(last - edge), RawLevel(edge, f'bpr_{tf}', f"BPR {tf}", -side,
-                                                   ts=int(candles[b[0] - 1][0]), body=lo if side > 0 else hi)))
+    for start, end in runs:
+        h = [c[2] for c in candles[start:end]]
+        l = [c[3] for c in candles[start:end]]
+        cl = [c[4] for c in candles[start:end]]
+        gaps = []
+        for i in range(2, len(h)):
+            if h[i - 2] < l[i]:
+                gaps.append((i, 1, h[i - 2], l[i]))
+            elif l[i - 2] > h[i]:
+                gaps.append((i, -1, h[i], l[i - 2]))
+        last = cl[-1]
+        for a in gaps:
+            for b in gaps:
+                elapsed_ms = timestamps[start + b[0]] - timestamps[start + a[0]]
+                if not (0 < elapsed_ms <= 20 * step_ms) or a[1] == b[1]:
+                    continue
+                lo, hi = max(a[2], b[2]), min(a[3], b[3])
+                if lo >= hi:
+                    continue
+                side = b[1]
+                if any((x < lo) if side > 0 else (x > hi) for x in cl[b[0] + 1:]):
+                    continue
+                edge = hi if side > 0 else lo
+                out.append((abs(last - edge), RawLevel(edge, f'bpr_{tf}', f"BPR {tf}", -side,
+                                                       ts=timestamps[start + b[0] - 1],
+                                                       body=lo if side > 0 else hi)))
     out.sort(key=lambda x: x[0])
     return [lv for _, lv in out[:keep]]
 
@@ -737,9 +825,11 @@ def bars_of(candles_1h: Sequence[Sequence[float]], hours: int) -> List[List[floa
 
 
 def day_poc(candles: Sequence[Sequence[float]], today_ms: int) -> List[Tuple[int, float]]:
-    """[(day_ms, POC)] of each completed UTC day the 5m candles fully cover (Dalton's daily profile, volume at price:
-    short candles - 1h ones put a POC percents off). The bucket = the candles' mean range x sqrt(3) (~a 15m ATR) /
-    profile_buckets_per_atr, as the map's other profiles."""
+    """POC-like buckets for completed UTC days from OHLCV candles.
+
+    The calculation is an OHLC volume allocation, not a reconstruction of a
+    time-at-price market profile and is not attributed to Dalton.
+    """
     if len(candles) < 2:
         return []
     step_ms = candles[1][0] - candles[0][0]
@@ -754,11 +844,13 @@ def day_poc(candles: Sequence[Sequence[float]], today_ms: int) -> List[Tuple[int
     for day, part in sorted(days.items()):
         if len(part) < 0.9 * DAY_MS / step_ms:          # a day the window only partly covers
             continue
-        atr = math.sqrt(3) * sum(c[2] - c[3] for c in part) / len(part)
+        # Do not manufacture a higher-timeframe volatility with sqrt(time);
+        # use the observed mean intrabar range for this descriptive bucket.
+        atr = sum(c[2] - c[3] for c in part) / len(part)
         profile = volume_profile(part, atr, '')
         if profile:
-            # (day, POC, VAH, VAL): eng-74 - Dalton reads the PREVIOUS day's value area (the map held only the rolling
-            # 24h and 4-day profiles)
+            # Keep the completed-day values separate from the current day;
+            # this is a temporal data rule, not an author-specific method.
             vah = next((l.price for l in profile if l.kind == 'va' and l.side > 0), None)
             val = next((l.price for l in profile if l.kind == 'va' and l.side < 0), None)
             out.append((day, profile[0].price, vah, val))
@@ -766,16 +858,14 @@ def day_poc(candles: Sequence[Sequence[float]], today_ms: int) -> List[Tuple[int
 
 
 def naked_daily_pocs(day_pocs: Sequence[Tuple[int, float]], candles: Sequence[Sequence[float]]) -> List[RawLevel]:
-    """The completed days' POCs no candle after that day has traded through (`candles`: 1h, 8 days - a touch needs
-    only the range): naked / virgin POCs (Dalton), an untested value reference. Kind 'poc' like the composites."""
+    """Return untraded completed-day POC-like reference buckets."""
     out = []
     for row in day_pocs:
         day, poc = row[0], row[1]
         end = day + DAY_MS
         if not any(c[0] >= end and c[3] <= poc <= c[2] for c in candles):
             out.append(RawLevel(poc, 'poc', f"naked POC {time.strftime('%m-%d', time.gmtime(day / 1000))}", ts=day))
-    # the previous completed day's POC / VAH / VAL (Dalton: yesterday's value area is the day's reference - an open
-    # outside it, the 80% rule, VAH resistance / VAL support from outside)
+    # Include the previous completed day's reference values for display only.
     if day_pocs:
         last = max(day_pocs, key=lambda r: r[0])
         out.append(RawLevel(last[1], 'poc', 'POC PD', ts=last[0]))
@@ -880,15 +970,27 @@ def merge(levels: Iterable[RawLevel], atr: float, symbol: Optional[str] = None) 
             ev = events.setdefault((l.side, round(l.price, 12)), {})
             ev[l.kind] = min(ev.get(l.kind, 0.0) + w, 2 * w)
         per_kind: Dict[str, float] = {}
-        for ev in events.values():
+        event_weights: List[Tuple[float, str, float]] = []
+        for (_, event_price), ev in events.items():
             kind = max(ev, key=lambda k: ev[k])
             w = weights.get(kind, 0.5)
-            per_kind[kind] = min(per_kind.get(kind, 0.0) + ev[kind], 2 * w)
+            event_weight = ev[kind]
+            event_weights.append((event_price, kind, event_weight))
+            per_kind[kind] = per_kind.get(kind, 0.0) + event_weight
+        per_kind = {kind: min(total, 2 * weights.get(kind, 0.5)) for kind, total in per_kind.items()}
         for l in group:
             per_kind.setdefault(l.kind, 0.0)          # the zone still lists every kind it holds (labels, roles)
         strength = sum(per_kind.values())
-        wsum = sum(weights.get(l.kind, 0.5) for l in group)
-        price = sum(l.price * weights.get(l.kind, 0.5) for l in group) / wsum
+        # Use the same unique-event winner and per-kind cap for the zone center
+        # as for strength. Duplicate labels must not pull the displayed center
+        # toward an extreme that did not earn additional strength.
+        raw_kind: Dict[str, float] = {}
+        for _, kind, event_weight in event_weights:
+            raw_kind[kind] = raw_kind.get(kind, 0.0) + event_weight
+        effective = [(p, w * per_kind[kind] / raw_kind[kind])
+                     for p, kind, w in event_weights if raw_kind.get(kind, 0.0) > 0]
+        wsum = sum(w for _, w in effective)
+        price = sum(p * w for p, w in effective) / wsum if wsum else sum(l.price for l in group) / len(group)
         ordered = sorted(group, key=lambda l: -weights.get(l.kind, 0.5))
         labels: List[str] = []
         for l in ordered:

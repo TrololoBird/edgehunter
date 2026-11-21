@@ -492,9 +492,11 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
              funding_8h: Optional[float] = None, funding_hours: Optional[float] = None) -> Dict:
     """
     Replay 1m candles [open_time, open, high, low, close, ...] after an entry. With use_fill the trade is entered at
-    fill_price (manual execution) and R is measured from there; otherwise at levels['entry'] (the trigger close).
+    an estimated first-minute market price and R is measured from there; otherwise at levels['entry'] (a reference
+    price only). No path in this function can establish an exchange fill.
     SL and TPs are checked candle by candle; if one candle touches both SL and a TP, SL counts first (conservative); a
-    target counts only once price traded target_through_bps THROUGH it (a limit order is not filled by a touch).
+    target counts only once price traded target_through_bps THROUGH it. Limit entries are rejected because OHLC does
+    not provide queue position or a fill model.
     With funding_8h (the rate at the signal) each exit's R is net of the funding settlements it was held through.
     Returns the furthest target reached before the stop and the R result of exiting fully at TP1 / TP2
     (unfinished trades are marked to the last close). A fill already beyond the stop is 'SKIPPED' (not traded).
@@ -503,13 +505,22 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
     entry = levels['entry']
     # a system without a profit target journals NULL targets (eng-51): unreachable here, the trade is marked to the end
     targets = [t if t is not None else entry + direction * 1e12 for t in (levels['tp1'], levels['tp2'], levels['tp3'])]
-    result = {'filled': 1, 'outcome': 'OPEN', 'r_tp1': None, 'r_tp2': None, 'r_be': None, 'entry_fill': None}
+    result = {'filled': 1, 'outcome': 'OPEN', 'r_tp1': None, 'r_tp2': None, 'r_be': None, 'entry_fill': None,
+              'execution_status': 'ESTIMATED_MARKET_FILL' if use_fill else 'REFERENCE_PRICE'}
     if use_fill:
-        # eng-58: a resting limit (Seiden, ICT CE / OTE) fills AT its price - it was traded at the trigger; only the
-        # market entries take the next minute's open + slippage (a human's reaction)
-        fill = float(entry) if levels.get('limit_entry') and candles else fill_price(levels, direction, candles)
+        # A candle touching a price does not establish queue position, traded
+        # volume ahead of the order, partial execution, or that the order was
+        # still resting.  The old replay silently converted every touch plan
+        # into a filled limit order.  v2 has no historical queue model, so a
+        # limit/FVG/OTE plan is explicitly unsupported rather than optimistic.
+        if levels.get('limit_entry'):
+            result.update(filled=0, outcome='UNSUPPORTED_LIMIT_MODEL', execution_status='UNSUPPORTED_LIMIT')
+            return result
+        # Market entries use the first complete minute after the signal as an
+        # estimated fill; this is still an estimate, never an exchange fill.
+        fill = fill_price(levels, direction, candles)
         if fill is None:
-            result['filled'] = 0
+            result.update(filled=0, outcome='UNKNOWN_NO_FILL_DATA', execution_status='UNKNOWN_NO_FILL_DATA')
             return result
         result['entry_fill'] = fill
         if direction * (fill - sl) <= 0 or direction * (targets[0] - fill) <= 0:
@@ -518,7 +529,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         entry = fill
     risk = abs(entry - sl)
     if not candles or not risk:
-        result['filled'] = 0
+        result.update(filled=0, outcome='UNKNOWN_NO_FILL_DATA', execution_status='UNKNOWN_NO_FILL_DATA')
         return result
 
     through = CONFIG.levels.target_through_bps / 1e4

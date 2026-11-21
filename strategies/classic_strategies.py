@@ -1,7 +1,4 @@
-"""
-Cards of the classic methods in strategies/classic.py: each enters at its signal's close (as its author does), with
-its own stop and target where the method defines one; the lifecycle, R:R rule and journal are shared.
-"""
+'Cards for the profile, opening-range and RSI-based strategy components in strategies/classic.py.\nEach uses its configured entry/stop/target contract and shared lifecycle; no published-strategy\nfidelity is claimed.'
 from typing import Dict, Optional
 
 from config import CONFIG
@@ -13,7 +10,7 @@ CONNORS_CATASTROPHE_STOP_ATR = 2.0
 
 
 class ValueAreaStrategy(_System):
-    """Dalton's 80% rule: target the value area's far edge, stop beyond the edge price re-entered through."""
+    'Uses the configured value-area re-entry target and stop placement.\nThis is a local contract, not a source-certified 80% rule.'
     name = 'value_area'
     min_rr = 1.0                     # Dalton: the far edge of the value area is the target, no ratio rule
     setups = {'VA80 LONG': 1, 'VA80 SHORT': -1}
@@ -73,9 +70,7 @@ class ValueAreaStrategy(_System):
 
 
 class OrbStrategy(_System):
-    """eng-93: the session opening range breakout (strategies.classic.session_orb) on the majors, gold, silver and
-    oil: the first break of the Asia / London / New York session's first 30 minutes, the stop at the range's middle,
-    TP1 the range's width projected, out at that session's close (was Crabel's open +- Stretch on the UTC day)."""
+    'Uses the configured session opening-range signal, stop, target and session exit.\nThis is not presented as an original published opening-range strategy.'
     name = 'orb'
     setups = {'ORB UP': 1, 'ORB DOWN': -1}
     min_rr = 0.0                     # Crabel: no target / ratio rule (exits by time or the opposite level)
@@ -84,7 +79,7 @@ class OrbStrategy(_System):
     uses_minutes = True              # eng-84: the day's VWAP side
 
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
-        """Crabel ORB contract: opposite range level is the stop; session close is the exit."""
+        'Returns the configured opening-range entry levels, opposite-side stop and session exit.'
         stop = (plan.get('exit') or {}).get('stop') or []
         if len(stop) < 2 or stop[0] != 'price' or not entry:
             return None
@@ -150,7 +145,7 @@ class OrbStrategy(_System):
 
 
 class ConnorsStrategy(_System):
-    """Connors' RSI(2): out at the SMA5 with an explicit 2 daily-ATR catastrophe stop."""
+    'Uses the configured daily RSI(2), moving-average exit and catastrophe-stop parameters.\nNo original-system attribution or optimality claim is made.'
     name = 'connors'
     # Connors' published rule implemented here is RSI2X LONG only: close above SMA200 and RSI(2) < 5.
     # Cross-back and mirrored short variants are research alternatives, not this method's executable card.
@@ -160,7 +155,7 @@ class ConnorsStrategy(_System):
     time_exit = 'fixed'                # the method's own exit (eng-47)
 
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
-        """Connors contract: the SMA5 is the method exit and the 2 daily-ATR stop is real protection."""
+        'Returns the configured RSI(2) exit and protection levels.'
         exit = plan.get('exit') or {}
         stop = exit.get('stop') or []
         if len(stop) < 2 or not entry:

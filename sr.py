@@ -1,27 +1,10 @@
-"""
-Support / resistance from where price actually turned (eng-75, the owner: "you don't understand what support and
-resistance are and what forms them"; web-checked 2026-10-08: Fidelity, Investing.com, Capital.com, Dukascopy,
-Wealthsimple, FTMO, Traders Agency).
+"""Descriptive price zones computed from confirmed candle pivots.
 
-What forms a level, by the sources:
-- price reversed there: a swing high / low is where supply and demand changed hands (old highs resist, old lows
-  support);
-- memory: traders trapped at that price exit at breakeven when it returns, those who missed it buy / sell there -
-  hence ROLE REVERSAL: a broken support resists from below, a broken resistance supports from above;
-- strength: how many times price reacted there, how big the reaction was (size and duration), the volume on the
-  touches, the timeframe (4h / daily / weekly outweigh 1h) and recency; touches alone are not enough (FTMO: a level
-  tested too often may be weaker - orders rest behind it), the quality of the reaction counts.
-
-So a zone here is a CLUSTER OF SWING PIVOTS of the 1h / 4h / daily candles, not a catalogue of constructs:
-- pivots: fractal swings (the candle's high above `width` neighbours on both sides; lows mirrored), each with its
-  reaction (the largest move away in the next `react_bars` candles, in that timeframe's ATR) and its volume
-  (the candle's volume / the median of the 20 before);
-- pivots within `tol` of each other (by price) form one zone, its band = the pivots' wicks (at most `max_width`);
-- touches = pivots + the later 1h candles that wicked into the band and closed back out on the side they came
-  from (rejections); flip = the cluster holds both swing highs and swing lows (the level changed role);
-- strength = sum over the pivots of tf weight x (1 + reaction, capped) x volume factor x recency decay, plus half a
-  point per rejection. The weights are hypotheses - research_sr.py measures whether these zones hold price better
-  than placebo prices before anything trades on them.
+The module groups confirmed fractal extrema from supplied 1h/4h/1d candles
+and reports reactions observed in the supplied history. It does not establish
+support, resistance, order intent, a liquidity pool, or a forecast. Timeframe
+weights, tolerances, decay and reaction scores are calculation parameters of
+this module and are not attributed to a published trading method.
 """
 from typing import Dict, List, Optional, Sequence
 

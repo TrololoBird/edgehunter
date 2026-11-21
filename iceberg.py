@@ -1,13 +1,10 @@
-"""
-Iceberg detection: how a whale really accumulates (resting limit orders refilled at one price), not the aggressive
-market sweeps the old "whales" counted (measured x1.0: those were liquidations, stops and chasers).
+"""Detect a *replenishment-like* public L2 pattern.
 
-For the hot coins with a live Binance book (depth20 @500ms): at one price level of one side, the volume EXECUTED
-against it (aggTrades whose taker hit that side at that price) exceeds `multiple` x the largest size ever VISIBLE there
-while the level held (no trade through it), and is at least `min_usd`. A bid iceberg = a hidden buyer absorbing sells
-("whale buying"), an ask iceberg the hidden seller. Journaled as features (`iceberg_net_5m`: bid - ask iceberg USD over
-5 minutes, `iceberg_n_5m`) and logged; measured before anything trades on it.
-Sources: Bookmap's iceberg tracker, the usual definition (executed > displayed at a level that refills).
+The detector compares executions and aggregate displayed size at one price.
+Binance public depth messages do not contain order identifiers or a complete
+queue, so the result cannot identify an iceberg order, a hidden participant or
+an intent. The feature is observational and is unavailable when book
+coverage/sequence continuity is not valid.
 """
 import logging
 import time
@@ -38,13 +35,7 @@ class _Level:
 
 
 class IcebergDetector:
-    """
-    Bids and asks are kept apart so a trade only touches its own side: scanning every tracked level on every aggTrade
-    stalled the event loop on ETH / BTC (live 2026-10-01, watchdog: iceberg.on_trade). A level must REFILL - be shown
-    again in >= `min_refills` book snapshots after trades hit it - before it counts: depth20 arrives every 500 ms, so
-    "executed > the largest size ever shown" alone fired on every busy ETH level where new orders simply arrived
-    between two snapshots (112 of 157 events on ETH, "$61k executed vs $212 shown").
-    """
+    """Track aggregate level replenishment without attributing an order."""
 
     def __init__(self):
         # symbol -> side (+1 bid / -1 ask) -> price -> level
@@ -121,7 +112,7 @@ class IcebergDetector:
         if not lvl.fired and lvl.visible > 0 and lvl.refills >= cfg.min_refills and lvl.executed >= cfg.min_usd and                 lvl.executed >= cfg.multiple * lvl.visible:
             lvl.fired = True
             self.events.setdefault(symbol, deque(maxlen=200)).append((ts_ms, side, price, lvl.executed))
-            logger.info(f"Iceberg {'BID' if side > 0 else 'ASK'} {symbol} @ {price:.6g}: ${lvl.executed:,.0f} "
+            logger.info(f"Replenishment-like {'BID' if side > 0 else 'ASK'} {symbol} @ {price:.6g}: ${lvl.executed:,.0f} "
                         f"executed vs ${lvl.visible:,.0f} ever shown, {lvl.refills} refills "
                         f"({max(0, ts_ms - lvl.first_ms) / 1000:.0f}s)")
 

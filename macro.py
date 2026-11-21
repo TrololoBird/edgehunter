@@ -1,17 +1,13 @@
-"""
-Macro context from FRED (St. Louis Fed; public CSV, no key): US 10-year Treasury yield (DGS10), the broad trade-
-weighted dollar index (DTWEXBGS) and Brent crude (DCOILBRENTEU). audit N06: a value is used only from its RELEASE
-(available_ms, a conservative calendar per series), not from the day after its observation date: H.10 (DTWEXBGS) is
-published weekly on the following Monday 16:15 ET, EIA's Brent spot with up to a week's delay, H.15 (DGS10) the next
-business day. FRED's current CSV is not a point-in-time vintage either (revisions are in it): for a strict history use
-ALFRED vintages - until then the training features are labelled approximate.
+"""Point-in-time macro context.
 
-Features: the 5-trading-day change of each series as of the previous day (yield in basis points, dollar and Brent in
-%). Context for the scenario card and a candidate input of its probability model (`train_scenarios.py --macro`);
-not a signal by itself.
+The public FRED CSV is a current, revised series. It is not a historical
+vintage and therefore cannot be used to reconstruct what a trading process
+knew at an old timestamp. v2 accepts only rows carrying an explicit release
+timestamp (for example an ALFRED vintage or a release-event archive). A
+current FRED download can still be cached for inspection, but it produces no
+decision features in strict mode.
 """
 import errors
-import bisect
 import csv
 import io
 import json
@@ -61,10 +57,11 @@ def fetch(series_id: str, timeout: Optional[float] = None) -> List[Tuple[int, fl
 
 
 class Macro:
-    def __init__(self, data: Optional[Dict[str, List[Tuple[int, float]]]] = None):
+    def __init__(self, data: Optional[Dict[str, List[Tuple[int, float]]]] = None, *, strict_pit: bool = True):
         self.data = data or {}
+        self.strict_pit = bool(strict_pit)
         self.loaded_at = 0.0
-        self._ts: Dict[str, List[int]] = {}
+        self._pit_rows: Dict[str, List[Tuple[int, float, int]]] = {}
 
     def refresh(self, max_age_sec: float = 6 * 3600) -> bool:
         """Download (or read the cache when it is fresh); True when every series is present."""
@@ -77,19 +74,52 @@ class Macro:
                 os.makedirs(os.path.dirname(CACHE), exist_ok=True)
                 atomic_write(CACHE, json.dumps(self.data).encode('utf-8'))
             self.loaded_at = time.time()
-            self._ts = {}
+            self._pit_rows = {}
         except Exception as e:
             errors.report('macro.refresh', e)
+            return False
+        if self.strict_pit and not all(self.data.get(k) and all(len(row) >= 3 for row in self.data[k]) for k in SERIES):
+            # The current FRED CSV is useful for a human dashboard, but it is
+            # not a release-time dataset and must not be advertised as a
+            # usable historical provider.
             return False
         return all(self.data.get(k) for k in SERIES)
 
     def _asof(self, name: str, ts_ms: float, back: int = 0) -> Optional[float]:
-        rows = self.data.get(name) or []
-        if name not in self._ts:
-            self._ts[name] = [available_ms(name, r[0]) for r in rows]     # release times rise with the dates
-        # audit N06: the last value RELEASED by ts_ms (was: dated before ts_ms - 1 day)
-        i = bisect.bisect_right(self._ts[name], ts_ms) - 1 - back
-        return rows[i][1] if 0 <= i < len(rows) else None
+        """Return the latest observation known at ``ts_ms``.
+
+        A PIT table may contain several vintages of one observation.  First
+        choose the latest vintage released by the decision time for each
+        observation date, then move ``back`` observations in observation-time
+        order.  Sorting by release time alone would return an older observation
+        from a later revision and would make a five-observation change depend
+        on the number of revisions in the file.
+        """
+        if name not in self._pit_rows:
+            rows = self.data.get(name) or []
+            parsed: List[Tuple[int, float, int]] = []
+            for r in rows:
+                try:
+                    obs, value = int(r[0]), float(r[1])
+                    if len(r) >= 3:
+                        release = int(r[2])
+                    elif self.strict_pit:
+                        # Unknown release time is never usable in strict PIT
+                        # mode; keeping it at +inf makes that explicit.
+                        release = 2**63 - 1
+                    else:
+                        release = int(available_ms(name, obs))
+                except (TypeError, ValueError, IndexError):
+                    continue
+                parsed.append((obs, value, release))
+            self._pit_rows[name] = parsed
+        latest: Dict[int, Tuple[float, int]] = {}
+        for obs, value, release in self._pit_rows[name]:
+            if release <= ts_ms and (obs not in latest or release >= latest[obs][1]):
+                latest[obs] = (value, release)
+        observations = sorted(latest.items())
+        i = len(observations) - 1 - int(back)
+        return observations[i][1][0] if 0 <= i < len(observations) else None
 
     def features(self, ts_ms: float) -> Dict[str, float]:
         out = {}

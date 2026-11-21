@@ -1,18 +1,16 @@
-"""
-Signal journal: every new signal is stored in SQLite with the market state at that moment, and a background
-loop later fills in what the price actually did (15m / 1h / 4h returns, 4h max favorable/adverse move) from
-Binance 1m futures klines. `stats.py` turns the table into per-setup statistics.
+"""Versioned v2 observation journal.
 
-Writes never block the event loop: the connection runs in WAL mode and every call from async code goes through
-asyncio.to_thread (the a* methods), serialized by a lock. Every 15 minutes the prices of the whole universe are
-stored (`universe` table): stats.py measures Edge against that real market baseline instead of the median of
-the coins that happened to produce signals.
+Rows carry source-manifest, feature-schema and execution-model provenance.
+Reference prices, estimated replay values and exchange-confirmed fills are
+separate fields.  The journal does not promote an observation into a strategy
+or ML rule, and its database refuses unmarked legacy rows.
 """
 import asyncio
 import bisect
 import json
 import logging
 import math
+import os
 import sqlite3
 import threading
 
@@ -22,11 +20,12 @@ from typing import Dict, List, Optional, Tuple
 
 from config import CONFIG
 from levels import simulate
-from strategies import confirm
+from strategies import STRATEGIES, confirm
 from scorer import LONG_PHASES, SHORT_PHASES
 from sqlsafe import identifier
 from security import safe_pickle_load
 from core.provenance import fields as provenance_fields
+from core.source_manifest import SOURCE_MANIFEST_VERSION, source_manifest_hash
 
 
 # Alternative entries are measured on the same card but never become the card's primary trade.  Keep
@@ -73,7 +72,7 @@ def _anchor_json(plan: Optional[Dict]) -> Optional[str]:
 
 
 def load_pretrained() -> Optional[Dict]:
-    """The models pretrain.py built from the public archive (None when it was not run)."""
+    """Load only a manifest-compatible v2 artifact; legacy archive models are rejected."""
     import os
     path = CONFIG.pretrain.path
     if not os.path.exists(path):
@@ -97,10 +96,8 @@ def load_pretrained() -> Optional[Dict]:
 
 def pretrained_current(state: Optional[Dict]) -> bool:
     """
-    The pretrained P(edge) was built by the current signal logic. A model of an older logic_version learned rows the
-    bot no longer writes (eng-7: rows of older versions saw up to 55s of the future in their Tier-0 inputs), so it
-    is not used. The live-loopside-v1 generator marker is also required; legacy or untagged P(edge)
-    cannot pass on logic_version alone. Regime history is handled separately.
+    Compatibility check retained for forensic artifacts. v2 does not enable
+    this model until a new task, schema and OOS protocol are approved.
     """
     return (bool(state) and state.get('logic_version') == CONFIG.journal.logic_version
             and state.get('success_generator') == 'live-loopside-v1')
@@ -123,7 +120,8 @@ def _policy_text(value) -> Optional[str]:
 
 logger = logging.getLogger(__name__)
 
-FEATURE_SCHEMA_VERSION = 'features-v2'
+FEATURE_SCHEMA_VERSION = 'features-v3'
+EXECUTION_MODEL_VERSION = 'execution-v2-reference-only'
 MODEL_STATUS = {'pretrained': 'not_loaded', 'reason': None}
 
 # Horizon label -> minutes after the signal
@@ -280,6 +278,10 @@ def horizon_due_ms(ts_ms: int, minutes: int) -> int:
     return first_minute + minutes * 60_000 + CLOSE_MARGIN_MS
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS journal_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY,
     ts_ms INTEGER NOT NULL,
@@ -310,7 +312,7 @@ CREATE INDEX IF NOT EXISTS idx_universe_sym ON universe(symbol, ts_ms, price);
 -- snapshot taken BEFORE price arrives can be checked)
 CREATE TABLE IF NOT EXISTS liquidations (
     ts_ms INTEGER NOT NULL, symbol TEXT NOT NULL, price REAL NOT NULL, usd REAL NOT NULL, side INTEGER NOT NULL,
-    venue TEXT
+    venue TEXT, coverage TEXT NOT NULL DEFAULT 'PARTIAL_PUBLIC_STREAM'
 );
 CREATE INDEX IF NOT EXISTS idx_liquidations ON liquidations(symbol, ts_ms);
 CREATE TABLE IF NOT EXISTS liq_levels (
@@ -444,6 +446,14 @@ EXTRA_COLUMNS = {
     # a risk gate that fired after plan/fill translation.
     'geometry_error': 'TEXT', 'risk_gate_reason': 'TEXT',
     'weis_ratio': 'REAL', 'tp1_min': 'REAL', 'limit_entry': 'INTEGER',
+    # v2 execution semantics: planned/reference prices are separate from an
+    # estimated replay fill and an exchange-confirmed fill.  A historical OHLC
+    # touch can never populate actual_fill.
+    'reference_price': 'REAL', 'estimated_fill': 'REAL', 'actual_fill': 'REAL',
+    'execution_status': 'TEXT', 'execution_model_version': 'TEXT',
+    'source_manifest_version': 'TEXT', 'source_manifest_hash': 'TEXT',
+    'funding_status': 'TEXT', 'agg_funding_kind': 'TEXT',
+    'return_basis': 'TEXT',
     # audit 2026-10-18: the thirds-model expectancy at the entry (exp_model, exp_note when it was only a shadow) and the
     # nearest opposing level before TP1 (obstacle_r in R from the entry, its source): diagnostics, never a filter
     'exp_model': 'REAL', 'exp_note': 'TEXT', 'obstacle_r': 'REAL', 'obstacle_src': 'TEXT',
@@ -463,7 +473,8 @@ FEATURE_KEYS = {
     'ls_global': 'ls_global', 'ls_top': 'ls_top', 'hl_net_usd': 'hl_net_usd', 'cb_premium': 'cb_premium',
     'market_crowd': 'market_crowd', 'mkt_1h': 'mkt_1h', 'mkt_4h': 'mkt_4h', 'btc_1h': 'btc_1h', 'btc_4h': 'btc_4h', 'mkt_1d': 'mkt_1d', 'btc_1d': 'btc_1d',
     'coin_trend': 'coin_trend', 'vol_ratio': 'vol_ratio', 'volume_24h': 'volume_24h',
-    'agg_funding_8h': 'agg_funding_8h', 'ls_bybit': 'ls_bybit', 'ls_okx': 'ls_okx', 'hour_utc': 'hour_utc',
+    'agg_funding_8h': 'agg_funding_8h', 'agg_funding_kind': 'agg_funding_kind',
+    'ls_bybit': 'ls_bybit', 'ls_okx': 'ls_okx', 'hour_utc': 'hour_utc',
     'weekend': 'weekend', 'liq_on_wick': 'liq_on_wick', 'oi_change_sweep': 'oi_change_sweep', 'adx': 'adx',
     'trend_w': 'trend_w', 'breadth_w': 'breadth_w',
     'dvol_btc': 'dvol_btc', 'dvol_chg_1h': 'dvol_chg_1h', 'pc_oi_btc': 'pc_oi_btc', 'funding_spread': 'funding_spread',
@@ -555,9 +566,9 @@ def oi_anomaly(sig: Dict) -> bool:
 
 def crowded(sig: Dict, direction: int) -> bool:
     """
-    Leverage crowded on the trade's side with positions still building: funding (all venues, else Binance) at or
-    beyond the crowding level for that side, or (longs) US spot at a discount (Coinbase premium), AND OI rising
-    over the last hour.
+    Diagnostic crowding predicate over funding, premium and OI observations.
+    It does not measure participant leverage or establish intent, and is not a
+    v2 trade filter while the source-gated registry is empty.
     """
     cfg = CONFIG.orderflow
     funding = sig.get('agg_funding_8h')
@@ -603,8 +614,9 @@ def one_venue(sig: Dict) -> bool:
 
 def classify(sig: Dict) -> Tuple[str, str, int]:
     """
-    (kind, group_key, direction) for a scorer signal: 'setup' = a detected setup (strategies.detect / structure), 'structured'
-    = the 15m phases, 'anomaly' = a Tier-0 reading.
+    Classify an observation row. Legacy structured/strategy labels are retained
+    for read-only schema compatibility; the v2 phase and strategy paths are
+    disabled and anomaly rows carry no direction.
     """
     if sig.get('is_setup'):
         return 'setup', sig['setup'], sig['direction']
@@ -626,22 +638,21 @@ def classify(sig: Dict) -> Tuple[str, str, int]:
     cascade = bool(sig.get('liq_cascade'))
     if price_anomaly(sig):
         up = px > 0
-        # Observed liquidations first, then the price/OI matrix: up on falling OI = shorts covering (fades);
-        # down on falling OI = longs liquidated
-        if cascade and up and liq_short > liq_long:
-            return 'anomaly', 'SHORT SQUEEZE', 0
-        if cascade and not up and liq_long > liq_short:
-            return 'anomaly', 'LONG FLUSH', 0
+        # Observed force-order activity is recorded as activity. It does not
+        # identify every liquidation in the market or prove a squeeze/flush.
+        if cascade and (liq_long > 0 or liq_short > 0):
+            return 'anomaly', 'FORCE_ORDER_ACTIVITY', 0
         if oi < 0:
-            return 'anomaly', 'SHORT SQUEEZE' if up else 'LONG FLUSH', 0
-        # Directional only when both confirm: OI clearly rising (new positions, not just unknown/flat OI) and the
-        # 5m futures taker flow on the same side as the move. Missing data = unconfirmed.
+            return 'anomaly', 'PRICE_UP_OI_DOWN' if up else 'PRICE_DOWN_OI_DOWN', 0
+        # A positive OI change is an expansion of open contracts. It does not
+        # reveal which side initiated the contract; taker flow only supplies a
+        # directional observation, never a new-long/new-short classification.
         cvd = perp_flow_5m(sig)
-        oi_confirms = oi > 0        # eng-121: the price / OI matrix (OI rising = new positions); our floors / z removed
+        oi_confirms = oi > 0
         flow_confirms = bool(cvd) and (cvd > 0) == up
         if oi_confirms and flow_confirms:
-            return 'anomaly', 'IMPULSE UP' if up else 'IMPULSE DOWN', 1 if up else -1
-        return 'anomaly', 'IMPULSE UNCONFIRMED', 0
+            return 'anomaly', 'PRICE_OI_EXPANSION_UP' if up else 'PRICE_OI_EXPANSION_DOWN', 0
+        return 'anomaly', 'PRICE_MOVE_WITHOUT_POSITION_INFERENCE', 0
     if cascade:
         return 'anomaly', 'LIQ CASCADE', 0
     # the algo cluster is what flags (CONFIG.tier0.flag_rules); net whale sweeps alone measured x1.0, so a cluster
@@ -659,8 +670,9 @@ def classify(sig: Dict) -> Tuple[str, str, int]:
         # Flagged by the IsolationForest only: an unusual combination, no single threshold crossed
         return 'anomaly', 'UNUSUAL', 0
     if abs(px) < t0.absorption_max_move:
-        # Volume spike that doesn't move price: aggressive orders absorbed by resting liquidity
-        return 'anomaly', 'ABSORPTION', 0
+        # A small price response is an observation. Without the order book it
+        # cannot establish passive absorption or a participant's intent.
+        return 'anomaly', 'FLOW_PRICE_RESPONSE_LOW', 0
     return 'anomaly', 'VOLUME SPIKE', 0
 
 
@@ -694,8 +706,10 @@ def veto_reason(group_key: str, sig: Dict) -> Optional[str]:
 # Labels that describe the same underlying event: the live candle and the 5m windows can flip an event between
 # them from one scan to the next, so cooldowns and on-screen rows are kept per (symbol, family)
 _FAMILIES = {
-    'IMPULSE UP': 'IMPULSE', 'IMPULSE DOWN': 'IMPULSE', 'IMPULSE UNCONFIRMED': 'IMPULSE',
-    'SHORT SQUEEZE': 'IMPULSE', 'LONG FLUSH': 'IMPULSE', 'LIQ CASCADE': 'IMPULSE',
+    'PRICE_OI_EXPANSION_UP': 'PRICE_OI', 'PRICE_OI_EXPANSION_DOWN': 'PRICE_OI',
+    'PRICE_MOVE_WITHOUT_POSITION_INFERENCE': 'PRICE_OI',
+    'PRICE_UP_OI_DOWN': 'PRICE_OI', 'PRICE_DOWN_OI_DOWN': 'PRICE_OI',
+    'FORCE_ORDER_ACTIVITY': 'FORCE_ORDER', 'LIQ CASCADE': 'FORCE_ORDER',
     'ABSORPTION': 'VOLUME', 'VOLUME SPIKE': 'VOLUME',
     'OI SURGE': 'OI', 'OI FLUSH': 'OI',
     'WHALES BUY': 'WHALES', 'WHALES SELL': 'WHALES', 'ALGO BUY': 'WHALES', 'ALGO SELL': 'WHALES',
@@ -741,6 +755,9 @@ def _features(sig: Dict) -> Dict:
 class SignalJournal:
     def __init__(self, path: str = CONFIG.journal.db_path):
         self.path = path
+        parent = os.path.dirname(os.path.abspath(path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self._lock = threading.Lock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -748,6 +765,7 @@ class SignalJournal:
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA journal_size_limit=67108864")
         self.conn.executescript(SCHEMA)
+        self._assert_v2_database()
         self._migrate()
         # after _migrate: setup_ts_ms is a migrated column on old databases (the entry lookups of finalize / card_r)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_entry ON signals(symbol, group_key, setup_ts_ms) "
@@ -771,14 +789,17 @@ class SignalJournal:
         self.model_status = MODEL_STATUS
         self.model_status.update(edge_mode='shadow', trade_mode='shadow', edge_mature=False, trade_mature=False)
         self._trade_learned: set = set()      # entry row ids the P(trade) model has learned (warm start vs live close)
-        if CONFIG.ml.trade_enabled:
+        if not STRATEGIES:
+            self.model_status.update(edge_mode='quarantined', trade_mode='quarantined',
+                                     reason='source_gated_registry_empty')
+        if CONFIG.ml.trade_enabled and STRATEGIES:
             try:
                 from ml import TradeModel
                 self.trade = TradeModel()
                 self.model_status['trade_mature'] = bool(self.trade.mature)
             except Exception as e:
                 logger.warning(f"P(trade) model unavailable: {e}")
-        if CONFIG.ml.success_enabled:
+        if CONFIG.ml.success_enabled and STRATEGIES:
             try:
                 from ml import SuccessModel
                 self.success = SuccessModel()
@@ -794,6 +815,29 @@ class SignalJournal:
                 self.model_status['edge_mature'] = bool(self.success.mature)
                 logger.info(f"P(edge) model: pretrained on {pretrained['rows']} historical rows of {pretrained['coins']} "
                             f"coins ({pretrained['start']} .. {pretrained['end']}); the journal replay continues it")
+
+    def _assert_v2_database(self) -> None:
+        """Refuse to reinterpret an unmarked legacy journal as a v2 journal."""
+        expected = {
+            'runtime': 'edgehunter-v2',
+            'source_manifest_version': SOURCE_MANIFEST_VERSION,
+            'source_manifest_hash': source_manifest_hash(),
+            'feature_schema_version': FEATURE_SCHEMA_VERSION,
+            'execution_model_version': EXECUTION_MODEL_VERSION,
+        }
+        rows = dict(self.conn.execute("SELECT key, value FROM journal_meta"))
+        if not rows:
+            count = self.conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+            if count:
+                raise RuntimeError(
+                    f"refusing to open an unmarked journal with {count} rows; archive it and start a clean v2 database"
+                )
+            self.conn.executemany("INSERT INTO journal_meta(key, value) VALUES (?, ?)", expected.items())
+            self.conn.commit()
+            return
+        mismatched = [k for k, v in expected.items() if rows.get(k) != v]
+        if mismatched:
+            raise RuntimeError(f"journal provenance mismatch: {', '.join(mismatched)}")
 
     def _migrate(self):
         existing = {row[1] for row in self.conn.execute("PRAGMA table_info(signals)")}
@@ -889,6 +933,10 @@ class SignalJournal:
         }
         row.update(provenance_fields())
         row['feature_schema_version'] = FEATURE_SCHEMA_VERSION
+        row['source_manifest_version'] = SOURCE_MANIFEST_VERSION
+        row['source_manifest_hash'] = source_manifest_hash()
+        row['execution_model_version'] = EXECUTION_MODEL_VERSION
+        row['return_basis'] = 'OBSERVATION_REFERENCE'
         row.update(_features(sig))
         row['contract_id'] = sig.get('contract_id') or sig.get('setup')
         return row
@@ -906,6 +954,22 @@ class SignalJournal:
             for symbol, sig in signals:
                 price = prices.get(symbol)
                 if not price:
+                    continue
+                if sig.get('range_breakout'):
+                    group_key, ts = sig['range_breakout'], sig['setup_ts_ms']
+                    if self.conn.execute(
+                        "SELECT 1 FROM signals WHERE kind = 'range_breakout' AND symbol = ? AND setup_ts_ms = ?",
+                        (symbol, ts),
+                    ).fetchone() or any(r['kind'] == 'range_breakout' and r['symbol'] == symbol
+                                       and r['setup_ts_ms'] == ts for r in rows):
+                        continue
+                    row = self._base_row(now_ms, symbol, 'range_breakout', group_key, 0, price, sig)
+                    for field in ('rvol_1m', 'oi_change_5m', 'price_change_5m', 'delta_ratio',
+                                  'funding_8h', 'whale_net_5m'):
+                        row[field] = None
+                    row.update(setup_ts_ms=ts, reason=f"Closed 15m beyond 20-bar range at {sig['range_boundary']}",
+                               demo_eligible=0)
+                    rows.append(row)
                     continue
                 kind, group_key, direction = classify(sig)
                 family, rank = event_family(group_key)
@@ -934,15 +998,18 @@ class SignalJournal:
 
     def record_entry(self, tracked) -> None:
         """
-        An entry triggered by the LTF model (signal_book.TrackedSignal): its own row 'ENTRY <setup>' with the levels,
-        so stats.py replays exactly what the dashboard showed, from the entry moment. Vetoed entries (no order-flow
-        confirmation) are stored too, with the reason.
+        Store a source-gated entry reference with its planned levels.  This row
+        is not proof of an exchange order or fill: actual execution fields stay
+        unknown until user-data events are reconciled.
         """
+        from strategies import strategy_of
+        if not STRATEGIES or strategy_of(getattr(tracked, 'group_key', '')) is None:
+            raise ValueError("entry journaling requires a source-verified v2 strategy")
         lv = tracked.levels
         row = self._base_row(int(tracked.entered_at * 1000), tracked.symbol, 'entry', f"ENTRY {tracked.group_key}",
                              tracked.direction, lv['entry'], tracked.sig)
-        # systems without a profit target (Turtles, Connors, ORB) carry 100 / 200 / 300 R placeholders for the lifecycle:
-        # journaled as NULL, not as prices (live ZRO ORB DOWN: TP1 -1.757) - eng-51
+        # Target-less source contracts may leave target columns NULL; a
+        # placeholder price must never be invented for the lifecycle.
         no_tp = bool((tracked.plan or {}).get('no_tp'))
         row.update({'entry': lv['entry'], 'sl': lv['sl'], 'tp1': None if no_tp else lv['tp1'],
                     'tp2': None if no_tp else lv['tp2'], 'tp3': None if no_tp else lv['tp3'],
@@ -966,7 +1033,8 @@ class SignalJournal:
                     'atr_entry': (tracked.plan or {}).get('tf_atr') or (tracked.plan or {}).get('atr'),
                     'zone_far': _zone_far(tracked),
                     'strat_class': strategy_class(tracked.mode), 'crowd_pos': tracked.sig.get('crowd_pos'),
-                    # eng-58: a resting limit (Seiden's line, ICT's CE / OTE): the replay fills it at the entry price
+                    # Legacy limit intent is metadata only. v2 never treats an
+                    # OHLC touch as an exchange fill.
                     'limit_entry': int(getattr(tracked, 'limit_variant', False) or
                                        ((tracked.plan or {}).get('trigger') == 'touch'
                                         and not CONFIG.executor.touch_confirm_close)),
@@ -987,6 +1055,14 @@ class SignalJournal:
                     'reason': ' | '.join(str(x) for x in (tracked.sig.get('setup_note'),
                                                           (tracked.plan or {}).get('trigger'),
                                                           (tracked.plan or {}).get('entry_note')) if x) or None})
+        # ``lv['entry']`` is the strategy's reference/decision price.  A
+        # historical confirmation close is not an exchange fill.  Actual fill
+        # fields remain NULL until an exchange acknowledgement and fill event
+        # are reconciled by the execution adapter.
+        row.update({'reference_price': lv.get('entry'), 'estimated_fill': None, 'actual_fill': None,
+                    'execution_status': 'REFERENCE_ONLY',
+                    'execution_model_version': EXECUTION_MODEL_VERSION,
+                    'return_basis': 'ENTRY_REFERENCE_UNEXECUTED'})
         # eng-153 (external audit #3): the shadow benchmarks (flow_entry / reclaim_entry / weak_mss, never traded) are
         # rows of their own like variant_*: they took the card's one veto slot and the method's own later veto was lost
         shadow = "COALESCE(is_benchmark_variant, 0) = 1"
@@ -1130,12 +1206,14 @@ class SignalJournal:
         logger.debug(f"skip: history shorter than needed for {len(fresh)} coin / strategy pairs")
 
     def record_liquidations(self, events: List[Tuple]) -> None:
-        """Live liquidations [(symbol, ts_ms, price, usd, side, venue)]."""
+        """Partial public force-order observations, never a complete liquidation tape."""
         if not events:
             return
-        rows = [(ts, sym, float(price), float(usd), int(side), venue) for sym, ts, price, usd, side, venue in events]
+        rows = [(ts, sym, float(price), float(usd), int(side), venue, 'PARTIAL_PUBLIC_STREAM')
+                for sym, ts, price, usd, side, venue in events]
         with self._lock:
-            self.conn.executemany("INSERT INTO liquidations (ts_ms, symbol, price, usd, side, venue) VALUES (?, ?, ?, ?, ?, ?)", rows)
+            self.conn.executemany("INSERT INTO liquidations (ts_ms, symbol, price, usd, side, venue, coverage) "
+                                 "VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
             self.conn.commit()
 
     def record_liq_levels(self, ts_ms: int, symbol: str, ref_price: Optional[float], levels: List[Tuple]) -> None:
@@ -1158,10 +1236,10 @@ class SignalJournal:
 
     def universe_return(self, ts_ms: int, minutes: int, stat: str = 'mean') -> Optional[float]:
         """
-        Return of the whole universe between the snapshots nearest ts and ts + minutes (<= 20 min away): the MEAN
-        (Edge: an equal-weight universe has zero mean excess, while coins beat the median by ~0.11% per 4h on average -
-        right-skewed returns - so Edge against the median favoured every long and penalised every short) or the
-        'median' (the P(edge) label: a balanced 'beat the median coin').
+        Return of the available universe between past-only snapshots near
+        ``ts`` and ``ts + minutes``.  ``stat`` selects the arithmetic mean or
+        cross-sectional median; neither is a neutral or future-proof market
+        benchmark by definition.
         """
         with self._lock:
             # reload the snapshot times when a later one is needed, at most once a minute (a label still in the
@@ -1171,12 +1249,21 @@ class SignalJournal:
                 self._snapshot_times_at = time.time()
                 self._snapshot_times = [t for (t,) in self.conn.execute("SELECT DISTINCT ts_ms FROM universe ORDER BY ts_ms")]
 
-            def nearest(t: int) -> Optional[int]:
-                i = bisect.bisect_left(self._snapshot_times, t)
-                near = [s for s in self._snapshot_times[max(0, i - 1):i + 1] if abs(s - t) <= 20 * 60_000]
-                return min(near, key=lambda s: abs(s - t)) if near else None
+            def nearest_past(t: int) -> Optional[int]:
+                """Return only a snapshot available at ``t``.
 
-            t0, t1 = nearest(ts_ms), nearest(ts_ms + minutes * 60_000)
+                Choosing the nearest snapshot from either side made a signal
+                at time t depend on a later universe observation whenever the
+                next snapshot was closer.  That is look-ahead in the market
+                baseline, even though the price series itself is historical.
+                """
+                i = bisect.bisect_right(self._snapshot_times, t) - 1
+                if i < 0:
+                    return None
+                snapshot = self._snapshot_times[i]
+                return snapshot if t - snapshot <= 20 * 60_000 else None
+
+            t0, t1 = nearest_past(ts_ms), nearest_past(ts_ms + minutes * 60_000)
             if t0 is None or t1 is None or t0 == t1:
                 return None
             snaps = []
@@ -1285,8 +1372,9 @@ class SignalJournal:
     def refresh_anomaly_effects(self, days: float = 14.0) -> int:
         """
         Each anomaly label's effect, measured against the coin itself: the median of |4h move after the label| /
-        the coin's usual |4h move| (its universe snapshots over the same days). x1.0 = the label adds nothing to the
-        coin's normal volatility (live 2026-09-27..30: whales, absorption, one-venue, cascades ~x1.0; impulses x1.4).
+        the coin's median |4h move| (its universe snapshots over the same
+        days). This is descriptive telemetry only; it is not a strategy edge
+        or a causal effect estimate.
         """
         since = int((time.time() - days * 86_400) * 1000)
         norm = lambda s: s.replace('/USDT:USDT', 'USDT').replace('/', '')
@@ -1318,7 +1406,10 @@ class SignalJournal:
                 moves = np.abs(px[jj][ok] / px[ok] - 1)
                 moves = moves[np.isfinite(moves)]
                 if len(moves) > 20:
-                    usual[str(name)] = float(moves.mean())
+                    # The effect denominator is defined as the coin's median
+                    # absolute move; using a mean here made the reported ratio
+                    # depend on outliers while the numerator used a median.
+                    usual[str(name)] = float(np.median(moves))
         ratios: Dict[str, list] = {}
         for label, s, r4 in rows:
             base = usual.get(norm(s))
@@ -1360,7 +1451,12 @@ class SignalJournal:
         95% Wilson interval does not pay; it is not the expectancy of the whole exit policy (trail, partials, time
         exits), and entries of one market move are not independent draws, so the interval is optimistic.
         """
-        from strategies import geometry
+        from strategies import geometry, STRATEGIES
+        if not STRATEGIES:
+            # No source-backed strategy is active in v2. Legacy hit rates
+            # cannot change the new execution contract.
+            geometry.HIT_RATE.clear()
+            return 0
         since = int((time.time() - 30 * 86400) * 1000)
         with self._lock:
             rows = self.conn.execute(
@@ -1406,7 +1502,8 @@ class SignalJournal:
         discovery rate controlled over every (strategy, confirmation) tested (proven_negative). Only entries of the
         current logic version count.
         """
-        if not CONFIG.orderflow.promote_confirmations:
+        from strategies import STRATEGIES
+        if not CONFIG.orderflow.promote_confirmations or not STRATEGIES:
             return 0
         with self._lock:
             rows = self.conn.execute(
@@ -1568,6 +1665,12 @@ class SignalJournal:
             logger.info(f"Journal: signal {signal_id} {label} not labelled: the 1m minutes have a gap")
             return
         updates = {f'ret_{label}': float(window[-1][4]) / price - 1}
+        if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
+            replay = self._replay(row, window)
+            updates.update(replay)
+            updates['estimated_fill'] = replay.get('entry_fill')
+            updates['actual_fill'] = None
+            updates['execution_status'] = replay.get('execution_status') or 'ESTIMATED_REPLAY'
         if label == '4h':
             updates['mfe_4h'] = max(float(k[2]) for k in window) / price - 1
             updates['mae_4h'] = min(float(k[3]) for k in window) / price - 1
@@ -1577,8 +1680,7 @@ class SignalJournal:
                 updates['mfe_r'] = d * ((hi if d > 0 else lo) - e) / (d * (e - sl))
                 updates['mae_r'] = d * ((lo if d > 0 else hi) - e) / (d * (e - sl))
         if label == '8h' and row.get('entry') is not None and row.get('direction') and row.get('kind') == 'entry':
-            # Entry rows: replay SL / TP on the 1m candles of the trade's whole life, filled like a human would
-            updates.update(self._replay(row, window))
+            # Entry rows: replay SL / TP on the 1m candles of the trade's whole life.
             updates.update(excursions(row, window))      # eng-148: every entry, stopped or not, on its 8h window
             updates['outcome_h'] = minutes // 60
         sets = ', '.join(f"{col} = ?" for col in updates)
@@ -1590,9 +1692,13 @@ class SignalJournal:
 
     @staticmethod
     def _replay(row: Dict, window: List) -> Dict:
-        """SL / TP of an entry row replayed on its 1m candles, filled like a human would."""
-        updates = simulate(row, row['direction'], window, use_fill=True, funding_8h=row.get('funding_8h'),
-                           funding_hours=row.get('funding_hours'))
+        """Replay risk levels with an explicitly estimated, never exchange-confirmed fill."""
+        # A signal-time funding quote is not a settlement history.  Applying
+        # it to every future settlement fabricates financing P/L, so v2 leaves
+        # funding out until settlement events are available for the whole hold.
+        updates = simulate(row, row['direction'], window, use_fill=True, funding_8h=None,
+                           funding_hours=None)
+        updates['funding_status'] = 'UNAVAILABLE_SETTLEMENT_HISTORY'
         if row.get('tp1') is None and updates.get('outcome') in ('SL', 'OPEN'):
                 # eng-84: a method without targets (Bollinger's band, Crabel's session close, the Turtles' channel) can
                 # only read 'SL' / 'OPEN' here - its winners never showed (BB / ORB: 0 TP of 60). Its result is the

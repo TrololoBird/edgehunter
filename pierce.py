@@ -1,8 +1,12 @@
-"""
-How far price pierces a level before it turns back, measured (research_overshoot.py -> models/overshoot.json: per coin
-and level kind the p50 / p80 / p90 of the depth of rejections, 80 coins x 12 months, stable across halves; the script was removed on
-2026-10-22, the saved model stays). The stop
-buffer beyond a level and the "just behind" distance of a stop pool come from here instead of ATR constants.
+"""Archived descriptive calibration for price excursions beyond levels.
+
+``models/overshoot.json`` records per-kind and per-coin percentiles for
+2025-10-05 through 2026-09-30 (260 coins; see ``research/overshoot.md``).
+The generating script was removed by owner decision and its input data/checksum
+are not present here, so the figures are not reproducible from this checkout.
+The newer-half coverage is a within-sample temporal split, not proof of stable
+future behavior or trading advantage. Runtime uses these values as a heuristic
+when available; missing values remain unavailable.
 """
 import json
 import os

@@ -1,10 +1,10 @@
-"""
-Loop-side setup detectors (eng-59, B9): the strategies the scanner checks on the final 1m candles / daily candles of
-each coin rather than in the maps worker - the pump start / top, the Silver Bullet, PO3, the Turtles' touch, Crabel's
-ORB, the OI signal, the dump bounce, Connors' RSI(2). Moved out of scanner.Scanner so the archive replay
-(replay.py) runs the SAME code as the live bot. `md` is the coin's MarketData (or the replay's stand-in with the same
-fields: d1, h1, tier0, oi_samples, minute_closed_until); `minutes_of(symbol)` returns the FINAL 1m futures candles,
-`m15_of(symbol)` the closed 15m candles [ts, o, h, l, c, quote_vol, taker_buy].
+"""Legacy loop-side detectors retained for forensic inspection only.
+
+The functions in this module contain named historical experiments and local
+event predicates. Their presence does not establish that they reproduce
+Crabel, Turtle, Connors, ICT or any other published method. The v2 scanner
+does not call them while the source-gated strategy registry is empty, and the
+archive replay is not a live-equivalent process.
 """
 from typing import Callable, Dict, List, Optional
 

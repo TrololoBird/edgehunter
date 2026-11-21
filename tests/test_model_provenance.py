@@ -65,3 +65,26 @@ def test_scenario_quarantine_is_rejected_before_pickle_load(tmp_path):
     scenarios._model_cache.clear()
     assert scenarios.load_model(str(path)) is None
     assert scenarios.SCENARIO_MODEL_STATUS['reason'] == 'legacy_quarantine'
+
+
+def test_scenario_model_cache_rechecks_manifest_without_artifact_change(tmp_path):
+    import hashlib
+    import json
+
+    path = tmp_path / 'scenario_prob.pkl'
+    payload = b'not-loaded'
+    path.write_bytes(payload)
+    sidecar = tmp_path / 'scenario_prob.pkl.manifest.json'
+    manifest = {'model_id': path.name, 'artifact_sha256': hashlib.sha256(payload).hexdigest(),
+                'quarantine': True}
+    sidecar.write_text(json.dumps(manifest), encoding='utf-8')
+    scenarios._model_cache.clear()
+    assert scenarios.load_model(str(path)) is None
+    assert scenarios.SCENARIO_MODEL_STATUS['reason'] == 'legacy_quarantine'
+
+    manifest['quarantine'] = False
+    sidecar.write_text(json.dumps(manifest), encoding='utf-8')
+    # The pickle is unchanged; a new manifest signature must still trigger a
+    # fresh validation attempt instead of retaining the cached quarantine.
+    assert scenarios.load_model(str(path)) is None
+    assert scenarios.SCENARIO_MODEL_STATUS['reason'] != 'legacy_quarantine'

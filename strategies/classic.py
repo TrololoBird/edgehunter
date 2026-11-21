@@ -1,25 +1,4 @@
-"""
-Classic published methods added as their authors define them (eng-29), on the session instruments only
-(CONFIG.strategies.orb_bases: the majors, gold, silver, oil):
-
-- value_area  Dalton's 80% rule by SESSION (eng-95; Dalton "Mind Over Markets"): the session (Asia / London / New York,
-              weekdays) opens outside the previous same session's TPO value area (70% of time at price, eng-58),
-              closes two consecutive 30-minute periods back inside it -> entry at the second period's close, target
-              the far edge, out at the session's close (session_va_event, VA80). Beside it the failed auction
-              (eng-127, failed_auction_event, AUCTION LONG / SHORT). Both run in the maps worker at 15m closes.
-- orb         Toby Crabel's opening range breakout ("Playing the Opening Range Breakout", Stocks & Commodities): the
-              range of a session's first 5 minutes, stop orders the Stretch (10-day SMA of min(High - Open,
-              Open - Low)) beyond its high / low; the first level traded through is the entry (ON THE TOUCH, a stop
-              order), the other level the stop; out at the session's close (eng-146; eng-145's 15m
-              Parabolic SAR exit reverted). Checked
-              loop-side on every final minute (session_orb via strategies.loopside.LoopDetectors).
-- connors     Larry Connors' RSI(2) on DAILY candles, with the trend (close above / below the 200-day SMA): RSI2X = his
-              original rule (a close with RSI(2) < 5, buy on the close; the mirrored short is shadow), RSI2 = the
-              cross-back (eng-84: RSI(2) comes back out of the extreme, the close still beyond the SMA5). Out on the
-              first daily close beyond the current SMA5. He uses no stop: the R unit is 1 daily ATR, position at 1x,
-              and the executor keeps a catastrophe stop 3 R units away (eng-144, our deviation). Checked loop-side
-              after each daily close (strategies.loopside.LoopDetectors._connors_daily).
-"""
+'Session-based strategy components represented in this module: profile re-entry, opening-range\nconditions and daily RSI(2) conditions. Thresholds, timeframes, exits and fills are configured\nrules. This text makes no claim to reproduce a published strategy or to have validated performance.'
 import math
 from typing import Dict, List, Optional, Sequence, Union
 from zoneinfo import ZoneInfo
@@ -35,10 +14,7 @@ NY = ZoneInfo('America/New_York')
 # ------------------------------------------------------------------------------------------------ value area
 
 def value_area(candles: Sequence[Sequence[float]], share: float = 0.70, buckets: int = 60, tpo: bool = False):
-    """(VAL, POC, VAH) of the candles' volume spread evenly over each candle's range, else None. tpo: Market Profile's
-    TPO value area (Dalton - eng-58): the candles are merged into 30-minute brackets and every price row a bracket
-    visited gets ONE mark (audit C03: a wide candle's single unit was spread thinly over its rows, so a few narrow
-    bars at one price made a 70% 'profile' there)."""
+    'Computes VAL/POC/VAH from the selected candle-volume or time-bracket representation.\nThe profile is a project-defined calculation; no published Market Profile or 80% rule is claimed.'
     try:
         buckets = int(buckets)
         share = float(share)
@@ -113,21 +89,12 @@ def _day_candles(m15: Sequence[Sequence[float]], day_start: int) -> List[Sequenc
 
 
 def _complete_quarters(rows: Sequence[Sequence[float]], start: int, cut: int) -> bool:
-    """Exact session-relative 15m grid, including sessions opening off the UTC quarter.
-
-    The old ``start % 15m`` guard silently disabled the COMEX 08:20 ET XAU/XAG session.  Callers use
-    ``_session_quarters`` to align the available closed 15m bars to the session origin before this strict check.
-    """
+    'Checks that a session-relative 15-minute grid is complete, including sessions whose origin is not\non a UTC quarter.'
     return bool(cut > start and [int(c[0]) for c in rows] == list(range(start, cut, QUARTER_MS)))
 
 
 def _session_quarters(rows: Sequence[Sequence[float]], start: int, cut: int) -> List[List[float]]:
-    """Aggregate closed 15m rows into a session-relative grid.
-
-    Binance's standard 15m candles are UTC aligned, while COMEX opens at :20.  A bar's midpoint identifies the
-    session-relative bucket; every bucket must have a source bar, otherwise the result is rejected as incomplete.
-    This preserves a deterministic partial-edge convention without inventing candles across a data gap.
-    """
+    'Aggregates closed 15-minute rows into a session-relative grid and rejects incomplete buckets.'
     if cut <= start:
         return []
     n = (cut - start + QUARTER_MS - 1) // QUARTER_MS
@@ -152,7 +119,7 @@ def _session_quarters(rows: Sequence[Sequence[float]], start: int, cut: int) -> 
 
 
 def value_area_event(m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]:
-    """Dalton's 80% rule at the close of a 30-minute period (`cut` = close time of the last 15m candle)."""
+    'Evaluates the configured session value-area re-entry condition at a 30-minute cut.\nThis is a local condition; no external 80% rule is claimed.'
     if cut % (2 * QUARTER_MS) or len(m15) < 100:
         return None
     today = cut - cut % DAY_MS
@@ -193,14 +160,14 @@ def value_area_event(m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]
 # ------------------------------------------------------------------------------------------------ opening range
 
 def stretch(d1: Sequence[Sequence[float]], days: int = 10) -> Optional[float]:
-    """Crabel's Stretch: the SMA of the last `days` closed days' min(High - Open, Open - Low)."""
+    'Computes the configured stretch as the moving average of min(High−Open, Open−Low) over closed days.\nNo author attribution or performance claim is made.'
     if len(d1) < days:
         return None
     return sum(min(c[2] - c[1], c[1] - c[3]) for c in d1[-days:]) / days
 
 
 def narrow_range(d1: Sequence[Sequence[float]], days: int) -> Optional[bool]:
-    """Crabel's NR-n: the last closed day's range the smallest of the last n days (None without the history)."""
+    'Checks whether the last closed day has the smallest range in the configured lookback.\nThis is a local narrow-range condition.'
     if len(d1) < days:
         return None
     ranges = [c[2] - c[3] for c in d1[-days:]]
@@ -220,7 +187,7 @@ ORB_NY_BY_CLASS = {'XAU': ((8, 20), (13, 30)), 'XAG': ((8, 20), (13, 30)),
 
 
 def orb_sessions(base: str, now_ms: int) -> List[tuple]:
-    """(name, open_ms, close_ms) of the sessions running at now_ms for the coin (weekdays only)."""
+    'Returns the configured weekday sessions active at the supplied timestamp.'
     import datetime as dt
     from zoneinfo import ZoneInfo
     out = []
@@ -245,7 +212,7 @@ def _session_times(base: str, name: str, tz: str, start, end):
 
 
 def previous_session(base: str, name: str, open_ms: int) -> Optional[tuple]:
-    """(open_ms, close_ms) of the same session on the previous weekday (local calendar)."""
+    'Returns the previous weekday interval for the selected session under the configured local calendar.'
     import datetime as dt
     for nm, tz, start, end in ORB_SESSIONS:
         if nm != name:
@@ -263,11 +230,7 @@ def previous_session(base: str, name: str, open_ms: int) -> Optional[tuple]:
 
 
 def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]:
-    """
-    eng-95, Dalton's 80% rule by session (as on a stock exchange: yesterday's regular session's value area, today's
-    open of the same session): the session opened outside the previous same session's TPO value area and closed two
-    consecutive 30-minute periods (counted from the session's open) back inside it -> the far edge; out at the close.
-    """
+    "Evaluates whether a session re-enters the prior session's configured value area and returns the\nconfigured target/exit description. This is a local rule, not a published 80% rule."
     for name, open_ms, close_ms in orb_sessions(base, cut - 1):
         prev = previous_session(base, name, open_ms)
         if prev is None:
@@ -307,14 +270,7 @@ def session_va_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Opt
 
 
 def failed_auction_event(base: str, m15: Sequence[Sequence[float]], cut: int) -> Optional[Dict]:
-    """
-    eng-127, the failed auction (Steidlmayer / Dalton, auction market theory): the session OPENED INSIDE the previous
-    same session's TPO value area, probed beyond one edge and did not find acceptance there - acceptance = two
-    consecutive 30-minute periods closing beyond (the TPO convention of the 80% rule) - then a 30-minute period closed
-    back inside: "price re-enters a previously accepted value range ... the market will auction to the opposite end"
-    -> the far edge; the stop beyond the probe's extreme; out at the session's close. (The opening outside value is
-    the 80% rule, session_va_event.)
-    """
+    'Evaluates a configured failed-auction candidate: a probe outside the prior value area followed by\nthe configured re-entry condition. The former quotation and named external attribution are removed.'
     for name, open_ms, close_ms in orb_sessions(base, cut - 1):
         prev = previous_session(base, name, open_ms)
         if prev is None:
@@ -360,14 +316,7 @@ def failed_auction_event(base: str, m15: Sequence[Sequence[float]], cut: int) ->
 def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, price_hi: float, price_lo: float,
                 fired: set, symbol: str, d1: Sequence[Sequence[float]] = (),
                 sessions: Optional[List[tuple]] = None) -> Optional[Dict]:
-    """Crabel's ORB on a running session. audit: Crabel, "Playing the Opening Range Breakout" Part 8 (Stocks &
-    Commodities, p. 36) - the opening range of the first minutes (30 seconds to 5 minutes; 5 here), a buy stop the
-    Stretch (the 10-day SMA of min(High - Open, Open - Low)) above its high and a sell stop the Stretch below its low;
-    the first level TRADED through is the entry (a stop order fills on the touch, at the level or a gap's open), the
-    other one the stop. Was: the session's open +- Stretch and a 5m CLOSE beyond (eng-105), another reference and
-    moment. `minutes`: final 1m candles; the break is read on them (a minute late at most, the level is the price).
-    audit E08: the contract is the CLOSED minute - price_hi / price_lo (the live tick) are accepted for the caller's
-    signature and deliberately not read: a stop-entry detected on a candle that closed is a minute late, not instant."""
+    'Evaluates the configured session opening-range condition from final one-minute candles.\nThe entry, stop and exit are model conventions; this is not a verified reproduction of a published\nopening-range breakout strategy.'
     or_minutes = 5
     for name, open_ms, close_ms in (orb_sessions(base, now_ms) if sessions is None else sessions):
         if (symbol, open_ms) in fired:
@@ -404,7 +353,7 @@ def session_orb(base: str, minutes: Sequence[Sequence[float]], now_ms: int, pric
 # ------------------------------------------------------------------------------------------------ Connors RSI(2)
 
 def rsi(closes: Sequence[float], period: int) -> Optional[float]:
-    """Wilder's RSI of the last close."""
+    'Computes the configured RSI value from the latest close. No author attribution is asserted.'
     if len(closes) < period + 1:
         return None
     gains = losses = 0.0
@@ -421,11 +370,7 @@ def rsi(closes: Sequence[float], period: int) -> Optional[float]:
 
 
 def connors_event(d1: Sequence[Sequence[float]], first: Union[bool, str] = True) -> Optional[Dict]:
-    """
-    Connors on DAILY candles (his system; the 1h version of eng-29's first draft was another system): the day that
-    closed with RSI(2) in the extreme (`first=True`: not already there the day before; `first='orig'`: the original
-    close-in rule - he is in until the SMA5 exit, and a run of oversold days is one trade).
-    """
+    'Evaluates the configured daily RSI(2) extreme and moving-average exit conditions.\nThis is not described as an original published system.'
     cfg = CONFIG.strategies
     h1 = d1
     if len(h1) < 202:

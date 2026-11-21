@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
-"""
-Statistics over the signal journal (signals.db): what the price did after each kind of signal.
+"""Descriptive reports over the versioned v2 observation journal.
 
-    python stats.py                 # rows of the current signal logic (CONFIG.journal.logic_version)
-    python stats.py --all-versions  # every row, including older logic
-    python stats.py --days 7        # last 7 days
-    python stats.py --last 30       # also list the 30 most recent signals with their outcomes
-
-Returns are measured from the futures last price at the signal, in the signal's direction: for BEAR / IMPULSE
-DOWN a falling price counts as a gain. "Net" figures subtract the round-trip fee (CONFIG.journal.fee_round_trip).
-
-Market baseline: the MEAN return of the WHOLE universe over the same window (not the median: coins beat the median
-by ~0.11% per 4h on average - right-skewed returns - which made every long look good and every short bad), from the price snapshots the
-scanner stores every 15 minutes (older databases without snapshots fall back to the mean of the coins logged in
-the same hour). "Edge" is a setup's return in its direction minus that baseline, so a falling market doesn't make
-every short look good. [lo..hi] = 90% bootstrap interval of the mean: an interval that straddles 0 means the
-sample cannot tell the setup from noise yet.
+Returns and benchmarks are reference-price statistics unless a row explicitly
+contains an estimated or exchange-confirmed execution.  Past-only snapshots
+are a selected arithmetic mean or cross-sectional median, not a universal
+neutral benchmark.  This module makes no profitability claim and does not load
+quarantined legacy databases, models or strategy results.
 """
 import re
 import argparse
@@ -145,10 +135,16 @@ class UniverseBaseline:
         return len(self.times) >= 2
 
     def _at(self, ts: int) -> Optional[int]:
-        """The snapshot nearest to ts (either side), within MAX_GAP_MS."""
-        i = bisect.bisect_left(self.times, ts)
-        near = [t for t in self.times[max(0, i - 1):i + 1] if abs(t - ts) <= self.MAX_GAP_MS]
-        return min(near, key=lambda t: abs(t - ts)) if near else None
+        """The latest snapshot at or before ``ts``.
+
+        A future snapshot is not available to a signal and therefore must not
+        be selected merely because it is closer in wall-clock distance.
+        """
+        i = bisect.bisect_right(self.times, ts) - 1
+        if i < 0:
+            return None
+        value = self.times[i]
+        return value if ts - value <= self.MAX_GAP_MS else None
 
     def ret(self, ts: int, minutes: int) -> Optional[float]:
         t0, t1 = self._at(ts), self._at(ts + minutes * 60_000)
@@ -551,8 +547,8 @@ FEATURES: List[Tuple[str, Callable[[sqlite3.Row], Optional[str]]]] = [
         ('books with it' if _col(r, 'direction') * ((_col(r, 'okx_book_imb') or 0) + (_col(r, 'bybit_book_imb') or 0)) > 0.1
          else 'books against it' if _col(r, 'direction') * ((_col(r, 'okx_book_imb') or 0) + (_col(r, 'bybit_book_imb') or 0)) < -0.1
          else 'balanced')),
-    ('icebergs (hidden limit orders) vs the signal', lambda r: None if not _col(r, 'iceberg_n_5m') or _col(r, 'direction') is None else
-        ('iceberg on its side' if _col(r, 'direction') * (_col(r, 'iceberg_net_5m') or 0) > 0 else 'iceberg against it')),
+    ('replenishment-like L2 pattern vs the signal', lambda r: None if not _col(r, 'iceberg_n_5m') or _col(r, 'direction') is None else
+        ('same-side replenishment-like flow' if _col(r, 'direction') * (_col(r, 'iceberg_net_5m') or 0) > 0 else 'opposite-side replenishment-like flow')),
     ('confirmations positive', lambda r: None if _col(r, 'conf_n') is None else f"{_col(r, 'conf_n')} of 4"),
     ('market regime', lambda r: _col(r, 'regime')),
     ('P(edge) model', lambda r: None if _col(r, 'p_edge') is None else ('p >= 0.5' if _col(r, 'p_edge') >= 0.5 else 'p < 0.5')),

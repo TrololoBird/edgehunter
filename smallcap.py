@@ -1,22 +1,10 @@
-"""
-eng-158: live 1m watch of the small caps outside the universe for the start of pumps and dumps.
+"""Quarantined monitor for additional one-minute market observations.
 
-The universe holds ~70 data-complete coins; the biggest pumps / dumps happen in the coins outside it (no spot pair,
-fresh listings, < 2 other venues). Until now those were read once an hour on 1h candles and journaled only
-(Scanner.wide_watch_loop), so a -45% dump (KAT, WET 24.10) was seen an hour late and never traded.
-
-Here every such perpetual (wide_min_volume, the wide watch's list) gets its Binance futures 1m kline stream on ONE
-dynamic connection (no restart of the universe's streams when the list changes - eng-102). Per coin only a ring of
-the last `smallcap_minutes` final minutes is kept (tuples, ~7 MB for 150 coins). On each final minute a cheap gate
-(|15m move| >= pump_start_min_pct) runs first; only then the coin's 15m volatility and its OI change are fetched by
-REST and PUMP START / DUMP START (strategies.pump) decide. A hit becomes an ordinary setup signal for the SignalBook:
-the card, the journal and the demo trade follow the same rules as in the universe. The coin's minutes / price feed
-the card through Scanner._minute_candles / _price_of while it is not in the universe.
-
-Inputs that differ from the universe (no spot pair, no order books here):
-- spot taker flow -> the FUTURES taker flow of the last 5 minutes (sig 'flow_src' = 'futures': journaled);
-- rvol_1m -> the last minute's quote volume / (24h quote volume / 1440), the universe's own definition;
-- the plan's ATR -> the 1h ATR(14) of the wide watch's 1h candles / 2 (a 15m ATR by the square-root rule).
+The old pump/dump detector is not a verified manipulation classifier or
+strategy. This module remains importable for provenance investigation, but
+the v2 scanner does not construct it while the source-gated registry is empty.
+Its candle and volume calculations must not be described as proof of a pump,
+dump, intent, or executable trade.
 """
 import asyncio
 import logging

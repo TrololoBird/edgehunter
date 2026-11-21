@@ -20,17 +20,25 @@ fi
   --exclude .claude,research,'research_*.py',docs/evidence,docs/audit_2026_10_16_followup/checks,tests -q .
 $PY -c "import scanner, executor, webui, briefing, strategies.detect" >/dev/null
 $PY -m pip check
-# mode tables naming a strategy nobody registers (a deleted strategy left behind) stop the start
-$PY -c "import strategies, sys; u = strategies.unknown_names(); u and sys.exit(f'unknown strategy names: {u}')"
+# The v2 registry intentionally excludes quarantined legacy strategies. Their
+# names remain in historical mode tables, so only enabled names are validated
+# by the contract check below; an empty v2 registry is a valid data-only mode.
 # Lettered releases are valid feature-gate versions, but live evidence must
 # remain on one exact release (eng-169l and eng-169m are never interchangeable).
 $PY - <<'PY'
 from config import CONFIG
 from core.versioning import version_key
+def valid_version(value):
+    if not isinstance(value, str) or not value:
+        return False
+    if value.startswith('v2-'):
+        return len(value) > 3 and all(c.isalnum() or c in '._-' for c in value[3:])
+    return version_key(value) != (0, '')
+
 v = CONFIG.journal.logic_version
-if version_key(v) == (0, ''):
+if not valid_version(v):
     raise SystemExit(f'invalid logic version: {v!r}')
-if CONFIG.journal.verdict_since and version_key(CONFIG.journal.verdict_since) == (0, ''):
+if CONFIG.journal.verdict_since and not valid_version(CONFIG.journal.verdict_since):
     raise SystemExit(f'invalid verdict_since version: {CONFIG.journal.verdict_since!r}')
 PY
 # Every enabled mode must be represented consistently in the registry, pool rules,

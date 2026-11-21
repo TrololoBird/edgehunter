@@ -1,16 +1,4 @@
-"""
-Cup with handle (William O'Neil, "How to Make Money in Stocks"; statistics: Thomas Bulkowski, "Encyclopedia of Chart
-Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
-
-- a prior advance of >= 30% into the left rim (the lowest low of the 2x cup-length before it to the rim);
-- the cup: 12-33% deep (O'Neil; eng-58, was up to 50%), 49..420 daily candles (7 .. 60 calendar weeks in the retained 898-bar window);
-- the handle after the right rim: 7 .. 56 calendar days, drifting in the cup's UPPER half and no deeper than 12% of the
-  rim, on lower volume than the cup's;
-- the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
-- stop below the handle's low; TP1 the pivot + 61% of the depth, TP2 + the full depth (Bulkowski's measure rule); O'Neil's own rule
-  (cut losses at 7-8%, take 20-25%) is an exit rule, not an entry filter: the stop is the nearer of the handle's low
-  and 8% below the entry, the minimum R:R to the measured target is 1.
-"""
+'Daily cup-and-handle candidate detector with configured depth, duration, volume, breakout, stop\nand target conditions. The numerical thresholds are project parameters; no published-pattern fidelity, scientific basis or performance is claimed.'
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
@@ -29,7 +17,7 @@ def _pivots_high(h: List[float], k: int = 3) -> List[int]:
 
 
 def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skips: Optional[List] = None) -> Optional[Dict]:
-    """The breakout of a cup with handle on the candle that just closed ([ts, o, h, l, c, quote_vol]), else None."""
+    'Returns a cup-and-handle breakout candidate on the just-closed candle when the configured\nconditions are met.'
     n = len(candles)
     if n < 60:
         return None
@@ -105,7 +93,7 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
 
 
 class CupHandleStrategy(_System):
-    """O'Neil's cup with handle: entry at the breakout close, stop below the handle, target the measured move."""
+    'Represents the configured cup-and-handle candidate contract: breakout reference, stop and\nmeasured target. It is not described as an original published strategy.'
     name = 'cup_handle'
     setups = {'CUP HANDLE': 1}
     ttl_key = 'cup_ttl'
@@ -113,7 +101,7 @@ class CupHandleStrategy(_System):
     min_rr = 1.0                                     # the measured target must pay more than the risk (O'Neil's 3:1 is an exit rule)
 
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
-        """O'Neil/Bulkowski contract: 8%/handle stop and measured cup targets."""
+        'Returns the configured cup/handle entry, stop and target levels.\nNo external contract or parameter provenance is claimed.'
         ex, targets = plan.get('exit') or {}, list(plan.get('targets') or ())[:3]
         stop = ex.get('stop') or []
         if direction != 1 or len(stop) < 2 or not targets or not entry:

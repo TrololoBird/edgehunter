@@ -34,6 +34,13 @@ logger = logging.getLogger(__name__)
 
 N_BANDS = 50            # 0.1% bands out to 5% on each side of the mid
 BAND = 0.001
+RECORDER_STATUS = {
+    'enabled': True, 'minutes_attempted': 0, 'minutes_written': 0,
+    'rows_written': 0, 'write_failures': 0, 'skipped_busy': 0,
+    'disk_pauses': 0, 'missed_minutes': 0, 'compact_failures': 0,
+    'last_attempt_ms': None, 'last_write_ms': None,
+    'last_minute_start_sec': None, 'last_error': None,
+}
 
 
 # ------------------------------------------------------------------------------------------------ loop side
@@ -240,9 +247,26 @@ def prune(root: str, keep_days: int) -> None:
         if day.toordinal() < cutoff:
             shutil.rmtree(folder, ignore_errors=True)
 
-def _log_failure(future) -> None:
-    if not future.cancelled() and future.exception() is not None:
-        logger.warning(f"Recorder write failed: {future.exception()!r}")
+def _log_failure(future, kind: str = 'write') -> None:
+    if future.cancelled():
+        return
+    exc = future.exception()
+    if exc is not None:
+        key = 'compact_failures' if kind == 'compact' else 'write_failures'
+        RECORDER_STATUS[key] += 1
+        RECORDER_STATUS['last_error'] = type(exc).__name__
+        logger.warning(f"Recorder {kind} failed: {exc!r}")
+        return
+    if kind == 'write':
+        try:
+            RECORDER_STATUS['rows_written'] += int(future.result() or 0)
+        except (TypeError, ValueError, OverflowError):
+            RECORDER_STATUS['write_failures'] += 1
+            RECORDER_STATUS['last_error'] = 'invalid_write_result'
+            return
+        RECORDER_STATUS['minutes_written'] += 1
+        RECORDER_STATUS['last_write_ms'] = int(time.time() * 1000)
+        RECORDER_STATUS['last_error'] = None
 
 
 async def record_loop(fetcher, executor_fn, root: str, running) -> None:
@@ -262,11 +286,13 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
         if minute <= last_minute:
             continue
         if pending is not None and not pending.done():
+            RECORDER_STATUS['skipped_busy'] += 1
             logger.warning("Recorder: the previous write is still running, skipping a minute")
             continue
         try:
             import shutil
             if shutil.disk_usage(root if os.path.exists(root) else '.').free < cfg_rec().min_free_gb * 1e9:
+                RECORDER_STATUS['disk_pauses'] += 1
                 logger.warning(f"Recorder paused: less than {cfg_rec().min_free_gb:g} GB free on the disk")
                 last_minute = minute
                 continue
@@ -277,7 +303,11 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
             walls = wall_rows(fetcher.depth, last_depth)
             last_depth = now
             deriv = deriv_rows(fetcher.venue_derivs, now * 1000)
+            RECORDER_STATUS['missed_minutes'] += max(0, minute - last_minute - len(flows))
             last_minute = minute
+            RECORDER_STATUS['minutes_attempted'] += len(flows)
+            RECORDER_STATUS['last_attempt_ms'] = int(time.time() * 1000)
+            RECORDER_STATUS['last_minute_start_sec'] = minute * 60
             pool = executor_fn()
             for i, (m, flow) in enumerate(flows):
                 last = i == len(flows) - 1
@@ -288,8 +318,11 @@ async def record_loop(fetcher, executor_fn, root: str, running) -> None:
             if now - last_compact > 600:
                 last_compact = now
                 prune(root, cfg_rec().keep_days)
-                loop.run_in_executor(pool, compact, root, now).add_done_callback(_log_failure)
+                loop.run_in_executor(pool, compact, root, now).add_done_callback(
+                    lambda future: _log_failure(future, 'compact'))
         except Exception as e:
+            RECORDER_STATUS['write_failures'] += 1
+            RECORDER_STATUS['last_error'] = type(e).__name__
             logger.warning(f"Recorder: {e!r}")
 
 

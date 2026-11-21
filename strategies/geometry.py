@@ -1,16 +1,4 @@
-"""
-Geometry shared by every strategy: the stop floor, the stop pushed beyond a stop pool, targets picked from the coin's
-level map by the strategy's INTENT, the entry levels and R:R, and the R:R cap of a waiting zone.
-
-Target intents (the strategy says what it trades toward; Fibonacci only where a real leg exists):
-- 'extension'          continuation: strong zones beyond the leg's end, the leg's extensions fill empty slots;
-- 'opposite_liquidity' a sweep: the nearest resting-stop pools on the other side first;
-- 'mean'               absorption / exhaustion / climaxes: VWAP, POC, value area, volume nodes first;
-- 'range'              a trading range's far side first;
-- 'measured'           a breakout: strong zones beyond the edge, measured moves of the range fill empty slots.
-A target is always >= zones.min_target_atr beyond its reference (and beyond the previous target); slots still empty are
-1-ATR steps ('ATR step'), never copies of one level.
-"""
+'Shared entry/stop/target geometry for strategy plans. Intent labels and fallback ATR steps are\nconfigured calculations, not published trading methodologies or evidence of edge.'
 from strategies.base import CardLevels  # noqa: F401  (the return type of entry_levels)
 from typing import Dict, List, Optional, Sequence, Tuple
 import math
@@ -22,13 +10,7 @@ MEAN_KINDS = ('vwap', 'poc', 'va', 'hvn')
 
 
 def cost_of(price: float, volume_24h: Optional[float] = None, symbol: Optional[str] = None) -> float:
-    """
-    (volume_24h: the coin's; the slippage then grows as liquidity falls, levels.slippage_bps - the same model the
-    journal's replay fills with, so an entry that passes R:R here is not a loser there by construction)
-    Execution cost of a round trip in price units: the taker fees (0.05% a side at Binance VIP0) plus the slippage of
-    a market entry and of a stop exit (levels.slippage_bps each). Fees alone made a 1-ATR stop on a quiet coin look
-    ~0.3R cheaper than it trades.
-    """
+    'Computes configured round-trip execution cost from fees and slippage inputs. The value is a model\nassumption, not a guarantee of realized venue cost.'
     from levels import slippage_bps
     return (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h, symbol) / 1e4) * price
 
@@ -37,11 +19,7 @@ from pierce import measured_kind, overshoot  # noqa: E402  (measured level pierc
 
 
 def stop_pierce(plan: Dict, stop: float) -> Optional[str]:
-    """
-    eng-124: no source names the pierce quantile of a stop's buffer (p50 / p80 / p90) - the stop's level kind and its
-    three measured quantiles (% of price) are journaled with each entry; with the row's sl / mae_4h / mfe_4h they show
-    which buffer the stopped trades would have survived, to choose the quantile on live trades.
-    """
+    'Records configured or observed stop-buffer measurements when available. No source-defined pierce\nquantile or optimal live quantile is claimed.'
     zones = plan.get('zones') or []
     try:
         kind = kind_at(htf_zones(zones, plan.get('target_tf') or plan.get('tf')), stop) if zones else None
@@ -55,7 +33,7 @@ def stop_pierce(plan: Dict, stop: float) -> Optional[str]:
 
 
 def kind_at(zones: List[Zone], price: float) -> Optional[str]:
-    """The measured kind of the map zone a stop base sits on (the zone's own kinds, not its text label)."""
+    'Returns the level kinds associated with a zone used as a stop base.'
     for z in zones:
         if z.lo - 1e-12 <= price <= z.hi + 1e-12:
             kind = measured_kind(z.kinds)
@@ -65,7 +43,7 @@ def kind_at(zones: List[Zone], price: float) -> Optional[str]:
 
 
 def kind_of_label(label: str, tf: str) -> str:
-    """The level kind behind a stop's source label (for its measured buffer)."""
+    'Maps a stop-source label to its configured level kind.'
     s = label or ''
     if 'EQ' in s:
         return 'equal'
@@ -77,9 +55,7 @@ def kind_of_label(label: str, tf: str) -> str:
 
 
 def stop_too_far(plan: Dict, entry: float, stop: float) -> Optional[str]:
-    """eng-91: a stop farther than levels.max_stop_pct from the entry is no trade (the 1.5 ATR(4h) pad of a coin whose 4h
-    ATR a pump inflated put W's stop 48% away, PONS' 18% - live). Systems whose wide stop IS the method (the Turtles' 2N,
-    Connors) are exempt."""
+    'Tests whether a stop exceeds the configured maximum distance. Exemptions are local configuration;\nno named-system fidelity is claimed.'
     cap = CONFIG.levels.max_stop_pct
     if not cap or not entry or plan.get('strategy') in ('breakout', 'connors'):
         return None
@@ -88,7 +64,7 @@ def stop_too_far(plan: Dict, entry: float, stop: float) -> Optional[str]:
 
 
 def stop_floor(atr: float, recent_atr: Optional[float]) -> float:
-    """Minimum stop distance: min_stop_atr x the larger of ATR14 and the last hour's ATR (ATR14 lags a waking market)."""
+    'Returns the configured minimum stop distance from the relevant ATR values.'
     return CONFIG.levels.min_stop_atr * max(atr, recent_atr or 0.0)
 
 
@@ -97,7 +73,7 @@ def _near(zone: Zone, direction: int) -> float:
 
 
 def _target_in_zones(price: float, zones: Sequence[Zone]) -> bool:
-    """Whether a persisted target is actually represented by an allowed timeframe zone."""
+    'Checks whether a persisted target is represented by an allowed timeframe zone.'
     tol = 1e-9 * max(abs(float(price)), 1.0)
     for zone in zones:
         if zone.lo - tol <= price <= zone.hi + tol:
@@ -117,7 +93,7 @@ LTF_UNTIMED = ('vwap', 'round', 'book', 'liq_est', 'liq_hit', 'liq_hl', 'equal',
 
 
 def _kind_rank(k: str) -> Optional[int]:
-    """One level kind's timeframe rank (see _zone_rank); None = valid on every timeframe."""
+    'Returns the configured timeframe rank for a level kind.'
     tf = k.rsplit('_', 1)[-1] if '_' in k else None
     if tf in TF_RANK:
         return TF_RANK[tf]
@@ -127,10 +103,7 @@ def _kind_rank(k: str) -> Optional[int]:
 
 
 def _zone_rank(zone: Zone) -> Optional[int]:
-    """The highest timeframe rank among the zone's kinds (swing_15m, fvg_1h, ob_4h ...); None = valid on every
-    timeframe (it holds a daily-or-longer untimed reference: previous day / week / month, the year, an open, a completed
-    day's profile, a range); intraday untimed kinds (VWAP, round, book, liquidations, equal highs / lows, profile nodes)
-    rank as 15m. A plan may target the zone when this rank >= its own timeframe's."""
+    "Returns the highest configured timeframe rank among a zone's kinds."
     best = -1
     for k in zone.kinds:
         r = _kind_rank(k)
@@ -141,8 +114,7 @@ def _zone_rank(zone: Zone) -> Optional[int]:
 
 
 def _trim(zone: Zone, rank: int) -> Zone:
-    """audit D05: the zone as a plan of timeframe rank `rank` sees it - the edges of its own levels only. A lower
-    timeframe's level merged into a 1h swing's zone moved the 1h target (130.1 -> 129.9, R:R 3.01 -> 2.99)."""
+    'Trims a merged zone to levels that qualify for the requested timeframe rank. No audit result or\nperformance effect is asserted.'
     if not zone.parts:
         return zone
     own = [p for p in zone.parts if (_kind_rank(p[0]) is None or _kind_rank(p[0]) >= rank)]
@@ -154,9 +126,7 @@ def _trim(zone: Zone, rank: int) -> Zone:
 
 
 def htf_zones(zones: List[Zone], tf: Optional[str]) -> List[Zone]:
-    """The zones a plan of timeframe `tf` may target: its own timeframe and higher (2026-10-05, the owner: a 1h / 4h
-    trade's TP1 was the nearest 15m swing / FVG, cutting the R:R of a stop now sized in the structure's ATR). A merged
-    zone is cut back to the edges of the levels that qualify."""
+    "Returns zones eligible for a plan's timeframe under the configured rank rule. No owner decision or\nsource methodology is asserted."
     rank = TF_RANK.get(tf or '15m', 1)
     if rank <= 1:
         return zones
@@ -172,11 +142,7 @@ def _ltf_prices(zones: List[Zone], tf: Optional[str], direction: int) -> List[fl
 
 def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: float, direction: int,
              gap: float) -> None:
-    """
-    Fill the empty target slots (up to 3) with the nearest map zones beyond the last target, ANY strength (a single
-    swing, a session high, an FVG, an order block): a level on the chart before an ATR step (the steps sat in empty
-    space while levels stood right there, 2026-10-01: TP2 / TP3 were ATR steps on 18 / 21 of 35 entries).
-    """
+    'Fills empty target slots, up to three, with the nearest map zones beyond the last target; any\nqualifying zone may be used before the configured synthetic fallback.'
     last = prices[-1] if prices else ref
     for z in sorted((z for z in zones if direction * (_near(z, direction) - last) >= gap and not liq_only(z)),
                     key=lambda z: direction * (_near(z, direction) - last)):
@@ -190,7 +156,7 @@ def map_fill(zones: List[Zone], prices: List[float], labels: List[str], ref: flo
 
 
 def is_synthetic(label: Optional[str]) -> bool:
-    """A target that is no price level: an ATR step, an R multiple, a placeholder ('none: ...')."""
+    'Identifies a target represented by a synthetic step, R multiple or placeholder rather than a mapped\nprice level.'
     if not label:
         return True
     import re
@@ -204,29 +170,14 @@ HIT_RATE: Dict[str, Tuple[float, ...]] = {}
 
 
 def setup_key(name: Optional[str]) -> str:
-    """HIT_RATE's key: the setup without the journal's 'ENTRY ' prefix (audit C13)."""
+    'Builds the normalized setup key used to group journal statistics. No hit-rate validation is implied.'
     name = (name or '').strip()
     return name[6:] if name.upper().startswith('ENTRY ') else name
 
 
 def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], sources: List[str], direction: int,
                   sl_src: str, low: bool = False) -> Optional[Dict]:
-    """
-    Entry / stop / three targets and the R:R checks, the same for every path (eng-41):
-    - a LEVEL target sits in front of its level by the level kind's typical pierce (p50): price often turns before
-      the level, and the replay counts a target only once traded through it - the old target on the level overstated
-      R:R by about that pierce;
-    - R:R is measured on the level targets only (an ATR step / an R multiple / a placeholder passes any threshold by
-      construction - SMT's '2.5 R' targets: 2 of 44 reached); ATR steps count where the map holds nothing beyond the
-      entry at all (price discovery - the owner's rule);
-    - the R:R that decides is the BLENDED one of the actual exit (a third at each target; a missing level slot exits
-      at the last level);
-    - risk must be >= cost_guard x the round-trip execution cost (audit F09: the text said 3x / 'a third of the
-      risk'; the rule is CONFIG.levels.cost_guard, 1 since eng-108 - the risk at least pays one round trip)
-    - with a journal-measured p(TP_k before the stop) for the setup the entry must have a positive expectancy of its
-      three thirds, sum_k (p_k x R:R_k - (1 - p_k)) / 3 at the upper ends of the shrinkage intervals; the method's
-      minimum R:R (Strategy.min_rr, else the global one) holds as well.
-    """
+    'Builds entry, stop, target and configured risk/reward/cost checks. Calculated expectancy is a model\noutput; no measured edge, owner rule or audit result is asserted.'
     if direction not in (-1, 1) or not targets or len(targets) != len(sources):
         return None
     try:
@@ -427,9 +378,7 @@ def finish_levels(plan: Dict, entry: float, stop: float, targets: List[float], s
 
 def obstacle_before(zones: List[Zone], entry: float, tp1: float, direction: int,
                     risk: float) -> Tuple[Optional[float], Optional[str]]:
-    """audit 2026-10-18 P2 #7, a diagnostic (journaled, never a filter): the nearest strong map zone the price meets
-    between the entry and TP1 - (its near edge in R from the entry, its label). A method's own objective (a range's far
-    side, an extension) skips the map on purpose; this shows what stands in the way, not that the target is wrong."""
+    'Reports the nearest intervening map zone between entry and the first target as a diagnostic. It is\nnot a filter and does not establish that the target is wrong.'
     if not risk or not zones:
         return None, None
     path = [z for z in zones if z.strength >= CONFIG.zones.min_strength
@@ -441,13 +390,13 @@ def obstacle_before(zones: List[Zone], entry: float, tp1: float, direction: int,
 
 
 def _cost_reason() -> str:
-    """The cost guard's veto as the rule actually stands (CONFIG.levels.cost_guard x the round-trip cost)."""
+    'Returns the reason for a cost-guard decision under the configured rule.'
     g = CONFIG.levels.cost_guard
     return f"risk < {g:g}x the round-trip costs" if g != 1 else "costs exceed the risk"
 
 
 def _min_rr(plan: Dict) -> float:
-    """The plan's minimum R:R to TP1: its method's own (Strategy.min_rr, from the source) else the global rule."""
+    'Returns the configured minimum risk/reward ratio to TP1.'
     v = plan.get('min_rr')
     return CONFIG.levels.min_rr_tp1 if v is None else v
 
@@ -456,8 +405,7 @@ LIQUIDITY_KINDS = ('pdhl', 'equal', 'swing_1h', 'swing_1d', 'swing_1w', 'pmhl', 
 
 
 def _liq_price(zone: Zone, direction: int) -> float:
-    """The nearest untaken liquidity extreme of the zone in the trade's direction (its levels' own prices: a swing's
-    wick, not the body edge the S/R zone starts from); the zone's near edge when it carries no liquidity part."""
+    'Returns the nearest untaken liquidity extreme of the zone in the trade direction.'
     prices = [p[1] for p in zone.parts if p[0] in LIQUIDITY_KINDS and not p[4]]
     if not prices:
         return _near(zone, direction)
@@ -467,10 +415,7 @@ def _liq_price(zone: Zone, direction: int) -> float:
 def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, intent: str,
                    fillers: Sequence[float] = (), fill_label: str = 'fib',
                    first: Optional[Tuple[float, str]] = None) -> Tuple[List[float], List[str]]:
-    """
-    Up to three targets beyond `ref` in the trade's direction by the strategy's intent; `first` forces a primary
-    objective (a range's far side) into the candidates. Returns (prices, labels).
-    """
+    "Selects up to three target candidates beyond a reference in the strategy's configured direction;\nthe configured primary objective may be forced into the candidate set."
     cfg = CONFIG.zones
     gap = cfg.min_target_atr * atr
     liquidity = intent in ('draw_liquidity', 'opposite_liquidity')
@@ -568,9 +513,7 @@ def select_targets(zones: List[Zone], ref: float, direction: int, atr: float, in
 
 
 def zone_pad(plan: Dict, measured: Optional[float], moved: bool = False) -> Tuple[Optional[float], str]:
-    """The buffer beyond the stop's structure: the larger of the measured pierce of the level and
-    zone_buffer_atr x the ATR of the structure's own timeframe (Seiden-style: 1-2 ATR of the zone's timeframe beyond
-    its distal line; the owner: beyond the zone with a 3-5% margin - on alts' 4h that is ~1.5 ATR). eng-69."""
+    'Computes a stop buffer from configured measured penetration and ATR inputs. No named-source rule,\nowner margin or source-based optimality is claimed.'
     work = plan.get('tf_atr') or plan.get('leg_atr') or plan.get('atr')
     if moved:
         return capped_pad(None, work, True)
@@ -584,9 +527,7 @@ def zone_pad(plan: Dict, measured: Optional[float], moved: bool = False) -> Tupl
 
 
 def capped_pad(measured: Optional[float], work_atr: Optional[float], moved: bool) -> Tuple[Optional[float], str]:
-    """eng-147: the buffer beyond a stop's structure. Moved past a pool / swing by stop_beyond: only moved_pad_atr x
-    the working ATR (the stop sits at the pool's far edge; a deep raid of the pool itself can still reach it). Else the measured pierce, capped at pierce_cap_atr x
-    the working ATR."""
+    'Computes the configured stop buffer after pool and penetration caps.'
     cfg = CONFIG.levels
     if moved and work_atr:
         return cfg.moved_pad_atr * work_atr, f"{cfg.moved_pad_atr:g} ATR past the pool"
@@ -598,10 +539,7 @@ def capped_pad(measured: Optional[float], work_atr: Optional[float], moved: bool
 
 
 def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Tuple[float, str]:
-    """
-    The stop: beyond the strategy's reference (the anchor's extreme / the range middle / the trigger's swing) and a
-    stop pool just behind it, then the ATR buffer, never closer than the stop floor.
-    """
+    'Builds a stop from configured structure, pool, ATR and floor rules.'
     cfg = CONFIG.levels
     atr = plan['atr']
     zones: List[Zone] = plan.get('zones') or []
@@ -643,7 +581,7 @@ def stop_levels(plan: Dict, entry: float, extreme: Optional[float], direction: i
 
 
 def exit_stop(exit: Dict, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Tuple[float, str]:
-    """A system's own stop rule (plan['exit']['stop']): ['pct', f] / ['atr', k] / ['ref', pad ATR] / ['price', p]."""
+    "Returns the plan's configured stop specification."
     kind, value = exit['stop'][0], exit['stop'][1]
     atr = exit.get('atr') or plan['atr']
     if kind == 'pct':
@@ -658,11 +596,7 @@ def exit_stop(exit: Dict, plan: Dict, entry: float, extreme: Optional[float], di
 
 
 def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: int) -> Tuple[Optional[float], str, bool]:
-    """
-    A system's own first target (plan['exit']['tp']): ['pct', f] / ['rr', r] / ['level', price, min R:R, fallback R]
-    (the level when it pays min R:R, else the system skips - `low` True; no level -> fallback R) / ['map', min R:R]
-    (the map's TP1). Returns (price, label, below the system's minimum R:R).
-    """
+    "Returns the plan's configured first-target specification and whether its risk/reward check fails."
     spec = exit['tp']
     kind = spec[0]
     if kind == 'pct':
@@ -701,12 +635,7 @@ def exit_target(exit: Dict, plan: Dict, entry: float, risk: float, direction: in
 def structure_stop(zones: List[Zone], entry: float, direction: int, atr: float, floor: float,
                    symbol: Optional[str] = None, tf: str = '15m',
                    tf_atr: Optional[float] = None) -> Optional[Tuple[float, str]]:
-    """
-    Stop beyond the nearest price-action structure on the stop side (swings, equal highs / lows, previous day / week /
-    sessions, range edges, round numbers, book bands) that leaves at least `floor` of risk, pushed beyond a stop pool
-    right behind it, plus the ATR buffer. None when no such structure lies within max_stop_atr ATR (price discovery:
-    then the fixed rule is all there is).
-    """
+    'Finds a qualifying configured price structure on the stop side and applies the configured pool,\nATR and maximum-distance rules.'
     cfg = CONFIG.levels
     cands = []
     for z in zones:
@@ -741,10 +670,7 @@ HTF_SWINGS = ('swing_1h', 'swing_1d', 'swing_1w')
 
 def clear_pool(zones: List[Zone], stop: float, entry: float, direction: int, symbol: Optional[str],
                label: str) -> Tuple[float, str]:
-    """eng-84: a system's fixed-price stop (AUCTION's test, a trendline pivot, Connors' 3 ATR) went straight to the
-    exchange, never checked against the map: SKY's sat 0.24% beyond the 1h low - inside that pool's usual pierce, and
-    the raid of the low took it (liquidated longs printed below). A resting-stop pool between the stop and the entry
-    whose usual pierce (p90) reaches the stop moves the stop beyond the pool's pierce."""
+    'Moves a fixed-price stop beyond an intervening configured stop pool when the configured penetration\ntest requires it. No live example, liquidation inference or named-strategy rule is asserted.'
     from pierce import measured_kind, overshoot
     best = None
     for z in zones:
@@ -765,13 +691,7 @@ def clear_pool(zones: List[Zone], stop: float, entry: float, direction: int, sym
 
 
 def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[Dict]:
-    """
-    Entry / stop / targets of the ported systems (strategies/maniac.py). Their own structural exits (beyond the sweep,
-    the impulse's start, a level) are kept. Their FIXED exits (a % or ATR stop, a % or R target) ignore the map: a 1%
-    stop on SUI (15m ATR 1.35%) sat inside one candle's noise and was taken before the move (live, 2026-09-30). Those
-    are replaced by the map: the stop beyond the nearest structure, the targets at the next levels; the fixed rule is
-    only the fallback where the map has nothing (price discovery).
-    """
+    'Builds levels for configured system plans. Fixed exits are used as configured, with map-based levels\nonly where the documented fallback permits; no porting fidelity or live example is claimed.'
     exit = plan['exit']
     atr = exit.get('atr') or plan['atr']
     try:
@@ -929,7 +849,7 @@ def system_levels(plan: Dict, entry: float, extreme: Optional[float], direction:
 
 
 def _ext_label(target: float, label: str, ratios: Dict[float, float], plan: Dict, direction: int) -> str:
-    """'ext 1.272' for an extension target, '+ <zone>' when a 4h / daily / weekly zone sits within the pierce of it."""
+    'Formats an extension target label and an optional nearby higher-timeframe zone label.'
     import re
     if label != 'ext':
         return label
@@ -944,7 +864,7 @@ def _ext_label(target: float, label: str, ratios: Dict[float, float], plan: Dict
 
 
 def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional['CardLevels']:
-    """Entry / stop / targets for an entry at `entry` (targets behind the entry are dropped, refilled beyond it)."""
+    'Builds entry, stop and target levels for an entry at the supplied price, dropping targets behind\nthe entry and refilling beyond it as configured.'
     if plan.get('exit'):
         return system_levels(plan, entry, extreme, direction)
     stop, sl_src = stop_levels(plan, entry, extreme, direction)
@@ -1019,10 +939,7 @@ def entry_levels(plan: Dict, entry: float, extreme: Optional[float], direction: 
 def cap_for_rr(tp1: float, stop_est: float, direction: int, atr: float, recent_atr: Optional[float],
                min_rr: Optional[float] = None, volume_24h: Optional[float] = None,
                symbol: Optional[str] = None) -> float:
-    """
-    The furthest entry (from the extreme toward TP1) that still pays min_rr_tp1 (net of fees) to TP1 with the stop at `stop_est`
-    or the stop floor, whichever is wider: a waiting zone ends there.
-    """
+    'Returns the furthest entry from the extreme toward TP1 that still satisfies the configured minimum\nrisk/reward after modeled costs, using the wider of the estimated stop and stop floor.'
     rr = CONFIG.levels.min_rr_tp1 if min_rr is None else min_rr
     # R:R is net of the execution cost by the coin's liquidity, as finish_levels judges it (eng-58: was a flat 5 bps)
     fee = cost_of(tp1, volume_24h, symbol)

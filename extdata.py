@@ -1,23 +1,10 @@
-"""
-Public data beyond the streams (verified live 2026-09-30), all REST, light on bandwidth; context for the journal /
-stats / P(edge), never a trigger until the journal proves one:
+"""Optional external observations for the dashboard and journal.
 
-- Deribit (no other source has options): the DVOL implied-volatility index of BTC / ETH (hourly candles) and the
-  put / call open-interest ratio of each one's options (get_book_summary_by_currency) -> market_state
-  `dvol_btc`, `dvol_chg_1h`, `pc_oi_btc`; a DVOL jump is logged as a market anomaly.
-- Hyperliquid `predictedFundings`: the NEXT funding of Binance, Bybit and Hyperliquid for every coin in one call ->
-  per coin `funding_spread` (max - min of the venues' 8h-equivalent rates): crowding on one venue.
-- OKX `rubik/stat/taker-volume` (5m taker buy / sell of each coin's contracts): the OKX flow windows are seeded at
-  start-up for the minutes before the streams (Binance's are seeded from its 1m klines).
-- eng-133 (shadow features, journaled, never a filter): Binance TradFi perpetuals (gold, WTI oil, SPY, QQQ) 1h / 24h
-  changes, the US cash-session flag, the previous day's CBOE VIX close, the Fear & Greed index and the spot-ETF net
-  flow (tools/farside_flows.py writes etf_flows.json; a day D is visible from D+1 08:00 UTC: no look-ahead).
-- Order books of OKX (`market/books`, 50 levels) and Bybit (`market/orderbook`, 50) for the hot coins every 60s ->
-  per coin `okx_book_imb` / `bybit_book_imb`: (bid - ask) / (bid + ask) within 0.5% of the mid (Binance has its own).
-- eng-134 (shadow, journaled, never a filter): Upbit's KRW tickers (all markets in one keyless call, every 60s) ->
-  per coin `kimchi_prem` % = the KRW price / Upbit's own KRW-USDT / the Binance futures price - 1 (no FX source
-  needed), computed at the card; NULL when the snapshot or the coin's last Upbit trade is older than 3 min, the coin
-  is not on Upbit, or |premium| > 30% (a ticker shared by two different coins).
+These adapters query separate venues and providers. Each returned value must
+retain its source, timestamp, units and freshness; a value from one venue is
+not a market-wide measure and is not interchangeable with another venue's
+field. The v2 decision path does not infer intent, causality, complete market
+liquidations or a trading edge from these observations.
 """
 import asyncio
 import time
@@ -25,6 +12,7 @@ import csv
 import io
 import json
 import logging
+import math
 import errors
 import os
 from datetime import datetime, timezone
@@ -36,6 +24,14 @@ from config import CONFIG
 from data_quality import quality
 
 logger = logging.getLogger(__name__)
+
+# REST order books are polled serially on a 60-second loop. Allow a small
+# scheduling/request margin so a successfully refreshed snapshot is not stale
+# for most of its normal polling interval. A missed poll becomes stale after
+# this TTL and dead after two minutes.
+REST_BOOK_POLL_INTERVAL_SEC = 60.0
+REST_BOOK_FRESH_TTL_SEC = REST_BOOK_POLL_INTERVAL_SEC + 15.0
+REST_BOOK_MAX_AGE_SEC = 120.0
 
 DERIBIT = 'https://www.deribit.com/api/v2/public'
 HL = 'https://api.hyperliquid.xyz/info'
@@ -140,6 +136,8 @@ class ExternalData:
             self.market[f'{k}_chg_1h'] = self.market[f'{k}_chg_24h'] = None
         self.market.update({'us_session': None, 'vix_prev': None, 'fng': None, 'etf_flow_1d': None, 'etf_flow_3d': None})
         self.coin: Dict[str, Dict[str, float]] = {}
+        # (symbol, venue) -> transport/API/content/freshness outcomes of the last REST book attempt.
+        self.book_status: Dict[tuple, Dict[str, object]] = {}
         self._session: Optional[aiohttp.ClientSession] = None
         self._tradfi_ok: Dict[str, float] = {}
         self._slow_ok: Dict[str, float] = {}
@@ -161,8 +159,10 @@ class ExternalData:
             try:
                 if payload is None:
                     async with self._session.get(url) as r:
+                        r.raise_for_status()
                         return await r.json(content_type=None)
                 async with self._session.post(url, data=json.dumps(payload), headers={'Content-Type': 'application/json'}) as r:
+                    r.raise_for_status()
                     return await r.json(content_type=None)
             except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError):
                 if attempt == 2:
@@ -172,6 +172,19 @@ class ExternalData:
     async def close(self):
         if self._session is not None:
             await self._session.close()
+
+    def rest_book_status(self, now: Optional[float] = None) -> Dict[tuple, Dict[str, object]]:
+        """Expose the last REST-book stage results and derive freshness from receipt age."""
+        now = time.time() if now is None else now
+        out = {}
+        for key, state in self.book_status.items():
+            row = dict(state)
+            received_at = row.get('received_at')
+            row['age_sec'] = max(0.0, now - received_at) if isinstance(received_at, (int, float)) else None
+            row['fresh'] = bool(row.get('valid_market_data') and row['age_sec'] is not None
+                                and row['age_sec'] <= REST_BOOK_FRESH_TTL_SEC)
+            out[key] = row
+        return out
 
     # ------------------------------------------------------------------ eng-133: macro shadow features
     async def macro_loop(self, running):
@@ -387,7 +400,7 @@ class ExternalData:
 
     # ------------------------------------------------------------------ OKX flow seed
     async def seed_okx_flow(self):
-        """Once, after the streams started: 5m OKX taker volume of the 15 minutes before them into the flow windows."""
+        """Inspect completed REST taker-volume buckets for diagnostics; do not treat them as event-level prints."""
         started = self.fetcher.streams_started_ms
         if not started:
             return
@@ -416,18 +429,15 @@ class ExternalData:
                     # completed bucket before the stream start.
                     bucket = okx_completed_bucket(t, started)
                     if bucket is not None and started - 15 * 60_000 <= bucket and bucket + 300_000 <= started:
-                        for k in range(5):      # the 5m bucket spread over its minutes
-                            self.fetcher.flow.seed_minute('okx', key, bucket + k * 60_000,
-                                                          float(buy) / 5, float(sell) / 5, 0)
+                        # Coarse REST taker aggregates are observations, not trade prints.
                         seeded += 1
-                        self.okx_seed_stats['buckets_written'] += 1
                     else:
                         self.okx_seed_stats['window_misses'] += 1
             except Exception as e:
                 self.okx_seed_stats['errors'] += 1
                 errors.report('extdata.seed_okx_flow', e, f"OKX taker volume {coin}")
             await asyncio.sleep(0.45)           # rubik: 5 requests / 2s
-        logger.info(f"OKX flow seeded: {seeded} 5m buckets for {len(coins)} coins; "
+        logger.info(f"OKX REST taker-flow observations checked (not trade prints): {seeded} completed 5m buckets for {len(coins)} coins; "
                     f"requests={self.okx_seed_stats['requests']} rows={self.okx_seed_stats['rows']} "
                     f"buckets={self.okx_seed_stats['buckets_written']} misses={self.okx_seed_stats['window_misses']} "
                     f"empty={self.okx_seed_stats['empty']} malformed={self.okx_seed_stats['malformed']} "
@@ -436,38 +446,105 @@ class ExternalData:
     # ------------------------------------------------------------------ cross-venue books
     @staticmethod
     def _imbalance(bids, asks) -> Optional[float]:
-        if not bids or not asks:
+        if not ExternalData._valid_book_levels(bids) or not ExternalData._valid_book_levels(asks):
             return None
         mid = (float(bids[0][0]) + float(asks[0][0])) / 2
+        if not math.isfinite(mid) or mid <= 0 or float(bids[0][0]) >= float(asks[0][0]):
+            return None
         bid = sum(float(p) * float(q) for p, q, *_ in bids if float(p) >= mid * 0.995)
         ask = sum(float(p) * float(q) for p, q, *_ in asks if float(p) <= mid * 1.005)
         return (bid - ask) / (bid + ask) if bid + ask else None
+
+    @staticmethod
+    def _valid_book_levels(levels) -> bool:
+        if not isinstance(levels, list) or not levels:
+            return False
+        for row in levels:
+            if not isinstance(row, (list, tuple)) or len(row) < 2:
+                return False
+            try:
+                price, size = float(row[0]), float(row[1])
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if not math.isfinite(price) or not math.isfinite(size) or price <= 0 or size <= 0:
+                return False
+        return True
+
+    @staticmethod
+    def _valid_snapshot(bids, asks) -> bool:
+        if not ExternalData._valid_book_levels(bids) or not ExternalData._valid_book_levels(asks):
+            return False
+        return float(bids[0][0]) < float(asks[0][0]) \
+            and all(float(bids[i][0]) >= float(bids[i + 1][0]) for i in range(len(bids) - 1)) \
+            and all(float(asks[i][0]) <= float(asks[i + 1][0]) for i in range(len(asks) - 1))
+
+    @staticmethod
+    def _okx_book(payload):
+        if not isinstance(payload, dict) or payload.get('code') not in ('0', 0):
+            return None
+        rows = payload.get('data')
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            return None
+        book = rows[0]
+        return book if ExternalData._valid_snapshot(book.get('bids'), book.get('asks')) else None
+
+    @staticmethod
+    def _bybit_book(payload):
+        if not isinstance(payload, dict) or payload.get('retCode') not in (0, '0'):
+            return None
+        book = payload.get('result')
+        if not isinstance(book, dict) or not ExternalData._valid_snapshot(book.get('b'), book.get('a')):
+            return None
+        return book
 
     async def books_loop(self, running):
         while running():
             started = time.time()
             for key in self.fetcher.depth.active():
                 venues = self.fetcher.symbol_map.by_key.get(key, {})
-                try:
-                    okx = next((m for m in venues.values() if m.venue == 'okx'), None)
-                    if okx is not None:
-                        d = await self._json(f"{OKX}/market/books?instId={okx.native}&sz=50")
-                        book = (d.get('data') or [{}])[0]
-                        self.coin.setdefault(key, {})['okx_book_imb'] = self._imbalance(book.get('bids'), book.get('asks'))
-                    byb = next((m for m in venues.values() if m.venue == 'bybit'), None)
-                    if byb is not None:
-                        d = await self._json(f"{BYBIT}/market/orderbook?category=linear&symbol={byb.native}&limit=50")
-                        r = d.get('result') or {}
-                        self.coin.setdefault(key, {})['bybit_book_imb'] = self._imbalance(r.get('b'), r.get('a'))
-                except Exception as e:
-                    errors.report('extdata.books_loop', e, f"books {key}")
-                    self.quality_state = getattr(self, 'quality_state', {})
-                    previous = self.quality_state.get(('book', key))
-                    self.quality_state[('book', key)] = quality(time.time(), previous.fetched_at if previous else None,
-                                                               30, 120, 'cross_venue_books', type(e).__name__)
+                valid_any = False
+                sources = (
+                    ('okx', next((m for m in venues.values() if m.venue == 'okx'), None),
+                     lambda m: f"{OKX}/market/books?instId={m.native}&sz=50", 'code', self._okx_book,
+                     lambda b: self._imbalance(b['bids'], b['asks'])),
+                    ('bybit', next((m for m in venues.values() if m.venue == 'bybit'), None),
+                     lambda m: f"{BYBIT}/market/orderbook?category=linear&symbol={m.native}&limit=50", 'retCode',
+                     self._bybit_book, lambda b: self._imbalance(b['b'], b['a'])),
+                )
+                for venue, market, url, code_key, parser, imbalance in sources:
+                    if market is None:
+                        continue
+                    state = {'transport_success': False, 'api_success': False,
+                             'valid_market_data': False, 'fresh': False, 'error': None}
+                    self.book_status[(key, venue)] = state
+                    try:
+                        payload = await self._json(url(market))
+                        state['transport_success'] = True
+                        state['api_success'] = isinstance(payload, dict) and payload.get(code_key) in ('0', 0)
+                        book = parser(payload)
+                        if book is None:
+                            state['error'] = 'invalid API response or snapshot'
+                            raise ValueError(f'{venue} API response or book snapshot invalid')
+                        state['valid_market_data'] = True
+                        self.coin.setdefault(key, {})[f'{venue}_book_imb'] = imbalance(book)
+                        state.update(fresh=True, received_at=time.time())
+                        valid_any = True
+                    except Exception as e:
+                        # Record each source failure and continue to its peer;
+                        # a bad OKX response must not skip the Bybit request.
+                        if state.get('error') is None:
+                            state['error'] = type(e).__name__
+                        errors.report('extdata.books_loop', e, f"{venue} book {key}")
+                self.quality_state = getattr(self, 'quality_state', {})
+                now = time.time()
+                previous = self.quality_state.get(('book', key))
+                if valid_any:
+                    self.quality_state[('book', key)] = quality(
+                        now, now, REST_BOOK_FRESH_TTL_SEC, REST_BOOK_MAX_AGE_SEC, 'cross_venue_books')
                 else:
-                    self.quality_state = getattr(self, 'quality_state', {})
-                    now = time.time()
-                    self.quality_state[('book', key)] = quality(now, now, 30, 120, 'cross_venue_books')
+                    self.quality_state[('book', key)] = quality(
+                        now, previous.fetched_at if previous else None, REST_BOOK_FRESH_TTL_SEC,
+                        REST_BOOK_MAX_AGE_SEC, 'cross_venue_books',
+                        'no configured venue returned a valid book snapshot')
                 await asyncio.sleep(0.3)
-            await asyncio.sleep(max(5.0, 60 - (time.time() - started)))
+            await asyncio.sleep(max(5.0, REST_BOOK_POLL_INTERVAL_SEC - (time.time() - started)))

@@ -1,33 +1,11 @@
-"""
-Order books of the hot symbols, built the way Binance documents a local book ("How to manage a local order book
-correctly"): the <sym>@depth@500ms diff stream, buffered until a 1000-level REST snapshot arrives, events with
-u < lastUpdateId dropped, the first applied one spanning lastUpdateId, then every event's `pu` must equal the
-previous `u` (else the book is re-synced from a new snapshot). Each event carries absolute quantities: 0 removes a
-level. Within a minute of streaming the book reaches far beyond the 1000 levels of the snapshot (any level that
-changes is sent): 2026-10-05 the 500-level snapshots of the old design covered BTC only +-0.07% (less than one 0.1%
-heat bucket) and ETH +-0.2%.
+"""Maintain a sequence-checked local order-book observation.
 
-COVERAGE (eng-80): the REST snapshot holds 1000 levels per side (BTC ~+-0.07%); beyond it the local book knows only
-the levels that CHANGED since the sync - a large order that just rests far from the price never appears, which is
-exactly what walls / bands look for. So heat snapshots, walls and bands use only the price range the last snapshot
-covered (`cov_lo` .. `cov_hi`), and a book whose mid left that range is re-synced (at most every 5 minutes)
-from a fresh snapshot (Binance's guidance: keep the book to the depth you actually hold).
-
-Every decrease of a level is split into FILLED (taker trades at that price on that side, from the aggTrade stream,
-within ATTRIBUTION_MS) and PULLED (cancelled): liquidity that disappears without trades is the spoofing signature
-(~31% of large crypto orders could spoof, arXiv 2504.15908); liquidity that is traded into and stays / refills is
-absorption. Additions are counted as ADDED. Per heat bucket and minute: [added, pulled, filled] of each side.
-
-Heatmap (as Bookmap draws it): a snapshot of the whole local book within +-heat_range_pct every heat_snapshot_sec,
-bucketed by heat_bucket_pct of price on a grid fixed per coin. Walls: single levels >= wall_multiple x the median
-level notional within +-wall_range_pct that stood wall_min_age_sec (book depth refills within 5-10s after a trade -
-arXiv 1602.00731 - so a 10s-old order said little). Liquidity bands: heat buckets that held heat_band_multiple x the
-snapshot's median bucket in >= heat_band_presence of the snapshots of heat_band_window_sec AND were not mostly
-pulled (pulled USD over the window < the band's average resting USD, or fills >= half of the pulls).
-
-What the book is used for is decided elsewhere and measured: depth is context, sweep sizing and the slippage of an
-entry; bands / walls are not support or resistance by themselves (no study shows resting depth holds price on an
-hours horizon; order-flow imbalance explains price over seconds - Cont, Kukanov & Stoikov 2014).
+The implementation applies exchange depth snapshots and incremental updates,
+tracks coverage and records additions, reductions and trades that can be
+temporally associated with a level. A reduction is not proof of cancellation,
+spoofing or absorption, and a local book does not provide order identity or
+complete market depth. Heat, wall and band outputs are diagnostics only; the
+v2 signal path does not treat them as support, resistance, intent or fills.
 """
 import heapq
 import statistics

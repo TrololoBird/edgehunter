@@ -34,11 +34,31 @@ logger = logging.getLogger(__name__)
 MARKETS = ('spot', 'futures')
 
 
+def normalize_binance_liquidation(order: dict) -> Optional[Tuple[int, float, float, int]]:
+    """Return (exchange_ms, avg_execution_price, executed_notional, side_liquidated) for filled force orders only."""
+    if not isinstance(order, dict) or order.get('X') != 'FILLED':
+        return None
+    try:
+        event_ms = int(order['T'])
+        price = float(order['ap'])
+        executed = float(order['z'])
+        side = 1 if order['S'] == 'SELL' else -1 if order['S'] == 'BUY' else 0
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if (event_ms <= 0 or side == 0 or not math.isfinite(price) or price <= 0
+            or not math.isfinite(executed) or executed <= 0):
+        return None
+    return event_ms, price, price * executed, side
+
+
 @dataclass
 class MarketData:
     symbol: str
     spot_df: "pl.DataFrame" = field(default=None)
     futures_df: "pl.DataFrame" = field(default=None)
+    # ``funding_rate`` is the last rate reported as settled/paid.  The mark
+    # stream's ``r`` is a separate estimate for the next settlement and is
+    # kept in ``predicted_funding``.  They must not be silently substituted.
     funding_rate: float = 0.0
     predicted_funding: float = 0.0
     open_interest: float = 0.0
@@ -76,6 +96,18 @@ class MarketData:
     # audit C03: (open time, event time ms) of the latest futures 1m kline update - its price is as fresh as the event,
     # not as the candle's schedule
     kline_event: tuple = (0, 0.0)
+    kline_buckets_published: int = 0
+    kline_buckets_incomplete: int = 0
+    kline_events_seen: int = 0
+    kline_events_valid: int = 0
+    kline_events_invalid: int = 0
+    # Binance kline clock domains are deliberately separate: E is event time,
+    # t/T describe the candle interval, and received_ms is our local clock.
+    kline_last_exchange_ms: int = 0
+    kline_last_candle_open_ms: int = 0
+    kline_last_candle_close_ms: int = 0
+    kline_last_receive_ms: float = 0.0
+    kline_last_latency_ms: Optional[float] = None
     spot_minute_klines: deque = field(default_factory=lambda: deque(maxlen=60))
     _alt_minute: Optional[list] = None          # the Bybit spot minute being built [ts, o, h, l, c, q, Q]
     avg_minute_usd: float = 0.0
@@ -100,6 +132,12 @@ class MarketData:
     recent_closed: dict = field(default_factory=lambda: {m: deque(maxlen=8) for m in MARKETS})
     # Set once the REST candle history is loaded; until then only Tier-0 runs for the symbol
     baseline_ready: bool = False
+    baseline_attempted: bool = False
+    baseline_loading: bool = False
+    baseline_loaded: bool = False
+    baseline_error: Optional[str] = None
+    baseline_validated: bool = False
+    history_validated: bool = False
     # Bumped whenever the REST history of a frame is (re)loaded: the scanner's heavy pass must rerun
     history_version: int = 0
     # Typical 15m move of price / OI (std of 15m changes, from the last heavy scan): Tier-0 z-scores
@@ -208,7 +246,7 @@ class MarketData:
         self.ticker_samples.append((now_ms, price, self.quote_volume_24h))
 
     def record_oi(self, ts_ms: float, open_interest: float):
-        if not open_interest or open_interest <= 0:
+        if not math.isfinite(float(ts_ms)) or not math.isfinite(float(open_interest)) or open_interest <= 0:
             return
         if self.oi_samples and self.oi_samples[-1][0] >= ts_ms:
             return
@@ -242,12 +280,14 @@ class MarketData:
 
     def seed_oi(self, samples: List[Tuple[float, float]]):
         """Older OI samples (REST history) merged under the live ones: the 5m OI change is known right after start."""
-        merged = {ts: oi for ts, oi in list(self.oi_samples) + [(float(t), float(v)) for t, v in samples if v]}
+        valid = [(float(t), float(v)) for t, v in samples
+                 if math.isfinite(float(t)) and math.isfinite(float(v)) and float(t) > 0 and float(v) > 0]
+        merged = {ts: oi for ts, oi in list(self.oi_samples) + valid}
         self.oi_samples.clear()
         self.oi_samples.extend(sorted(merged.items()))
         # the day of 5m points under the live ones, one per 5-minute bucket
         buckets = {}
-        for ts, oi in sorted(list(self.oi_5m) + [(float(t), float(v)) for t, v in samples if v]):
+        for ts, oi in sorted(list(self.oi_5m) + valid):
             buckets.setdefault(int(ts) // 300_000, (ts, oi))
         self.oi_5m.clear()
         self.oi_5m.extend(buckets[k] for k in sorted(buckets))
@@ -256,11 +296,47 @@ class MarketData:
     def last_price(self) -> Optional[float]:
         return self.ticker_samples[-1][1] if self.ticker_samples else None
 
-    def apply_kline(self, market: str, k: dict, event_ms: Optional[float] = None):
+    def apply_kline(self, market: str, k: dict, event_ms: Optional[float] = None,
+                    received_ms: Optional[float] = None):
+        self.kline_events_seen += 1
+        local_receive_ms = float(received_ms if received_ms is not None else time.time() * 1000)
+        try:
+            if not isinstance(k, dict) or k.get('i') not in ('1m', CONFIG.timeframe.rest_timeframe):
+                raise ValueError('invalid Binance kline interval or payload')
+            step = 60_000 if k['i'] == '1m' else TIMEFRAME_MS
+            ts_raw, end_raw = float(k['t']), float(k['T'])
+            ts, end = int(ts_raw), int(end_raw)
+            event_raw = float(event_ms)
+            event_timestamp = int(event_raw)
+            o, h, low, c = (float(k[key]) for key in ('o', 'h', 'l', 'c'))
+            volume, quote = float(k['v']), float(k['q'])
+            taker_base, taker_quote = float(k['V']), float(k['Q'])
+            trade_count = float(k['n'])
+            if (not math.isfinite(ts_raw) or ts_raw != ts or not math.isfinite(end_raw) or end_raw != end
+                    or not math.isfinite(event_raw) or event_raw != event_timestamp or event_timestamp <= 0
+                    or not all(math.isfinite(v) for v in (o, h, low, c, volume, quote, taker_base, taker_quote, trade_count))
+                    or ts <= 0 or ts % step or end != ts + step - 1
+                    or min(o, h, low, c) <= 0 or low > min(o, c) or h < max(o, c) or low > h
+                    or volume < 0 or quote < 0 or taker_base < 0 or taker_quote < 0 or trade_count < 0
+                    or trade_count != int(trade_count)
+                    or taker_base > volume + max(1e-12, volume * 1e-9)
+                    or taker_quote > quote + max(1e-8, quote * 1e-9)):
+                raise ValueError('invalid Binance websocket kline values or timestamps')
+        except (KeyError, TypeError, ValueError, OverflowError):
+            self.kline_events_invalid += 1
+            return
+        self.kline_events_valid += 1
+        self.kline_last_exchange_ms = event_timestamp
+        self.kline_last_candle_open_ms = ts
+        self.kline_last_candle_close_ms = end
+        self.kline_last_receive_ms = local_receive_ms
+        self.kline_last_latency_ms = local_receive_ms - event_timestamp
         if k.get('i') == '1m':
             candle = [int(k['t']), float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['q']), float(k['Q']),
                       float(k.get('v', 'nan'))]                   # base volume (coins), NaN if absent
             target = self.minute_klines if market == 'futures' else self.spot_minute_klines
+            if not k.get('x') and candle[0] in self._closed_seen[market]:
+                return  # A delayed forming update must not replace a closed minute.
             previous = next((c for c in target if c[0] == candle[0]), None)
             keyed = {int(c[0]): c for c in target}
             keyed[candle[0]] = candle
@@ -268,7 +344,7 @@ class MarketData:
             target.clear()
             target.extend(ordered)
             if market == 'futures' and target and target[-1][0] == candle[0]:
-                self.kline_event = (candle[0], float(event_ms or time.time() * 1000))
+                self.kline_event = (candle[0], local_receive_ms)
             if k.get('x'):
                 if market == 'futures':
                     self.minute_closed_until = max(self.minute_closed_until, candle[0])
@@ -303,17 +379,23 @@ class MarketData:
             'open_interest': None,
         }
         if k.get('x'):
-            self.closed_klines[market].append(row)
-            if k.get('complete', True):
-                self.recent_closed[market].append(dict(row))
-                self.finalized_until[market] = max(self.finalized_until[market], row['timestamp'])
-            # else: built from an incomplete set of minutes (stream gap / start mid-candle). It sits in the frame
-            # but is NOT final: scoring skips it until the REST candle replaces it (request_backfill)
-            live = self.live_klines.get(market)
-            if live and live['timestamp'] <= row['timestamp']:
-                del self.live_klines[market]
+            self._publish_closed_kline(market, row)
         else:
             self.live_klines[market] = row
+
+    def _publish_closed_kline(self, market: str, row: dict) -> None:
+        start = row['timestamp']
+        self.closed_klines[market] = [r for r in self.closed_klines[market] if r['timestamp'] != start]
+        self.closed_klines[market].append(row)
+        self.incomplete[market].discard(start)
+        recent = self.recent_closed[market]
+        self.recent_closed[market] = deque(
+            (r for r in recent if r['timestamp'] != start), maxlen=recent.maxlen)
+        self.recent_closed[market].append(dict(row))
+        self.finalized_until[market] = max(self.finalized_until[market], start)
+        live = self.live_klines.get(market)
+        if live and live['timestamp'] <= start:
+            del self.live_klines[market]
 
     def _add_closed_minute(self, market: str, c: List[float], base_volume: float):
         """
@@ -353,49 +435,30 @@ class MarketData:
     def _replace_closed_bucket(self, market: str, start: int) -> None:
         """Rebuild a 15m aggregate after a late correction to an already closed minute."""
         target = self.minute_klines if market == 'futures' else self.spot_minute_klines
-        rows = sorted((c for c in target if start <= c[0] < start + TIMEFRAME_MS), key=lambda c: c[0])
+        rows = sorted((c for c in target if start <= c[0] < start + TIMEFRAME_MS
+                       and c[0] in self._closed_seen[market]), key=lambda c: c[0])
         if not rows:
             return
         complete = {int(c[0]) for c in rows} == set(range(start, start + TIMEFRAME_MS, 60_000))
-        def base_volume(c):
-            try:
-                value = float(c[7]) if len(c) > 7 else float('nan')
-            except (TypeError, ValueError):
-                value = float('nan')
-            return value if math.isfinite(value) else 0.0
-        row = {'timestamp': start, 'open': rows[0][1], 'high': max(c[2] for c in rows), 'low': min(c[3] for c in rows),
-               'close': rows[-1][4], 'volume': sum(base_volume(c) for c in rows),
-               'quote_volume': sum(float(c[5]) for c in rows), 'taker_delta': sum(2 * float(c[6]) - float(c[5]) for c in rows),
-               'open_interest': None}
-        # Replace a pending aggregate with its corrected value instead of queueing two rows at the same timestamp.
-        # ``merge_live_candle`` also handles corrections after a row was drained, but keeping this queue unique avoids
-        # duplicate work and makes a cold-start backfill deterministic.
-        self.closed_klines[market] = [r for r in self.closed_klines[market] if r['timestamp'] != start]
-        self.closed_klines[market].append(row)
-        if complete:
-            self.incomplete[market].discard(start)
-            recent = deque((r for r in self.recent_closed[market] if r['timestamp'] != start), maxlen=self.recent_closed[market].maxlen)
-            recent.append(dict(row))
-            self.recent_closed[market] = recent
-            self.finalized_until[market] = max(self.finalized_until[market], start)
-        else:
-            self.incomplete[market].add(start)
-            self.backfill_wanted[market] = max(self.backfill_wanted.get(market, 0), start)
+        if not complete or not all(len(c) > 7 and math.isfinite(c[7]) for c in rows):
+            return  # Existing finalized data must survive a correction with insufficient inputs.
+        row = {'timestamp': start, 'open': rows[0][1], 'high': max(c[2] for c in rows),
+               'low': min(c[3] for c in rows), 'close': rows[-1][4],
+               'volume': sum(c[7] for c in rows), 'quote_volume': sum(c[5] for c in rows),
+               'taker_delta': sum(2 * c[6] - c[5] for c in rows), 'open_interest': None}
+        self._publish_closed_kline(market, row)
+        self.kline_buckets_published += 1
 
     def _finalize_bucket(self, market: str, bucket: dict):
         self.minute_bucket.pop(market, None)
         start = bucket['timestamp']
         self.bucket_done[market] = start
-        complete = bucket['seen'] == set(range(start, start + TIMEFRAME_MS, 60_000))
-        if not complete:
-            # Started mid-candle or missed minutes: the REST candle replaces it
-            self.backfill_wanted[market] = max(self.backfill_wanted.get(market, 0), bucket['timestamp'])
-            self.incomplete[market].add(bucket['timestamp'])
-        self.apply_kline(market, {
-            't': bucket['timestamp'], 'o': bucket['open'], 'h': bucket['high'], 'l': bucket['low'],
-            'c': bucket['close'], 'v': bucket['volume'], 'q': bucket['quote_volume'], 'Q': bucket['taker_buy'],
-            'x': True, 'i': CONFIG.timeframe.rest_timeframe, 'complete': complete,
-        })
+        if bucket['seen'] != set(range(start, start + TIMEFRAME_MS, 60_000)):
+            self.backfill_wanted[market] = max(self.backfill_wanted.get(market, 0), start)
+            self.incomplete[market].add(start)
+            self.kline_buckets_incomplete += 1
+            return
+        self._replace_closed_bucket(market, start)
 
     def live_candle(self, market: str) -> Optional[dict]:
         """The in-progress 15m candle: the closed minutes of the bucket plus the live minute."""
@@ -429,7 +492,8 @@ class MarketData:
 class VenueDeriv:
     oi_usd: float = 0.0
     funding_8h: Optional[float] = None
-    mark: float = 0.0
+    funding_kind: str = "unknown"  # settled | predicted | unknown
+    mark: Optional[float] = None
     ts: float = 0.0
     # audit N18: each field's own age - a fresh mark kept a stale OI / funding 'fresh' through the shared ts
     oi_ts: float = 0.0
@@ -497,6 +561,10 @@ class DataFetcher:
     """
 
     FUNDING_INFO_REFRESH_SEC = 3600
+    HISTORY_RECOVERY_MAX_ATTEMPTS = 8
+    # Exhaustion is a circuit breaker, not a permanent stop. After one quiet
+    # window the affected history job may make another bounded attempt cycle.
+    HISTORY_RECOVERY_COOLDOWN_SEC = 900
 
     def liq_bucket(self, ts_ms: int, usd: float, side: int, live: bool = False):
         """eng-151: one long liquidation into its 5m bucket (stale buckets pruned at each new bucket)."""
@@ -526,8 +594,10 @@ class DataFetcher:
         self._light_cache: Dict[str, Tuple[float, Dict]] = {}     # web analysis of coins outside the universe
         self.venue_exchanges: Dict[str, ccxt.Exchange] = {}
         self.markets: Dict[str, MarketData] = {}
+        self.universe_symbols: set = set()
         self._running = False
         self._tasks: List[asyncio.Task] = []
+        self._task_failures: Dict[str, str] = {}
         self._background_tasks: set = set()
         self._book_snapshot_tasks: set = set()
         self._binance_streams: List[BinanceStream] = []
@@ -547,6 +617,15 @@ class DataFetcher:
         }
         self._backfill_state: Dict[Tuple[str, str], Dict[str, object]] = {}
         self._backfill_semaphore = asyncio.Semaphore(3)
+        self._history_status: Dict[str, Dict[str, object]] = {}
+        self._history_status_versions: Dict[str, int] = {}
+        self._history_repair_state: Dict[Tuple[str, str], Dict[str, object]] = {}
+        self.history_recovery_stats: Dict[str, int] = {
+            'checks': 0, 'requests': 0, 'recovered': 0, 'incomplete': 0, 'failed': 0,
+            'job_unexpected': 0, 'loop_failures': 0,
+        }
+        self.history_recovery_last_error: Optional[str] = None
+        self.history_recovery_loop_backoff = 5.0
         self.funding_interval_hours: Dict[str, int] = {}
         self.streams_started_ms = 0               # the flow windows before it are seeded from REST klines
         # set by a Binance listing / contract status event (!contractInfo): the universe is re-selected early
@@ -743,7 +822,7 @@ class DataFetcher:
             await self._refresh_funding_info()
             await asyncio.sleep(300)
 
-    async def fetch_open_interest(self, symbol: str) -> Optional[float]:
+    async def fetch_open_interest(self, symbol: str) -> Optional[Tuple[float, float]]:
         binance_symbol = self._ccxt_to_binance_symbol(symbol)
         if not binance_symbol:
             self.quality_state = getattr(self, 'quality_state', {})
@@ -760,10 +839,22 @@ class DataFetcher:
                                                         300, 900, 'binance', type(e).__name__)
             return None
         now = time.time()
-        self.oi_last_updated[symbol] = now
         self.quality_state = getattr(self, 'quality_state', {})
-        self.quality_state[('oi', symbol)] = quality(now, now, 300, 900, 'binance')
-        return float(res.get('openInterest', 0.0))
+        previous = self.quality_state.get(('oi', symbol))
+        try:
+            value = float(res['openInterest'])
+            event_ms = float(res['time'])
+            if not math.isfinite(value) or value <= 0 or not math.isfinite(event_ms) or event_ms <= 0:
+                raise ValueError('invalid open-interest value or exchange timestamp')
+        except (KeyError, TypeError, ValueError, OverflowError) as e:
+            self.quality_state[('oi', symbol)] = quality(now, previous.fetched_at if previous else None,
+                                                        300, 900, 'binance', f'invalid_response:{type(e).__name__}')
+            return None
+        self.oi_last_updated[symbol] = event_ms / 1000
+        self.oi_received_at = getattr(self, 'oi_received_at', {})
+        self.oi_received_at[symbol] = now
+        self.quality_state[('oi', symbol)] = quality(now, event_ms / 1000, 300, 900, 'binance')
+        return value, event_ms
 
     async def _oi_loop(self):
         """
@@ -788,11 +879,11 @@ class DataFetcher:
                     await asyncio.sleep(0.5 * (attempt + 1))
             md = self.markets.get(symbol)
             if oi and md is not None:
-                now_ms = time.time() * 1000
+                oi, event_ms = oi
                 md.open_interest = oi
-                md.record_oi(now_ms, oi)
+                md.record_oi(event_ms, oi)
                 if md.last_price:
-                    self._record_venue_oi(symbol, 'binance', oi * md.last_price, now_ms, native=oi)
+                    self._record_venue_oi(symbol, 'binance', oi * md.last_price, event_ms, native=oi)
 
         while self._running:
             symbols = list(self.markets)
@@ -849,11 +940,15 @@ class DataFetcher:
             md.mark_price, md.index_price = float(m.get('markPrice') or 0.0), float(m.get('indexPrice') or 0.0)
             if md.mark_price and md.index_price:
                 md.premium_hist.append((now_ms, md.mark_price / md.index_price - 1))
-            # lastFundingRate: the live estimate of the next funding; settlements run every 1/4/8h -> 8h-equivalent
+            # REST ``lastFundingRate`` is the most recently settled rate, not
+            # the next settlement estimate.  Keep it separate from mark-price
+            # stream ``r`` below.
             rate = float(m.get('lastFundingRate') or 0.0) * 8 / self.funding_interval_hours.get(key, 8)
-            md.funding_rate = md.predicted_funding = rate
+            md.funding_rate = rate
             state = self.venue_derivs.setdefault(key, {}).setdefault('binance', VenueDeriv())
-            state.funding_8h, state.mark, state.ts, state.funding_ts = rate, md.mark_price, now_ms, now_ms
+            if now_ms >= (state.funding_ts or 0):
+                state.funding_8h, state.funding_kind, state.funding_ts = rate, 'settled', now_ms
+            state.mark, state.ts = md.mark_price, now_ms
 
     async def _update_24h_volumes(self):
         rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetTicker24hr', priority=1, weight=40)
@@ -950,7 +1045,8 @@ class DataFetcher:
                 # singleOpenInterestValue: one side, comparable with the other venues
                 oi = num(t.get('singleOpenInterestValue')) or (num(t.get('openInterestValue')) or 0) / 2 or None   # audit E07: both sides -> one
                 self.on_deriv(market, oi_usd=oi or None, mark=num(t.get('markPrice')) or None,
-                              funding_8h=num(funding) * 8 / hours if funding not in (None, '') else None)
+                              funding_8h=num(funding) * 8 / hours if funding not in (None, '') else None,
+                              funding_kind='predicted')
         elif venue == 'bitget':
             for t in payload.get('data') or []:
                 market = self.symbol_map.lookup('bitget', t.get('symbol', ''))
@@ -967,14 +1063,15 @@ class DataFetcher:
                 if market is None or funding in (None, ''):
                     continue
                 hours = num(t.get('fundingRateInterval')) or 8.0
-                self.on_deriv(market, funding_8h=num(funding) * 8 / hours)
+                self.on_deriv(market, funding_8h=num(funding) * 8 / hours, funding_kind='predicted')
 
     DERIV_CACHE_MS = 10_000
 
-    def deriv_snapshot(self, key: str, now_ms: Optional[float] = None) -> Dict[str, float]:
+    def deriv_snapshot(self, key: str, now_ms: Optional[float] = None) -> Dict[str, object]:
         """
         Aggregated positioning across venues: OI change over 5m / 1h (each venue's % change weighted by its current
-        OI in USD, so unit and contract-size differences cancel), OI-weighted 8h funding, venues reporting.
+        OI in USD, so unit and contract-size differences cancel), OI-weighted funding, its settled/predicted/mixed
+        provenance, and venues reporting.
         Cached per coin for DERIV_CACHE_MS: the inputs update every 10-60s, and recomputing all venues' windows
         for 300 coins on every 2s Tier-0 pass was a tenth of the event loop's busy time (profiled).
         """
@@ -986,10 +1083,11 @@ class DataFetcher:
         self._deriv_cache[key] = (now_ms, out)
         return out
 
-    def _deriv_snapshot(self, key: str, now_ms: float) -> Dict[str, float]:
+    def _deriv_snapshot(self, key: str, now_ms: float) -> Dict[str, object]:
         states = self.venue_derivs.get(key, {})
         # None, not 0, while no venue has the history for a window yet (0 would read "OI flat")
-        out = {'agg_oi_change_5m': None, 'agg_oi_change_1h': None, 'agg_funding_8h': None, 'oi_venues': 0}
+        out = {'agg_oi_change_5m': None, 'agg_oi_change_1h': None, 'agg_funding_8h': None,
+               'agg_funding_kind': 'unknown', 'agg_funding_observations': 0, 'oi_venues': 0}
         for label, window in (('agg_oi_change_5m', 300_000), ('agg_oi_change_1h', 3_600_000)):
             num = den = 0.0
             for state in states.values():
@@ -1001,12 +1099,21 @@ class DataFetcher:
                     den += state.oi_usd
             out[label] = num / den if den else None
         num = den = 0.0
+        funding_kinds = set()
+        funding_count = 0
         for state in states.values():
             if state.funding_8h is not None and state.oi_usd and 0 <= now_ms - state.funding_ts < 600_000 \
                     and 0 <= now_ms - state.oi_ts < 600_000:
                 num += state.funding_8h * state.oi_usd
                 den += state.oi_usd
+                funding_kinds.add(state.funding_kind or 'unknown')
+                funding_count += 1
         out['agg_funding_8h'] = num / den if den else None
+        out['agg_funding_observations'] = funding_count
+        if len(funding_kinds) == 1:
+            out['agg_funding_kind'] = next(iter(funding_kinds))
+        elif len(funding_kinds) > 1:
+            out['agg_funding_kind'] = 'mixed'
         out['oi_venues'] = sum(1 for s in states.values() if s.oi_usd and 0 <= now_ms - s.oi_ts < 600_000)
         return out
 
@@ -1255,26 +1362,82 @@ class DataFetcher:
         return split_base(self._to_spot_symbol(symbol).split('/')[0])[1]
 
     async def _fetch_klines(self, market: str, symbol: Optional[str], interval: Optional[str] = None,
-                            limit: Optional[int] = None) -> List:
+                            limit: Optional[int] = None, *, priority: int = 0) -> List:
         # Raw Binance klines (not fetch_ohlcv): they carry quote volume and taker buy quote volume
         exchange = self.spot_exchange if market == 'spot' else self.futures_exchange
         if not symbol or symbol not in exchange.markets:
             return []
         method = 'publicGetKlines' if market == 'spot' else 'fapiPublicGetKlines'
         limit = limit or CONFIG.timeframe.rest_lookback_candles
+        tf = interval or CONFIG.timeframe.rest_timeframe
         try:
-            return await self._rest_call(exchange, method, {
+            rows = await self._rest_call(exchange, method, {
                 'symbol': exchange.market(symbol)['id'],
-                'interval': interval or CONFIG.timeframe.rest_timeframe,
+                'interval': tf,
                 'limit': limit,
-            }, priority=0, weight=2 if market == 'spot' else
+            }, priority=priority, weight=2 if market == 'spot' else
                 # Binance futures klines: 1 below 100 candles, 2 to 499, 5 to 1000, 10 above (the 600-minute seed is 5)
                 1 if limit < 100 else 2 if limit < 500 else 5 if limit <= 1000 else 10)
+            return self._validate_binance_klines(rows, tf)
         except RATE_LIMIT_ERRORS:
             raise
         except Exception as e:
             errors.report('fetcher._fetch_klines', e, f"Klines fetch skipped for {symbol}")
             return []
+
+    @staticmethod
+    def _validate_binance_klines(rows, timeframe: str, now_ms: Optional[int] = None) -> List:
+        """Validate and deduplicate a Binance kline page before it reaches a cache or analytics buffer.
+
+        Exact duplicate rows are idempotently collapsed. Conflicting duplicates, out-of-order timestamps,
+        malformed OHLCV values, misaligned opens, or impossible close times reject the whole page.
+        """
+        from history_coverage import TF_MS
+
+        step = TF_MS.get(timeframe)
+        if step is None:
+            raise ValueError(f'unsupported Binance kline timeframe: {timeframe}')
+        if not isinstance(rows, (list, tuple)):
+            raise ValueError('kline response is not a row array')
+        now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        out, seen = [], {}
+        previous_ts = None
+        weekly_anchor = 4 * 86_400_000
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 12:
+                raise ValueError('malformed Binance kline row')
+            try:
+                ts_raw = float(row[0])
+                close_ts_raw = float(row[6])
+                ts, close_ts = int(ts_raw), int(close_ts_raw)
+                values = tuple(float(row[i]) for i in (1, 2, 3, 4, 5, 7, 9, 10))
+                trades_raw = float(row[8])
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError('nonnumeric Binance kline field') from exc
+            if (not math.isfinite(ts_raw) or ts_raw != ts or not math.isfinite(close_ts_raw)
+                    or close_ts_raw != close_ts or not all(math.isfinite(v) for v in values)
+                    or not math.isfinite(trades_raw) or trades_raw < 0 or trades_raw != int(trades_raw)):
+                raise ValueError('nonfinite or nonintegral Binance kline field')
+            expected_anchor = weekly_anchor if timeframe == '1w' else 0
+            if ts <= 0 or ts % step != expected_anchor or close_ts != ts + step - 1:
+                raise ValueError('misaligned Binance kline timestamps')
+            o, h, low, c, base_vol, quote_vol, taker_base, taker_quote = values
+            if (min(o, h, low, c) <= 0 or base_vol < 0 or quote_vol < 0 or taker_base < 0 or taker_quote < 0
+                    or h < max(o, c) or low > min(o, c) or low > h
+                    or taker_base > base_vol + max(1e-12, base_vol * 1e-9)
+                    or taker_quote > quote_vol + max(1e-8, quote_vol * 1e-9)):
+                raise ValueError('impossible Binance OHLCV values')
+            signature = (ts, *values, int(trades_raw), close_ts)
+            if ts in seen:
+                if seen[ts] != signature:
+                    raise ValueError('conflicting duplicate Binance kline')
+                continue
+            if previous_ts is not None and ts < previous_ts:
+                raise ValueError('out-of-order Binance kline timestamps')
+            previous_ts = ts
+            seen[ts] = signature
+            out.append(list(row))
+        return out
 
     async def fetch_minute_klines(self, futures_symbol: str, start_ms: int, count: int) -> Optional[List]:
         """
@@ -1283,32 +1446,42 @@ class DataFetcher:
         exchange has no data.
         """
         try:
-            return await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines', {
+            rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines', {
                 'symbol': self.futures_exchange.market(futures_symbol)['id'],
                 'interval': '1m',
                 'startTime': -(-start_ms // 60_000) * 60_000,
                 'limit': count,
             }, priority=2, weight=1 if count < 100 else 2)
+            return self._validate_binance_klines(rows, '1m')
         except Exception as e:
             errors.report('fetcher.fetch_minute_klines', e, f"Minute klines failed for {futures_symbol}")
             return None
 
     @staticmethod
-    def minute_holes(minutes, closed_until: int, window: int = 240) -> List[int]:
+    def minute_holes(minutes, closed_until: int, window: int = 240, listed_ms: Optional[int] = None) -> List[int]:
         """eng-161: the missing closed minutes inside a 1m buffer (after its first minute, within the last `window`
         minutes up to closed_until) - the holes levels.resample drops 5m / 15m bars for ('1m gaps dropped')."""
-        if not minutes or not closed_until:
+        if not closed_until or window <= 0:
             return []
-        have = {int(c[0]) for c in minutes if c[0] <= closed_until}
-        if not have:
-            return []
-        start = max(min(have), int(closed_until) - (window - 1) * 60_000)
-        return [t for t in range(start, int(closed_until) + 1, 60_000) if t not in have]
+        end = int(closed_until) // 60_000 * 60_000
+        start = max(0, end - (window - 1) * 60_000)
+        if listed_ms and listed_ms > 0:
+            start = max(start, int(listed_ms) // 60_000 * 60_000)
+        have = set()
+        for candle in minutes or ():
+            try:
+                ts = int(candle[0])
+            except (IndexError, TypeError, ValueError, OverflowError):
+                continue
+            if start <= ts <= end and ts % 60_000 == 0:
+                have.add(ts)
+        return [t for t in range(start, end + 1, 60_000) if t not in have]
 
     async def patch_minute_holes(self, symbol: str, md, now_ms: int) -> int:
         """eng-161: refill the futures 1m holes of a universe coin from REST (a stream reconnect leaves them for good:
         seed_minutes ran only at start-up / join). Returns the minutes still missing afterwards."""
-        holes = self.minute_holes(md.minute_klines, md.minute_closed_until)
+        holes = self.minute_holes(md.minute_klines, md.minute_closed_until,
+                                  listed_ms=getattr(md, 'listed_ms', None))
         if not holes:
             return 0
         self.backfill_stats['attempted'] += 1
@@ -1318,7 +1491,8 @@ class DataFetcher:
             before = len(holes)
             md.seed_minutes('futures', [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
                                          float(k[10]), float(k[5])] for k in rows], now_ms)
-            after = len(self.minute_holes(md.minute_klines, md.minute_closed_until))
+            after = len(self.minute_holes(md.minute_klines, md.minute_closed_until,
+                                          listed_ms=getattr(md, 'listed_ms', None)))
             self.backfill_stats['applied'] += max(0, before - after)
             if after == 0:
                 self.backfill_stats['verified'] += 1
@@ -1326,7 +1500,8 @@ class DataFetcher:
                 self.backfill_stats['deferred'] += 1
             return after
         self.backfill_stats['failed'] += 1
-        return len(self.minute_holes(md.minute_klines, md.minute_closed_until))
+        return len(self.minute_holes(md.minute_klines, md.minute_closed_until,
+                                     listed_ms=getattr(md, 'listed_ms', None)))
 
     async def _fetch_oi_history(self, futures_symbol: str) -> List:
         # /futures/data/openInterestHist: weight 0, own limit of 1000 requests / 5 min
@@ -1352,14 +1527,8 @@ class DataFetcher:
             rows = await self._fetch_klines(market, sym, '1m', limit + 1)
             md.seed_minutes(market, [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
                                       float(k[10]), float(k[5])] for k in rows or []], now_ms)
-            if market == 'futures' and self.streams_started_ms:
-                # Binance's taker flow of the 15 minutes the streams did not see (a minute that closed before they
-                # started): Tier-0's 5m windows are valid at once (the other venues fill in live)
-                for k in rows or []:
-                    t = int(k[0])
-                    if self.streams_started_ms - 15 * 60_000 <= t and t + 60_000 <= self.streams_started_ms:
-                        buy, total = float(k[10]), float(k[7])
-                        self.flow.seed_minute('binance', symbol, t, buy, max(0.0, total - buy), int(k[8]))
+            # REST OHLCV taker aggregates stay in candle history and are not
+            # inserted into the event-flow ring as individual executions.
 
     async def _seed_oi(self, symbol: str, md: MarketData):
         """
@@ -1379,7 +1548,16 @@ class DataFetcher:
             errors.report('fetcher._seed_oi', e, f"OI history seed skipped for {symbol}")
             return
         # openInterestHist timestamps are period END times: the OI at that moment
-        points = [(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in rows or []]
+        points = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                event_ms, amount = int(row['timestamp']), float(row['sumOpenInterest'])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+            if event_ms > 0 and math.isfinite(amount) and amount > 0:
+                points.append((event_ms, amount))
         md.seed_oi(points)
         # the same hour (coins) under Binance's live samples in the venue aggregate: agg 1h OI works from the start
         state = self.venue_derivs.setdefault(symbol, {}).setdefault('binance', VenueDeriv())
@@ -1413,19 +1591,20 @@ class DataFetcher:
         n = CONFIG.zones.htf_candles
         try:
             klines, oi, k5, k1d, k30 = await asyncio.gather(
-                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                {'symbol': binance_symbol, 'interval': '1h', 'limit': n}, priority=1, weight=1),
+                self._fetch_klines('futures', symbol, '1h', n, priority=1),
                 self._rest_call(self.futures_exchange, 'fapiDataGetOpenInterestHist',
                                 {'symbol': binance_symbol, 'period': '1h', 'limit': min(n, 500)}, priority=2, weight=0),
-                # 4 days of 5m candles (limit > 1000 weighs 10; card coins only, hourly)
-                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                {'symbol': binance_symbol, 'interval': '5m', 'limit': 4 * 288}, priority=1, weight=10),
+                # Request one extra because the newest Binance row is usually
+                # still forming and _closed_only drops it. The consumer requires
+                # 1,152 closed observations, not 1,151.
+                self._fetch_klines('futures', symbol, '5m', 4 * 288 + 1, priority=1),
                 # the higher-timeframe range of the scenario card (limit 100-500 weighs 2, 500-1000 weighs 5)
-                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                {'symbol': binance_symbol, 'interval': '1d', 'limit': 200}, priority=1, weight=2),
-                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                {'symbol': binance_symbol, 'interval': '1h', 'limit': 720}, priority=1, weight=5),
+                self._fetch_klines('futures', symbol, '1d', 200, priority=1),
+                # Keep 720 closed bars after _closed_only drops the forming row.
+                self._fetch_klines('futures', symbol, '1h', 720 + 1, priority=1),
             )
+            if not klines or not k5 or not k1d or not k30:
+                raise ValueError(f'incomplete validated candle set for {symbol}')
         except Exception as e:
             errors.report('fetcher.load_htf', e, f"1h history failed for {symbol}")
             md.htf_loaded = time.time() - CONFIG.zones.htf_refresh_sec + 300  # retry in 5 min
@@ -1441,6 +1620,7 @@ class DataFetcher:
         md.htf_1h_30d = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
                          for k in self._closed_only(k30 or [])]
         md.htf_loaded = time.time()
+        md.history_version += 1
         return True
 
     async def chart_candles(self, symbol: str) -> Optional[Dict]:
@@ -1450,9 +1630,10 @@ class DataFetcher:
             return None
         try:
             k15, k5, k1h = await asyncio.gather(*[
-                self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                {'symbol': binance_symbol, 'interval': tf, 'limit': 99}, priority=0, weight=1)
+                self._fetch_klines('futures', symbol, tf, 99, priority=0)
                 for tf in ('15m', '5m', '1h')])
+            if not k15 or not k5 or not k1h:
+                raise ValueError(f'incomplete validated chart candles for {symbol}')
         except Exception as e:
             errors.report('fetcher.chart_candles', e, f"Chart candles failed for {symbol}")
             return None
@@ -1480,15 +1661,14 @@ class DataFetcher:
                 return hit[1]
             try:
                 ks = await asyncio.gather(*[
-                    self._rest_call(ex, 'fapiPublicGetKlines',
-                                    {'symbol': binance_symbol, 'interval': tf, 'limit': n}, priority=3, weight=2)
+                    self._fetch_klines('futures', symbol, tf, n, priority=3)
                     for tf, n in (('1h', 499), ('4h', 499), ('1d', 399), ('1w', 99))])
             except Exception as e:
                 errors.report('fetcher.light_candles', e, f"Light candles failed for {symbol}")
                 return None
         rows = lambda r: [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])] for k in r or []]
         h1, h4, d1, w1 = (rows(k) for k in ks)
-        if len(h1) < 50 or len(d1) < 20:
+        if not all(ks) or len(h1) < 50 or len(d1) < 20:
             return None
         out = {'h1': h1, 'h4': h4, 'd1': d1, 'w1': w1, 'price': h1[-1][4], 'fetched_at': time.time()}
         if len(self._light_cache) > 64:
@@ -1531,9 +1711,20 @@ class DataFetcher:
     def create_market_data(self, symbols: List[str]) -> Dict[str, MarketData]:
         """Empty MarketData per symbol so streams can start before the REST history arrives."""
         self.markets = {s: self._new_market_data(s) for s in symbols}
+        self.universe_symbols = set(symbols)
+        self._history_status = {}
+        self._history_status_versions = {}
+        self._history_repair_state = {}
         self.flow.register(symbols)
         self.symbol_map.set_universe({s: self.futures_exchange.markets[s] for s in symbols})
         return self.markets
+
+    def _active_market_data(self, symbol: str, md: MarketData) -> bool:
+        """Reject a recovery result for an object that left the active universe while REST was in flight."""
+        if hasattr(self, 'markets') and self.markets.get(symbol) is not md:
+            return False
+        active = getattr(self, 'universe_symbols', None)
+        return active is None or symbol in active
 
     def apply_universe(self, symbols: List[str], keep: Iterable[str] = ()) -> Tuple[List[str], List[str]]:
         """
@@ -1541,8 +1732,11 @@ class DataFetcher:
         (open cards finish on the old data). Returns (added, removed); the caller restarts streams and loads history.
         """
         keep = set(keep)
+        previous_universe = set(getattr(self, 'universe_symbols', ()))
+        self.universe_symbols = set(symbols)
         added = [s for s in symbols if s not in self.markets]
         removed = [s for s in self.markets if s not in symbols and s not in keep]
+        newly_active = set(symbols) - previous_universe
         for s in added:
             self.markets[s] = self._new_market_data(s)
         for s in removed:
@@ -1553,6 +1747,21 @@ class DataFetcher:
             self.whales.forget(s)
             self.rush.forget(s)
             self.venue_derivs.pop(s, None)
+        current = set(self.markets)
+        status_versions = getattr(self, '_history_status_versions', None)
+        if status_versions is None:
+            self._history_status_versions = status_versions = {}
+        for stale in set(self._history_status) - current:
+            self._history_status.pop(stale, None)
+            status_versions.pop(stale, None)
+        for key in [key for key in self._history_repair_state if key[0] not in current]:
+            self._history_repair_state.pop(key, None)
+        for s in newly_active:
+            # A kept MarketData object may re-enter after being outside the
+            # stream universe. Its old health snapshot cannot prove current
+            # coverage; force a fresh assessment before reporting it ready.
+            self._history_status.pop(s, None)
+            status_versions.pop(s, None)
         self.flow.register(added)
         self.symbol_map.set_universe({s: self.futures_exchange.markets[s] for s in self.markets
                                       if s in self.futures_exchange.markets})
@@ -1570,7 +1779,9 @@ class DataFetcher:
             await asyncio.sleep(10)
         while self._running:
             started = time.time()
-            symbols = [s for s, md in self.markets.items() if started - md.h1_loaded >= cfg.h1_refresh_sec - 120]
+            expected_open = (int(started) // 3600 - 1) * 3_600_000
+            symbols = [s for s, md in self.markets.items()
+                       if not md.h1 or md.h1[-1][0] < expected_open]
             logger.info('1h history loader pass: %d symbols', len(symbols))
             sem = asyncio.Semaphore(8)
 
@@ -1584,21 +1795,22 @@ class DataFetcher:
                 async with sem:
                     try:
                         # limit 499 weighs 2 like 200 did: the long history of crypto_maniac's 1h systems
-                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                     {'symbol': binance_symbol, 'interval': '1h',
-                                                      'limit': cfg.long_history_candles}, priority=1, weight=2)
-                        rows_15m = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                         {'symbol': binance_symbol, 'interval': '15m',
-                                                          'limit': cfg.long_history_candles}, priority=1, weight=2)
+                        rows = await self._fetch_klines('futures', symbol, '1h', cfg.long_history_candles, priority=1)
+                        rows_15m = await self._fetch_klines('futures', symbol, '15m', cfg.long_history_candles, priority=1)
                     except Exception as e:
                         errors.report('fetcher.candles_1h', e, f"1h / 15m candles failed for {symbol}")
                         return
+                if not rows or not rows_15m:
+                    errors.report('fetcher.candles_1h', ValueError('empty or invalid validated candle page'),
+                                  f"1h / 15m candles failed for {symbol}")
+                    return
                 # the long histories as float arrays (~28 KB a coin instead of ~150 KB of candle lists: 6 GB box)
                 hourly = parse(rows)
                 md.h1 = hourly[-cfg.h1_candles:]
                 md.h1_long = np.asarray(hourly, dtype=np.float64)
                 md.m15_long = np.asarray(parse(rows_15m), dtype=np.float64)
                 md.h1_loaded = time.time()
+                md.history_version += 1
 
             await asyncio.gather(*(one(s) for s in symbols))
             if symbols:
@@ -1631,16 +1843,19 @@ class DataFetcher:
                     return
                 async with sem:
                     try:
-                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                     {'symbol': binance_symbol, 'interval': '4h', 'limit': 200},
-                                                     priority=2, weight=2)
+                        rows = await self._fetch_klines('futures', symbol, '4h', 200, priority=2)
                     except Exception as e:
                         errors.report('fetcher.candles_4h', e, f"4h candles failed for {symbol}")
                         return
+                if not rows:
+                    errors.report('fetcher.candles_4h', ValueError('empty or invalid validated candle page'),
+                                  f"4h candles failed for {symbol}")
+                    return
                 # audit D15: the same 8-field schema as the 1h REST candles (quote, taker-buy quote, base volume)
                 md.h4 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]), float(k[10]),
                           float(k[5])] for k in self._closed_only(rows or [])]
                 md.h4_slot = slot
+                md.history_version += 1
 
             if symbols and now - slot * 14_400 >= 60:
                 await asyncio.gather(*(one(s) for s in symbols))
@@ -1648,8 +1863,11 @@ class DataFetcher:
 
     async def _daily_candles_loop(self):
         """
-        Up to 1500 daily candles of every universe coin (weight 10) once per UTC day, a minute after the daily close,
-        and for coins that join: Connors' RSI(2) system reads daily closes (~240 weight a day).
+        Up to 500 daily candles per universe coin (weight 5) once per UTC day.
+        The live v2 consumers need at most 370 bars; longer legacy strategy
+        candidates are quarantined. Keeping the request to the consumed window
+        also avoids old corrupt Binance taker-volume fields invalidating an
+        otherwise usable daily candle page.
         """
         logger.info('daily history loader started')
         while self._running and self.baselines_loaded() < len(self.markets) * 0.9:
@@ -1667,17 +1885,18 @@ class DataFetcher:
                     return
                 async with sem:
                     try:
-                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                     # review V13: a 65-week cup needs its prior advance (2x) and
-                                                     # maximum handle: 3 x 455 + 56 + 2 = 1423 bars (limit <= 1500)
-                                                     {'symbol': binance_symbol, 'interval': '1d', 'limit': 1500},
-                                                     priority=2, weight=10)
+                        rows = await self._fetch_klines('futures', symbol, '1d', 500, priority=2)
                     except Exception as e:
                         errors.report('fetcher.candles_1d', e, f"daily candles failed for {symbol}")
                         return
+                if not rows:
+                    errors.report('fetcher.candles_1d', ValueError('empty or invalid validated candle page'),
+                                  f"daily candles failed for {symbol}")
+                    return
                 md.d1 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
                          for k in self._closed_only(rows or [])]
                 md.d1_day = day
+                md.history_version += 1
 
             if symbols and now - day * 86400 >= 60:
                 await asyncio.gather(*(one(s) for s in symbols))
@@ -1876,12 +2095,14 @@ class DataFetcher:
                     return
                 async with sem:
                     try:
-                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                     {'symbol': binance_symbol, 'interval': '5m', 'limit': 1440},
-                                                     priority=2, weight=10)
+                        rows = await self._fetch_klines('futures', symbol, '5m', 1440, priority=2)
                     except Exception as e:
                         errors.report('fetcher.day_pocs', e, f"5m candles failed for {symbol}")
                         return
+                if not rows:
+                    errors.report('fetcher.day_pocs', ValueError('empty or invalid validated candle page'),
+                                  f"5m candles failed for {symbol}")
+                    return
                 candles = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])]
                            for k in self._closed_only(rows or [])]
                 md.day_pocs = day_poc(candles, day * 86_400_000)
@@ -1914,16 +2135,19 @@ class DataFetcher:
                     return
                 async with sem:
                     try:
-                        rows = await self._rest_call(self.futures_exchange, 'fapiPublicGetKlines',
-                                                     {'symbol': binance_symbol, 'interval': '1w', 'limit': 60},
-                                                     priority=2, weight=1)
+                        rows = await self._fetch_klines('futures', symbol, '1w', 60, priority=2)
                     except Exception as e:
                         errors.report('fetcher.candles_1w', e, f"weekly candles failed for {symbol}")
                         return
+                if not rows:
+                    errors.report('fetcher.candles_1w', ValueError('empty or invalid validated candle page'),
+                                  f"weekly candles failed for {symbol}")
+                    return
                 closed = self._closed_only(rows or [])
                 md.w1_ref = weekly_ref([float(k[4]) for k in closed])
                 md.w1 = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7])] for k in closed]
                 md.w1_loaded = time.time()
+                md.history_version += 1
 
             if symbols and now >= week_start + 60:
                 await asyncio.gather(*(one(s) for s in symbols))
@@ -1960,6 +2184,612 @@ class DataFetcher:
     def baselines_loaded(self) -> int:
         return sum(1 for md in self.markets.values() if md.baseline_ready)
 
+    @staticmethod
+    def _history_rows(md: MarketData, timeframe: str) -> List:
+        if timeframe == '1m':
+            return [r for r in md.minute_klines if r[0] <= md.minute_closed_until]
+        if timeframe == '5m':
+            return md.htf_5m
+        if timeframe == '15m':
+            return md.m15_long
+        if timeframe == '1h':
+            return md.h1_long if len(md.h1_long) else md.h1
+        if timeframe == '4h':
+            return md.h4
+        if timeframe == '1d':
+            return md.d1
+        if timeframe == '1w':
+            return md.w1
+        return []
+
+    @staticmethod
+    def _history_requirements(timeframe: str) -> Tuple[int, int]:
+        # Requirements are bounded to the history actually retained/consumed by
+        # the live pipeline; they do not assert full instrument lifetime history.
+        return {
+            '1m': (240, 600), '5m': (1152, 1200), '15m': (200, 502),
+            '1h': (200, 672), '4h': (30, 202), '1d': (200, 500), '1w': (20, 60),
+        }[timeframe]
+
+    def _baseline_frame_validated(self, symbol: str, frame: pl.DataFrame) -> bool:
+        assessed = self._baseline_frame_assessment(symbol, frame)
+        return assessed['state'] in ('READY', 'LISTING_TOO_RECENT')
+
+    def _baseline_frame_assessment(self, symbol: str, frame: pl.DataFrame) -> Dict:
+        from history_coverage import coverage
+
+        timeframe = CONFIG.timeframe.rest_timeframe
+        if frame is None or frame.is_empty():
+            return {'timeframe': timeframe, 'state': 'LOADING', 'ready': False, 'missing_bars': 0,
+                    'gaps': [], 'invalid_bars': 0, 'latest_closed_ms': None, 'quality': 'RECOVERING'}
+        required, calculation_bars = self._history_requirements(timeframe)
+        rows = frame.select(['timestamp', 'open', 'high', 'low', 'close', 'volume']).iter_rows()
+        market = self.futures_exchange.markets.get(symbol) or {}
+        listed_ms = (market.get('info') or {}).get('onboardDate')
+        assessed = coverage(rows, timeframe, int(time.time() * 1000), required=required,
+                            calculation_bars=calculation_bars, listed_ms=listed_ms)
+        assessed['quality'] = 'VALID_COMPLETE' if assessed['state'] == 'READY' else \
+            'VALID_PARTIAL' if assessed['state'] == 'LISTING_TOO_RECENT' else 'RECOVERING'
+        return assessed
+
+    def _assess_history(self, symbol: str, md: MarketData, error: Optional[str] = None) -> Dict:
+        from history_coverage import coverage
+
+        now_ms = int(time.time() * 1000)
+        # Coverage scans multiple retained frames for every active symbol.
+        # The recovery loop, scanner and health endpoint can ask for the same
+        # assessment several times in one pass; repeating the full row walk on
+        # the event loop caused multi-second stalls. Reuse only an assessment
+        # for the same candle revision, and for at most 3 seconds. This is a
+        # freshness bound on the quality summary, not a substitute for data.
+        cached = self._history_status.get(symbol)
+        if (error is None and cached is not None
+                and getattr(self, '_history_status_versions', {}).get(symbol) == md.history_version
+                and 0 <= now_ms - int(cached.get('assessed_ms') or 0) < 3_000):
+            return dict(cached)
+        market = self.futures_exchange.markets.get(symbol) or {}
+        listed_ms = (market.get('info') or {}).get('onboardDate') or md.listed_ms
+        active = ('1m', '15m', '1h', '4h', '1d', '1w')
+        if CONFIG.timeframe.rest_timeframe not in active:
+            active += (CONFIG.timeframe.rest_timeframe,)
+        if md.htf_loaded or md.htf_5m:
+            active += ('5m',)
+        timeframes = {}
+        for tf in active:
+            required, _ = self._history_requirements(tf)
+            part = coverage(self._history_rows(md, tf), tf, now_ms, required=required,
+                            calculation_bars=min(required, 200), listed_ms=listed_ms)
+            repair = self._history_repair_state.get((symbol, tf), {})
+            state = part['state']
+            if state == 'READY':
+                quality_state = 'VALID_COMPLETE'
+            elif state == 'LISTING_TOO_RECENT':
+                quality_state = 'VALID_PARTIAL'
+            elif (int(repair.get('attempts', 0)) >= self.HISTORY_RECOVERY_MAX_ATTEMPTS
+                  and not self._history_recovery_available(repair)):
+                quality_state = 'UNAVAILABLE'
+            elif (not md.baseline_ready and int(self._history_repair_state.get((symbol, 'baseline'), {}).get('attempts', 0))
+                  >= self.HISTORY_RECOVERY_MAX_ATTEMPTS and not self._history_recovery_available(
+                    self._history_repair_state.setdefault((symbol, 'baseline'), {'attempts': 0}))):
+                quality_state = 'UNAVAILABLE'
+            elif not md.baseline_ready:
+                quality_state = 'RECOVERING'
+            else:
+                quality_state = 'RECOVERING'
+            timeframes[tf] = {**part, 'quality': quality_state,
+                              'last_attempt_ms': int(repair.get('last_attempt', 0) * 1000) or None,
+                              'attempts': int(repair.get('attempts', 0)),
+                              'last_error': repair.get('error')}
+        base_tf = CONFIG.timeframe.rest_timeframe
+        if base_tf in timeframes:
+            frame_quality = self._baseline_frame_assessment(symbol, md.futures_df)
+            if md.incomplete['futures']:
+                frame_quality.update(state='DATA_GAP', ready=False, quality='RECOVERING',
+                                     missing_bars=max(frame_quality['missing_bars'], len(md.incomplete['futures'])))
+            existing = timeframes[base_tf]
+            existing['long_history_quality'] = existing['quality']
+            frame_state = frame_quality['quality']
+            if frame_state in ('VALID_COMPLETE', 'VALID_PARTIAL'):
+                existing.update(frame_quality)
+            else:
+                base_repair = self._history_repair_state.get((symbol, 'base_frame'), {})
+                existing.update(frame_quality)
+                existing['attempts'] = int(base_repair.get('attempts', 0))
+                existing['last_attempt_ms'] = int(base_repair.get('last_attempt', 0) * 1000) or None
+                existing['quality'] = ('UNAVAILABLE' if int(base_repair.get('attempts', 0))
+                                       >= self.HISTORY_RECOVERY_MAX_ATTEMPTS and
+                                       not self._history_recovery_available(base_repair) else 'RECOVERING')
+                existing['last_error'] = md.baseline_error or base_repair.get('error') or existing.get('last_error')
+        required_ready = all(v['quality'] in ('VALID_COMPLETE', 'VALID_PARTIAL') for v in timeframes.values())
+        md.history_validated = required_ready
+        if required_ready and md.baseline_ready:
+            state = 'VALID_COMPLETE' if all(v['quality'] == 'VALID_COMPLETE' for v in timeframes.values()) else 'VALID_PARTIAL'
+        elif not md.baseline_ready:
+            state = 'RECOVERING'
+        elif any(v['quality'] == 'UNAVAILABLE' for v in timeframes.values()):
+            state = 'UNAVAILABLE'
+        elif any(v['quality'] == 'RECOVERING' for v in timeframes.values()):
+            state = 'RECOVERING'
+        else:
+            state = 'VALID_PARTIAL'
+        status = {'ready': required_ready and md.baseline_ready, 'state': state,
+                  'progress_pct': round(sum(v['progress_pct'] for v in timeframes.values()) / max(1, len(timeframes)), 1),
+                  'assessed_ms': now_ms, 'timeframes': timeframes, 'error': error}
+        self._history_status[symbol] = status
+        versions = getattr(self, '_history_status_versions', None)
+        if versions is None:
+            self._history_status_versions = versions = {}
+        versions[symbol] = md.history_version
+        return status
+
+    def history_status(self, symbol: str) -> Dict:
+        """Current per-symbol candle coverage; ready covers only configured live windows."""
+        md = self.markets.get(symbol)
+        if md is None:
+            return {'ready': False, 'state': 'UNAVAILABLE', 'reason': 'outside_universe',
+                    'progress_pct': 0, 'timeframes': {}}
+        return self._assess_history(symbol, md)
+
+    def update_base_frame_quality(self, symbol: str, assessment: Dict) -> None:
+        """Publish the scan-frame contract immediately so health never waits for the slower recovery poll."""
+        md = self.markets.get(symbol)
+        if md is None:
+            return
+        timeframe = CONFIG.timeframe.rest_timeframe
+        status = self._history_status.setdefault(symbol, {'ready': False, 'state': 'RECOVERING',
+                                                           'timeframes': {}, 'assessed_ms': int(time.time() * 1000)})
+        expected_timeframes = ['1m', '15m', '1h', '4h', '1d', '1w']
+        if timeframe not in expected_timeframes:
+            expected_timeframes.append(timeframe)
+        if md.htf_loaded or md.htf_5m:
+            expected_timeframes.append('5m')
+        for tf in expected_timeframes:
+            status.setdefault('timeframes', {}).setdefault(tf, {'timeframe': tf, 'state': 'LOADING',
+                                                                 'quality': 'RECOVERING', 'missing_bars': 0,
+                                                                 'last_error': None})
+        repair = self._history_repair_state.get((symbol, timeframe), {})
+        part = dict(assessment)
+        # Scanner._frame_quality returns the coverage state (READY /
+        # LISTING_TOO_RECENT), while REST assessments also add `quality`.
+        # Normalize both representations here so state=READY cannot coexist
+        # with quality=RECOVERING.
+        state_quality = {'READY': 'VALID_COMPLETE', 'LISTING_TOO_RECENT': 'VALID_PARTIAL'}
+        assessed_quality = assessment.get('quality') or state_quality.get(assessment.get('state'))
+        if assessed_quality not in ('VALID_COMPLETE', 'VALID_PARTIAL', 'UNAVAILABLE', 'RECOVERING'):
+            assessed_quality = 'RECOVERING'
+        part.update({'quality': assessed_quality,
+                     'attempts': int(repair.get('attempts', 0)),
+                     'last_attempt_ms': int(repair.get('last_attempt', 0) * 1000) or None,
+                     'last_error': md.baseline_error or repair.get('error')})
+        status.setdefault('timeframes', {})[timeframe] = part
+        qualities = [value.get('quality') for value in status['timeframes'].values()]
+        status['ready'] = bool(qualities) and all(q in ('VALID_COMPLETE', 'VALID_PARTIAL') for q in qualities)
+        if not status['ready']:
+            status['state'] = 'UNAVAILABLE' if 'UNAVAILABLE' in qualities else 'RECOVERING'
+        elif 'VALID_PARTIAL' in qualities:
+            status['state'] = 'VALID_PARTIAL'
+        else:
+            status['state'] = 'VALID_COMPLETE'
+        status['assessed_ms'] = int(time.time() * 1000)
+        md.baseline_validated = part['quality'] in ('VALID_COMPLETE', 'VALID_PARTIAL')
+        md.history_validated = status['ready']
+
+    def history_diagnostics(self) -> Dict:
+        """Compact health summary; detailed rows are capped to avoid large websocket/API payloads."""
+        states, by_tf, unready = {}, {}, []
+        expected = self.universe_symbols
+        current_readings = {symbol: self._history_status.get(symbol) for symbol in expected}
+        current_markets = [self.markets[s] for s in expected if s in self.markets]
+        for symbol, reading in current_readings.items():
+            if reading is None:
+                reading = {'state': 'RECOVERING', 'ready': False, 'timeframes': {}}
+            state = str(reading.get('state', 'UNKNOWN'))
+            states[state] = states.get(state, 0) + 1
+            if not reading.get('timeframes') and len(unready) < 50:
+                unready.append({'symbol': symbol, 'timeframe': 'history', 'state': state,
+                                'missing_bars': 0, 'last_error': getattr(self.markets.get(symbol), 'baseline_error', None)})
+            for timeframe, part in reading.get('timeframes', {}).items():
+                quality_state = str(part.get('quality', 'UNKNOWN'))
+                if quality_state in ('VALID_COMPLETE', 'VALID_PARTIAL'):
+                    continue
+                counts = by_tf.setdefault(timeframe, {})
+                counts[quality_state] = counts.get(quality_state, 0) + 1
+                if len(unready) < 50:
+                    unready.append({'symbol': symbol, 'timeframe': timeframe, 'state': quality_state,
+                                    'missing_bars': int(part.get('missing_bars', 0)),
+                                    'last_error': part.get('last_error')})
+        if not expected or any(self._history_status.get(s) is None for s in expected):
+            overall = 'RECOVERING'
+        elif states.get('UNAVAILABLE'):
+            overall = 'UNAVAILABLE'
+        elif states.get('RECOVERING'):
+            overall = 'RECOVERING'
+        elif states.get('VALID_PARTIAL'):
+            overall = 'VALID_PARTIAL'
+        else:
+            overall = 'VALID_COMPLETE'
+        return {'state': overall, 'ok': bool(expected) and overall in ('VALID_COMPLETE', 'VALID_PARTIAL'),
+                'symbols_expected': len(expected), 'symbols_assessed': sum(1 for s in expected if s in self._history_status),
+                'stale_status_entries': len(set(self._history_status) - expected), 'states': states,
+                'baseline_attempted': sum(bool(md.baseline_attempted) for md in current_markets),
+                'baseline_loading': sum(bool(md.baseline_loading) for md in current_markets),
+                'baseline_loaded': sum(bool(md.baseline_loaded) for md in current_markets),
+                'baseline_validated': sum(bool(md.baseline_validated) for md in current_markets),
+                'history_validated': sum(bool(md.history_validated) for md in current_markets),
+                'incomplete_timeframes': by_tf, 'unready': unready,
+                'recovery': dict(self.history_recovery_stats),
+                'last_recovery_error': self.history_recovery_last_error,
+                'background_task_failures': dict(list(getattr(self, '_task_failures', {}).items())[-20:])}
+
+    def kline_diagnostics(self) -> Dict:
+        return {'buckets_published': sum(md.kline_buckets_published for md in self.markets.values()),
+                'buckets_incomplete': sum(md.kline_buckets_incomplete for md in self.markets.values()),
+                'events_seen': sum(md.kline_events_seen for md in self.markets.values()),
+                'events_valid': sum(md.kline_events_valid for md in self.markets.values()),
+                'events_rejected': sum(md.kline_events_invalid for md in self.markets.values()),
+                'symbols_with_rejections': sum(1 for md in self.markets.values() if md.kline_events_invalid),
+                'last_exchange_ms': max((md.kline_last_exchange_ms for md in self.markets.values()), default=0) or None,
+                'last_event_ms': max((md.kline_last_exchange_ms for md in self.markets.values()), default=0) or None,
+                'last_candle_open_ms': max((md.kline_last_candle_open_ms for md in self.markets.values()), default=0) or None,
+                'last_candle_close_ms': max((md.kline_last_candle_close_ms for md in self.markets.values()), default=0) or None,
+                'last_receive_ms': max((md.kline_last_receive_ms for md in self.markets.values()), default=0) or None,
+                'last_latency_ms': next((md.kline_last_latency_ms for md in self.markets.values()
+                                         if md.kline_last_receive_ms == max((x.kline_last_receive_ms for x in self.markets.values()), default=0)), None)}
+
+    async def _recover_history_window(self, symbol: str, md: MarketData, timeframe: str) -> Dict:
+        """Fetch one bounded Binance history window, merge idempotently, then verify coverage again."""
+        _, limit = self._history_requirements(timeframe)
+        state = self._history_repair_state.setdefault((symbol, timeframe), {'attempts': 0})
+        if not self._history_recovery_available(state):
+            return self._assess_history(symbol, md, state.get('error') or 'retry_budget_exhausted')
+        state['last_attempt'] = time.time()
+        state['attempts'] = int(state.get('attempts', 0)) + 1
+        state['total_attempts'] = int(state.get('total_attempts', 0)) + 1
+        self.history_recovery_stats['requests'] += 1
+        try:
+            current = self._assess_history(symbol, md)['timeframes'].get(timeframe, {})
+            step = {'1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000,
+                    '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000}[timeframe]
+            gap = (current.get('gaps') or [None])[0] if current.get('state') == 'DATA_GAP' else None
+            if gap:
+                # Binance's documented startTime/endTime range lets us request
+                # only the missing segment. Bound each repair page so long gaps
+                # make incremental progress under the shared REST weight gate.
+                gap_start = int(gap['start_ms'])
+                count = min(1000, int(gap['missing_bars']))
+                gap_end = gap_start + (count - 1) * step
+                exchange = self.futures_exchange
+                market = exchange.market(symbol)
+                rows = await self._rest_call(exchange, 'fapiPublicGetKlines', {
+                    'symbol': market['id'], 'interval': timeframe, 'startTime': gap_start,
+                    'endTime': gap_end + step - 1, 'limit': count,
+                }, priority=2, weight=1 if count < 100 else 2 if count < 500 else 5)
+                normalized = self._validate_binance_klines(rows, timeframe)
+                now_ms = int(time.time() * 1000)
+                closed = [r for r in normalized if int(r[6]) < now_ms - 3000]
+                expected = list(range(gap_start, gap_end + step, step))
+                if [int(r[0]) for r in closed] != expected:
+                    raise ValueError(f'incomplete backfill page: expected {len(expected)} {timeframe} bars, received {len(closed)}')
+            else:
+                rows = await self._fetch_klines('futures', symbol, timeframe, limit, priority=2)
+                normalized = self._validate_binance_klines(rows, timeframe)
+                now_ms = int(time.time() * 1000)
+                closed = [r for r in normalized if int(r[6]) < now_ms - 3000]
+            if not rows:
+                raise ValueError(f'empty Binance {timeframe} response')
+            if not closed:
+                raise ValueError(f'no closed Binance {timeframe} rows')
+            if not self._active_market_data(symbol, md):
+                state.update(error='symbol_left_active_universe')
+                return {'ready': False, 'state': 'UNAVAILABLE', 'error': state['error'], 'timeframes': {}}
+            parsed = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]),
+                       float(k[7]), float(k[10]), float(k[5])] for k in closed]
+            if timeframe == '1m':
+                md.seed_minutes('futures', parsed, now_ms)
+            else:
+                existing = self._history_rows(md, timeframe)
+                merged = {int(r[0]): list(r) for r in existing}
+                if timeframe == '1d':
+                    merged.update({int(r[0]): [*r[:5], r[5]] for r in parsed})
+                    result = [merged[t] for t in sorted(merged)][-limit:]
+                    md.d1 = result
+                else:
+                    merged.update({int(r[0]): r for r in parsed})
+                    result = [merged[t] for t in sorted(merged)][-limit:]
+                    if timeframe == '5m':
+                        md.htf_5m = result
+                    elif timeframe == '15m':
+                        md.m15_long = np.asarray(result, dtype=np.float64)
+                    elif timeframe == '1h':
+                        md.h1 = result[-200:]
+                        md.h1_long = np.asarray(result, dtype=np.float64)
+                    elif timeframe == '4h':
+                        md.h4 = result
+                    elif timeframe == '1w':
+                        md.w1 = [[*r[:5], r[5]] for r in result]
+                        from strategies.structure import weekly_ref
+                        md.w1_ref = weekly_ref([float(r[4]) for r in md.w1])
+                        md.w1_loaded = time.time()
+            md.history_version += 1
+            assessed = self._assess_history(symbol, md)
+            part = assessed['timeframes'].get(timeframe, {})
+            if part.get('quality') in ('VALID_COMPLETE', 'VALID_PARTIAL'):
+                state.update(attempts=0, next_attempt=0.0, error=None, exhausted=False, exhausted_at=None)
+                self.history_recovery_stats['recovered'] += 1
+            else:
+                self._history_retry_after_attempt(state, f'post_fetch_{part.get("state", "unknown")}')
+                self.history_recovery_stats['incomplete'] += 1
+            return assessed
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Network/timeout/rate-limit and malformed-content errors are job-local.
+            # Cancellation remains control flow and is intentionally not caught.
+            self._record_history_recovery_failure(symbol, timeframe, exc)
+            return self._assess_history(symbol, md, self._history_repair_state[(symbol, timeframe)]['error'])
+
+    async def _recover_baseline(self, symbol: str, md: MarketData) -> bool:
+        """Retry a failed/empty cold-start frame load as an isolated recovery job."""
+        state = self._history_repair_state.setdefault((symbol, 'baseline'), {'attempts': 0})
+        if not self._history_recovery_available(state):
+            return False
+        state['attempts'] = int(state.get('attempts', 0)) + 1
+        state['total_attempts'] = int(state.get('total_attempts', 0)) + 1
+        state['last_attempt'] = time.time()
+        md.baseline_attempted = True
+        md.baseline_loading = True
+        self.history_recovery_stats['requests'] += 1
+        try:
+            async with self._backfill_semaphore:
+                (spot_df, spot_final), (futures_df, futures_final) = await asyncio.gather(
+                    self._load_frame('spot', symbol), self._load_frame('futures', symbol))
+            if futures_df is None or futures_df.is_empty():
+                raise ValueError('baseline recovery returned no futures candles')
+            if not self._active_market_data(symbol, md):
+                state.update(error='symbol_left_active_universe')
+                return False
+            md.spot_df, md.futures_df = spot_df, futures_df
+            md.finalized_until = {'spot': max(md.finalized_until['spot'], spot_final),
+                                  'futures': max(md.finalized_until['futures'], futures_final)}
+            await asyncio.gather(self._seed_oi(symbol, md), self._seed_minutes(symbol, md))
+            md.history_version += 1
+            md.baseline_loaded = md.baseline_ready = True
+            md.baseline_error = None
+            md.baseline_validated = self._baseline_frame_validated(symbol, futures_df)
+            self._history_repair_state.pop((symbol, 'baseline'), None)
+            self.history_recovery_stats['recovered'] += 1
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            md.baseline_error = f'{type(exc).__name__}: {exc}'[:500]
+            self._record_history_recovery_failure(symbol, 'baseline', exc)
+            return False
+        finally:
+            md.baseline_loading = False
+
+    async def _recover_base_frame(self, symbol: str, md: MarketData) -> bool:
+        """Recover the exact base scan frame, then validate its whole consumed tail before replacing it."""
+        state = self._history_repair_state.setdefault((symbol, 'base_frame'), {'attempts': 0})
+        if not self._history_recovery_available(state):
+            return False
+        state['attempts'] = int(state.get('attempts', 0)) + 1
+        state['total_attempts'] = int(state.get('total_attempts', 0)) + 1
+        state['last_attempt'] = time.time()
+        self.history_recovery_stats['requests'] += 1
+        try:
+            async with self._backfill_semaphore:
+                df, final = await self._load_frame('futures', symbol)
+                if df is None or df.is_empty():
+                    raise ValueError('base-frame recovery returned no futures candles')
+                gaps = self._frame_missing_ranges(df, CONFIG.timeframe.rest_timeframe)
+                for _ in range(8):
+                    if not gaps:
+                        break
+                    df, gaps = await self._repair_frame_gap(symbol, 'futures', df)
+                if gaps:
+                    raise ValueError(f'base-frame repair left {sum(g[2] for g in gaps)} internal gaps')
+                quality = self._baseline_frame_assessment(symbol, df)
+                if quality['state'] not in ('READY', 'LISTING_TOO_RECENT'):
+                    raise ValueError(f'base-frame coverage not ready after recovery: {quality["state"]}')
+                # Preserve only stream candles newer than the REST snapshot; older rows are superseded by REST.
+                for row in list(md.recent_closed['futures']):
+                    if row['timestamp'] > final:
+                        df, _ = merge_live_candle(df, dict(row), row['timestamp'])
+                if self._frame_missing_ranges(df, CONFIG.timeframe.rest_timeframe):
+                    raise ValueError('stream reconciliation reintroduced an internal base-frame gap')
+                quality = self._baseline_frame_assessment(symbol, df)
+                if quality['state'] not in ('READY', 'LISTING_TOO_RECENT'):
+                    raise ValueError(f'base-frame coverage failed after stream reconciliation: {quality["state"]}')
+            if self.markets.get(symbol) is not md:
+                raise ValueError('symbol left the active market map during base-frame recovery')
+            md.set_frame('futures', df)
+            md.finalized_until['futures'] = max(md.finalized_until['futures'], final)
+            md.incomplete['futures'] = {ts for ts in md.incomplete['futures'] if ts > final}
+            md.last_merged.pop('futures', None)
+            md.history_version += 1
+            md.baseline_loaded = md.baseline_ready = md.baseline_validated = True
+            md.baseline_error = None
+            self._history_repair_state.pop((symbol, 'base_frame'), None)
+            self.history_recovery_stats['recovered'] += 1
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._record_history_recovery_failure(symbol, 'base_frame', exc)
+            return False
+
+    async def _load_initial_baseline(self, symbol: str, md: MarketData) -> bool:
+        """Cold-start load with distinct attempted/loaded/validated state and fail-closed readiness."""
+        md.baseline_attempted = True
+        md.baseline_loading = True
+        try:
+            (spot_df, spot_final), (futures_df, futures_final) = await asyncio.gather(
+                self._load_frame('spot', symbol), self._load_frame('futures', symbol))
+            if futures_df is None or futures_df.is_empty():
+                raise ValueError('initial baseline returned no futures candles')
+            if not self._active_market_data(symbol, md):
+                md.baseline_error = 'symbol_left_active_universe'
+                return False
+            md.spot_df, md.futures_df = spot_df, futures_df
+            md.history_version += 1
+            await asyncio.gather(self._seed_oi(symbol, md), self._seed_minutes(symbol, md))
+            md.finalized_until = {'spot': max(md.finalized_until['spot'], spot_final),
+                                  'futures': max(md.finalized_until['futures'], futures_final)}
+            md.baseline_loaded = md.baseline_ready = True
+            md.baseline_validated = self._baseline_frame_validated(symbol, futures_df)
+            md.baseline_error = None
+            return True
+        except asyncio.CancelledError:
+            md.baseline_loaded = md.baseline_ready = False
+            raise
+        except Exception as exc:
+            md.baseline_loaded = md.baseline_ready = md.baseline_validated = False
+            md.baseline_error = f'{type(exc).__name__}: {exc}'[:500]
+            logger.warning('Failed to fetch baselines for %s: %s', symbol, exc)
+            return False
+        finally:
+            md.baseline_loading = False
+
+    @staticmethod
+    def _history_retry_delay(attempt: int) -> float:
+        return min(300.0, 5.0 * (2 ** min(max(0, int(attempt) - 1), 6)))
+
+    def _history_recovery_available(self, state: Dict[str, object], now: Optional[float] = None) -> bool:
+        """Whether a bounded recovery attempt is due; reopen exhausted jobs after a cooldown."""
+        now = time.time() if now is None else float(now)
+        attempts = int(state.get('attempts', 0))
+        if attempts >= self.HISTORY_RECOVERY_MAX_ATTEMPTS:
+            exhausted_at = float(state.get('exhausted_at') or now)
+            state.setdefault('exhausted_at', exhausted_at)
+            if now < exhausted_at + self.HISTORY_RECOVERY_COOLDOWN_SEC:
+                state['exhausted'] = True
+                state['next_attempt'] = exhausted_at + self.HISTORY_RECOVERY_COOLDOWN_SEC
+                return False
+            state.update(attempts=0, exhausted=False, exhausted_at=None,
+                         next_attempt=now, cycle=int(state.get('cycle', 0)) + 1)
+        return now >= float(state.get('next_attempt', 0.0))
+
+    def _history_retry_after_attempt(self, state: Dict[str, object], error: Optional[str] = None) -> None:
+        attempts = int(state.get('attempts', 0))
+        state['error'] = error
+        if attempts >= self.HISTORY_RECOVERY_MAX_ATTEMPTS:
+            exhausted_at = time.time()
+            state.update(exhausted=True, exhausted_at=exhausted_at,
+                         next_attempt=exhausted_at + self.HISTORY_RECOVERY_COOLDOWN_SEC)
+        else:
+            state.update(exhausted=False, exhausted_at=None,
+                         next_attempt=time.time() + self._history_retry_delay(attempts))
+
+    def _record_history_recovery_failure(self, symbol: str, timeframe: str, exc: Exception,
+                                         *, unexpected: bool = False) -> None:
+        state = self._history_repair_state.setdefault((symbol, timeframe), {'attempts': 0})
+        attempt = int(state.get('attempts', 0))
+        if unexpected:
+            attempt += 1
+            state['total_attempts'] = int(state.get('total_attempts', 0)) + 1
+        error = f'{type(exc).__name__}: {exc}'[:500]
+        exhausted = attempt >= self.HISTORY_RECOVERY_MAX_ATTEMPTS
+        state.update(attempts=attempt, error=error, updated=time.time(), exhausted=exhausted)
+        self._history_retry_after_attempt(state, error)
+        self.history_recovery_stats['failed'] += 1
+        if unexpected:
+            self.history_recovery_stats['job_unexpected'] += 1
+        self.history_recovery_last_error = f'{symbol} {timeframe}: {error}'
+        errors.report('fetcher.history_recovery', exc, f'{symbol} {timeframe}')
+
+    async def _run_history_recovery_jobs(self, candidates: List[tuple], semaphore=None) -> List:
+        """Run independent symbol/timeframe repairs without allowing one job to cancel its siblings."""
+        semaphore = semaphore or asyncio.Semaphore(4)
+
+        async def bounded(item):
+            _, _, symbol, md, timeframe = item
+            try:
+                async with semaphore:
+                    if timeframe == 'baseline':
+                        return await self._recover_baseline(symbol, md)
+                    if timeframe == 'base_frame':
+                        return await self._recover_base_frame(symbol, md)
+                    return await self._recover_history_window(symbol, md, timeframe)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._record_history_recovery_failure(symbol, timeframe, exc, unexpected=True)
+                return None
+
+        tasks = [asyncio.create_task(bounded(item), name=f'history-recovery:{item[2]}:{item[4]}')
+                 for item in candidates]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for index, (item, result) in enumerate(zip(candidates, results)):
+            if isinstance(result, asyncio.CancelledError):
+                # A cancelled child is job-local. Cancellation of this parent
+                # propagates from gather itself and is not converted here.
+                self._record_history_recovery_failure(
+                    item[2], item[4], RuntimeError('recovery child cancelled unexpectedly'), unexpected=True)
+                results[index] = None
+                continue
+            if isinstance(result, BaseException):
+                # Defensive: bounded jobs isolate ordinary exceptions. Anything
+                # that reaches here is retained in diagnostics and siblings ran.
+                self._record_history_recovery_failure(item[2], item[4], result, unexpected=True)
+        return results
+
+    async def _history_recovery_loop(self):
+        """Detect and rate-limit repairs for gaps in active candle histories, validating before publication."""
+        semaphore = asyncio.Semaphore(4)
+        while self._running:
+            try:
+                candidates = []
+                active_symbols = set(getattr(self, 'universe_symbols', self.markets))
+                for symbol in sorted(active_symbols):
+                    md = self.markets.get(symbol)
+                    if md is None:
+                        continue
+                    self.history_recovery_stats['checks'] += 1
+                    assess_retry = self._history_repair_state.setdefault((symbol, 'assessment'), {'attempts': 0})
+                    if not self._history_recovery_available(assess_retry):
+                        continue
+                    if not md.baseline_ready:
+                        if md.baseline_loading:
+                            continue
+                        repair = self._history_repair_state.setdefault((symbol, 'baseline'), {'attempts': 0})
+                        if self._history_recovery_available(repair):
+                            candidates.append((0, 0, symbol, md, 'baseline'))
+                        continue
+                    try:
+                        status = self._assess_history(symbol, md)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        self._record_history_recovery_failure(symbol, 'assessment', exc, unexpected=True)
+                        continue
+                    else:
+                        self._history_repair_state.pop((symbol, 'assessment'), None)
+                    for tf, reading in status['timeframes'].items():
+                        if reading['quality'] in ('VALID_COMPLETE', 'VALID_PARTIAL', 'UNAVAILABLE'):
+                            continue
+                        job_tf = 'base_frame' if tf == CONFIG.timeframe.rest_timeframe else tf
+                        repair = self._history_repair_state.setdefault((symbol, job_tf), {'attempts': 0})
+                        if not self._history_recovery_available(repair):
+                            continue
+                        rank = {'INVALID': 0, 'DATA_GAP': 1, 'STALE': 2, 'LOADING': 3}.get(reading['state'], 4)
+                        candidates.append((rank, -int(reading['missing_bars']), symbol, md, job_tf))
+                candidates.sort(key=lambda item: (item[0], item[1], item[2], item[4]))
+                selected = candidates[:8]
+                if selected:
+                    await self._run_history_recovery_jobs(selected, semaphore)
+                self.history_recovery_loop_backoff = 5.0
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # A pass-level bug must not permanently kill the long-lived repair loop.
+                self.history_recovery_stats['loop_failures'] += 1
+                self.history_recovery_last_error = f'loop: {type(exc).__name__}: {exc}'[:500]
+                logger.exception('History recovery pass failed; it will retry')
+                await asyncio.sleep(self.history_recovery_loop_backoff)
+                self.history_recovery_loop_backoff = min(300.0, self.history_recovery_loop_backoff * 2)
+
     async def fetch_rest_baselines(self, symbols: List[str]):
         """
         Background cold start: fill candle history symbol by symbol (highest volume first) with bounded
@@ -1981,19 +2811,8 @@ class DataFetcher:
                 return
             async with semaphore:
                 try:
-                    (spot_df, spot_final), (futures_df, futures_final) = await asyncio.gather(
-                        self._load_frame('spot', futures_symbol), self._load_frame('futures', futures_symbol)
-                    )
-                    md.spot_df, md.futures_df = spot_df, futures_df
-                    md.history_version += 1
-                    await asyncio.gather(self._seed_oi(futures_symbol, md), self._seed_minutes(futures_symbol, md))
-                    md.finalized_until = {'spot': max(md.finalized_until['spot'], spot_final),
-                                          'futures': max(md.finalized_until['futures'], futures_final)}
-                except Exception as e:
-                    # Frames stay empty; the first kline row flags a backfill that retries the download
-                    logger.warning(f"Failed to fetch baselines for {futures_symbol}: {e}")
+                    await self._load_initial_baseline(futures_symbol, md)
                 finally:
-                    md.baseline_ready = True
                     done = sum(1 for s in symbols if s in self.markets and self.markets[s].baseline_ready)
                     if done % 50 == 0 or done == len(symbols):
                         logger.info(f"REST baselines: {done}/{len(symbols)}")
@@ -2040,6 +2859,57 @@ class DataFetcher:
         if exc is not None:
             logger.error("DataFetcher background task failed: %r", exc, exc_info=exc)
 
+    @staticmethod
+    def _frame_missing_ranges(df: pl.DataFrame, timeframe: str) -> List[Tuple[int, int, int]]:
+        """Return (first missing open, last missing open, count) for a sorted candle frame."""
+        from history_coverage import TF_MS
+
+        step = TF_MS.get(timeframe)
+        if step is None or df is None or df.is_empty() or 'timestamp' not in df.columns:
+            return []
+        stamps = [int(ts) for ts in df['timestamp'].to_list()]
+        if stamps != sorted(set(stamps)):
+            raise ValueError('candle frame timestamps are duplicated or unordered')
+        if any(ts % step for ts in stamps):
+            raise ValueError('candle frame contains a misaligned timestamp')
+        gaps = []
+        for previous, current in zip(stamps, stamps[1:]):
+            if current - previous > step:
+                count = (current - previous) // step - 1
+                gaps.append((previous + step, current - step, count))
+        return gaps
+
+    async def _repair_frame_gap(self, symbol: str, market: str, df: pl.DataFrame) -> Tuple[pl.DataFrame, List[Tuple[int, int, int]]]:
+        """Backfill exactly one internal gap from Binance REST, then leave the caller to revalidate the frame."""
+        from history_coverage import TF_MS
+
+        timeframe = CONFIG.timeframe.rest_timeframe
+        step = TF_MS.get(timeframe)
+        gaps = self._frame_missing_ranges(df, timeframe)
+        if not gaps or step is None:
+            return df, gaps
+        start, _, missing_count = gaps[0]
+        count = min(1000, missing_count)
+        end = start + (count - 1) * step
+        exchange = self.spot_exchange if market == 'spot' else self.futures_exchange
+        request_symbol = self._spot_symbol_for(symbol) if market == 'spot' else symbol
+        if not request_symbol or request_symbol not in exchange.markets:
+            raise ValueError(f'no Binance {market} symbol for {symbol}')
+        method = 'publicGetKlines' if market == 'spot' else 'fapiPublicGetKlines'
+        rows = await self._rest_call(exchange, method, {
+            'symbol': exchange.market(request_symbol)['id'], 'interval': timeframe,
+            'startTime': start, 'endTime': end + step - 1, 'limit': count,
+        }, priority=1, weight=2 if market == 'spot' else 1 if count < 100 else 2 if count < 500 else 5)
+        validated = self._validate_binance_klines(rows, timeframe)
+        now_ms = int(time.time() * 1000)
+        closed = [row for row in validated if int(row[6]) < now_ms - 3000]
+        expected = list(range(start, end + step, step))
+        if [int(row[0]) for row in closed] != expected:
+            raise ValueError(f'incomplete {market} frame backfill: expected {len(expected)}, received {len(closed)}')
+        patch = self._klines_to_df(closed)
+        repaired = pl.concat([df, patch], how='diagonal_relaxed').unique(subset='timestamp', keep='last').sort('timestamp')
+        return repaired, self._frame_missing_ranges(repaired, timeframe)
+
     async def _backfill(self, symbol: str, market: str, need_ts: int = 0):
         key = (symbol, market)
         state = self._backfill_state.setdefault(key, {'state': 'queued', 'attempts': 0})
@@ -2080,6 +2950,22 @@ class DataFetcher:
                     self.backfill_stats['jobs_deferred'] += 1
                     self.backfill_stats['deferred'] += 1
                     continue   # the candle to replace is not published yet: next attempt
+                try:
+                    gaps = self._frame_missing_ranges(df, CONFIG.timeframe.rest_timeframe)
+                    if gaps:
+                        df, gaps = await self._repair_frame_gap(symbol, market, df)
+                except asyncio.CancelledError:
+                    raise
+                except (ValueError, KeyError, IndexError, TypeError, OverflowError) as e:
+                    errors.report('fetcher._backfill_validation', e, f"Backfill validation failed for {symbol} ({market})")
+                    state.update(state='queued', updated=time.time(), reason=f'validation:{type(e).__name__}')
+                    self.backfill_stats['job_retries'] += 1
+                    continue
+                if gaps:
+                    state.update(state='queued', updated=time.time(), reason=f'internal_gaps:{sum(g[2] for g in gaps)}')
+                    self.backfill_stats['jobs_deferred'] += 1
+                    self.backfill_stats['deferred'] += 1
+                    continue
                 # REST is the authority for the candles it has; only complete stream candles NEWER than the snapshot
                 # (closed while it was in flight) are applied on top. Re-applying older stream rows put an incomplete
                 # candle back over the correct REST one.
@@ -2149,16 +3035,32 @@ class DataFetcher:
 
     async def start_websockets(self, symbols: List[str]):
         self._running = True
+        self.universe_symbols = set(symbols)
         await self._start_binance_streams(symbols)
         await self._start_venue_streams()
-        for name, loop in (('oi', self._oi_loop), ('funding-info', self._funding_info_loop),
+        for name, loop in (('history-recovery', self._history_recovery_loop), ('oi', self._oi_loop), ('funding-info', self._funding_info_loop),
                            ('bulk-deriv', self._bulk_deriv_loop), ('coinbase-prices', self._coinbase_prices_loop),
                            ('book-sync', self._book_sync_loop), ('binance-tickers', self._binance_rest_tickers_loop),
                            ('hourly-candles', self._hourly_candles_loop), ('seasonal', self._seasonal_loop),
                            ('weekly-candles', self._weekly_candles_loop), ('daily-candles', self._daily_candles_loop),
                            ('day-pocs', self._day_pocs_loop), ('dominance', self._dominance_loop),
                            ('external', self._external_loop), ('h4-candles', self._h4_candles_loop)):
-            self._tasks.append(asyncio.create_task(loop(), name=f'fetcher-{name}'))
+            task = asyncio.create_task(loop(), name=f'fetcher-{name}')
+            task.add_done_callback(self._loop_task_done)
+            self._tasks.append(task)
+
+    def _loop_task_done(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        name = task.get_name()
+        self._task_failures[name] = f'{type(exc).__name__}: {exc}'[:500]
+        if name == 'fetcher-history-recovery':
+            self.history_recovery_stats['loop_failures'] += 1
+            self.history_recovery_last_error = self._task_failures[name]
+        logger.error('DataFetcher loop task %s terminated unexpectedly: %r', name, exc, exc_info=exc)
 
     def _binance_plans(self, symbols: List[str]) -> List[Tuple[str, str, List[str], int]]:
         """(market, name, raw stream names, streams per socket) of the static Binance groups; fills _binance_keys."""
@@ -2215,6 +3117,10 @@ class DataFetcher:
     async def restart_streams(self, symbols: List[str]):
         """After a universe change: every static stream moves to the new symbol set by diff (audit-80: the sockets
         stay up; only a group that did not exist yet is started)."""
+        previously_active = set(getattr(self, 'universe_symbols', ()))
+        self.universe_symbols = set(symbols)
+        for symbol in self.universe_symbols - previously_active:
+            self._history_status.pop(symbol, None)
         by_name = {st.name: st for st in self._binance_streams}
         for market, name, streams, per_socket in self._binance_plans(symbols):
             st = by_name.get(name)
@@ -2305,11 +3211,15 @@ class DataFetcher:
                     if md.mark_price and md.index_price and (not md.premium_hist or
                                                              recv_ms - md.premium_hist[-1][0] >= 30_000):
                         md.premium_hist.append((recv_ms, md.mark_price / md.index_price - 1))
-                    # r: the live estimate of the next funding rate; settlements run every 1/4/8h -> 8h-equivalent
+                    # r: the live estimate of the next funding rate.  It is not
+                    # a settled payment and cannot be charged to a historical
+                    # trade without settlement-event data.
                     rate = float(m.get('r') or 0.0) * 8 / self.funding_interval_hours.get(key, 8)
-                    md.funding_rate = md.predicted_funding = rate
+                    md.predicted_funding = rate
                     state = self.venue_derivs.setdefault(key, {}).setdefault('binance', VenueDeriv())
-                    state.funding_8h, state.mark, state.ts, state.funding_ts = rate, md.mark_price, recv_ms, recv_ms
+                    if recv_ms >= (state.funding_ts or 0):
+                        state.funding_8h, state.funding_kind, state.funding_ts = rate, 'predicted', recv_ms
+                    state.mark, state.ts = md.mark_price, recv_ms
                 self.market_marks_at = now_s
                 self.marks_stream_at = now_s
             return
@@ -2347,7 +3257,7 @@ class DataFetcher:
         elif event == 'kline':
             md = self.markets.get(self._binance_keys.get((market_type, data.get('s'))))
             if md is not None:
-                md.apply_kline(market_type, data['k'], data.get('E'))
+                md.apply_kline(market_type, data.get('k'), data.get('E'), received_ms=recv_ms)
         elif event == 'contractInfo':
             if data.get('ct') == 'PERPETUAL' and str(data.get('s', '')).endswith('USDT'):
                 logger.info(f"Binance contract event: {data.get('s')} {data.get('cs')}")
@@ -2356,17 +3266,17 @@ class DataFetcher:
             o = data['o']
             key = self._binance_keys.get(('futures', o.get('s')))
             if key is not None:
-                price = float(o.get('ap') or o.get('p') or 0)
-                usd = price * float(o.get('z') or o.get('q') or 0)
-                # S = the liquidation order's side: a forced SELL closes a long
-                side_liq = 1 if o['S'] == 'SELL' else -1
-                self.flow.liquidation('binance', key, int(o['T']), usd, side_liq, recv_ms)
+                normalized = normalize_binance_liquidation(o)
+                if normalized is None:
+                    return
+                event_ms, price, usd, side_liq = normalized
+                self.flow.liquidation('binance', key, event_ms, usd, side_liq, recv_ms)
                 md = self.markets.get(key)
                 if md is not None and price:
-                    md.liq_events.append((int(o['T']), price, usd, side_liq, 'binance'))
-                    self.liq_bucket(int(o['T']), usd, side_liq, live=True)
+                    md.liq_events.append((event_ms, price, usd, side_liq, 'binance'))
+                    self.liq_bucket(event_ms, usd, side_liq, live=True)
                     if self.log_liquidations:
-                        self.liq_log.append((key, int(o['T']), price, usd, side_liq, 'binance'))
+                        self.liq_log.append((key, event_ms, price, usd, side_liq, 'binance'))
         elif event == 'depthUpdate':
             key = self._binance_keys.get(('futures', data.get('s')))
             if key is not None:
@@ -2415,7 +3325,8 @@ class DataFetcher:
                 self.liq_log.append((market.key, ts_ms, binance_price, usd, side_liq, market.venue))
 
     def on_deriv(self, market: VenueMarket, oi_usd: Optional[float] = None, funding_8h: Optional[float] = None,
-                 mark: Optional[float] = None, ts_ms: Optional[float] = None, native_oi: Optional[float] = None):
+                 mark: Optional[float] = None, ts_ms: Optional[float] = None, native_oi: Optional[float] = None,
+                 funding_kind: str = 'unknown'):
         if mark and not market.verified and not self.symbol_map.check_price(market, mark, self._binance_price(market.key)):
             return
         now_ms = time.time() * 1000
@@ -2424,7 +3335,7 @@ class DataFetcher:
         # is capped at now; a message older than what is stored is dropped, it must not roll the series back
         ev_ms = min(float(ts_ms), now_ms) if ts_ms else now_ms
         if funding_8h is not None and ev_ms >= (state.funding_ts or 0):
-            state.funding_8h, state.funding_ts = funding_8h, ev_ms
+            state.funding_8h, state.funding_kind, state.funding_ts = funding_8h, str(funding_kind), ev_ms
         if mark:
             state.mark = mark
         state.ts = now_ms
@@ -2437,8 +3348,8 @@ class DataFetcher:
         # A liquidation is executed as a MARKET order and prints in the same trade stream: a "whale buy" during a
         # short squeeze was the shorts' forced buying (live eng-6: 36% of WHALES BUY / 52% of WHALES SELL rows had the
         # opposite side liquidated in the same 5 minutes). A sweep whose size is mostly forced flow of its side in
-        # the same seconds is no whale decision: left out of the whale book (Binance's forceOrder feed is sampled,
-        # Bybit's / OKX's complete - the check misses some forced flow, never adds any).
+        # the same seconds on the same venue is not an independent whale decision. Public liquidation streams vary in
+        # coverage and are partial observations; unmatched venues never suppress this sweep.
         # Checked only for sweeps big enough to count (notable / whale size): thousands of small sweeps a second each
         # read every venue's ring, and with the machine short of RAM those reads paged and stalled the loop
         whale, notable = self.whales.thresholds(sweep.symbol)
@@ -2446,7 +3357,7 @@ class DataFetcher:
             from flow import LIQ_LONG, LIQ_SHORT
             forced = self.flow.symbol_range(sweep.symbol, LIQ_SHORT if sweep.side > 0 else LIQ_LONG,
                                             int(sweep.t_first // 1000) - 1, int(sweep.t_last // 1000) + 2,
-                                            now_sec=int(sweep.t_last // 1000) + 1)
+                                            now_sec=int(sweep.t_last // 1000) + 1, venues=(sweep.venue,))
             if forced >= CONFIG.sweeps.forced_share * sweep.usd:
                 return
         self.whales.add(sweep)
@@ -2721,14 +3632,64 @@ class DataFetcher:
 
     def venue_status(self) -> Dict[str, Dict]:
         status = self.flow.venue_status()
+
+        def connection_state(streams, stale):
+            counts = [getattr(stream, 'connected', None) for stream in streams]
+            known = [value for value in counts
+                     if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0]
+            total = sum(known)
+            if stale:
+                return total if len(known) == len(counts) else None, 'STALE'
+            if total > 0:
+                return total, 'CONNECTED'
+            if len(known) == len(counts) and counts:
+                return 0, 'DISCONNECTED'
+            return None, 'UNKNOWN'
+
         for venue, stream in self.venue_streams.items():
-            status.setdefault(venue, {}).update(connected=stream.connected, bytes=stream.bytes)
+            entry = status.setdefault(venue, {})
+            stale = entry.get('silent_sec') is not None and entry['silent_sec'] > 120
+            connected, health_state = connection_state([stream], stale)
+            details = stream.diagnostics() if hasattr(stream, 'diagnostics') else {'name': venue, 'health_state': 'UNKNOWN'}
+            entry.update(connected=connected, bytes=getattr(stream, 'bytes', 0), health_state=health_state,
+                         stream_diagnostics=[details])
         binance = list(self._binance_streams) + self._depth_streams
-        # eng-132: Binance's forceOrder stream pushes at most ONE liquidation per symbol per 1000 ms (the snapshot of the
-        # latest; Binance's own wording) - its liquidation sums are a lower bound, flagged for the dashboard
-        status.setdefault('binance', {}).update(connected=sum(s.connected for s in self._binance_streams),
-                                                bytes=sum(s.bytes for s in binance), liq_sampled=True)
+        # Binance's forceOrder stream is a sampled public feed, not a complete
+        # liquidation tape.  Counts/sums derived from it are explicitly
+        # partial lower-bound observations.
+        bentry = status.setdefault('binance', {})
+        stale = bentry.get('silent_sec') is not None and bentry['silent_sec'] > 120
+        connected, health_state = connection_state(self._binance_streams, stale)
+        bentry.update(connected=connected, bytes=sum(getattr(s, 'bytes', 0) for s in binance), liq_sampled=True,
+                      health_state=health_state,
+                      stream_diagnostics=[s.diagnostics() if hasattr(s, 'diagnostics') else
+                                          {'name': getattr(s, 'name', 'binance'), 'health_state': 'UNKNOWN'}
+                                          for s in binance])
+        for venue in set(self.flow.venues) - set(self.venue_streams) - {'binance'}:
+            entry = status[venue]
+            entry.setdefault('health_state', 'NOT_CONFIGURED')
         return status
+
+    def oi_diagnostics(self, now_ms: Optional[float] = None) -> Dict[str, Dict[str, object]]:
+        """Per-symbol exchange measurement and local receipt timestamps for the latest OI sample."""
+        now_ms = time.time() * 1000 if now_ms is None else float(now_ms)
+        result = {}
+        quality_states = getattr(self, 'quality_state', {})
+        receive_times = getattr(self, 'oi_received_at', {})
+        for symbol, market in self.markets.items():
+            sample = market.oi_samples[-1] if market.oi_samples else None
+            state = quality_states.get(('oi', symbol))
+            measured_ms = float(sample[0]) if sample else None
+            received_ms = float(receive_times[symbol]) * 1000 if symbol in receive_times else None
+            result[symbol] = {
+                'source': 'binance_rest_open_interest',
+                'exchange_ts_ms': measured_ms,
+                'receive_ts_ms': received_ms,
+                'age_sec': max(0.0, (now_ms - measured_ms) / 1000) if measured_ms is not None else None,
+                'quality_state': getattr(getattr(state, 'state', None), 'value', 'missing'),
+                'quality_error': getattr(state, 'error', None),
+            }
+        return result
 
     # ------------------------------------------------------------------ stop
 

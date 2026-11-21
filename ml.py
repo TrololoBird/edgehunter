@@ -1,20 +1,9 @@
-"""
-Machine learning that adapts to the current market instead of fixed thresholds fitted to the past.
+"""Quarantined legacy model implementations retained for research and forensic compatibility.
 
-1. AnomalyModel (scikit-learn IsolationForest): Tier-0 anomalies as an UNUSUAL COMBINATION of a coin's live
-   features (RVOL, price / OI z-scores, whale sweeps, liquidations, flow intensity, one-venue share, algo
-   clusters), refitted every hour on the last hours of the whole universe. It replaces the OR of seven fixed
-   thresholds (which flagged ~1000 onsets an hour, most of them noise) once it has been fitted; until then the
-   rules decide. No labels needed.
-2. RegimeModel (scikit-learn GaussianMixture): the market regime from market-wide features of every closed 15m
-   candle (BTC 1h move and volatility, breadth, median funding / OI change / RVOL). Clusters are named from their
-   centers ('up·volatile', 'flat·quiet', ...). Every journal row carries the regime; stats.py splits Edge by it
-   and journal.veto_reason mutes a setup whose Edge in the current regime is proven negative.
-3. SuccessModel (River when available; a small compatibility model on Python 3.10): online logistic regression +
-   drift detection for P(4h Edge > 0) of a directional signal from journal features. It learns from every labelled row
-   as it comes in (and replays the journal after a restart), and starts over when error rates drift.
-   Shadow mode: stored in the journal and shown on cards once trained, never used as a filter until stats.py
-   proves it separates winners from losers.
+These classes are not an active ML subsystem in v2: the live scanner does not
+fit or infer with them, the v2 strategy registry is empty, and model artifacts
+with unverifiable provenance remain quarantined. See
+``docs/LEGACY_ARTIFACT_QUARANTINE.md``.
 """
 import logging
 import json

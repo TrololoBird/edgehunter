@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core.provenance import fields as provenance_fields
+from core.source_manifest import SOURCE_MANIFEST_VERSION, source_manifest_hash
 
-FEATURE_SCHEMA_VERSION = "features-v2"
+FEATURE_SCHEMA_VERSION = "features-v4"
+EXECUTION_MODEL_VERSION = "execution-v2-reference-only"
 
 
 def _sha256(path: str | os.PathLike[str]) -> str:
@@ -47,6 +49,9 @@ def build_manifest(model_path: str, state: Dict[str, Any]) -> Dict[str, Any]:
         "artifact_sha256": _sha256(model_path),
         "logic_version": state.get("logic_version"),
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "source_manifest_version": SOURCE_MANIFEST_VERSION,
+        "source_manifest_hash": source_manifest_hash(),
+        "execution_model_version": EXECUTION_MODEL_VERSION,
         "training_period": {"start": state.get("start"), "end": state.get("end")},
         "source_commit": provenance["source_commit"],
         "implementation_hash": provenance["implementation_hash"],
@@ -85,6 +90,12 @@ def validate_manifest(model_path: str, state: Dict[str, Any], *, require: bool =
         return False, "logic_version_mismatch"
     if manifest.get("feature_schema_version") != FEATURE_SCHEMA_VERSION:
         return False, "feature_schema_mismatch"
+    if manifest.get("source_manifest_version") != SOURCE_MANIFEST_VERSION:
+        return False, "source_manifest_version_mismatch"
+    if manifest.get("source_manifest_hash") != source_manifest_hash():
+        return False, "source_manifest_hash_mismatch"
+    if manifest.get("execution_model_version") != EXECUTION_MODEL_VERSION:
+        return False, "execution_model_version_mismatch"
     current = provenance_fields()
     if manifest.get("source_dirty"):
         return False, "trained_from_dirty_source"

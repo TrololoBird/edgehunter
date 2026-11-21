@@ -1,13 +1,10 @@
-"""
-Positioning of other traders, from public data, for coins with open cards (context and level map, never a trigger):
+"""Public positioning observations from selected venues and accounts.
 
-- Long / short ratios: Binance global accounts, top-trader accounts and top-trader positions (/futures/data, own
-  limit 1000 requests / 5 min shared with openInterestHist), Bybit account ratio, OKX account ratio (5m periods).
-- Hyperliquid large accounts: the chain is public, so the real positions of big traders are known, with their
-  liquidation prices. Accounts = the leaderboard's most active traders by monthly volume (the file is ~40 MB, so it is
-  downloaded every `hl_accounts_refresh_sec` and cached in hl_accounts.json); positions of each account every
-  `hl_positions_refresh_sec`. Their liquidation prices become 'liq_hl' levels (zones.py): real, not estimated.
-- OKX liquidations (REST, the last 100 per contract): refill the observed-liquidation lists after a restart.
+Hyperliquid data here covers only the addresses selected from a leaderboard.
+It does not identify all owners or represent all large traders. The platform's
+liquidation-price field is an account-level estimate, not a guaranteed future
+execution level. All outputs are context observations and never prove market
+intent or total-market positioning.
 """
 import asyncio
 import json
@@ -220,10 +217,10 @@ class Positioning:
     @staticmethod
     def _write_leverage_mix(positions: Dict[str, List[Tuple[int, float, Optional[float], float]]]) -> None:
         """
-        The leverage the tracked accounts really use, weighted by notional (eng-57): it replaces the guessed
-        10 / 25 / 50 / 100x mix of the liquidation estimate (zones.leverage_mix). Leverages are rounded to whole x;
-        bins under 1% of the notional are dropped. Large Hyperliquid accounts are a proxy for the market's leverage,
-        not Binance's own (which publishes none).
+        Observed leverage fields for the selected Hyperliquid accounts, weighted by
+        their reported notional.  This is an account-subset diagnostic, not a
+        market-wide leverage estimate and not a replacement for Binance data.
+        Rounded bins under 1% of that subset's notional are omitted.
         """
         from zones import LEVERAGE_MIX_PATH
         notional: Dict[float, float] = {}
@@ -308,7 +305,12 @@ class Positioning:
         return {'hl_long_usd': sum(longs), 'hl_short_usd': sum(shorts), 'hl_longs': len(longs), 'hl_shorts': len(shorts)}
 
     def hl_levels(self, symbol: str, price: Optional[float]) -> List[RawLevel]:
-        """Liquidation prices of the tracked accounts, summed per price bucket: the 'liq_hl' levels of the map."""
+        """Bucket platform liquidation-price estimates for tracked accounts.
+
+        These are observable platform estimates for a selected account set. They
+        are not guaranteed execution prices, total-market liquidation levels, or
+        evidence that a liquidation will occur at the bucket.
+        """
         rows = [r for r in self.hl_positions.get(symbol, []) if r[2]] if self.hl_current() else []
         if not rows or not price:
             return []
@@ -320,9 +322,10 @@ class Positioning:
         for (bucket, side), sizes in buckets.items():
             usd = sum(sizes)
             if usd >= CONFIG.positioning.hl_min_level_usd:
-                who = 'longs' if side > 0 else 'shorts'
-                out.append(RawLevel((bucket + 0.5) * step, 'liq_hl', f"HL liq {who} ${usd / 1e6:.1f}M ({len(sizes)})",
-                                    -side, usd))
+                who = 'positive-side' if side > 0 else 'negative-side'
+                out.append(RawLevel((bucket + 0.5) * step, 'liq_hl',
+                                    f"HL platform estimate {who} ${usd / 1e6:.1f}M ({len(sizes)})",
+                                    0, usd))
         return out
 
     # ------------------------------------------------------------------ OKX liquidations after a restart

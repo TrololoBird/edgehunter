@@ -1280,3 +1280,9 @@ Left by design: stage 4 (each item its own yes after 100+ cluster-independent tr
 
 This document is an append-only history of earlier revisions. File names, strategy aliases, dependency versions and
 test counts inside dated entries describe those revisions and must not be treated as the current project interface.
+
+### Data-feed scope correction (2026-11-19)
+
+Older entries that call Bybit liquidation data “complete” preserve the wording used at that time, not a current coverage
+claim. Public liquidation streams are partial venue observations. EdgeHunter labels them as observations and does not
+infer market-wide liquidation totals from them; see `MASTER_FINDINGS_REGISTER.md` finding `DEF-MKT-004` and `SPR1-MKT-001`.

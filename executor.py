@@ -1,19 +1,10 @@
-"""
-Demo execution on BingX (virtual VST, `open-api-vst`): an eligible card that reaches ENTRY is sent there unless a
-configured demo gate (for example `demo_off_setups`, market/basis checks or an exchange constraint) rejects it. Its
-result is recorded next to the journal's replay. DEMO ONLY: sandbox mode is forced and cannot be switched off from the
-config. Never an order on a real balance.
+"""Exchange execution adapter, disabled by the v2 default profile.
 
-- ENTRY: a market order sized so the stop costs `risk_pct` of the demo balance (capped by `max_leverage`), then a
-  reduce-only stop-market at the card's SL and three reduce-only take-profits (thirds) at TP1 / TP2 / TP3.
-- The card finishes (SL / TP3 / CLOSED / INVALID / EXPIRED / MISSED after an entry): open orders are cancelled and
-  whatever is left of the position is closed at market.
-- Every minute the open demo trades are reconciled: a position the exchange closed (stop / last target) is finalized.
-- Each trade is a row of `demo_trades.db` (fills, fees, realized USD, R against the planned stop).
-
-The API key is the owner's (config.local.toml, `[executor] api_key / api_secret`), a trade-only key.
-    python executor.py --check           markets, balance, position mode
-    python executor.py --test BTC/USDT:USDT    open and close the minimum size (checks order handling)
+The adapter separates order intent, acknowledgement, exchange fills and
+reconciliation. It must not be enabled for real or demo balances until a
+source-backed strategy and the technical execution gate have passed.
+Credentials are accepted only from environment variables; they are never
+read from checkout files.
 """
 import asyncio
 import json
@@ -25,11 +16,13 @@ import sqlite3
 from sqlsafe import identifier
 import contextlib
 import time
+from urllib.parse import urlsplit
 from typing import Dict, List, Optional
 
 from config import CONFIG
 from storage import atomic_write
 from core.provenance import fields as provenance_fields
+from strategies import STRATEGIES
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +65,7 @@ CREATE TABLE IF NOT EXISTS execution_intents (
 
 
 UNKNOWN_HOLD_SEC = 900.0     # a coin stays closed to new entries this long after an entry whose outcome is unknown
+VST_API_ORIGIN = 'https://open-api-vst.bingx.com'
 
 
 class EntryUnknown(Exception):
@@ -124,10 +118,20 @@ def credentials() -> tuple:
 
 
 class DemoExecutor:
-    def __init__(self, db_path: str = 'demo_trades.db'):
+    def __init__(self, db_path: Optional[str] = None):
         cfg = CONFIG.executor
-        self.enabled = bool(cfg.enabled and all(credentials()))
-        self.db_path = db_path
+        # Even an explicitly enabled adapter cannot trade while the v2 source
+        # manifest has no admitted strategy.  Configuration is not a strategy
+        # approval mechanism.
+        self.enabled = bool(cfg.enabled and all(credentials()) and STRATEGIES and
+                            os.environ.get('EDGEHUNTER_BINGX_DEMO_EXECUTION') == '1' and
+                            os.environ.get('EDGEHUNTER_BINGX_KILL_SWITCH', '1') == '0')
+        # The v2 executor is disabled by default and uses a separate database
+        # even when a testnet adapter is explicitly enabled.  Never reopen the
+        # legacy demo database as part of a new run.
+        self.db_path = db_path or cfg.db_path
+        if self.db_path != ':memory:':
+            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
         self._flat_seen: Dict[str, int] = {}      # card id -> consecutive reconcile passes that read the position as 0
         self._finalized: Dict[str, tuple] = {}    # symbol -> (trade, time) of the last finalize (close_untracked guard)
         self._unknown_coins: Dict[str, float] = {}  # coin -> when an entry's outcome stayed UNKNOWN: held until close_untracked has had its turn
@@ -156,8 +160,8 @@ class DemoExecutor:
         # resting limit entries of touch plans (Seiden's proximal line, the Silver Bullet's CE): waiting-card key ->
         # {order_id, symbol, levels in BingX prices, ...} (eng-46)
         self.pending: Dict[str, Dict] = {}
-        self.pending_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'demo_pending.json')
-        self.unknown_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'demo_unknown.json')
+        self.pending_path = os.path.join(os.path.dirname(os.path.abspath(self.db_path)), 'demo_pending.json')
+        self.unknown_path = os.path.join(os.path.dirname(os.path.abspath(self.db_path)), 'demo_unknown.json')
         try:
             # audit F01: an entry of unknown outcome holds its coin across a restart too
             with open(self.unknown_path, encoding='utf-8') as f:
@@ -295,14 +299,58 @@ class DemoExecutor:
             self.ex.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(
                 ssl=ssl.create_default_context(cafile=certifi.where()), enable_cleanup_closed=True,
                 happy_eyeballs_delay=0.25))
+            # Never follow an HTTP redirect from VST. A redirect is a protocol
+            # failure, not permission to replay an authenticated request on a
+            # different host.
+            original_request = self.ex.session._request
+
+            async def no_redirect_request(method, url, **kwargs):
+                kwargs['allow_redirects'] = False
+                return await original_request(method, url, **kwargs)
+
+            self.ex.session._request = no_redirect_request
         if not self._markets_ready:
             await self.ex.load_markets()
-            try:
-                await self.ex.set_position_mode(False)   # one-way: reduce-only orders need no position side
-            except Exception as e:
-                logger.info(f"Demo: position mode unchanged ({e})")
             self._markets_ready = True
+        self._assert_vst_endpoint(self.ex)
         return self.ex
+
+    @staticmethod
+    def _assert_vst_endpoint(ex, *, require_gate: bool = False) -> None:
+        """Fail closed unless every CCXT route is the official VST host."""
+        if require_gate and (os.environ.get('EDGEHUNTER_BINGX_DEMO_EXECUTION') != '1' or
+                             os.environ.get('EDGEHUNTER_BINGX_KILL_SWITCH', '1') != '0'):
+            raise RuntimeError('BingX VST execution gate is closed')
+        if not bool((getattr(ex, 'options', {}) or {}).get('sandboxMode')):
+            raise RuntimeError('BingX sandbox mode is not active')
+        urls = ((getattr(ex, 'urls', {}) or {}).get('api') or {})
+        if not urls:
+            raise RuntimeError('BingX API route map is unavailable')
+        for route in urls.values():
+            expanded = ex.implode_hostname(route) if '{hostname}' in route else route
+            parsed = urlsplit(expanded)
+            if parsed.scheme != 'https' or parsed.netloc.lower() != 'open-api-vst.bingx.com':
+                raise RuntimeError('BingX route rejected: only open-api-vst.bingx.com is allowed')
+
+    async def _demo_create_order(self, ex, *args, **kwargs):
+        # Balance verification is read-only and bound to the already checked
+        # VST endpoint. Re-check the route immediately after the awaited query.
+        self._assert_vst_endpoint(ex, require_gate=True)
+        balance = await ex.fetch_balance()
+        totals = balance.get('total') or {}
+        amount = _positive(totals.get('VST') or totals.get('USDT'))
+        if amount is None:
+            raise RuntimeError('BingX VST account balance is unavailable; order blocked')
+        self._assert_vst_endpoint(ex, require_gate=True)
+        return await ex.create_order(*args, **kwargs)
+
+    async def _demo_cancel_order(self, ex, *args, **kwargs):
+        self._assert_vst_endpoint(ex, require_gate=True)
+        return await ex.cancel_order(*args, **kwargs)
+
+    async def _demo_set_leverage(self, ex, *args, **kwargs):
+        self._assert_vst_endpoint(ex)
+        return await ex.set_leverage(*args, **kwargs)
 
     async def _market_of(self, symbol: str, price: float):
         """
@@ -552,7 +600,7 @@ class DemoExecutor:
         ex = await self._exchange()
 
         async def place():
-            return await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', qty, None,
+            return await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', qty, None,
                                          {'stopLossPrice': float(ex.price_to_precision(symbol, price)),
                                           'reduceOnly': True, 'workingType': 'MARK_PRICE'})
         for attempt in range(3):
@@ -629,7 +677,7 @@ class DemoExecutor:
             if len(orders) == 2 and not self._is_plain_tp3(sym, px(far)):
                 continue
             try:
-                await ex.cancel_order(far['id'], sym)
+                await self._demo_cancel_order(ex, far['id'], sym)
             except Exception as e:
                 errors.report('executor._free_tp_slot', e, f"Demo cancel TP3 {sym}")
                 continue
@@ -685,7 +733,7 @@ class DemoExecutor:
             if o.get('id') == keep or (stops_only and not self._is_stop(o)):
                 continue
             try:
-                await ex.cancel_order(o['id'], symbol)
+                await self._demo_cancel_order(ex, o['id'], symbol)
             except Exception as e:
                 errors.report('executor._cancel_orders', e, f"Demo cancel {symbol} {o.get('id')}")
 
@@ -710,7 +758,7 @@ class DemoExecutor:
             if amount <= 0 or amount < min_qty or not trade.get(f'tp{k}'):
                 continue
             try:
-                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
+                await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
                                       {'takeProfitPrice': float(ex.price_to_precision(symbol, float(trade[f'tp{k}']))),
                                        'reduceOnly': True, 'workingType': 'MARK_PRICE'})
             except Exception as err:
@@ -726,7 +774,7 @@ class DemoExecutor:
                     last = 0.0
                 if last and d * (last - float(trade[f'tp{k}'])) >= 0:
                     try:
-                        await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
+                        await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
                                               {'reduceOnly': True})
                         logger.info(f"Demo TP{k} {symbol}: price {last} already beyond the target, {amount} taken at market")
                         continue
@@ -1111,7 +1159,7 @@ class DemoExecutor:
             logger.info(f"Demo: {symbol} size {qty} below the minimum {min_qty}")
             return
         try:
-            await ex.set_leverage(leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
+            await self._demo_set_leverage(ex, leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
         except Exception as e:
             errors.report('executor._open', e, f"Demo leverage {symbol}")
         side, exit_side = ('buy', 'sell') if d > 0 else ('sell', 'buy')
@@ -1123,7 +1171,7 @@ class DemoExecutor:
         self._set_inflight(card_id, 'ORDER_SENT', client_order_id=cid, exchange_symbol=symbol)
         try:
             try:
-                order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
+                order = await self._demo_create_order(ex, symbol, 'market', side, qty, None, {'clientOrderId': cid})
             except (ccxt.NetworkError, ccxt.ExchangeNotAvailable, asyncio.TimeoutError):
                 raise
             except Exception as e:
@@ -1138,7 +1186,7 @@ class DemoExecutor:
                     raise
                 cid = f"pb{uuid.uuid4().hex[:24]}"
                 self._set_inflight(card_id, 'ORDER_SENT', client_order_id=cid, exchange_symbol=symbol)
-                order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
+                order = await self._demo_create_order(ex, symbol, 'market', side, qty, None, {'clientOrderId': cid})
         except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
             order = await self._resolve_unknown_entry(symbol, d, cid, e)
             if order is None:
@@ -1378,11 +1426,11 @@ class DemoExecutor:
             self.pending[key] = {'skip': True, 'reason': f'size {qty} below the minimum'}
             return
         try:
-            await ex.set_leverage(cfg.max_leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
+            await self._demo_set_leverage(ex, cfg.max_leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
         except Exception as e:
             errors.report('executor._place_limit', e, f"Demo leverage {symbol}")
         price = float(ex.price_to_precision(symbol, lv['entry']))
-        order = await ex.create_order(symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
+        order = await self._demo_create_order(ex, symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
         self.pending[key] = {'order_id': order['id'], 'client_order_id': (order.get('clientOrderId') or
                                                                           (order.get('info') or {}).get('clientOrderId')),
                              'card_id': key, 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio, 'fee': fee,
@@ -1407,7 +1455,7 @@ class DemoExecutor:
             return
         ex = await self._exchange()
         try:
-            await ex.cancel_order(p['order_id'], p['symbol'])
+            await self._demo_cancel_order(ex, p['order_id'], p['symbol'])
         except Exception as e:
             errors.report('executor._cancel_limit', e, f"Demo cancel limit {p['symbol']}")
         # the cancel may fail or come after a fill (live ARB / CAP 2026-10-02: 'cancelled' limits filled and sat
@@ -1478,7 +1526,7 @@ class DemoExecutor:
                 # eng-85: a partly filled limit sat without a stop until limit_wait_min: the rest is cancelled and the
                 # filled part becomes the trade (its stop / targets for the filled size)
                 try:
-                    await ex.cancel_order(p['order_id'], p['symbol'])
+                    await self._demo_cancel_order(ex, p['order_id'], p['symbol'])
                 except Exception as e:
                     errors.report('executor.check_limits', e, f"Demo cancel partial limit {p['symbol']}")
                 try:
@@ -1830,7 +1878,7 @@ class DemoExecutor:
                 if o is keep:
                     continue
                 try:
-                    await ex.cancel_order(o['id'], trade['symbol'])
+                    await self._demo_cancel_order(ex, o['id'], trade['symbol'])
                     logger.warning(f"Demo {trade['symbol']}: extra stop {px(o):.6g} cancelled (kept {px(keep):.6g})")
                 except Exception as e:
                     errors.report('executor._dedupe_stops', e, f"Demo extra stop {trade['symbol']}")
@@ -1850,7 +1898,7 @@ class DemoExecutor:
         for o in await ex.fetch_open_orders(symbol):
             if not self._is_stop(o):
                 try:
-                    await ex.cancel_order(o['id'], symbol)
+                    await self._demo_cancel_order(ex, o['id'], symbol)
                 except Exception as e:
                     errors.report('executor._cancel_targets', e, f"Demo cancel {symbol} {o.get('id')}")
 
@@ -1887,7 +1935,7 @@ class DemoExecutor:
                 except ccxt.InvalidOrder:
                     excess = 0.0
                 if excess > 0 and excess >= min_qty:
-                    await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', excess, None,
+                    await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', excess, None,
                                           {'reduceOnly': True})
                 else:
                     excess = 0.0
@@ -1983,7 +2031,7 @@ class DemoExecutor:
             price = mark if mark is not None else last
             left = await self._position_qty(symbol)
             if price and left > 0 and d * (price - new_sl) <= 0:
-                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
+                await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
                 logger.info(f"Demo RESTOP {symbol}: price {price} already beyond the new stop {new_sl:.6g}, "
                             f"{left} closed at market")
                 return
@@ -2017,7 +2065,7 @@ class DemoExecutor:
                     for o in await ex.fetch_open_orders(symbol):
                         if not self._is_stop(o):
                             try:
-                                await ex.cancel_order(o['id'], symbol)
+                                await self._demo_cancel_order(ex, o['id'], symbol)
                             except Exception as e:
                                 # eng-175: 109400 'order not exist' = the target filled between the fetch and the
                                 # cancel (live 1000BONK 28.10: 'out by its tp0 meanwhile' a second later) - the
@@ -2034,7 +2082,7 @@ class DemoExecutor:
                         # its half, not 1/6 (live APE 2026-10-24: half of the original closed from 2/3 left)
                         half = float(ex.amount_to_precision(symbol, left - qty * rest_share))
                         if half > 0:
-                            await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', half, None,
+                            await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', half, None,
                                                   {'reduceOnly': True})
                         done = f"{half} closed at market"
                     rest = await self._position_qty(symbol)
@@ -2076,7 +2124,7 @@ class DemoExecutor:
                 before, before_px = await self._position_of(symbol, d, strict=True)
                 cid = f"pb{uuid.uuid4().hex[:24]}"
                 try:
-                    order = await ex.create_order(symbol, 'market', 'buy' if d > 0 else 'sell', unit, None,
+                    order = await self._demo_create_order(ex, symbol, 'market', 'buy' if d > 0 else 'sell', unit, None,
                                                   {'clientOrderId': cid})
                 except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
                     logger.warning(f"Demo ADD {symbol}: outcome unknown ({e!r}): resolving by position")
@@ -2317,7 +2365,7 @@ class DemoExecutor:
             for o in await ex.fetch_open_orders(symbol):
                 if not self._is_stop(o):
                     try:
-                        await ex.cancel_order(o['id'], symbol)
+                        await self._demo_cancel_order(ex, o['id'], symbol)
                     except Exception as e:
                         errors.report('executor._close', e, f"Demo cancel TP {symbol}")
         except Exception as e:
@@ -2329,13 +2377,13 @@ class DemoExecutor:
             try:
                 t = await ex.fetch_ticker(symbol)
                 px = float((t.get('ask') if d > 0 else t.get('bid')) or t.get('last'))
-                order = await ex.create_order(symbol, 'limit', side, left, px, {'reduceOnly': True})
+                order = await self._demo_create_order(ex, symbol, 'limit', side, left, px, {'reduceOnly': True})
                 for _ in range(5):
                     await asyncio.sleep(3)
                     if await self._position_qty(symbol) == 0:
                         break
                 try:
-                    await ex.cancel_order(order['id'], symbol)
+                    await self._demo_cancel_order(ex, order['id'], symbol)
                 except Exception as e:                  # filled / gone: the position check below decides
                     logger.debug(f"Demo cancel passive close {symbol}: {e!r}")
             except Exception as e:
@@ -2348,7 +2396,7 @@ class DemoExecutor:
             left = await self._position_qty(symbol)
         if left > 0:
             try:
-                await ex.create_order(symbol, 'market', side, left, None, {'reduceOnly': True})
+                await self._demo_create_order(ex, symbol, 'market', side, left, None, {'reduceOnly': True})
             except Exception as e:
                 if '101290' in str(e) and await self._position_qty(symbol) == 0:
                     # BingX's own stop / target filled between the position check and this order (BAT 2026-10-05
@@ -2360,7 +2408,7 @@ class DemoExecutor:
                     # at the touch instead, the stop still resting; the trade stays open, the next pass re-places it
                     t = await ex.fetch_ticker(symbol)
                     px = float((t.get('bid') if d > 0 else t.get('ask')) or t.get('last'))
-                    await ex.create_order(symbol, 'limit', side, left, px, {'reduceOnly': True})
+                    await self._demo_create_order(ex, symbol, 'limit', side, left, px, {'reduceOnly': True})
                     if symbol not in self._band_warned:
                         self._band_warned.add(symbol)
                         logger.warning(f"Demo: {symbol} market close rejected by BingX's price band: reduce-only limit "
@@ -2761,25 +2809,20 @@ class DemoExecutor:
 
 
 async def _cli(args):
+    if args.test:
+        # The old diagnostic CLI could place a sandbox order directly and
+        # bypass the source-gated executor.  v2 has no approved strategy or
+        # testnet gate, so an order probe is deliberately unavailable.
+        print("Order probes are disabled until the v2 testnet gate is approved")
+        return
     ex = DemoExecutor(db_path=':memory:')
     if not all(credentials()):
-        print("No BINGX_API_KEY / BINGX_API_SECRET in the environment nor [executor] api_key / api_secret in config.local.toml")
+        print("No BINGX_API_KEY / BINGX_API_SECRET in the environment; exchange access is disabled")
         return
     try:
         x = await ex._exchange()
         print(f"BingX demo: {len([m for m in x.markets.values() if m.get('swap')])} swap markets, "
               f"balance {await ex._balance():.2f} VST")
-        if args.test:
-            symbol = args.test
-            price = (await x.fetch_ticker(symbol))['last']
-            qty = float(x.amount_to_precision(symbol, max((x.markets[symbol]['limits']['amount'] or {}).get('min') or 0,
-                                                          6 / price)))
-            o = await x.create_order(symbol, 'market', 'buy', qty)
-            print('opened', o.get('id'), o.get('average'), qty)
-            await asyncio.sleep(3)
-            left = await ex._position_qty(symbol)
-            await x.create_order(symbol, 'market', 'sell', left or qty, None, {'reduceOnly': True})
-            print('closed', left or qty)
     finally:
         await ex.close()
 
