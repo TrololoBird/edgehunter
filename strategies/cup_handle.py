@@ -1,16 +1,4 @@
-"""
-Cup with handle (William O'Neil, "How to Make Money in Stocks"; statistics: Thomas Bulkowski, "Encyclopedia of Chart
-Patterns"), on DAILY candles at the UTC day's close (eng-58; was 1h / 4h):
-
-- a prior advance of >= 30% into the left rim (the lowest low of the 2x cup-length before it to the rim);
-- the cup: 12-33% deep (O'Neil; eng-58, was up to 50%), 35..325 daily candles (his 7 .. 65 weeks);
-- the handle after the right rim: 5 days (O'Neil: at least one to two weeks) .. cup/4 candles, drifting in the cup's UPPER half and no deeper than 12% of the
-  rim, on lower volume than the cup's;
-- the entry: the first close above the handle's high (the pivot) on >= 1.4x the average volume (O'Neil: +40-50%).
-- stop below the handle's low; TP1 the pivot + 61% of the depth, TP2 + the full depth (Bulkowski's measure rule); O'Neil's own rule
-  (cut losses at 7-8%, take 20-25%) is an exit rule, not an entry filter: the stop is the nearer of the handle's low
-  and 8% below the entry, the minimum R:R to the measured target is 1.
-"""
+'Daily cup-and-handle candidate detector with configured depth, duration, volume, breakout, stop\nand target conditions. The numerical thresholds are project parameters; no published-pattern fidelity, scientific basis or performance is claimed.'
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
@@ -18,12 +6,18 @@ from strategies.base import CardLevels, PlanInput, Strategy
 from strategies.maniac_strategies import _System, _confirm_plan  # noqa: F401  (_System: the gate key)
 
 
+# The scanner retains at most 898 closed daily bars.  Keeping the prior-advance window at 2x the
+# cup length therefore caps the cup at 420 bars (about 60 calendar weeks) so every allowed pattern
+# can be evaluated without a truncated left side.
+CUP_MAX_LEN = 420
+
+
 def _pivots_high(h: List[float], k: int = 3) -> List[int]:
     return [i for i in range(k, len(h) - k) if h[i] == max(h[i - k:i + k + 1])]
 
 
 def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skips: Optional[List] = None) -> Optional[Dict]:
-    """The breakout of a cup with handle on the candle that just closed ([ts, o, h, l, c, quote_vol]), else None."""
+    'Returns a cup-and-handle breakout candidate on the just-closed candle when the configured\nconditions are met.'
     n = len(candles)
     if n < 60:
         return None
@@ -38,11 +32,22 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
     pivots = _pivots_high(h[:-1])
     for r in reversed(pivots):                       # the right rim: the handle starts after it
         handle = list(range(r + 1, last))
+        if len(handle) > 56:
+            break
+        if len(handle) < 7:
+            continue
+        h_lo = min(l[i] for i in handle)
+        pivot = max(h[i] for i in [r] + handle)
+        handle_volume = sum(v[i] for i in handle) / len(handle)
+        # These checks depend on the right rim / handle only.  They must not
+        # abort the search for a different right rim or a wider left rim.
+        if not (c[last] > pivot >= c[last - 1]) or c[last] > pivot * 1.05:
+            continue
         for left in reversed([p for p in pivots if p < r]):
             cup_len = r - left
-            # audit: O'Neil's 7-65 WEEKS are calendar time; the crypto daily chart has 7 candles a week, so 49-455
-            # candles (35-325 were stock trading days: 5 weeks on a 24/7 market)
-            if not 49 <= cup_len <= 455:
+            # audit: O'Neil's 7-65 WEEKS are calendar time; the crypto daily chart has 7 candles a week.  The
+            # retained prior-advance window is 2x the cup, so 49-420 keeps the full pattern inside <=840 bars.
+            if not 49 <= cup_len <= CUP_MAX_LEN:
                 continue
             rim = min(h[left], h[r])
             bottom = min(l[left:r + 1])
@@ -56,19 +61,11 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
             low_third = bottom + (rim - bottom) / 3
             if sum(1 for i in range(left, r + 1) if l[i] <= low_third) <= 0.4 * (cup_len + 1):
                 continue
-            if not 7 <= len(handle) <= 56:     # eng-121: O'Neil's handle >= 1 week, <= 8 weeks: 7-56 calendar days
-                break
-            h_lo = min(l[i] for i in handle)
-            pivot = max(h[i] for i in [r] + handle)
             if h_lo < (rim + bottom) / 2 or (pivot - h_lo) / pivot > 0.12:
-                break                                # the handle fell into the lower half / too deep
+                continue                             # this left rim's cup is invalid; try a wider cup
             cup_vol = sum(v[left:r + 1]) / (cup_len + 1)
-            if sum(v[i] for i in handle) / len(handle) >= cup_vol:
-                break                                # volume did not dry up in the handle
-            if not (c[last] > pivot >= c[last - 1]):
-                break                                # not this rim's breakout: an older right rim may be
-            if c[last] > pivot * 1.05:
-                break                          # O'Neil: 5% past the pivot the buy point is missed - no chase
+            if handle_volume >= cup_vol:
+                continue                             # volume did not dry up for this cup
             if left < 2 * cup_len:
                 # eng-132: the prior advance is measured over 2x the cup's length before the left rim; a shorter history
                 # measured it on a cut window (a rise looked smaller or bigger than it was): skipped, and said so
@@ -96,7 +93,7 @@ def cup_handle(candles: Sequence[Sequence[float]], tf: str, period_ms: int, skip
 
 
 class CupHandleStrategy(_System):
-    """O'Neil's cup with handle: entry at the breakout close, stop below the handle, target the measured move."""
+    'Represents the configured cup-and-handle candidate contract: breakout reference, stop and\nmeasured target. It is not described as an original published strategy.'
     name = 'cup_handle'
     setups = {'CUP HANDLE': 1}
     ttl_key = 'cup_ttl'
@@ -104,7 +101,7 @@ class CupHandleStrategy(_System):
     min_rr = 1.0                                     # the measured target must pay more than the risk (O'Neil's 3:1 is an exit rule)
 
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
-        """O'Neil/Bulkowski contract: 8%/handle stop and measured cup targets."""
+        'Returns the configured cup/handle entry, stop and target levels.\nNo external contract or parameter provenance is claimed.'
         ex, targets = plan.get('exit') or {}, list(plan.get('targets') or ())[:3]
         stop = ex.get('stop') or []
         if direction != 1 or len(stop) < 2 or not targets or not entry:

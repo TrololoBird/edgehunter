@@ -22,25 +22,25 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Legacy report groupings are intentionally empty in v2.  A strategy source
+# contract must define any future reporting taxonomy explicitly.
+STRUCTURAL_GROUP_A = frozenset()
+STRUCTURAL_GROUP_B = frozenset()
+
 
 @dataclass(frozen=True)
 class ExchangeConfig:
     exchange_id: str = "binance"
     quote_currency: str = "USDT"
-    # The universe is the set of coins with COMPLETE data, not the top by volume (fetcher.select_universe): every
-    # coin has a Binance spot pair (spot vs perp, the spot confirmation), >= min_futures_venues other futures venues
-    # (aggregated OI / liquidations / flows), enough history for its higher-timeframe pools (1h candles 8 days), a
-    # tradable spread; the most liquid of them up to max_pairs. An earlier 300-coin trial had no spot on a third of the
-    # coins and no book / positioning on most, and saturated the link (Binance ~190 KB/s, stalls). The market
-    # baseline for Edge still uses every USDT perpetual (REST mark prices, no streams).
+    # Universe selection is an operational data-availability filter.  It is
+    # not a claim that the resulting set represents the whole market.
     max_pairs: int = 70           # pinned + the strategies' pools (was 150: the laptop's RAM / CPU / link)
     min_24h_quote_volume_usd: float = 10_000_000
     require_spot: bool = True
     min_futures_venues: int = 2          # of Bybit, OKX, Bitget, Hyperliquid
     min_listing_days: int = 9
-    # eng-99 (the owner): small caps - $1-10M 24h volume, the most liquid smallcap_max of them, outside the complete-data
-    # rule (no spot / other venues needed; listed >= min_listing_days, spread <= smallcap_max_spread). Only the
-    # smallcap_strategies trade them (pools.allows); the demo risks smallcap_risk_mult of the usual risk on them
+    # Legacy small-cap strategy fields are retained only for schema
+    # compatibility and are inactive while the source-gated registry is empty.
     smallcap_min_volume_usd: float = 1_000_000
     smallcap_max: int = 60
     smallcap_max_spread: float = 0.0
@@ -77,6 +77,11 @@ class TimeframeConfig:
     scan_interval_sec: int = 10
     bulk_funding_interval_sec: int = 30
     oi_update_interval_sec: int = 60
+    # Closed-minute repair: keep the queue moving across the whole universe
+    # instead of retrying only 15 coins every ten minutes (which let gaps grow
+    # faster than REST could repair them after a reconnect wave).
+    hole_repair_coins_per_pass: int = 30
+    hole_repair_retry_sec: int = 120
 
 
 @dataclass(frozen=True)
@@ -144,6 +149,10 @@ class MetricsConfig:
 
 @dataclass(frozen=True)
 class ScoringConfig:
+    # The former A-F phase scorer mixed price/OI heuristics with Wyckoff names
+    # and was never source-verified. Keep raw features available for analysis,
+    # but do not emit phase classifications until a reviewed v2 contract exists.
+    phase_scoring_enabled: bool = False
     accumulation_weight: int = 1
     cvd_rising_weight: int = 2
     oi_rising_flat_price_weight: int = 1
@@ -279,6 +288,11 @@ class DepthConfig:
     wall_skip_levels: int = 10
     # Diff streams push on change: a book is stale after this long without an event
     stale_sec: int = 60
+    # Keep only the actionable near-book window.  Diff streams can contain
+    # changed levels outside the original snapshot; retaining them forever
+    # made the Python dicts grow with uptime.
+    prune_range_pct: float = 0.05
+    max_levels_per_side: int = 2000
     # Heatmap: the whole local book within +-heat_range_pct, bucketed by heat_bucket_pct of price, every
     # heat_snapshot_sec, heat_snapshots kept (2h); a bucket is a liquidity band when it held >= heat_band_multiple x the
     # snapshot's median bucket in >= heat_band_presence of the snapshots of heat_band_window_sec (at least
@@ -331,7 +345,10 @@ class OrderflowConfig:
     confirm_exempt: tuple = ('breakout',)
     # A confirmation becomes required for a strategy once its entries WITHOUT it have >= promote_min_clusters
     # independent results (15m clusters) and a 90% interval of the 4h Edge entirely below 0 (journal, hourly)
-    promote_confirmations: bool = True
+    # Disabled in v2.  A live journal must not turn a dependent subgroup
+    # result into a new trading rule without a pre-declared, out-of-sample
+    # comparison.
+    promote_confirmations: bool = False
     promote_min_clusters: int = 30
     # an entry needs at least this many positive confirmations (flow / spot / oi / orderflow); 0 = off
     # eng-58: 0 (was 1) - one positive of five ~50/50 readings passes ~95% of entries: a filter in name only, set from
@@ -341,11 +358,11 @@ class OrderflowConfig:
 
 @dataclass(frozen=True)
 class MLConfig:
-    """ml.py: IsolationForest anomalies, GaussianMixture regimes, river P(edge) (see its docstring)."""
+    """Legacy compatibility switches; v2 live runtime has no admitted ML inference path."""
     # Anomalies: fit on the last anomaly_window_sec of universe feature vectors sampled every
     # anomaly_sample_every_sec, refit hourly; a coin is anomalous when its vector is among the anomaly_quantile
     # most unusual of the training window. Until the first fit (and with anomaly_enabled=false) the rules decide.
-    anomaly_enabled: bool = True
+    anomaly_enabled: bool = False
     # The classic rules (RVOL at time of day, z-scores, OI, whales, liquidations, one venue) decide anomalies; the
     # IsolationForest is only journaled: no evidence it beats rules / robust z on 9 interpretable features
     # (ADBench: no universally best detector), and live its "most unusual" events moved no more than the rules'
@@ -359,28 +376,28 @@ class MLConfig:
     # Vectors of the first minutes are not sampled for training: 5m windows and OI changes are still filling up
     anomaly_skip_first_sec: int = 360
     # Regimes: Gaussian mixture on market-wide features of closed 15m candles (history persisted, ~31 days)
-    regime_enabled: bool = True
+    regime_enabled: bool = False
     # the MOST clusters tried: the number is chosen by BIC over 2 .. this (eng-57; was a fixed 4)
     regime_clusters: int = 6
     # ~7 months of 15m candles: the pretrained months (pretrain.py) plus the live ones
     regime_history: int = 20_000
     regime_min_history: int = 60
     regime_refit_sec: int = 86_400
-    # Mute a setup in the current regime once its journal Edge there has >= regime_veto_min_n results and the
-    # upper end of its 90% interval is below 0 (journaled with vetoed='regime')
-    regime_veto: bool = True
+    # Keep regime performance as telemetry only. A negative regime sample must never switch a playbook off on the
+    # demo account; it is still journaled with vetoed='regime' for later analysis.
+    regime_veto: bool = False
     regime_veto_min_n: int = 30
     # False discovery rate of the journal's automatic rules (regime mutes, promoted confirmations): Benjamini-
     # Hochberg over all the groups tested at once
     rule_fdr: float = 0.05           # eng-125: Benjamini & Hochberg (1995) use q = 0.05; 0.10 had no source
     # P(edge): shown on cards once trained on this many labelled rows; shadow mode (never filters)
-    success_enabled: bool = True
+    success_enabled: bool = False
     success_min_trained: int = 300
     # eng-174 P(trade): the same online model on the ENTRY row's features (frozen at the entry), label = the trade's
     # own result after costs (card_r_low > 0), learned only once the card has closed. Shadow mode (never filters).
     # ~40 closed trades a day: an ADWIN drift is acted on only after trade_drift_min_rows trades since the last reset,
     # and the reset refits on the last trade_refit_rows trades instead of starting empty (no archive prior for trades)
-    trade_enabled: bool = True
+    trade_enabled: bool = False
     trade_min_trained: int = 150
     trade_drift_min_rows: int = 100
     trade_refit_rows: int = 200
@@ -612,16 +629,10 @@ class PositioningConfig:
 
 @dataclass(frozen=True)
 class PoolsConfig:
-    """
-    Per-strategy coin pools (pools.py): each strategy trades only its own coins, refreshed hourly. A pool = the
-    universe filtered by the strategy's rule (coin classes by 24h volume rank: major = BTC ETH SOL XRP BNB, large =
-    rank <= 30, mid = rank <= 80, small = the rest; sectors to exclude; minimum 1h volatility), minus the coins where
-    the strategy's journaled entries of the last lookback_days are proven negative (eng-59: block bootstrap + BH) (walk-
-    forward on the archive: the worst coins of the last 6 months stayed the worst the next month, -0.39R vs -0.10R;
-    picking the best ones did not help), capped at `size` coins by 24h volume. Setups outside the pool are journaled
-    with vetoed='not_in_pool'.
-    """
-    enabled: bool = True
+    """Legacy pool-selection settings; disabled until a PIT contract exists."""
+    # Disabled until the v2 universe and the source-backed strategy set have
+    # independent, point-in-time selection data.
+    enabled: bool = False
     # every universe coin (70) minus the ones a strategy's journal proved losing: the per-method top-20 (eng-29) was a
     # guess, and it vetoed the setups of the coins that moved (live 2026-10-01: MEGA's M-top, JASMY's breakout and
     # sweep 'not_in_pool'); on the archive only the EXCLUSION of the worst coins helped, picking the 'best' did not
@@ -640,53 +651,32 @@ class PoolsConfig:
     # event (mid, small); the Turtles diversified over everything; the rest name no asset class
     # eng-58: ICT's models (sweep / Silver Bullet, continuation, PO3) on liquid coins only - in crypto they are applied
     # to BTC / ETH and liquid majors; thin books turn every wick into a 'raid'
-    rules: tuple = (('continuation', 'major,large,mid', '', 0.0, 'volatility'), ('breakout', 'all', '', 0.0, 'volatility'),
-                    ('orb', 'all', '', 0.0, 'volume'), ('trendline_break', 'all', '', 0.0, 'volatility'),
-                    ('trendline_touch', 'all', '', 0.0, 'volatility'),
-                    ('connors', 'all', '', 0.0, 'volume'),
-                    ('bollinger_wm', 'all', '', 0.0, 'volume'), ('bollinger_method3', 'all', '', 0.0, 'volume'),
-                    ('bollinger_method1', 'all', '', 0.0, 'volume'), ('wyckoff', 'all', '', 0.0, 'volume'),
-                    ('cascade', 'all', '', 0.0, 'volume'), ('oi_build', 'all', '', 0.0, 'volume'),
-                    ('value_area', 'all', '', 0.0, 'volume'), ('auction', 'all', '', 0.0, 'volume'),
-                    ('sweep', 'major,large,mid', '', 0.0, 'volume'), ('silver_bullet', 'major,large,mid', '', 0.0, 'volume'),
-                    ('supply_demand', 'all', '', 0.0, 'volume'),
-                    ('pump_start', 'all', '', 0.0, 'volatility'), ('dump_start', 'all', '', 0.0, 'volatility'),
-                    ('pump_top', 'all', '', 0.0, 'volatility'), ('dump_bounce', 'all', '', 0.0, 'volatility'),
-                    ('cup_handle', 'all', '', 0.0, 'volume'),
-                    ('po3', 'major,large,mid', '', 0.0, 'volume'))
+    # No legacy pool rules are active in v2. A source-backed strategy adds its
+    # own rule only after the source manifest review.
+    rules: tuple = ()
 
 
 @dataclass(frozen=True)
 class StrategiesConfig:
+    """Quarantined legacy strategy settings.
+
+    The v2 registry is empty until a primary-source rule contract and causal
+    tests are reviewed.  These fields cannot enable a legacy implementation.
     """
-    Strategies (strategies/): each has its own anchor (a leg, a level or a range), entry, stop and target intent;
-    only the stop floor, the R:R check, the card lifecycle and the journal are shared. Timeframe rule: events are
-    detected on any data (ticks, 1m), the structure is never finer than 15m, the entry never finer than 5m, and the
-    entry timeframe is 3-6x finer than the structure (Elder's factor of ~5): 15m -> 5m, 1h -> 15m, 4h -> 1h. Sizes are
-    in 15m ATRs; lifetimes are (waiting, trigger in the zone, open trade) seconds.
-    """
-    # Every strategy produces cards again (eng-10, the owner's decision 2026-09-30): the archive replay cannot see the
-    # live-only inputs (confirmations from spot / other venues / footprint, liquidations, books), and a disabled
-    # strategy produced no card, so no entry, no confirmations and no replay were ever measured live. Setups that lost
-    # on the archive are marked on their cards (`archive_negative`) and judged by the live journal with the rule in
-    # CLAUDE.md ("Live verdict"): kept or deleted from the code.
-    # oi_build stays listed but its setups are off through disabled_setups (eng-144)
-    enabled: tuple = ('continuation', 'wyckoff', 'cascade', 'sweep', 'silver_bullet', 'breakout', 'supply_demand', 'value_area', 'auction',
-                      'trendline_break', 'trendline_touch', 'bollinger_wm', 'bollinger_method3', 'bollinger_method1', 'orb', 'connors', 'pump_start', 'dump_start', 'pump_top',
-                      'dump_bounce', 'cup_handle', 'po3', 'oi_build')
+    enabled: tuple = ()
     # BULL E buys the selling climax: Wyckoff reads the climax as the START of a trading range and buys later (the
     # spring's test: wyckoff_range); journaled, no card
     # BULL A (squeeze + tight range + OI) buys a squeeze BEFORE it breaks: Bollinger waits for the break (the direction
     # is unknown, a head fake comes first) and it is no Wyckoff phase - journaled, no card (eng-30, classic rule)
-    # eng-55 PUMP TOP: a short against the pump at its first turn - the archive's FADE (-0.08R on 560 trades
-    # Apr-Sep 2026, -0.19R on 60%+ pumps, negative in every period and split): journaled, no card
+    # eng-55 PUMP TOP: a short against the pump at its first turn. The archive result is displayed on the card and
+    # remains available for the demo journal; it is not an enable/disable switch.
     # eng-83 ORB UP / DOWN: Crabel's ORB lost net of costs on 14 months of Binance 15m / 5m (research/exit_bt):
     # the bot's daily-open variant -0.07R on 9.4k holdout trades (43 coins), no exit rule fixed it (breakeven,
     # chandelier 3/6 ATR, 2R target, partials, 8h); session opens (Asia / London / NY, 15-120m ranges, Stretch or wide
     # 0.5-1 daily ATR stops) negative after 0.20% too; the only gross edge (majors, London / NY) is 0.05-0.1% a trade,
     # below the costs: journaled, no card
-    # eng-88: OI SIGNAL LONG and PUMP START off - after the signal the coin lagged the market by 0.8% at 15 minutes and
-    # 1.5-2.4% at 1-2h, in rising and falling markets alike (minute marks 11-13.10), and lost on the demo
+    # OI BUILD and PUMP START stay active so their live data and outcomes are measured on the demo account. Historical
+    # losses are retained as card/journal metadata and do not change eligibility.
     # eng-101, shadow mode: filters / detector confirmations with no proven effect on either journal (server
     # 11-14.10, laptop 30.09-11.10) no longer block - the entry is taken and journaled with shadow_veto = the
     # reasons that WOULD have vetoed it, so card_r of shadowed vs clean entries measures each rule on live trades.
@@ -698,22 +688,9 @@ class StrategiesConfig:
     # 'not_in_pool' / 'h4_against' / 'regime_flat' had silently been blocking since 2026-10-24 19:10.
     # eng-168 (owner, 25.10): 'not_in_pool' back in shadow - -0.20R vs +0.01R is inside the noise; the clean eng-168
     # sample needs the full entry flow
-    shadow_vetoes: tuple = ('against_trend', 'pd_late', 'pd_spike_fail',   # eng-159: detector phases
-                            'not_in_pool',
-                            'no_prior_trend',                             # eng-164
-                            'pt_squeeze',                                 # eng-167 (audit F-14)
-                            'h4_against', 'regime_flat',
-                            'regime_trend', 'alts_vs_btc', 'profile', 'regime', 'no_confirmation',
-                            # eng-138: the filters by name (was the pattern 'no_*', which also put a setup's own
-                            # required parts - Wyckoff's spring test 'no_spring_test' - in shadow: springs without
-                            # their test were traded)
-                            'no_bias', 'no_supply', 'no_demand', 'no_orderflow', 'no_oi', 'no_level', 'no_htf_poi',
-                            '<confirmations>',     # every missing entry confirmation (confirm.required_names)
-                            'htf_bias', 'htf_conflict', 'htf_range', 'rg_breakout_in_range', 'rg_countertrend',
-                            'killzone', 'no_htf_poi', 'premium', 'discount', 'perp_led', 'low_rvol', 'against_vwap', 'btc_against', 'against_htf', 'against_day',
-                            'sweep_no_htf_bias')   # eng-151 (external audit #1): shadow, outcome journaled
-    # eng-157, the owner's order: EVERY setup on - cards and journal for all, data first, the verdict later
-    # (was: BULL E, BULL A, PUMP TOP, PUMP START, OI BUILD LONG / SHORT)
+    shadow_vetoes: tuple = ()
+    # Archive branches with measured zero/negative crypto expectancy.  They remain in the registry and journal so
+    # historical rows stay queryable, but the live card router marks new candidates ``disabled`` before execution.
     disabled_setups: tuple = ()
     # Raschke's Holy Grail: the EMA20 pullback only when ADX(14) > this (the source's rule; no map level in the zone)
     holy_grail_adx: float = 30.0
@@ -721,7 +698,7 @@ class StrategiesConfig:
     # a warning on the card, not a filter
     # (SWEEP / BREAKOUT were rewritten to their sources in eng-16: the archive has not replayed the new logic; the
     # phase setups except IMPULSE UP no longer exist since eng-35 / eng-127 - their names are kept for old cards)
-    archive_negative: tuple = ('BULL A', 'BULL B', 'BEAR C', 'BULL E', 'BULL F', 'BEAR D', 'IMPULSE UP')
+    archive_negative: tuple = ()
     # 1h candles of every coin (fetcher._hourly_candles_loop): ~8 days for the weekly / daily / session pools
     h1_candles: int = 200
     h1_refresh_sec: int = 3600
@@ -823,7 +800,15 @@ class StrategiesConfig:
     # eng-155 (the owner, live: 18 trendline shorts at +1..+3R with their stops untouched): break-even + costs after +1R
     # for every plan again, open cards included (SignalBook._trail)
     be_after_1r: bool = True
+    be_cost: float = 0.0015       # round-trip fee/slippage cushion used when a trap or +1R moves the stop to BE
     ema_trail_after_tp1: bool = False
+    # Prizrak Trade structural contract.  These gates apply only to plans explicitly marked by SignalBook; ordinary
+    # legacy playbooks retain their historical trigger until their replay is migrated.  A break needs two complete
+    # bodies beyond the working-TF level; wicks remain probes and can be retested.
+    prizrak_body_confirmations: int = 2
+    prizrak_structural_setups: tuple = ('SWEEP HIGH', 'SWEEP LOW', 'SD DEMAND', 'SD SUPPLY', 'PO3 LONG', 'PO3 SHORT',
+                                        'SPRING', 'UTAD', 'VA80 LONG', 'VA80 SHORT', 'AUCTION LONG', 'AUCTION SHORT')
+    prizrak_trap_be: bool = True
     time_stop_bars: int = 24
     # eng-51: at most crowd_max OPEN trades in one direction across all strategies (the rest journaled vetoed
     # 'crowded'). The Turtles allowed 6 units in closely correlated markets (Faith, Original Turtle Rules); alts move
@@ -866,8 +851,8 @@ class StrategiesConfig:
     # Connors' RSI(2) levels (eng-58: 5 / 95, his original rule; 10 / 90 is a later variant)
     connors_rsi_low: float = 5.0
     connors_rsi_high: float = 95.0
-    # eng-55: Connors uses no stop. A perpetual with leverage needs one for the margin: a CATASTROPHIC stop this many
-    # daily ATR(20) away, journaled as our deviation (it is not part of his exit)
+    # Connors' SMA5 exit is paired with the explicit 2 daily-ATR catastrophe stop in classic_strategies.py; it is a
+    # real exchange protection order and the position size is based on that distance.
     # eng-55 dump bounce (research/pumps*.md, positive in every period 2021-2026): a DUMP = close >= dump_min_move
     # below the 6h high on >= 3x the hour's volume of the week before; short the first 38.2-61.8% bounce on a 1h close
     # below the previous low; stop above the bounce + 0.25 ATR(1h); TP1 the dump's low, TP2 the 1.618 extension
@@ -876,7 +861,7 @@ class StrategiesConfig:
     # eng-57 wide watch: perpetuals outside the universe above this 24h volume (pretraining's floor, research_pumps)
     wide_min_volume: float = 3_000_000
     # eng-158: live 1m watch of those perpetuals for PUMP START / DUMP START (smallcap.py): cards + demo like the universe
-    smallcap_watch: bool = True
+    smallcap_watch: bool = False
     smallcap_minutes: int = 240               # 1m ring per coin (PUMP START 120, the 5m layer 48 bars; ~9 MB / 150)
     # eng-127: OI build = Pring's rule (strategies/oi_build.py, shadow); the OI robots' thresholds are deleted
     oi_build_ttl: tuple = (900, 900, 4 * 3600)
@@ -1071,7 +1056,9 @@ class LoggingConfig:
 @dataclass(frozen=True)
 class JournalConfig:
     """Signal journal (journal.py) and outcome tracking."""
-    db_path: str = "signals.db"
+    # A clean v2 journal. The legacy database is retained only as a read-only
+    # forensic artifact and is never opened by the working process.
+    db_path: str = "data/signals_v2.db"
     # Same symbol + same setup is logged again only after this long
     cooldown_sec: int = 1800
     eval_interval_sec: int = 60
@@ -1085,17 +1072,17 @@ class JournalConfig:
     # eng-155: eng-153 (sweep trigger) / eng-154 / eng-155 (break-even, half at +1R) went live without the bump - their
     # rows of 2026-10-24 15:12 until this bump are labelled eng-152
     # eng-162 (external audit EH-LOGIC-001): eng-156..161 changed detection / vetoes / journaling under the eng-155 label
-    logic_version: str = "eng-170b"   # Central net risk gate plus causal pump/dump overextension guard
+    logic_version: str = "v2-initial"
     # eng-87: WAITING cards of this logic version or later survive a restart under a newer logic_version (relabelled to
     # it): a bump that changes only trade management / execution / the journal no longer expires them (51 waiting cards
     # expired by the bumps of 11-13.10, 108 in the laptop journal). Raise it to the new logic_version whenever a bump
     # changes how a card is detected, planned or vetoed
     # eng-162: eng-156..161 changed vetoes (against_bias blocking, crowd_max), enabled setups, detection (DUMP START,
     # small caps, median RVOL) - by the rule above the waiting cards of older versions expire at this restart
-    keep_waiting_from: str = "eng-170b"   # eng-170b: re-plan waiting cards under the causal pump/dump guard
+    keep_waiting_from: str = "v2-initial"
     # eng-58: strategies are judged over every logic version from this one on (57 versions in 8 days left no version
     # with 30 clusters: the verdict waited forever); card_r of rows before eng-58 was gross - stats.card_r_net nets it
-    verdict_since: str = "eng-55"
+    verdict_since: str = "v2-initial"
     # Prices of the whole universe are snapshotted this often: the market baseline for Edge
     # 5 min: the nearest snapshot is at most 2.5 min off the signal's window (with 15 min the 15m-horizon Edge
     # baseline could be offset by ~7.5 min at each end)
@@ -1103,16 +1090,19 @@ class JournalConfig:
     # Round-trip trading cost used by stats.py for net R / returns (taker 0.05% per side)
     fee_round_trip: float = 0.001
     # Open cards / sweep histograms survive restarts here
-    state_path: str = "scanner_state.json"
+    state_path: str = "data/scanner_state_v2.json"
 
 
 @dataclass(frozen=True)
 class PretrainConfig:
     """pretrain.py: models trained on the Binance public archive before the bot starts (history.py)."""
-    path: str = 'pretrained.pkl'
+    # Legacy model artifacts are not valid for the v2 feature/strategy
+    # contract. A new artifact must be created explicitly after the journal
+    # has accumulated verified observations.
+    path: str = 'data/v2_pretrained.pkl'
     # every labelled historical row with its P(edge) features and the prediction made BEFORE learning it
-    dataset_path: str = 'pretrain_rows'      # a directory of parquet parts
-    cache_dir: str = 'history_cache'
+    dataset_path: str = 'data/v2_pretrain_rows'      # a directory of parquet parts
+    cache_dir: str = 'data/v2_history_cache'
     months: int = 6
     min_volume_usd: float = 3_000_000       # every USDT perpetual above it (a larger sample than the live universe)
     workers: int = 3
@@ -1143,9 +1133,10 @@ class IcebergConfig:
 
 @dataclass(frozen=True)
 class ExecutorConfig:
-    # BingX DEMO trading of every card that reaches ENTRY (executor.py; sandbox forced, never a real balance). Turned on
-    # by an api_key / api_secret in config.local.toml ([executor], a trade-only key)
-    enabled: bool = True
+    # Legacy executor parameters are retained only for schema compatibility.
+    # No exchange orders are permitted by the default v2 profile; credentials
+    # are environment-only and a separate testnet gate is required.
+    enabled: bool = False
     # eng-147 (the owner): a plan without targets (no R:R to re-check at BingX's price) is not opened when BingX ran
     # past the signal price in the trade's direction by more than this: N for the Turtles, the working-tf ATR otherwise
     chase_limit_n: float = 0.5
@@ -1192,13 +1183,10 @@ class ExecutorConfig:
     # owner 2026-10-18 (live demo 10-11..10-17: 3 longs in one 15 min all stopped, LDO/ATOM/VIRTUAL, ONDO/FIL/NIGHT,
     # MAGIC/ALGO/APE): at most one demo entry per direction within cluster_entry_sec (0 = off)
     cluster_entry_sec: int = 0       # eng-148, the owner: off - the demo shows every trade
-    # owner 2026-10-18: no demo trade of these setups (live demo 10-11..10-17: 23 of 30 lost, -17.8R of -33.8R, BTC up
-    # or down alike); their cards are still journaled
-    # eng-145, the owner (live journal eng-82..144): market_profile 12 of 13 stopped, bollinger 18 of 20 without TP1
-    # stopped, breakout (the Turtles' ~16% 2N stop, MFE 0.3R; BB1) -1.25R - journaled, no demo trades
-    # eng-173, the owner 2026-10-27: OI BUILD LONG (63 cards -26.1R, every version negative) and SHORT (85 cards -15.5R)
-    # leave the demo; cards stay in signal_book (card_r / trade_mfe_r keep accumulating), the demo row is SETUP_OFF
-    demo_off_setups: tuple = ('OI BUILD LONG', 'OI BUILD SHORT')
+    # Every setup is eligible for demo execution. Keep this empty so performance history, archive labels, and regime
+    # statistics cannot turn a playbook into SETUP_OFF.
+    demo_off_setups: tuple = ()
+    db_path: str = "data/demo_trades_v2.db"
     daily_summary: bool = True        # per-strategy R of yesterday's demo trades to the demo topic at 00:05 UTC
 
 
@@ -1364,6 +1352,9 @@ def load_overrides(config: AppConfig, path: str = LOCAL_CONFIG_PATH) -> AppConfi
         import tomli as tomllib
     with open(path, 'rb') as f:
         overrides = tomllib.load(f)
+    executor_overrides = overrides.get('executor') or {}
+    if any(key in executor_overrides for key in ('api_key', 'api_secret')):
+        raise ValueError('[executor] api_key/api_secret are environment-only; remove them from the config file')
     apply_overrides(config, overrides)
     logger.info(f"Config overrides loaded from {path}: {', '.join(f'[{s}]' for s in overrides)}")
     return config

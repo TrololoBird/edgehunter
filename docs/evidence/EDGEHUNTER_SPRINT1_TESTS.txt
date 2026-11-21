@@ -1,0 +1,5 @@
+..........                                                               [100%]
+10 passed, 36 deselected in 0.87s
+
+node --check web/app.js: PASS
+py_compile targeted modules: PASS

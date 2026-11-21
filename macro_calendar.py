@@ -1,9 +1,10 @@
-"""
-Scheduled US macro releases that move crypto at a known minute (FOMC statement 14:00 New York, CPI 08:30 New York):
-an entry from `before_min` before to `after_min` after a release is journaled with vetoed='macro_event' (the spread
-widens, stops are run both ways in the first minutes; the event, not the setup, decides the move). The dates are
-published a year ahead: FOMC (federalreserve.gov, 2026 schedule), CPI (bls.gov/schedule/news_release/cpi.htm).
-Add the next year's dates when they are published; a date list that ran out simply vetoes nothing.
+"""Calendar observations for scheduled macro releases.
+
+Official schedules identify expected publication times; they do not establish
+the direction, size or execution consequences of a market move. A blackout
+may be used as a reviewed risk policy, but a missing or stale calendar is an
+unknown data state. New entries must fail closed when coverage is unknown;
+open positions may be managed separately.
 """
 import time
 from datetime import datetime
@@ -96,9 +97,12 @@ def live_ok(now_ms: float) -> bool:
 
 
 def coverage(now_ms: float):
-    """Audit B06: why the macro veto may be blind right now, else None. The veto fails open (no source = no window), so
-    the degraded state must at least be visible: the weekly feed lost / stale, or the hand list of CPI / FOMC / NFP
-    already past its last date."""
+    """Return why calendar coverage is incomplete, or ``None`` when complete.
+
+    This describes the calendar data state. It is distinct from the policy
+    that blocks new entries when ``live_ok`` is false; no event found in an
+    unavailable calendar may be treated as proof that no event exists.
+    """
     why = []
     import official_calendar
     off = official_calendar.status_text(now_ms)

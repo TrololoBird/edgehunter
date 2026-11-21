@@ -1,18 +1,9 @@
-"""
-Browser dashboard: an aiohttp server inside the bot, bound to localhost only.
+"""Read-only local dashboard for v2 observations and data quality.
 
-- GET /            the page (web/index.html + app.js + style.css, no build step)
-- GET /ws          full state as JSON after every scan (cards, forming / vetoed setups, anomalies, session, venues,
-                   ML, market header)
-- GET /api/coin    one coin: 1h / 15m / 5m candles, the level map (zones.py) or the card's plan, the order-book
-                   heatmap (hot coins), journal rows of 48h
-- GET /api/history finished cards / anomalies / entries of the last N hours with what price did afterwards, raw and
-                   against the whole-universe mean (the journal's `universe` snapshots)
-- GET /api/anomaly_stats  per anomaly label: count and the average move afterwards in its direction
-- GET /api/stats   stats.py report rendered to HTML
-
-Journal queries use their own read-only SQLite connection (WAL: readers never block the bot's writer) in a worker
-thread. Nothing here is advice: the page shows mechanical rules and their measured results.
+The dashboard must not turn legacy strategy labels into active playbooks or
+present an estimate/replay price as an exchange fill.  Until a source-backed
+strategy is admitted, directional cards and phase classifications are empty;
+raw observations remain explicitly labelled as observations.
 """
 import asyncio
 import io
@@ -37,8 +28,9 @@ from journal import HORIZONS
 from scorer import LONG_PHASES, PHASE_MAX, SHORT_PHASES
 from strategies import SETUPS, confirm
 
-PHASE_NAMES = {'A': 'accumulation', 'B': 'spring', 'C': 'distribution', 'D': 'breakdown', 'E': 'capitulation',
-               'F': 'markup'}
+# The old A--F phase names were an unsupported mixture of different methods.
+# v2 deliberately has no phase-name mapping until a source contract is added.
+PHASE_NAMES = {}
 
 logger = logging.getLogger(__name__)
 
@@ -83,33 +75,16 @@ def explain(group_key: str, sig: Dict) -> List[str]:
     elif group_key.startswith('IMPULSE'):
         reasons = [f"{_pct(sig.get('price_change_5m', 0.0))}/5m", f"OI {_pct(sig.get('oi_change_5m', 0.0))}",
                    f"buyers {_buyers(sig.get('delta_ratio', 0.0))}", f"vol 1m {sig.get('rvol_1m', 0.0):.1f}x"]
-    elif phase == 'A':
-        if sig.get('is_squeezed'):
-            reasons.append("squeeze")
-        reasons += [f"range {sig.get('flat_range_atr', 0.0):.1f} ATR/2.5h",
-                    f"sells absorbed (sellers {_buyers(-sig.get('flow_flat', 0.0))})",
-                    f"OI {_pct(sig.get('oi_change_flat', 0.0))}"]
-    elif phase == 'B':
-        reasons = ["swept range low & reclaimed", f"sells absorbed (buyers {_buyers(sig.get('delta_ratio', 0.0))})",
-                   f"vol {sig.get('rvol_15m', 0.0):.1f}x"]
-    elif phase == 'E':
-        reasons = [f"climax vol {sig.get('rvol_15m', 0.0):.1f}x", f"OI {_pct(sig.get('oi_change_1h', 0.0))}/1h",
-                   f"fund {_pct(sig.get('funding_rate', 0.0), 3)}", f"buyers {_buyers(sig.get('delta_ratio', 0.0))}"]
-    elif phase == 'C':
-        reasons = ["new high on selling", f"buyers {_buyers(sig.get('flow_divergence', 0.0))}/5h",
-                   f"OI {_pct(sig.get('oi_change_3h', 0.0))}/3h", f"fund {_pct(sig.get('funding_rate', 0.0), 3)}"]
-    elif phase == 'D':
-        reasons = ["below lower BB", f"sellers {_buyers(-sig.get('delta_ratio', 0.0))}",
-                   f"OI {_pct(sig.get('oi_change_1h', 0.0))}/1h new shorts"]
-    elif phase == 'F':
-        reasons = ["above upper BB", f"buyers {_buyers(sig.get('delta_ratio', 0.0))}",
-                   f"OI {_pct(sig.get('oi_change_1h', 0.0))}/1h new longs"]
+    elif phase:
+        reasons = ["legacy phase label unavailable in v2"]
     return reasons + context_parts(sig)
 
 
 def context_parts(sig: Dict) -> List[str]:
     """Order-flow / positioning context shared by cards and tables."""
     parts: List[str] = []
+    if sig.get('flow_aggregate_quality_ok') == 0:
+        parts.append("неполное покрытие межбиржевого потока")
     w = sig.get('whales') or {}
     if w.get('buys') or w.get('sells'):
         net = w['buy_usd'] - w['sell_usd']
@@ -119,10 +94,11 @@ def context_parts(sig: Dict) -> List[str]:
         parts.append("algo " + ("buying" if sig['cluster'] > 0 else "selling"))
     spot, perp = sig.get('spot_delta_1h'), sig.get('perp_delta_1h')
     if spot is not None and perp:
-        parts.append(f"spot {'+' if spot >= 0 else '-'}{_usd(abs(spot))} / perp {'+' if perp >= 0 else '-'}{_usd(abs(perp))} 1h")
+        source = " (spot includes 1m OHLCV taker aggregates)" if sig.get('spot_cvd_source') else ''
+        parts.append(f"spot {'+' if spot >= 0 else '-'}{_usd(abs(spot))} / perp {'+' if perp >= 0 else '-'}{_usd(abs(perp))} 1h{source}")
     liq_l, liq_s = sig.get('liq_long_5m') or 0.0, sig.get('liq_short_5m') or 0.0
     if liq_l + liq_s >= 10_000:
-        parts.append(f"liquidated longs {_usd(liq_l)} / shorts {_usd(liq_s)} 5m")
+        parts.append(f"force-order observations long-side {_usd(liq_l)} / short-side {_usd(liq_s)} 5m")
     if sig.get('depth_imb') is not None:
         parts.append(f"book {sig['depth_imb']:+.0%}")
     if (sig.get('book_eaten') or 0) >= 1:
@@ -145,8 +121,9 @@ def context_parts(sig: Dict) -> List[str]:
         parts.append(f"market 1h {sig['mkt_1h'] * 100:+.2f}%" + (f", BTC {sig['btc_1h'] * 100:+.2f}%" if sig.get('btc_1h') is not None else ''))
     if (sig.get('market_crowd') or 0) >= CONFIG.market.cluster_min:
         parts.append(f"market move: {sig['market_crowd']} coins with the same-side setup in 5m")
-    if (sig.get('venues_active') or 0) >= 2 and (sig.get('top_venue_share') or 0) >= 0.8:
-        parts.append(f"{sig.get('top_venue') or '?'}-only flow")
+    if (sig.get('venues_flow_active') or 0) >= 2 and (sig.get('top_gross_venue_share') or 0) >= 0.8:
+        parts.append(f"gross flow concentration: {sig.get('top_gross_venue') or '?'} "
+                     f"{sig['top_gross_venue_share']:.0%} of active venues")
     return parts
 
 
@@ -168,7 +145,11 @@ def _name(symbol: str) -> str:
 # ---------------------------------------------------------------------------------------------------- state
 
 SIG_FIELDS = ('rvol_1m', 'rvol_15m', 'price_change_5m', 'oi_change_5m', 'oi_change_1h', 'delta_ratio', 'funding_rate',
-              'whale_net_5m', 'liq_long_5m', 'liq_short_5m', 'top_venue', 'top_venue_share', 'ml_score', 'long_score',
+              'whale_net_5m', 'liq_long_5m', 'liq_short_5m', 'top_venue', 'top_venue_share',
+              'top_gross_venue', 'top_gross_venue_share', 'gross_flow_5m', 'net_flow_5m', 'venues_flow_active',
+              'net_venues_active', 'net_top_venue_share', 'flow_aggregate_quality_ok',
+              'spot_cvd_source', 'spot_delta_candle_5m',
+              'spot_cvd_event_5m', 'ml_score', 'long_score',
               'short_score', 'p_edge', 'spot_delta_1h', 'perp_delta_1h', 'depth_imb', 'top_ratio', 'regime',
               'ls_global', 'ls_top', 'ls_bybit', 'ls_okx', 'hl_long_usd', 'hl_short_usd', 'hl_net_usd', 'cb_premium')
 
@@ -343,8 +324,12 @@ def build_state(scanner) -> Dict:
     forming = []
     for sym, sig in book.watchlist:
         bull = sig.get('alert_type') == 'LONG'
-        phases = [{'phase': p, 'name': PHASE_NAMES[p], 'score': sig.get(f'phase_{p.lower()}_score', 0),
-                   'max': PHASE_MAX[p]} for p in (LONG_PHASES if bull else SHORT_PHASES) if sig.get(f'phase_{p.lower()}_score', 0)]
+        phases = []
+        if CONFIG.scoring.phase_scoring_enabled:
+            phases = [{'phase': p, 'name': PHASE_NAMES.get(p, 'unverified'),
+                       'score': sig.get(f'phase_{p.lower()}_score', 0),
+                       'max': PHASE_MAX[p]} for p in (LONG_PHASES if bull else SHORT_PHASES)
+                       if sig.get(f'phase_{p.lower()}_score', 0) and p in PHASE_NAMES]
         forming.append({'symbol': sym, 'name': _name(sym), 'direction': 1 if bull else -1, 'phases': phases,
                         'why': context_parts(sig), 'sig': _sig_view(sig)})
     vetoed = [{'symbol': sym, 'name': _name(sym), 'setup': gk, 'reason': reason, 'sig': _sig_view(sig)}
@@ -357,8 +342,8 @@ def build_state(scanner) -> Dict:
                  for a in book.anomalies_view()]
     venues = {}
     for venue, st in scanner.fetcher.venue_status().items():
-        venues[venue] = {k: (v if isinstance(v, (str, bool)) else _num(v)) for k, v in st.items()
-                         if isinstance(v, (int, float, str, bool))}
+        venues[venue] = {k: (v if isinstance(v, (str, bool, list, dict)) else _num(v)) for k, v in st.items()
+                         if isinstance(v, (int, float, str, bool, list, dict))}
     results, r_list = book.session_results, book.session_r
     return {
         'ts': now,
@@ -366,6 +351,13 @@ def build_state(scanner) -> Dict:
         'market': scanner._market_context(),
         'ml': scanner._ml_status(),
         'venues': venues,
+        'data_quality': {
+            'open_interest': scanner.fetcher.oi_diagnostics(),
+            'kline_stream': scanner.fetcher.kline_diagnostics(),
+            'candle_history': scanner.fetcher.history_diagnostics(),
+            'rest_books': {f"{key[0]}|{key[1]}": value
+                           for key, value in scanner.ext.rest_book_status().items()},
+        },
         'timing': {'scan': scanner.last_scan_sec, 'heavy': scanner.last_heavy_sec, 'tier0': scanner.last_tier0_sec},
         'symbols': len(scanner.market_data), 'hot': len(scanner._hot),
         'cards': cards, 'forming': forming, 'vetoed': vetoed, 'anomalies': anomalies,
@@ -622,7 +614,8 @@ class WebUI:
             try:
                 # audit A15: the rows stats.demo_table counts (not the duplicates / rejects it excludes, whatever their
                 # r), the NEWEST 5000 (oldest-first with LIMIT froze the page at the first 5000), returned in order
-                where = f"WHERE r IS NOT NULL AND COALESCE(close_reason, '') NOT IN ({','.join('?' * len(DEMO_EXCLUDED))})"
+                where = ("WHERE r IS NOT NULL AND COALESCE(close_reason, '') NOT IN "
+                         "(?,?,?,?,?,?,?,?,?,?,?)")
                 args = list(DEMO_EXCLUDED)
                 if symbol:
                     where, args = "WHERE entry_fill IS NOT NULL AND symbol = ?", [symbol]
@@ -654,9 +647,12 @@ class WebUI:
         return self._json(await asyncio.to_thread(read))
 
     async def _health(self, request):
-        """The last minute's Health reading as JSON; 'ok' false when it is older than 3 minutes or a venue is DOWN."""
+        """Health is green only when recent telemetry and assessed candle windows are usable."""
         h = dict(getattr(self.scanner, 'health', None) or {})
-        h['ok'] = bool(h) and time.time() - h.get('ts', 0) < 180 and not h.get('down')
+        candle = h.get('candle_history') or {}
+        h['data_quality_ok'] = bool(candle.get('ok'))
+        h['ok'] = (bool(h) and time.time() - h.get('ts', 0) < 180 and not h.get('down')
+                   and h['data_quality_ok'])
         return web.json_response(h, status=200 if h['ok'] else 503)
 
     async def _coin(self, request):
@@ -710,7 +706,7 @@ class WebUI:
 
     async def _history(self, request):
         kind = request.query.get('kind', 'card')
-        if kind not in ('card', 'anomaly', 'entry', 'structured', 'setup', 'all'):
+        if kind not in ('card', 'anomaly', 'entry', 'structured', 'setup', 'range_breakout', 'all'):
             kind = 'card'
         hours = self._hours(request, 'hours', 24.0, 24.0 * 31)
         symbol = request.query.get('symbol') or None

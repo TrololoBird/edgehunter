@@ -22,6 +22,9 @@ MemoryHigh=2G
 Nice=-2
 Environment=PYTHONUTF8=1
 Environment=PYTHONUNBUFFERED=1
+# production must load an immutable, committed checkout; local precheck runs
+# without this flag so developers can validate a dirty worktree explicitly.
+Environment=EDGEHUNTER_REQUIRE_CLEAN=1
 
 [Install]
 WantedBy=multi-user.target

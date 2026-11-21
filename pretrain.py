@@ -1,26 +1,10 @@
-"""
-Pretraining on the public Binance archive (history.py) BEFORE the bot starts; live, the models keep learning.
+"""Quarantined historical data utility.
 
-What is trained (everything the archive has the inputs for):
-- the market regime model (ml.RegimeModel): the same market-wide features per closed 15m candle (BTC 1h move and
-  volatility, breadth, median funding / 1h OI change / RVOL) over months of history instead of the last days;
-- P(edge) (ml.SuccessModel): the journal rows the bot would have written - phase setups (A-F) scored by the same
-  indicator / scorer code on 15m candles built from 1m klines (futures + spot, OI from the 5-minute metrics, funding
-  from the funding history), liquidity sweeps and breakouts from the same detector (strategies.structure.build_context
-  on each closed candle with its 8 days of 1h candles), Tier-0 anomalies / impulses from the same
-  calculate_tier0_metrics + rules on every minute that could qualify - each with its context (market / BTC moves, the
-  coin's 1h trend, volatility, 24h volume, long-short ratios, regime, market crowd), the journal's cooldown, and the
-  label the live journal gives it (the 4h return in the signal's direction beat the median of every coin).
-
-Not in the archive (the models learn them live only): liquidations, order books, the other venues' flows / OI,
-Hyperliquid accounts, Coinbase, the IsolationForest verdict (Tier-0 rows here are the rule-based ones). Whale sizes
-come from live sweeps (kept across restarts). The IsolationForest itself is not pretrained: it judges "unusual
-compared with the last 3 hours", which history cannot tell (its window survives restarts, ml_state.pkl).
-
-Run:  .venv\\Scripts\\python pretrain.py [--months 6] [--min-volume 3e6] [--workers 3] [--rate 1000000]
-Downloads are cached (history_cache/); a re-run only computes. The result is pretrained.pkl; the bot loads it at
-start (journal P(edge), scanner regimes) and keeps learning on top of it. Run it while the bot is stopped or with a
-low --rate: the download shares the link with the live streams.
+Legacy archive replay cannot reconstruct live-only order books, liquidation
+streams, venue state, or revised-data availability. It is therefore disabled
+until a source-backed v2 strategy set and a point-in-time dataset contract are
+explicitly approved. It must never create a live-equivalent journal or reuse
+legacy models.
 """
 import errors
 import argparse
@@ -478,7 +462,7 @@ def _paths(fut_id: str, start_iso: str, end_iso: str, days: frozenset = frozense
     import os
     # the logic version and the coin's eligible days are part of the name: rows of older signal logic or of another
     # volume floor are never resumed
-    tag = hashlib.sha1(','.join(map(str, sorted(days))).encode()).hexdigest()[:8]
+    tag = hashlib.sha256(','.join(map(str, sorted(days))).encode()).hexdigest()[:8]
     stem = os.path.join(CONFIG.pretrain.cache_dir, 'rows',
                         f"{fut_id}_{start_iso}_{end_iso}_{tag}_{CONFIG.journal.logic_version}")
     return {'rows': stem + '.rows.parquet', 'series': stem + '.series.parquet', 'series5': stem + '.series5.parquet'}
@@ -715,14 +699,20 @@ def run(months: int, min_volume: float, workers: int, rate: float, limit: Option
         'success': success.state(), 'regime_history': regime_model.history, 'summary': summary,
     }
     atomic_write(CONFIG.pretrain.path, pickle.dumps(state))
+    from core.model_provenance import write_manifest
+    manifest = write_manifest(CONFIG.pretrain.path, state)
     logger.info(f"pretrain: P(edge) learned {learned} rows ({success.drifts} drift resets, accuracy "
-                f"{(success.accuracy or 0):.1%}); saved {CONFIG.pretrain.path} in {time.time() - started:.0f}s")
+                f"{(success.accuracy or 0):.1%}); saved {CONFIG.pretrain.path} and {manifest} "
+                f"in {time.time() - started:.0f}s")
     for g, (n, e) in sorted(summary.items(), key=lambda kv: -kv[1][0]):
         logger.info(f"pretrain:   {g:24} n={n:6}  Edge 4h {e * 100:+.3f}%")
     return state
 
 
 def main():
+    from strategies import STRATEGIES
+    if not STRATEGIES:
+        raise SystemExit("v2 pretraining is disabled until a source-verified strategy and PIT dataset contract exist")
     cfg = CONFIG.pretrain
     parser = argparse.ArgumentParser(description='Pretrain the models on the Binance public archive')
     parser.add_argument('--months', type=int, default=cfg.months)

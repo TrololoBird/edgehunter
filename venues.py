@@ -152,6 +152,13 @@ class VenueStream:
         self.messages = 0
         self.bytes = 0
         self.errors = 0
+        self.decode_errors = 0
+        self.handler_completed = 0
+        self.connection_attempts = 0
+        self.connection_opens = 0
+        self.reconnects = 0
+        self.last_receive_ms = 0.0
+        self.last_handler_ms = 0.0
         self.last_close = ''
         # dynamic connection state
         self._dynamic_wanted: Set[Any] = set()
@@ -280,12 +287,17 @@ class VenueStream:
         if data == b'pong' or data == b'ping':
             return
         self.messages += 1
+        recv_ms = _now_ms()
+        self.last_receive_ms = recv_ms
         try:
             payload = orjson.loads(data)
         except orjson.JSONDecodeError:
+            self.decode_errors += 1
             return
         try:
-            self.handle(payload, _now_ms())
+            self.handle(payload, recv_ms)
+            self.handler_completed += 1
+            self.last_handler_ms = _now_ms()
         except Exception as e:
             self.errors += 1
             if self.errors <= 20 or self.errors % 1000 == 0:
@@ -315,6 +327,9 @@ class VenueStream:
         failures = 0   # consecutive connections that delivered no data
         while self._running:
             transport = ping_task = None
+            self.connection_attempts += 1
+            if self.connection_attempts > 1:
+                self.reconnects += 1
             # our own listener object: its frame count is read after the connection ends, whatever ws_connect returns
             listener = _Listener(self, f'{self.name}:{index}')
             try:
@@ -328,6 +343,7 @@ class VenueStream:
                 )
                 self._transports.add(transport)
                 self.connected += 1
+                self.connection_opens += 1
                 if self.ping_payload:
                     ping_task = asyncio.create_task(self._pinger(transport))
                 if dynamic:
@@ -376,6 +392,25 @@ class VenueStream:
             if self._running:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
+
+    def diagnostics(self) -> Dict[str, object]:
+        """Transport/parser counters; handler completion does not certify valid market content."""
+        subscriptions = sum(len(v) for v in self._conn_subs.values()) + len(self._dynamic_wanted)
+        return {
+            'name': self.name,
+            'connected': self.connected,
+            'subscriptions': subscriptions,
+            'frames_received': self.messages,
+            'handler_completed': self.handler_completed,
+            'decode_errors': self.decode_errors,
+            'handler_errors': self.errors,
+            'connection_attempts': self.connection_attempts,
+            'connection_opens': self.connection_opens,
+            'reconnects': self.reconnects,
+            'bytes_received': self.bytes,
+            'last_receive_ms': self.last_receive_ms or None,
+            'last_handler_ms': self.last_handler_ms or None,
+        }
 
     # ------------------------------------------------------------------ dynamic subscriptions
 

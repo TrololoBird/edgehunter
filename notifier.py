@@ -81,7 +81,7 @@ class Notifier:
 
     def resume(self) -> None:
         """Start the retry task for messages left in the outbox by a previous run."""
-        if self._outbox and self._retry_task is None:
+        if self.enabled and self._outbox and self._retry_task is None:
             self._retry_task = asyncio.get_running_loop().create_task(self._retry_loop())
 
     async def _retry_loop(self) -> None:

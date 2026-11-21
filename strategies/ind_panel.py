@@ -1,17 +1,9 @@
-"""
-Classic indicator panel of one coin at one moment (strategies.confirm journals it on every entry as `_ind`; the archive
-study research_indicator_confirms.py uses the same functions): EMA 20 / 50 / 200 and the EMA50 slope (Murphy, Elder),
-RSI 14 (Wilder), MACD 12 / 26 / 9 (Appel), ADX 14 with +DI / -DI (Wilder), stochastic 14 / 3 (Lane), Bollinger %B and
-band width (Bollinger), MFI 14 (Quong & Soudack), OBV (Granville), CCI 20 (Lambert), ATR rank, relative volume.
-`rules(ind, d)` turns them into booleans "the indicator agrees with a trade in direction d"; which of them CONFIRM an
-entry is decided by research/indicator_confirms.md (pre-registered), not by this module.
-"""
+'Computes the configured indicator panel (moving averages, RSI, MACD, ADX/DI, stochastic,\nvolatility bands, MFI, OBV, CCI, ATR rank and relative volume). Indicator names are descriptive; no\nauthor fidelity, pre-registration or predictive-confirmation claim is made.'
 import numpy as np
 
 
 def ema(x: np.ndarray, n: int) -> np.ndarray:
-    """EMA seeded with the SMA of the first n values (TA-Lib / Appel; NaN before). Seeding with x[0] left EMA200 on the
-    panel's 499 candles up to 0.4% off (research/talib_check.md). Shorter than n: seeded with x[0] (best effort)."""
+    'Computes an EMA using the configured seed and period; short histories use the documented fallback.\nNo named-method or library-fidelity claim and no research result are asserted.'
     x = np.asarray(x, dtype=float)
     a = 2.0 / (n + 1)
     if len(x) < n:
@@ -33,7 +25,7 @@ def ema(x: np.ndarray, n: int) -> np.ndarray:
 
 
 def rma(x: np.ndarray, n: int) -> np.ndarray:
-    """Wilder's smoothing (RSI, ADX, ATR as their authors define them)."""
+    'Computes the configured RMA-style smoothing used by the panel. No named-author attribution or strategy claim is asserted.'
     x = np.asarray(x, dtype=float)
     out = np.full_like(x, np.nan)
     finite = np.flatnonzero(np.isfinite(x))
@@ -54,8 +46,7 @@ def sma(x: np.ndarray, n: int) -> np.ndarray:
 
 
 def rolling_std(x: np.ndarray, n: int) -> np.ndarray:
-    """Population std of each n-window from the deviations from its own mean (audit F01: sqrt(E[x^2] - E[x]^2)
-    cancelled catastrophically at large prices - std 10.5 for 0.0009, false zeros at 1e8)."""
+    "Computes population standard deviation around each window's own mean. Numerical-stability and audit\nclaims are omitted; they require a separate reproducible test."
     out = np.full_like(x, np.nan, dtype=np.float64)
     if len(x) >= n:
         from numpy.lib.stride_tricks import sliding_window_view
@@ -65,15 +56,44 @@ def rolling_std(x: np.ndarray, n: int) -> np.ndarray:
 
 def rolling_max(x, n):
     from numpy.lib.stride_tricks import sliding_window_view
-    out = np.full_like(x, np.nan)
-    out[n - 1:] = sliding_window_view(x, n).max(axis=1)
+    values = np.asarray(x, dtype=float)
+    out = np.full(values.shape, np.nan, dtype=float)
+    if len(values) < n:
+        return out
+    windows = sliding_window_view(values, n)
+    valid = np.isfinite(windows).all(axis=1)
+    values = np.full(len(windows), np.nan)
+    values[valid] = windows[valid].max(axis=1)
+    out[n - 1:] = values
     return out
 
 
 def rolling_min(x, n):
     from numpy.lib.stride_tricks import sliding_window_view
-    out = np.full_like(x, np.nan)
-    out[n - 1:] = sliding_window_view(x, n).min(axis=1)
+    values = np.asarray(x, dtype=float)
+    out = np.full(values.shape, np.nan, dtype=float)
+    if len(values) < n:
+        return out
+    windows = sliding_window_view(values, n)
+    valid = np.isfinite(windows).all(axis=1)
+    values = np.full(len(windows), np.nan)
+    values[valid] = windows[valid].min(axis=1)
+    out[n - 1:] = values
+    return out
+
+
+def sma_valid(x: np.ndarray, n: int) -> np.ndarray:
+    """Simple moving average only when every value in the window is finite."""
+    from numpy.lib.stride_tricks import sliding_window_view
+    values = np.asarray(x, dtype=float)
+    out = np.full_like(values, np.nan)
+    if len(values) < n:
+        return out
+    windows = sliding_window_view(values, n)
+    valid = np.isfinite(windows).all(axis=1)
+    means = np.full(len(windows), np.nan)
+    means[valid] = windows[valid].mean(axis=1)
+    out[n - 1:] = means
     return out
 
 
@@ -146,8 +166,8 @@ def indicators(k: np.ndarray) -> dict:
     rng = hi14 - lo14
     with np.errstate(divide='ignore', invalid='ignore'):
         k_raw = np.where(rng > tiny, 100 * (c - lo14) / rng, np.nan)
-    stoch_k = sma(np.nan_to_num(k_raw, nan=50.0), 3)
-    stoch_d = sma(np.nan_to_num(stoch_k, nan=50.0), 3)
+    stoch_k = sma_valid(k_raw, 3)
+    stoch_d = sma_valid(stoch_k, 3)
     mid, sd = sma(c, 20), rolling_std(c, 20)
     with np.errstate(divide='ignore', invalid='ignore'):
         pctb = np.where(4 * sd > tiny, (c - (mid - 2 * sd)) / (4 * sd), np.nan)
@@ -197,9 +217,9 @@ def rules(ind: dict, d: int) -> dict:
     e50_slope = ind['e50'] - lag(ind['e50'], 10)
     lo14, hi14 = rolling_min(ind['l'], 14), rolling_max(ind['h'], 14)
     prev_lo, prev_hi = lag(rolling_min(ind['l'], 14), 14), lag(rolling_max(ind['h'], 14), 14)
-    rsi_prev_lo = lag(rolling_min(np.nan_to_num(rsi, nan=50), 14), 14)
-    rsi_prev_hi = lag(rolling_max(np.nan_to_num(rsi, nan=50), 14), 14)
-    rsi_lo, rsi_hi = rolling_min(np.nan_to_num(rsi, nan=50), 14), rolling_max(np.nan_to_num(rsi, nan=50), 14)
+    rsi_prev_lo = lag(rolling_min(rsi, 14), 14)
+    rsi_prev_hi = lag(rolling_max(rsi, 14), 14)
+    rsi_lo, rsi_hi = rolling_min(rsi, 14), rolling_max(rsi, 14)
     k, dd = ind['stoch_k'], ind['stoch_d']
     cross_up = (k > dd) & (lag(k, 1) <= lag(dd, 1))
     cross_dn = (k < dd) & (lag(k, 1) >= lag(dd, 1))

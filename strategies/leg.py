@@ -16,12 +16,13 @@ ICT's optimal trade entry:
 """
 from typing import Dict, List, Optional
 
+import numpy as np
 import polars as pl
 
 from config import CONFIG
 from levels import TF_MS, _leg_levels, fib_price, find_impulse, retracement_of
 from strategies.base import CardLevels, TRIGGER_MINUTES, PlanInput, Strategy, base_plan
-from zones import merge
+from zones import liq_only, merge
 
 
 def _leg_anchor(impulse: Dict) -> Dict:
@@ -36,7 +37,8 @@ def _continuation_targets(zones, ref, direction, atr, extensions):
     for price in extensions:
         if direction * (price - ref) >= gap and len(targets) < 3:
             targets.append(price); sources.append('leg extension')
-    for zone in sorted(zones, key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
+    for zone in sorted((z for z in zones if not liq_only(z)),
+                       key=lambda z: direction * ((z.lo if direction > 0 else z.hi) - ref)):
         if len(targets) >= 3: break
         price = zone.lo if direction > 0 else zone.hi
         if direction * (price - (targets[-1] if targets else ref)) >= gap:
@@ -51,19 +53,28 @@ def _rows(df: pl.DataFrame) -> List[List[float]]:
     return [list(r) for r in df.select(['timestamp', 'open', 'high', 'low', 'close']).rows()]
 
 
+def _closed_df(x: PlanInput) -> Optional[pl.DataFrame]:
+    """Drop an in-progress 15m row while retaining all rows in replay/closed-frame callers."""
+    if x.df is None or x.df.is_empty() or not x.minutes:
+        return x.df
+    # The final 1m row is closed; a 15m candle is closed only when its open + 15m is no later than it.
+    cutoff = int(x.minutes[-1][0]) + 60_000
+    return x.df.filter(pl.col('timestamp') + 15 * 60_000 <= cutoff)
+
+
 def _ema_of_tf(x: PlanInput, tf: str, span: int) -> Optional[float]:
     """The EMA of the leg's own timeframe: 15m from the frame, 1h from the 1h candles, 4h = 4 x span on 1h."""
     if tf == '15m':
-        closes = x.df['close'].to_list() if x.df is not None and not x.df.is_empty() else []
+        frame = _closed_df(x)
+        closes = frame['close'].to_list() if frame is not None and not frame.is_empty() else []
     else:
         closes = [c[4] for c in (x.h1 or [])]
         span = span * 4 if tf == '4h' else span
     if len(closes) < span:
         return None
-    alpha, ema = 2 / (span + 1), closes[0]
-    for c in closes[1:]:
-        ema += alpha * (c - ema)
-    return ema
+    from strategies.ind_panel import ema
+    value = float(ema(np.asarray(closes, dtype=float), span)[-1])
+    return value if np.isfinite(value) else None
 
 
 def _to_4h(h1: List[List[float]]) -> List[List[float]]:
@@ -139,7 +150,7 @@ class LegContinuation(Strategy):
         return {'entry':float(entry),'sl':sl,'tp1':targets[0],'tp2':targets[1],'tp3':targets[2],'rr_tp1':rr[0],'rr_tp2':rr[1],'rr_blend':sum(rr)/3,'low_rr':False,'rr_reason':None,'risk_units':1.0,'risk0':risk,'stop_pierce':None,'sl_src':'beyond impulse start + 0.25 ATR','tp1_src':src[0],'tp2_src':src[1],'tp3_src':src[2],'zone_src':plan.get('zone_src'),'range_pos':None,'limit_entry':None,'volume_24h':plan.get('volume_24h')}
 
     def gate_key(self, x: PlanInput) -> Optional[tuple]:
-        impulse = find_impulse(x.df, x.direction, x.h1)
+        impulse = find_impulse(_closed_df(x), x.direction, x.h1)
         return (impulse['end_ts'], impulse['end']) if impulse else None
 
     def context_veto(self, sig: Dict, direction: int) -> Optional[str]:
@@ -155,7 +166,8 @@ class LegContinuation(Strategy):
     def plan(self, x: PlanInput) -> Optional[Dict]:
         cfg = CONFIG.levels
         d = x.direction
-        impulse = find_impulse(x.df, d, x.h1)
+        closed_df = _closed_df(x)
+        impulse = find_impulse(closed_df, d, x.h1)
         atr = x.atr
         if impulse is None or not atr:
             return None
@@ -165,7 +177,7 @@ class LegContinuation(Strategy):
         if x.sig.get(tide) == -d:
             return {'skip': 'against_tide'}
         if CONFIG.strategies.require_displacement:
-            candles = _rows(x.df) if impulse['tf'] == '15m' else [list(c) for c in (x.h1 or [])]
+            candles = _rows(closed_df) if impulse['tf'] == '15m' else [list(c) for c in (x.h1 or [])]
             if impulse['tf'] == '4h':
                 candles = _to_4h(candles)        # audit 2026-10-18: a 4h leg's FVG / BOS on its own candles, not 1h
             step = TF_MS[impulse['tf']]
@@ -173,7 +185,7 @@ class LegContinuation(Strategy):
                 return {'skip': 'no_displacement'}
             if not broke_structure(candles, impulse['start_ts'], impulse['end'], d, step):
                 return {'skip': 'no_bos'}
-        zones = merge(list(x.raw_levels or []) + _leg_levels(x.df, impulse, None), atr, symbol=x.symbol)
+        zones = merge(list(x.raw_levels or []) + _leg_levels(closed_df, impulse, None), atr, symbol=x.symbol)
         lo_ratio, hi_ratio = cfg.continuation_zone
         fib_lo, fib_hi = sorted((fib_price(impulse, lo_ratio), fib_price(impulse, hi_ratio)))
         # eng-121: the zone is ICT's OTE band itself (a map level inside it / Raschke's EMA20 + ADX were ours / another

@@ -48,7 +48,7 @@ def _cascade_targets(zones, start, direction, atr, retraces):
 
 
 def _cascade_cap_for_rr(tp1, stop_est, direction, atr, recent_atr, volume_24h):
-    """Cascade zone cap for its own 1R first-retracement rule."""
+    "Configured cap for the cascade entry's first-retracement risk/reward calculation.\nNo published-strategy attribution or performance claim is made."
     from levels import slippage_bps
     rr = 1.0
     fee = (CONFIG.journal.fee_round_trip + 2 * slippage_bps(volume_24h, None) / 1e4) * tp1
@@ -59,7 +59,7 @@ def _cascade_cap_for_rr(tp1, stop_est, direction, atr, recent_atr, volume_24h):
 
 
 def cascade_leg(sig: Dict, minutes: Sequence[Sequence[float]], direction: int, atr: float) -> Optional[Dict]:
-    """The cascade as a leg; its end follows new extremes of the final 1m candles."""
+    'Represents a cascade leg using the available final one-minute extrema.\nThe description is operational and does not establish a validated cascade pattern.'
     if sig.get('leg_start') is None:
         return None
     start, end = sig['leg_start'], sig['leg_end']
@@ -76,7 +76,7 @@ def cascade_leg(sig: Dict, minutes: Sequence[Sequence[float]], direction: int, a
 
 
 class CascadeTracker:
-    """Loop-side detector state: a running cascade per coin, fired once its leg is big enough."""
+    'State for a per-coin cascade detector. It fires only after the configured leg-size condition;\nno claim is made that this condition identifies a causal liquidation cascade.'
 
     def __init__(self):
         self.events: Dict[str, Dict] = {}
@@ -147,7 +147,7 @@ class ExhaustionStrategy(Strategy):
     uses_minutes = True
 
     def entry_levels(self, plan: Dict, entry: float, extreme: Optional[float], direction: int) -> Optional[CardLevels]:
-        """Cascade contract: climax extreme stop and retracement/mean targets."""
+        'Builds cascade entry levels from the configured extreme, retracement and target rules.\nThese are model conventions, not an externally established strategy.'
         atr, ref = float(plan.get('atr') or 0), plan.get('stop_ref')
         targets = list(plan.get('targets') or ())[:3]
         if direction not in (-1, 1) or not atr or ref is None or not targets or not entry:

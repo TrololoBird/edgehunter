@@ -1,3 +1,4 @@
+from security import safe_urlopen
 """
 Market briefings and watch alerts for the owner's Telegram channel (the owner's request 2026-10-05: BTC, ETH, gold and
 oil lead the altcoin market; the session opens move it).
@@ -27,6 +28,7 @@ from zoneinfo import ZoneInfo
 
 import errors
 from config import CONFIG
+from memory_guard import snapshot as memory_snapshot
 from scenario_snapshot import ScenarioSnapshot
 
 logger = logging.getLogger(__name__)
@@ -293,12 +295,11 @@ class Briefing:
         if cached and time.time() - cached[0] < 6 * 3600:
             return cached[1]
         import json
-        import urllib.request
         out = {}
         try:
             for tf, n in (('1d', 1000), ('1w', 200)):
                 url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={tf}&limit={n}"
-                with urllib.request.urlopen(url, timeout=20) as r:
+                with safe_urlopen(url, timeout=20) as r:
                     out[tf] = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])]
                                for k in json.loads(r.read())]
         except Exception as e:
@@ -814,6 +815,9 @@ class Briefing:
                 checks.append(('Импульс 1–3 дн.', 'ok' if sb == d else 'warn',
                                {1: 'рост', -1: 'падение', 0: 'нейтрально'}[sb]))
             checks.append(('R:R до TP1', 'ok' if rr >= 2 else 'warn' if rr >= 1 else 'bad', f"{rr:.1f}"))
+            if sc.get('ev_net') is not None:
+                checks.append(('EV net', 'ok' if sc['trade_gate'] else 'bad',
+                               f"{sc['ev_net']:+.5g}" if sc['trade_gate'] else 'NO TRADE'))
             if dist is not None:
                 checks.append(('Вход от цены', 'ok' if dist <= 1.5 else 'warn' if dist <= 4 else 'bad',
                                f"{dist:.1f} ATR(1h)"))
@@ -834,6 +838,8 @@ class Briefing:
             out['scenarios'][side] = {
                 'name': name, 'cond': sc['cond'], 'tag': sc.get('tag'), 'entry': list(sc['entry']), 'stop': sc['stop'],
                'targets': list(sc['targets']), 'be_winrate': sc['be_winrate'], 'rw_prob': sc['rw_prob'],
+               'p_base': sc.get('p_base'), 'p_breakeven': sc.get('p_breakeven'),
+               'ev_net': sc.get('ev_net'), 'trade_gate': sc.get('trade_gate', False),
                'rr': rr, 'checks': checks, 'verdict': verdict}
         return out
 
@@ -1293,7 +1299,7 @@ class Briefing:
                 b = symbol.split('/')[0] + 'USDT'
                 url = (f"https://fapi.binance.com/fapi/v1/klines?symbol={b}&interval=1m"
                        f"&startTime={int(post_ms) // 60_000 * 60_000}&endTime={first_full - 1}&limit=61")
-                with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'edgehunter-bot/1.0'}),
+                with safe_urlopen(urllib.request.Request(url, headers={'User-Agent': 'edgehunter-bot/1.0'}),
                                             timeout=15) as resp:
                     out = [[float(x) for x in k[:5]] for k in json.loads(resp.read())]
             except Exception as e:
@@ -1754,15 +1760,29 @@ class Briefing:
             self._post(f"🛠 Бот: проверки сетапов ограничены глубиной истории (включая историю до паттерна) — {blind}",
                        key='health|blind', every_sec=3600, topic='service')
         rss = (getattr(self.sc, 'health', None) or {}).get('rss_mb')
+        memory = memory_snapshot()
         try:
             import psutil
             total_mb = psutil.virtual_memory().total / 2**20
         except Exception as e:
             errors.report('briefing.memory', e)
             total_mb = 0.0
-        if rss and total_mb and rss > 0.55 * total_mb:
-            self._post(f"🛠 Бот: память {rss:.0f} МБ из {total_mb:.0f} МБ — ядро может убить процесс (OOM), "
-                       f"перезапуск сбросит рост", key='health|memory', every_sec=2 * 3600, topic='service')
+        current_mb = (memory.get('current') or 0) / 2**20
+        limit_bytes = memory.get('high') or memory.get('max')
+        limit_mb = limit_bytes / 2**20 if limit_bytes and limit_bytes > 0 else 0.0
+        if current_mb and limit_mb:
+            # MemoryHigh is the service's actionable budget.  55% of host RAM
+            # was a false alarm on this 3.9 GB host while the unit still had
+            # ~0.8 GB before shedding heavy passes at 90% of MemoryHigh.
+            memory_risk = current_mb >= 0.80 * limit_mb
+            detail = f"cgroup {current_mb:.0f}/{limit_mb:.0f} МБ"
+        else:
+            memory_risk = bool(rss and total_mb and rss > 0.70 * total_mb)
+            detail = f"хост {total_mb:.0f} МБ"
+        if rss and memory_risk:
+            self._post(f"🛠 Бот: память процесса {rss:.0f} МБ ({detail}) — близко к лимиту, "
+                       f"тяжёлый проход будет временно пропущен", key='health|memory', every_sec=2 * 3600,
+                       topic='service')
         ex = (self.sc.demo if self.sc.demo.enabled else None)
         if ex is not None:
             try:

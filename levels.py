@@ -304,11 +304,12 @@ def resample(candles: Sequence[Sequence[float]], minutes: int, now_ms: Optional[
 
 
 def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: int,
-                interval_ms: int = MINUTE_MS) -> Optional[Dict[str, float]]:
+                interval_ms: int = MINUTE_MS, body_confirmations: int = 1) -> Optional[Dict[str, float]]:
     """
     Market structure shift on closed LTF candles [open_time, open, high, low, close, quote_vol, taker_buy_quote].
     Zone candles are those still open at or after `since_ms` (the minute price entered the zone). Returns
-    {'entry', 'extreme', 'time', 'extreme_time'} for the first trigger, else None.
+    {'entry', 'extreme', 'time', 'extreme_time'} for the first trigger, else None.  ``body_confirmations`` keeps the
+    legacy one-close trigger at 1; Prizrak structural plans pass 2 so a wick / one noisy close is not a PP.
     """
     cfg = CONFIG.levels
     # 4 x the lookback before the zone: room for the swing the shift breaks (the zone's own candles decide the extreme)
@@ -340,10 +341,17 @@ def ltf_trigger(candles: Sequence[Sequence[float]], direction: int, since_ms: in
     if level is None:
         return None                 # eng-119: no swing, no structure shift (the 5-candle fallback was ours)
 
+    confirmations = max(1, int(body_confirmations or 1))
     for i in range(extreme_idx + 1, len(usable)):
         close = usable[i][4]
         if direction * (close - level) <= 0:
             continue
+        if confirmations > 1:
+            from strategies.prizrak import full_body_beyond
+            start = i - confirmations + 1
+            if start < extreme_idx + 1 or not all(full_body_beyond(usable[j], level, direction)
+                                                   for j in range(start, i + 1)):
+                continue
         # The flow of the shift itself: candles after the extreme (the selling INTO a low is what was absorbed there)
         # eng-119: the taker-flow requirement was ours (ICT's shift is the close beyond the swing) - journaled only
         recent = usable[max(extreme_idx + 1, i - cfg.ltf_flow_candles + 1):i + 1]
@@ -363,9 +371,12 @@ def pullback_volume_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     """
     if not reference_minute_usd:
         return None
-    window = [c[5] for c in minute_candles if since_ms <= c[0] < until_ms]
+    selected = [c for c in minute_candles if since_ms <= c[0] < until_ms]
+    window = [c[5] for c in selected]
     if not window:
         return None
+    if not window_coverage_ok(selected, since_ms, until_ms, MINUTE_MS):
+        return False
     return sum(window) / len(window) <= CONFIG.levels.spring_test_volume_ratio * reference_minute_usd
 
 
@@ -379,12 +390,42 @@ def pullback_spread_ok(minute_candles: Sequence[Sequence[float]], since_ms: int,
     """
     if not spring_range:
         return None
-    # complete=False: the pullback window starts mid-bucket by design (its first 15m bar is the zone's part of it)
-    bars = resample([c for c in minute_candles if since_ms <= c[0] < until_ms], 15, until_ms, complete=False)
+    selected = [c for c in minute_candles if since_ms <= c[0] < until_ms]
+    if not selected:
+        return None
+    if not window_coverage_ok(selected, since_ms, until_ms, MINUTE_MS):
+        return False
+    # complete=False: the pullback window starts mid-bucket by design (its first 15m bar is the zone's part of it),
+    # while the explicit minute coverage check above rejects an inner gap that would otherwise look like a narrow test.
+    bars = resample(selected, 15, until_ms, complete=False)
     if not bars:
         return None
     avg = sum(b[2] - b[3] for b in bars) / len(bars)
     return avg <= CONFIG.levels.spring_test_spread_ratio * spring_range / (max(spring_minutes, 15) / 15) ** 0.5
+
+
+def window_coverage_ok(candles: Sequence[Sequence[float]], since_ms: int, until_ms: int,
+                       interval_ms: int = MINUTE_MS, min_ratio: float = 1.0) -> bool:
+    """Whether a candle window contains every expected open without a transport gap.
+
+    The first bucket may start part-way through an interval (the caller's event time), but missing inner opens are
+    never interpreted as zero volume.  Duplicate timestamps count once, matching ``resample``'s correction policy.
+    """
+    if until_ms <= since_ms or interval_ms <= 0:
+        return False
+    starts = {int(c[0]) for c in candles if len(c) and since_ms <= int(c[0]) < until_ms}
+    if not starts:
+        return False
+    first = ((int(since_ms) + interval_ms - 1) // interval_ms) * interval_ms
+    last = (int(until_ms) - 1) // interval_ms * interval_ms
+    expected = list(range(first, last + interval_ms, interval_ms))
+    # A window that begins mid-interval does not require the pre-window portion of the first candle.
+    expected = [t for t in expected if t >= first and t < until_ms]
+    if not expected:
+        return False
+    ratio = len(starts & set(expected)) / len(expected)
+    contiguous = all(b - a == interval_ms for a, b in zip(sorted(starts), sorted(starts)[1:]))
+    return ratio >= min_ratio and contiguous and first in starts and last in starts
 
 
 # eng-124: bps of an executor.max_notional_usd market order walked through each coin's REST book (worst side, from the
@@ -451,9 +492,11 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
              funding_8h: Optional[float] = None, funding_hours: Optional[float] = None) -> Dict:
     """
     Replay 1m candles [open_time, open, high, low, close, ...] after an entry. With use_fill the trade is entered at
-    fill_price (manual execution) and R is measured from there; otherwise at levels['entry'] (the trigger close).
+    an estimated first-minute market price and R is measured from there; otherwise at levels['entry'] (a reference
+    price only). No path in this function can establish an exchange fill.
     SL and TPs are checked candle by candle; if one candle touches both SL and a TP, SL counts first (conservative); a
-    target counts only once price traded target_through_bps THROUGH it (a limit order is not filled by a touch).
+    target counts only once price traded target_through_bps THROUGH it. Limit entries are rejected because OHLC does
+    not provide queue position or a fill model.
     With funding_8h (the rate at the signal) each exit's R is net of the funding settlements it was held through.
     Returns the furthest target reached before the stop and the R result of exiting fully at TP1 / TP2
     (unfinished trades are marked to the last close). A fill already beyond the stop is 'SKIPPED' (not traded).
@@ -462,13 +505,22 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
     entry = levels['entry']
     # a system without a profit target journals NULL targets (eng-51): unreachable here, the trade is marked to the end
     targets = [t if t is not None else entry + direction * 1e12 for t in (levels['tp1'], levels['tp2'], levels['tp3'])]
-    result = {'filled': 1, 'outcome': 'OPEN', 'r_tp1': None, 'r_tp2': None, 'r_be': None, 'entry_fill': None}
+    result = {'filled': 1, 'outcome': 'OPEN', 'r_tp1': None, 'r_tp2': None, 'r_be': None, 'entry_fill': None,
+              'execution_status': 'ESTIMATED_MARKET_FILL' if use_fill else 'REFERENCE_PRICE'}
     if use_fill:
-        # eng-58: a resting limit (Seiden, ICT CE / OTE) fills AT its price - it was traded at the trigger; only the
-        # market entries take the next minute's open + slippage (a human's reaction)
-        fill = float(entry) if levels.get('limit_entry') and candles else fill_price(levels, direction, candles)
+        # A candle touching a price does not establish queue position, traded
+        # volume ahead of the order, partial execution, or that the order was
+        # still resting.  The old replay silently converted every touch plan
+        # into a filled limit order.  v2 has no historical queue model, so a
+        # limit/FVG/OTE plan is explicitly unsupported rather than optimistic.
+        if levels.get('limit_entry'):
+            result.update(filled=0, outcome='UNSUPPORTED_LIMIT_MODEL', execution_status='UNSUPPORTED_LIMIT')
+            return result
+        # Market entries use the first complete minute after the signal as an
+        # estimated fill; this is still an estimate, never an exchange fill.
+        fill = fill_price(levels, direction, candles)
         if fill is None:
-            result['filled'] = 0
+            result.update(filled=0, outcome='UNKNOWN_NO_FILL_DATA', execution_status='UNKNOWN_NO_FILL_DATA')
             return result
         result['entry_fill'] = fill
         if direction * (fill - sl) <= 0 or direction * (targets[0] - fill) <= 0:
@@ -477,7 +529,7 @@ def simulate(levels: Dict[str, float], direction: int, candles: List[List], use_
         entry = fill
     risk = abs(entry - sl)
     if not candles or not risk:
-        result['filled'] = 0
+        result.update(filled=0, outcome='UNKNOWN_NO_FILL_DATA', execution_status='UNKNOWN_NO_FILL_DATA')
         return result
 
     through = CONFIG.levels.target_through_bps / 1e4

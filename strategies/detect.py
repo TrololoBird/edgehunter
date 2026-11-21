@@ -1,11 +1,4 @@
-"""
-Loop-side detection of the event strategies. The coins' contexts (structure.Context) arrive from the maps worker
-after each 15m close carrying that candle's events (sweeps, accepted breakouts); every scan this class
-- releases those events once (a context rebuilt for the same candle does not fire it again),
-- checks absorption on each new final 1m candle at the coin's significant levels,
-- follows liquidation cascades until their leg is big enough (cascade.CascadeTracker).
-It returns setup dicts that the scanner turns into signals (the coin's live Tier-0 metrics + the setup's anchor).
-"""
+'Coordinates loop-side event detectors and returns setup records for the scanner. Event names are\nproject labels; no claim of validated liquidation, absorption or sweep detection is made.'
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from strategies.cascade import CascadeTracker
@@ -38,7 +31,7 @@ class LiveDetector:
             self._fired = {k: t for k, t in self._fired.items() if now_ms - t < 86_400_000}
 
     def state(self) -> list:
-        """Fired close events [(symbol, setup, event_ts, fired_at)] of the last day (kept across restarts)."""
+        'Stores fired close events for the configured retention window.'
         return [[sym, setup, ts, at] for (sym, setup, ts), at in self._fired.items()]
 
     def load_state(self, items, now_ms: int):
@@ -53,7 +46,7 @@ class LiveDetector:
         self.cascades.forget(symbol)
 
     def wants(self, symbol: str, minute_closed_until: int, metrics: Dict[str, float]) -> bool:
-        """Anything to look at this scan: pending close events, a new final minute, a running / new cascade."""
+        'Returns objects eligible for inspection on the current scan.'
         if symbol not in self.context:
             return False
         if self._pending.get(symbol) or self._last_minute.get(symbol) != minute_closed_until:
@@ -65,7 +58,7 @@ class LiveDetector:
 
     def scan(self, symbol: str, minutes: Sequence[Sequence[float]], metrics: Dict[str, float], now_ms: int,
              bands: Sequence[Tuple[float, int, float]] = ()) -> List[Dict]:
-        """`minutes`: FINAL 1m futures candles [open_time, o, h, l, c, quote_vol, taker_buy_quote]."""
+        'Accepts final one-minute futures candles for event processing.'
         ctx = self.context.get(symbol)
         if ctx is None:
             return []

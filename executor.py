@@ -1,19 +1,10 @@
-"""
-Demo execution on BingX (virtual VST, `open-api-vst`): an eligible card that reaches ENTRY is sent there unless a
-configured demo gate (for example `demo_off_setups`, market/basis checks or an exchange constraint) rejects it. Its
-result is recorded next to the journal's replay. DEMO ONLY: sandbox mode is forced and cannot be switched off from the
-config. Never an order on a real balance.
+"""Exchange execution adapter, disabled by the v2 default profile.
 
-- ENTRY: a market order sized so the stop costs `risk_pct` of the demo balance (capped by `max_leverage`), then a
-  reduce-only stop-market at the card's SL and three reduce-only take-profits (thirds) at TP1 / TP2 / TP3.
-- The card finishes (SL / TP3 / CLOSED / INVALID / EXPIRED / MISSED after an entry): open orders are cancelled and
-  whatever is left of the position is closed at market.
-- Every minute the open demo trades are reconciled: a position the exchange closed (stop / last target) is finalized.
-- Each trade is a row of `demo_trades.db` (fills, fees, realized USD, R against the planned stop).
-
-The API key is the owner's (config.local.toml, `[executor] api_key / api_secret`), a trade-only key.
-    python executor.py --check           markets, balance, position mode
-    python executor.py --test BTC/USDT:USDT    open and close the minimum size (checks order handling)
+The adapter separates order intent, acknowledgement, exchange fills and
+reconciliation. It must not be enabled for real or demo balances until a
+source-backed strategy and the technical execution gate have passed.
+Credentials are accepted only from environment variables; they are never
+read from checkout files.
 """
 import asyncio
 import json
@@ -22,12 +13,16 @@ import errors
 import math
 import os
 import sqlite3
+from sqlsafe import identifier
 import contextlib
 import time
+from urllib.parse import urlsplit
 from typing import Dict, List, Optional
 
 from config import CONFIG
 from storage import atomic_write
+from core.provenance import fields as provenance_fields
+from strategies import STRATEGIES
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +49,31 @@ CREATE TABLE IF NOT EXISTS demo_trades (
     opened_ms INTEGER, entry_plan REAL, entry_fill REAL, qty REAL, sl REAL, tp1 REAL, tp2 REAL, tp3 REAL,
     risk_usd REAL, closed_ms INTEGER, close_reason TEXT, exit_avg REAL, fees_usd REAL, pnl_usd REAL, r REAL,
     journal_r REAL, error TEXT)
+;
+CREATE TABLE IF NOT EXISTS demo_skips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id TEXT, symbol TEXT, setup TEXT, strategy TEXT, direction INTEGER,
+    opened_ms INTEGER NOT NULL, reason TEXT NOT NULL, logic_version TEXT
+);
+CREATE TABLE IF NOT EXISTS execution_intents (
+    card_id TEXT NOT NULL,
+    execution_phase TEXT NOT NULL,
+    created_ms INTEGER NOT NULL,
+    PRIMARY KEY (card_id, execution_phase)
+)
 """
 
 
 UNKNOWN_HOLD_SEC = 900.0     # a coin stays closed to new entries this long after an entry whose outcome is unknown
+VST_API_ORIGIN = 'https://open-api-vst.bingx.com'
 
 
 class EntryUnknown(Exception):
     """audit C02: a market entry whose outcome could not be read back (lost reply + unreadable exchange)."""
+
+
+class EntryNotFilled(Exception):
+    """The exchange gave a terminal, zero-fill result; no trade row may be created."""
 
 
 def _finite(x) -> Optional[float]:
@@ -94,17 +106,32 @@ def basis_reject(basis: float) -> Optional[str]:
 
 
 def credentials() -> tuple:
-    """(key, secret): BINGX_API_KEY / BINGX_API_SECRET from the environment (systemd EnvironmentFile, mode 600)
-    first, then config.local.toml [executor] - the key out of a file that sits next to the code."""
-    cfg = CONFIG.executor
-    return (os.environ.get('BINGX_API_KEY') or cfg.api_key, os.environ.get('BINGX_API_SECRET') or cfg.api_secret)
+    """(key, secret) from the service environment only.
+
+    A missing/cleared EnvironmentFile must disable exchange access. Falling
+    back to credentials kept in the checkout could silently keep trading after
+    an operator attempted an emergency stop.
+    """
+    key = os.environ.get('BINGX_API_KEY', '').strip()
+    secret = os.environ.get('BINGX_API_SECRET', '').strip()
+    return key, secret
 
 
 class DemoExecutor:
-    def __init__(self, db_path: str = 'demo_trades.db'):
+    def __init__(self, db_path: Optional[str] = None):
         cfg = CONFIG.executor
-        self.enabled = bool(cfg.enabled and all(credentials()))
-        self.db_path = db_path
+        # Even an explicitly enabled adapter cannot trade while the v2 source
+        # manifest has no admitted strategy.  Configuration is not a strategy
+        # approval mechanism.
+        self.enabled = bool(cfg.enabled and all(credentials()) and STRATEGIES and
+                            os.environ.get('EDGEHUNTER_BINGX_DEMO_EXECUTION') == '1' and
+                            os.environ.get('EDGEHUNTER_BINGX_KILL_SWITCH', '1') == '0')
+        # The v2 executor is disabled by default and uses a separate database
+        # even when a testnet adapter is explicitly enabled.  Never reopen the
+        # legacy demo database as part of a new run.
+        self.db_path = db_path or cfg.db_path
+        if self.db_path != ':memory:':
+            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
         self._flat_seen: Dict[str, int] = {}      # card id -> consecutive reconcile passes that read the position as 0
         self._finalized: Dict[str, tuple] = {}    # symbol -> (trade, time) of the last finalize (close_untracked guard)
         self._unknown_coins: Dict[str, float] = {}  # coin -> when an entry's outcome stayed UNKNOWN: held until close_untracked has had its turn
@@ -133,8 +160,8 @@ class DemoExecutor:
         # resting limit entries of touch plans (Seiden's proximal line, the Silver Bullet's CE): waiting-card key ->
         # {order_id, symbol, levels in BingX prices, ...} (eng-46)
         self.pending: Dict[str, Dict] = {}
-        self.pending_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'demo_pending.json')
-        self.unknown_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'demo_unknown.json')
+        self.pending_path = os.path.join(os.path.dirname(os.path.abspath(self.db_path)), 'demo_pending.json')
+        self.unknown_path = os.path.join(os.path.dirname(os.path.abspath(self.db_path)), 'demo_unknown.json')
         try:
             # audit F01: an entry of unknown outcome holds its coin across a restart too
             with open(self.unknown_path, encoding='utf-8') as f:
@@ -148,7 +175,7 @@ class DemoExecutor:
             pass
         self._markets_ready = False
         with self._db() as c:
-            c.execute(SCHEMA)
+            c.executescript(SCHEMA)
             c.execute("CREATE INDEX IF NOT EXISTS idx_demo_pending ON demo_trades(error, closed_ms)")
             # columns added after the first schema: migrated once here (was an ALTER TABLE on every trade)
             have = {r[1] for r in c.execute("PRAGMA table_info(demo_trades)")}
@@ -161,9 +188,27 @@ class DemoExecutor:
                               ('from_limit', 'INTEGER'), ('trail', 'INTEGER'), ('no_tp', 'INTEGER'),
                               ('slip_bps', 'REAL'), ('latency_ms', 'INTEGER'), ('leverage', 'INTEGER'),
                               ('logic_version', 'TEXT'), ('partial_done', 'INTEGER'), ('n_units', 'INTEGER'), ('r_unit', 'REAL'),
-                              ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER')):
+                              ('exit_via', 'TEXT'), ('virt', 'INTEGER'), ('tp_done', 'INTEGER'), ('units', 'INTEGER'),
+                              ('source_commit', 'TEXT'), ('implementation_hash', 'TEXT'), ('config_logic_version', 'TEXT'),
+                              ('source_dirty', 'INTEGER'), ('protection_state', 'TEXT'),
+                              ('desired_stop', 'REAL'), ('exchange_stop', 'REAL'), ('stop_order_id', 'TEXT'),
+                              ('protection_updated_ms', 'INTEGER'), ('protection_attempts', 'INTEGER'),
+                              ('protection_error', 'TEXT'), ('protection_alerted_ms', 'INTEGER'),
+                              ('quarantined', 'INTEGER'), ('quarantine_reason', 'TEXT'),
+                              ('demo_eligible', 'INTEGER'), ('client_order_id', 'TEXT'),
+                              ('geometry_error', 'TEXT'), ('risk_gate_reason', 'TEXT')):
                 if col not in have:
-                    c.execute(f"ALTER TABLE demo_trades ADD COLUMN {col} {kind}")
+                    safe_col = identifier(col, {
+                        'basis', 'exit_ref', 'no_stop', 'scale', 'entry_order', 'fill_confirmed', 'funding_usd',
+                        'close_pending_reason', 'close_pending_r', 'from_limit', 'trail', 'no_tp', 'slip_bps',
+                        'latency_ms', 'leverage', 'logic_version', 'partial_done', 'n_units', 'r_unit', 'exit_via',
+                        'virt', 'tp_done', 'units', 'source_commit', 'implementation_hash',
+                        'config_logic_version', 'source_dirty', 'protection_state', 'desired_stop', 'exchange_stop',
+                        'stop_order_id', 'protection_updated_ms', 'protection_attempts', 'protection_error',
+                        'protection_alerted_ms', 'quarantined', 'quarantine_reason',
+                        'demo_eligible', 'client_order_id', 'geometry_error', 'risk_gate_reason',
+                    })
+                    c.execute(f"ALTER TABLE demo_trades ADD COLUMN {safe_col} {kind}")
             placeholders = ', '.join('?' for _ in UNIT_SETUPS)
             c.execute(
                 f"UPDATE demo_trades SET units = 1 WHERE units IS NULL "
@@ -171,14 +216,62 @@ class DemoExecutor:
                 tuple(UNIT_SETUPS),
             )
             self._schema_cols = {r[1] for r in c.execute("PRAGMA table_info(demo_trades)")}
+            # A filled exchange price is the executable contract.  ``entry_plan`` is only the requested quote and can
+            # legitimately be on the other side of a stop after a limit crosses the zone.  The old migration checked
+            # both values with OR, quarantining valid fills (OPG/USDT id=2099) and making restart recovery create an
+            # UNTRACKED child.  Prefer the fill whenever it exists; use the plan only for a legacy row without one.
+            c.execute(
+                "UPDATE demo_trades SET quarantined = 0, geometry_error = NULL, quarantine_reason = NULL "
+                "WHERE closed_ms IS NULL AND COALESCE(quarantined, 0) = 1 "
+                "AND COALESCE(quarantine_reason, '') = 'wrong stop side' "
+                "AND entry_fill IS NOT NULL AND sl IS NOT NULL "
+                "AND direction * (entry_fill - sl) > 0 "
+                "AND (tp1 IS NULL OR direction * (tp1 - entry_fill) > 0)"
+            )
+            # Quarantine legacy malformed geometry before restoring open ownership.  The rows remain available for
+            # incident review, while risk limits and demo reports exclude them via COALESCE(quarantined, 0) = 0.
+            c.execute(
+                "UPDATE demo_trades SET quarantined = 1, "
+                "geometry_error = CASE "
+                "WHEN COALESCE(entry_fill, entry_plan) IS NOT NULL AND sl IS NOT NULL "
+                "     AND direction * (COALESCE(entry_fill, entry_plan) - sl) <= 0 THEN 'wrong_stop_side' "
+                "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
+                "     (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))) THEN 'wrong_tp1_side' "
+                "ELSE geometry_error END, quarantine_reason = CASE "
+                "WHEN COALESCE(entry_fill, entry_plan) IS NOT NULL AND sl IS NOT NULL "
+                "     AND direction * (COALESCE(entry_fill, entry_plan) - sl) <= 0 THEN 'wrong stop side' "
+                "WHEN tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
+                "     (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))) THEN 'wrong TP1 side' "
+                "ELSE COALESCE(quarantine_reason, 'legacy malformed geometry') END "
+                "WHERE ("
+                "(COALESCE(entry_fill, entry_plan) IS NOT NULL AND sl IS NOT NULL "
+                " AND direction * (COALESCE(entry_fill, entry_plan) - sl) <= 0) OR "
+                "(tp1 IS NOT NULL AND ((direction = 1 AND tp1 <= COALESCE(entry_fill, entry_plan)) OR "
+                "                         (direction = -1 AND tp1 >= COALESCE(entry_fill, entry_plan))))"
+                ")")
+            # The config keeps OI BUILD visible in the journal but disabled for demo execution.  Mark legacy rows too,
+            # so reports cannot silently count rows written before the execution eligibility field existed.
+            c.execute("UPDATE demo_trades SET demo_eligible = 0 WHERE demo_eligible IS NULL "
+                      "AND setup IN ('OI BUILD LONG', 'OI BUILD SHORT')")
             # scale: the Binance -> BingX price ratio on_restop / on_add convert with (1000FLOKI -> FLOKI is 0.001;
             # without it a restored trade's new stop went out at scale 1); rows from before the column: entry_plan
             c.row_factory = sqlite3.Row
-            for row in c.execute("SELECT * FROM demo_trades WHERE closed_ms IS NULL"):
+            for row in c.execute("SELECT * FROM demo_trades WHERE closed_ms IS NULL AND COALESCE(quarantined, 0) = 0").fetchall():
                 trade = dict(row)
+                protection = self._protection_state(trade)
+                if trade.get('protection_state') != protection:
+                    c.execute("UPDATE demo_trades SET protection_state = ? WHERE id = ?", (protection, trade['id']))
+                    trade['protection_state'] = protection
+                if protection == 'INVALID_GEOMETRY':
+                    logger.error("Demo ledger row %s has invalid stop geometry: %s", trade['id'], trade.get('symbol'))
+                    self.alert(f"⛔ Демо {trade.get('symbol')}: legacy-позиция {trade['id']} имеет invalid stop geometry; "
+                               "автоматическая реконструкция запрещена")
                 if trade.get('close_pending_reason') is not None:
                     trade['close_pending'] = [trade['close_pending_reason'], trade['close_pending_r']]
                 self.open[trade['card_id']] = trade
+                if trade.get('card_id'):
+                    c.execute("INSERT OR IGNORE INTO execution_intents(card_id, execution_phase, created_ms) "
+                              "VALUES (?, 'ENTRY', ?)", (trade['card_id'], int(trade.get('opened_ms') or time.time() * 1000)))
             c.execute("CREATE INDEX IF NOT EXISTS idx_demo_entry_order ON demo_trades(symbol, entry_order)")
 
     # ------------------------------------------------------------------ exchange
@@ -206,14 +299,58 @@ class DemoExecutor:
             self.ex.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(
                 ssl=ssl.create_default_context(cafile=certifi.where()), enable_cleanup_closed=True,
                 happy_eyeballs_delay=0.25))
+            # Never follow an HTTP redirect from VST. A redirect is a protocol
+            # failure, not permission to replay an authenticated request on a
+            # different host.
+            original_request = self.ex.session._request
+
+            async def no_redirect_request(method, url, **kwargs):
+                kwargs['allow_redirects'] = False
+                return await original_request(method, url, **kwargs)
+
+            self.ex.session._request = no_redirect_request
         if not self._markets_ready:
             await self.ex.load_markets()
-            try:
-                await self.ex.set_position_mode(False)   # one-way: reduce-only orders need no position side
-            except Exception as e:
-                logger.info(f"Demo: position mode unchanged ({e})")
             self._markets_ready = True
+        self._assert_vst_endpoint(self.ex)
         return self.ex
+
+    @staticmethod
+    def _assert_vst_endpoint(ex, *, require_gate: bool = False) -> None:
+        """Fail closed unless every CCXT route is the official VST host."""
+        if require_gate and (os.environ.get('EDGEHUNTER_BINGX_DEMO_EXECUTION') != '1' or
+                             os.environ.get('EDGEHUNTER_BINGX_KILL_SWITCH', '1') != '0'):
+            raise RuntimeError('BingX VST execution gate is closed')
+        if not bool((getattr(ex, 'options', {}) or {}).get('sandboxMode')):
+            raise RuntimeError('BingX sandbox mode is not active')
+        urls = ((getattr(ex, 'urls', {}) or {}).get('api') or {})
+        if not urls:
+            raise RuntimeError('BingX API route map is unavailable')
+        for route in urls.values():
+            expanded = ex.implode_hostname(route) if '{hostname}' in route else route
+            parsed = urlsplit(expanded)
+            if parsed.scheme != 'https' or parsed.netloc.lower() != 'open-api-vst.bingx.com':
+                raise RuntimeError('BingX route rejected: only open-api-vst.bingx.com is allowed')
+
+    async def _demo_create_order(self, ex, *args, **kwargs):
+        # Balance verification is read-only and bound to the already checked
+        # VST endpoint. Re-check the route immediately after the awaited query.
+        self._assert_vst_endpoint(ex, require_gate=True)
+        balance = await ex.fetch_balance()
+        totals = balance.get('total') or {}
+        amount = _positive(totals.get('VST') or totals.get('USDT'))
+        if amount is None:
+            raise RuntimeError('BingX VST account balance is unavailable; order blocked')
+        self._assert_vst_endpoint(ex, require_gate=True)
+        return await ex.create_order(*args, **kwargs)
+
+    async def _demo_cancel_order(self, ex, *args, **kwargs):
+        self._assert_vst_endpoint(ex, require_gate=True)
+        return await ex.cancel_order(*args, **kwargs)
+
+    async def _demo_set_leverage(self, ex, *args, **kwargs):
+        self._assert_vst_endpoint(ex)
+        return await ex.set_leverage(*args, **kwargs)
 
     async def _market_of(self, symbol: str, price: float):
         """
@@ -286,6 +423,43 @@ class DemoExecutor:
     def _drop_inflight(self, card_id: str) -> None:
         getattr(self, '_inflight', {}).pop(card_id, None)
 
+    @staticmethod
+    def _protection_state(trade: Dict) -> str:
+        if bool(trade.get('no_stop')):
+            return 'NO_STOP_ALLOWED' if str(trade.get('strategy') or '').lower() == 'connors' else 'INVALID'
+        try:
+            from strategies.base import geometry_error
+            level_view = dict(trade)
+            # The exchange fill defines risk.  A plan can be outside the final filled zone and must never invalidate a
+            # live position whose actual entry has a valid stop/target side.
+            level_view['entry'] = trade.get('entry_fill') or trade.get('entry_plan')
+            if geometry_error(level_view, int(trade.get('direction')), trade.get('entry_fill')) is not None:
+                return 'INVALID_GEOMETRY'
+        except (TypeError, ValueError):
+            return 'INVALID_GEOMETRY'
+        try:
+            entry = float(trade.get('entry_fill') or trade.get('entry_plan'))
+            stop = float(trade.get('sl'))
+            direction = int(trade.get('direction'))
+            if math.isfinite(entry) and math.isfinite(stop) and direction in (-1, 1) and direction * (entry - stop) > 0:
+                return 'PROTECTED'
+        except (TypeError, ValueError):
+            pass
+        return 'INVALID_GEOMETRY'
+
+    def _claim_execution(self, card_id: str, phase: str) -> bool:
+        """Persist an idempotency claim before the first exchange mutation."""
+        if not card_id or not phase:
+            return False
+        try:
+            with self._db() as c:
+                c.execute("INSERT OR IGNORE INTO execution_intents(card_id, execution_phase, created_ms) "
+                          "VALUES (?, ?, ?)", (card_id, phase, int(time.time() * 1000)))
+                return c.execute("SELECT changes()").fetchone()[0] == 1
+        except sqlite3.Error as e:
+            errors.report('executor._claim_execution', e, f'{card_id}:{phase}')
+            return False
+
     async def on_entry(self, s) -> None:
         if not self.enabled or s.levels is None:
             return
@@ -333,10 +507,7 @@ class DemoExecutor:
             gate = self.entry_gate(s)
             if gate is not None:
                 logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {gate}")
-                self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
-                              'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': gate,
-                              'closed_ms': int(time.time() * 1000),
-                              'close_reason': 'SETUP_OFF' if gate.startswith('setup') else 'CLUSTER'})
+                self._record_skip(s, gate)
                 return
             coin = _coin(s.symbol)
             busy = next((t for t in self.open.values() if _coin(t['symbol']) == coin), None) or \
@@ -356,6 +527,11 @@ class DemoExecutor:
                               'error': f"coin held by {busy.get('setup') or busy.get('card_id')}", 'closed_ms': int(time.time() * 1000),
                               'close_reason': 'OVERLAP'})
                 return
+            # The in-memory inflight map closes the race within one process;
+            # this durable claim also survives a restart or a lost reply.
+            if not self._claim_execution(card_id, 'ENTRY'):
+                logger.info(f"Demo: {s.symbol} {s.group_key} duplicate entry intent skipped")
+                return
             self._inflight[card_id] = {'card_id': card_id, 'symbol': s.symbol,
                                        'coin': coin, 'direction': s.direction,
                                        'setup': s.group_key, 'phase': 'RESERVED',
@@ -374,6 +550,7 @@ class DemoExecutor:
                 raise
             except Exception as e:
                 unknown = isinstance(e, EntryUnknown)
+                not_filled = isinstance(e, EntryNotFilled)
                 logger.warning(f"Demo entry {'UNKNOWN' if unknown else 'failed'} for {s.symbol} {s.group_key}: {e!r}")
                 if unknown:
                     self._set_inflight(card_id, 'UNKNOWN')
@@ -386,10 +563,14 @@ class DemoExecutor:
                     with self._db() as c:
                         c.execute("UPDATE demo_trades SET error = ? WHERE id = ? AND closed_ms IS NULL",
                                   (repr(e)[:300], existing['id']))
-                else:
+                elif not unknown and not not_filled:
                     self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
                                   'direction': s.direction, 'opened_ms': int(time.time() * 1000), 'error': repr(e)[:300],
                                   'closed_ms': int(time.time() * 1000), 'close_reason': 'UNKNOWN' if unknown else 'ERROR'})
+                else:
+                    # An unreadable outcome and a terminal zero-fill are not trades.  Keep the former in the durable
+                    # unknown hold and the latter in the skip ledger; neither may become a synthetic zero-fill row.
+                    self._record_skip(s, ('entry outcome unknown: ' if unknown else 'entry not filled: ') + repr(e)[:240])
                 if not unknown:
                     self._drop_inflight(card_id)
             else:
@@ -419,7 +600,7 @@ class DemoExecutor:
         ex = await self._exchange()
 
         async def place():
-            return await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', qty, None,
+            return await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', qty, None,
                                          {'stopLossPrice': float(ex.price_to_precision(symbol, price)),
                                           'reduceOnly': True, 'workingType': 'MARK_PRICE'})
         for attempt in range(3):
@@ -428,6 +609,41 @@ class DemoExecutor:
             except Exception as e:
                 if '110206' not in str(e) or attempt == 2 or not await self._free_tp_slot(symbol):
                     raise
+
+    @staticmethod
+    def _stop_fields(order: Optional[Dict], fallback: Optional[float] = None) -> tuple[Optional[str], Optional[float]]:
+        """Extract the venue stop identity/price from both ccxt and BingX raw order shapes."""
+        order = order or {}
+        info = order.get('info') or {}
+        oid = order.get('id') or info.get('orderId')
+        raw = order.get('stopPrice') or order.get('triggerPrice') or info.get('stopPrice') or info.get('triggerPrice')
+        try:
+            stop = float(raw if raw not in (None, '') else fallback) if raw not in (None, '') or fallback is not None else None
+        except (TypeError, ValueError):
+            stop = float(fallback) if fallback is not None else None
+        return (str(oid) if oid not in (None, '') else None), stop
+
+    def _record_stop(self, trade: Dict, order: Optional[Dict], desired: Optional[float], *, attempt: bool = True) -> None:
+        """Persist the actual exchange stop as soon as the create/edit call succeeds.
+
+        A protected position without this ledger identity cannot be rebound safely after a restart.  The old limit-fill
+        path placed the order but discarded its response, which left exactly that gap for AT/USDT:USDT.
+        """
+        order_id, exchange_stop = self._stop_fields(order, desired)
+        if order_id is None and not trade.get('stop_order_id'):
+            return
+        order_id = order_id or trade.get('stop_order_id')
+        exchange_stop = exchange_stop if exchange_stop is not None else trade.get('exchange_stop') or desired
+        trade.update(stop_order_id=order_id, exchange_stop=exchange_stop, desired_stop=desired,
+                     protection_updated_ms=int(time.time() * 1000), protection_error=None)
+        if attempt:
+            trade['protection_attempts'] = int(trade.get('protection_attempts') or 0) + 1
+        if trade.get('id'):
+            with self._db() as c:
+                c.execute("UPDATE demo_trades SET stop_order_id = ?, exchange_stop = ?, desired_stop = ?, "
+                          "protection_updated_ms = ?, protection_error = NULL, protection_attempts = ? WHERE id = ?",
+                          (order_id, exchange_stop, desired, trade['protection_updated_ms'],
+                           int(trade.get('protection_attempts') or 0), trade['id']))
 
     def _is_plain_tp3(self, exchange_symbol: str, price: float) -> bool:
         """eng-172: a coin with only TWO resting targets gives up the farther one only when it is the TRADE'S OWN TP3 of
@@ -461,7 +677,7 @@ class DemoExecutor:
             if len(orders) == 2 and not self._is_plain_tp3(sym, px(far)):
                 continue
             try:
-                await ex.cancel_order(far['id'], sym)
+                await self._demo_cancel_order(ex, far['id'], sym)
             except Exception as e:
                 errors.report('executor._free_tp_slot', e, f"Demo cancel TP3 {sym}")
                 continue
@@ -489,8 +705,13 @@ class DemoExecutor:
                     if 'STOP' in (t := str((o.get('info') or {}).get('type') or o.get('type') or '').upper())
                     or 'TAKE_PROFIT' in t)
         except Exception as e:
-            logger.debug(f"Demo TP/SL count {symbol}: {e!r}")
-            return None
+            # A failed open-order read cannot prove that a protective slot is
+            # available.  Failing open here allowed a market entry followed by
+            # BingX 110206 (no slot left for the stop), leaving an unprotected
+            # position.  Treat the count as an operational gate failure; the
+            # caller retries from reconcile/next signal.
+            errors.report('executor._ensure_sl_slot', e, f"Demo TP/SL count unreadable for {symbol}")
+            return f"TP/SL slot count unreadable for {symbol}: {type(e).__name__}"
         self._tpsl_est = (time.time(), n + 5)
         if n >= cfg.tpsl_warn and time.time() - self._tpsl_warned > 600:
             self._tpsl_warned = time.time()
@@ -512,7 +733,7 @@ class DemoExecutor:
             if o.get('id') == keep or (stops_only and not self._is_stop(o)):
                 continue
             try:
-                await ex.cancel_order(o['id'], symbol)
+                await self._demo_cancel_order(ex, o['id'], symbol)
             except Exception as e:
                 errors.report('executor._cancel_orders', e, f"Demo cancel {symbol} {o.get('id')}")
 
@@ -537,7 +758,7 @@ class DemoExecutor:
             if amount <= 0 or amount < min_qty or not trade.get(f'tp{k}'):
                 continue
             try:
-                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
+                await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
                                       {'takeProfitPrice': float(ex.price_to_precision(symbol, float(trade[f'tp{k}']))),
                                        'reduceOnly': True, 'workingType': 'MARK_PRICE'})
             except Exception as err:
@@ -553,7 +774,7 @@ class DemoExecutor:
                     last = 0.0
                 if last and d * (last - float(trade[f'tp{k}'])) >= 0:
                     try:
-                        await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
+                        await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', amount, None,
                                               {'reduceOnly': True})
                         logger.info(f"Demo TP{k} {symbol}: price {last} already beyond the target, {amount} taken at market")
                         continue
@@ -605,10 +826,14 @@ class DemoExecutor:
             return None                              # all off: no three queries per entry
         try:
             with self._db() as c:
-                closed = c.execute("SELECT r FROM demo_trades WHERE closed_ms >= ? AND r IS NOT NULL", (day0,)).fetchall()
-                opened = c.execute("SELECT COUNT(*) FROM demo_trades WHERE opened_ms >= ? AND entry_fill IS NOT NULL",
+                closed = c.execute("SELECT r FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 "
+                                   "AND COALESCE(close_reason, '') NOT IN ('ORPHAN', 'UNTRACKED') "
+                                   "AND closed_ms >= ? AND r IS NOT NULL", (day0,)).fetchall()
+                opened = c.execute("SELECT COUNT(*) FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 AND opened_ms >= ? AND entry_fill IS NOT NULL",
                                    (day0,)).fetchone()[0]
-                last = c.execute("SELECT r, closed_ms FROM demo_trades WHERE r IS NOT NULL ORDER BY closed_ms DESC LIMIT ?",
+                last = c.execute("SELECT r, closed_ms FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 "
+                                 "AND COALESCE(close_reason, '') NOT IN ('ORPHAN', 'UNTRACKED') "
+                                 "AND r IS NOT NULL ORDER BY closed_ms DESC LIMIT ?",
                                  (pause_n,)).fetchall() if pause_n else []
         except sqlite3.Error as e:
             # audit T06: limits that are ON but cannot be read block new risk (was None - the entry went through
@@ -627,15 +852,28 @@ class DemoExecutor:
         return None
 
     def entry_gate(self, s) -> Optional[str]:
-        """Owner 2026-10-18: one demo entry per direction per cluster_entry_sec; demo_off_setups are not traded."""
+        """Apply the shared demo eligibility field, then the optional per-direction cluster limit."""
         cfg = CONFIG.executor
         d = s.direction
-        if s.group_key in cfg.demo_off_setups:
+        demo_eligible = getattr(s, 'sig', None) or {}
+        if demo_eligible.get('demo_eligible', int(s.group_key not in cfg.demo_off_setups)) != 1:
             return f"setup off on demo: {s.group_key}"
         hit = self.cluster_hit(d)
         if hit is not None:
             return f"cluster: {hit} entered {'long' if d > 0 else 'short'} within {cfg.cluster_entry_sec // 60} min"
         return None
+
+    def _record_skip(self, s, reason: str) -> None:
+        """Keep non-trades out of the execution ledger while preserving auditability."""
+        card_id = f"{s.symbol}|{s.group_key}|{int(getattr(s, 'entered_at', 0) or 0)}"
+        with self._db() as c:
+            c.execute(
+                "INSERT INTO demo_skips "
+                "(card_id, symbol, setup, strategy, direction, opened_ms, reason, logic_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (card_id, s.symbol, s.group_key, getattr(s, 'mode', None), s.direction,
+                 int(time.time() * 1000), str(reason)[:300], CONFIG.journal.logic_version),
+            )
 
     def cluster_hit(self, d: int) -> Optional[str]:
         """The coin of a demo entry in direction d within cluster_entry_sec: a filled trade, or a resting limit placed /
@@ -667,6 +905,114 @@ class DemoExecutor:
         return f"BingX {fill_est:.6g} {ran:.2f} {'N' if n_turtle else 'ATR'} past the signal {lv['entry']:.6g} > {k:g}" \
             if ran > k else None
 
+    @staticmethod
+    def _actual_fill_geometry(plan: Dict, levels: Dict, fill: float, qty: float, direction: int,
+                              volume_24h: Optional[float], symbol: str) -> tuple:
+        """Validate the exchange fill against the card's *actual* entry geometry.
+
+        The quote used to decide a card is not a fill.  This check is deliberately independent of the requested
+        order price and is run after both market and resting-limit fills.  It returns ``(reason, risk, fee)``;
+        ``reason`` is None only when the position can be managed by the recorded stop/targets.
+        """
+        from strategies.geometry import cost_of, stop_too_far
+        from strategies.base import geometry_error
+
+        try:
+            fill = float(fill)
+            qty = float(qty)
+            stop = float(levels.get('sl'))
+        except (TypeError, ValueError):
+            return 'non-numeric exchange fill geometry', None, None
+        if not all(math.isfinite(v) for v in (fill, qty, stop)) or fill <= 0 or qty <= 0:
+            return 'non-finite or non-positive exchange fill', None, None
+        code = geometry_error(levels, direction, fill)
+        if code is not None:
+            return code, None, None
+        risk = direction * (fill - stop)
+        if direction not in (-1, 1) or not math.isfinite(risk) or risk <= 0:
+            return f'fill {fill:.12g} is on the wrong side of stop {stop:.12g}', None, None
+        fee = cost_of(fill, volume_24h, symbol)
+        if not math.isfinite(fee) or fee < 0:
+            return 'invalid execution cost', None, None
+        if risk < CONFIG.levels.cost_guard * fee:
+            return f'low_rr: actual stop risk {risk:.12g} is below execution cost guard {fee:.12g}', risk, fee
+        far = stop_too_far(plan, fill, stop)
+        if far:
+            return f'actual fill geometry: {far}', risk, fee
+        exit_spec = plan.get('exit') if isinstance(plan.get('exit'), dict) else {}
+        max_loss = exit_spec.get('max_loss_pct') or plan.get('max_loss_pct')
+        try:
+            if max_loss and risk > float(max_loss) * fill * (1 + 1e-9):
+                return f'actual stop risk {risk / fill:.2%} exceeds max loss {float(max_loss):.2%}', risk, fee
+        except (TypeError, ValueError):
+            return 'invalid max loss limit', risk, fee
+
+        targets = [levels.get(f'tp{k}') for k in (1, 2, 3)]
+        targetful = any(t is not None for t in targets)
+        if targetful:
+            if not all(t is not None for t in targets):
+                return 'partial target set after exchange fill', risk, fee
+            try:
+                targets = [float(t) for t in targets]
+            except (TypeError, ValueError):
+                return 'non-numeric target after exchange fill', risk, fee
+            if any(not math.isfinite(t) or t <= 0 or direction * (t - fill) <= 0 for t in targets):
+                return f'one or more targets are behind actual fill {fill:.12g}', risk, fee
+            rrs = [(direction * (t - fill) - fee) / (risk + fee) for t in targets]
+            if not all(math.isfinite(r) for r in rrs):
+                return 'non-finite actual R:R', risk, fee
+            # The executable TP1 must remain at least 1R after venue basis,
+            # spread and fill slippage.  This gate is independent of a
+            # playbook's own minimum and catches the historical low-RR rows
+            # that reached card creation without a veto.
+            if rrs[0] < 1.0 - 1e-12 or str(levels.get('rr_reason') or '').strip().lower() == 'costs exceed the risk':
+                return f'low_rr: actual TP1 R:R {rrs[0]:.3g} < 1', risk, fee
+            method_min = plan.get('min_rr')
+            try:
+                method_min = float(method_min) if method_min is not None else None
+            except (TypeError, ValueError):
+                return 'invalid strategy minimum R:R', risk, fee
+            floor = float(CONFIG.levels.min_rr_tp1_floor or 0.0)
+            if method_min is not None and rrs[0] < method_min:
+                return f'actual R:R to TP1 {rrs[0]:.3g} < strategy minimum {method_min:g}', risk, fee
+            if floor > 0 and rrs[0] < floor:
+                return f'actual R:R to TP1 {rrs[0]:.3g} < floor {floor:g}', risk, fee
+            need = method_min if method_min is not None else float(CONFIG.levels.min_rr_tp1 or 0.0)
+            blend = sum(rrs) / 3
+            if need > 0 and blend < need:
+                return f'actual blended R:R {blend:.3g} < {need:g}', risk, fee
+            if plan.get('min_rr_on_tp1') and rrs[0] < need:
+                return f'actual TP1 R:R {rrs[0]:.3g} < {need:g}', risk, fee
+        else:
+            if not (plan.get('allow_no_targets') and plan.get('exit_manager')):
+                return 'exchange fill has no executable targets or exit manager', risk, fee
+        return None, risk, fee
+
+    async def _close_invalid_fill(self, trade: Dict, reason: str) -> None:
+        """Quarantine a confirmed but unusable fill and flatten it immediately.
+
+        The position already exists at this point, so this is an emergency
+        reduce-only close rather than an entry veto.  Keep geometry breaches
+        separate from slippage-induced R:R breaches in the ledger and exit
+        reason so strategy expectancy does not absorb execution damage.
+        """
+        trade['protection_state'] = 'INVALID_GEOMETRY'
+        trade['error'] = f'post_fill_geometry: {reason}'[:300]
+        geometry_code = reason.split(':', 1)[0].strip() if reason else 'invalid_geometry'
+        slippage_abort = geometry_code.startswith('low_rr')
+        if slippage_abort:
+            trade['risk_gate_reason'] = 'low_rr'
+        else:
+            trade['geometry_error'] = geometry_code
+        close_reason = 'SLIPPAGE_ABORT' if slippage_abort else 'INVALID_FILL_GEOMETRY'
+        with self._db() as c:
+            c.execute("UPDATE demo_trades SET protection_state = ?, error = ?, quarantined = 1, quarantine_reason = ?, "
+                      "geometry_error = ?, risk_gate_reason = ? WHERE id = ?",
+                      (trade['protection_state'], trade['error'], reason[:300], trade.get('geometry_error'),
+                       trade.get('risk_gate_reason'), trade['id']))
+        self.alert(f"⛔ Демо {trade['symbol']}: post-fill contract breach ({reason}), позиция закрывается")
+        await self._close(trade, close_reason, None)
+
     async def _open(self, card_id: str, s) -> None:
         cfg = CONFIG.executor
         d = s.direction
@@ -695,19 +1041,33 @@ class DemoExecutor:
             # review V05: the Turtles' stop is 2N from the position's OWN entry - BingX's price, not Binance's
             lv['sl'] = fill_est - d * 2 * n_turtle * ratio
         reject = None
+        geometry_code = None
+        risk_gate_reason = None
         if basis_reject(basis):
             reject = basis_reject(basis)
-        elif d * (fill_est - lv['sl']) <= 0:
+        else:
+            from strategies.base import geometry_error
+            geometry_code = geometry_error(lv, d, fill_est)
+            if geometry_code is not None:
+                reject = f'geometry_error: {geometry_code}'
+            else:
+                pre_reason, _, _ = self._actual_fill_geometry(
+                    getattr(s, 'plan', None) or {}, lv, fill_est, 1.0, d,
+                    (s.sig or {}).get('volume_24h'), s.symbol)
+                if pre_reason is not None:
+                    risk_gate_reason = 'low_rr' if pre_reason.startswith('low_rr') else pre_reason
+                    reject = f'pre_trade_gate: {pre_reason}'
+        if reject is None and d * (fill_est - lv['sl']) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond the stop {lv['sl']:.6g}"
         # eng-113 (the owner): no invented chase cap - the size is recomputed at BingX's price (stop_dist below), so the
         # risk stays 1 R; the trade is judged by the formula alone (TP1 ahead, positive expectancy at that price)
-        elif s.levels.get('rr_tp1') is None and self._chase(s, lv, fill_est, d, n_turtle, ratio):
+        elif reject is None and s.levels.get('rr_tp1') is None and self._chase(s, lv, fill_est, d, n_turtle, ratio):
             # eng-147 (the owner): a plan without targets has no R:R to re-check, so a run past the signal price is
             # capped: 0.5 N for the Turtles, 0.5 ATR of the working timeframe for the others
             reject = f"chase_limit: {self._chase(s, lv, fill_est, d, n_turtle, ratio)}"
-        elif d * (lv['tp1'] - fill_est) <= 0 and s.levels.get('rr_tp1') is not None:
+        elif reject is None and s.levels.get('rr_tp1') is not None and d * (lv['tp1'] - fill_est) <= 0:
             reject = f"BingX {fill_est:.6g} already beyond TP1 {lv['tp1']:.6g}"
-        elif s.levels.get('rr_tp1') is not None:
+        elif reject is None and s.levels.get('rr_tp1') is not None:
             from strategies.geometry import cost_of
             fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'), s.symbol)
             risk = abs(fill_est - lv['sl'])
@@ -734,8 +1094,12 @@ class DemoExecutor:
             logger.info(f"Demo: {s.symbol} {s.group_key} skipped: {reject} (basis {basis:+.3%})")
             self._insert({'card_id': card_id, 'symbol': s.symbol, 'setup': s.group_key, 'strategy': s.mode,
                           'direction': d, 'opened_ms': int(time.time() * 1000), 'error': f"{reject}; basis {basis:+.3%}",
+                          'geometry_error': geometry_code,
+                          'risk_gate_reason': risk_gate_reason,
                           'closed_ms': int(time.time() * 1000),
-                          'close_reason': 'CHASE_LIMIT' if reject.startswith('chase_limit') else 'PRICE_GAP'})
+                          'close_reason': ('GEOMETRY_REJECT' if geometry_code else
+                                           'LOW_RR' if risk_gate_reason == 'low_rr' else
+                                           'CHASE_LIMIT' if reject.startswith('chase_limit') else 'PRICE_GAP')})
             return
         scale = ratio                      # every later conversion (pyramid / averaging stops) uses the same ratio
         ex = await self._exchange()
@@ -747,7 +1111,9 @@ class DemoExecutor:
                           'closed_ms': int(time.time() * 1000), 'close_reason': 'NO_SLOT'})
             return
         balance = min(await self._balance(), cfg.account_usd)
-        # sized from BingX's own bid / ask: the plan's entry understated the risk by the spread (WLD 2026-10-02: -1.45R)
+        # Size from the exchange-side quote and the actual exchange stop distance; the Binance plan's entry can
+        # understate the risk by the spread (WLD 2026-10-02: -1.45R).  Once filled, the persisted risk_usd below is
+        # recomputed from the confirmed fill-to-stop distance so the stop is exactly -1R of the recorded trade risk.
         stop_dist = abs(fill_est - lv['sl'])
         if balance <= 0 or stop_dist <= 0:
             return
@@ -768,8 +1134,8 @@ class DemoExecutor:
         from strategies.geometry import cost_of
         fee = cost_of(fill_est, (s.sig or {}).get('volume_24h'), s.symbol)
         no_stop = bool((getattr(s, 'plan', None) or {}).get('no_stop'))
-        # eng-127: a system without a stop (Connors: "stops hurt") - the 'stop' is only the R unit (1 daily ATR, the
-        # Turtles' N sizing) and the position runs at 1x, so the account carries it to any price without a liquidation
+        # Connors now carries a declared catastrophe stop like every other protected card.  Keep the no-stop branch
+        # only for legacy/restored contracts that explicitly opt into it.
         leverage = 1 if no_stop else cfg.max_leverage
         if not no_stop and fill_est:
             # eng-167 (trade-geometry review, section 11): the stop must come before a liquidation. BingX's estimate of
@@ -793,7 +1159,7 @@ class DemoExecutor:
             logger.info(f"Demo: {symbol} size {qty} below the minimum {min_qty}")
             return
         try:
-            await ex.set_leverage(leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
+            await self._demo_set_leverage(ex, leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
         except Exception as e:
             errors.report('executor._open', e, f"Demo leverage {symbol}")
         side, exit_side = ('buy', 'sell') if d > 0 else ('sell', 'buy')
@@ -805,7 +1171,7 @@ class DemoExecutor:
         self._set_inflight(card_id, 'ORDER_SENT', client_order_id=cid, exchange_symbol=symbol)
         try:
             try:
-                order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
+                order = await self._demo_create_order(ex, symbol, 'market', side, qty, None, {'clientOrderId': cid})
             except (ccxt.NetworkError, ccxt.ExchangeNotAvailable, asyncio.TimeoutError):
                 raise
             except Exception as e:
@@ -820,19 +1186,19 @@ class DemoExecutor:
                     raise
                 cid = f"pb{uuid.uuid4().hex[:24]}"
                 self._set_inflight(card_id, 'ORDER_SENT', client_order_id=cid, exchange_symbol=symbol)
-                order = await ex.create_order(symbol, 'market', side, qty, None, {'clientOrderId': cid})
+                order = await self._demo_create_order(ex, symbol, 'market', side, qty, None, {'clientOrderId': cid})
         except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
             order = await self._resolve_unknown_entry(symbol, d, cid, e)
             if order is None:
                 raise
-        fill = order.get('average') or order.get('price')
-        filled = order.get('filled')
-        if (not fill or not filled) and order.get('id'):
+        fill = _positive(order.get('average'))
+        filled = _positive(order.get('filled'))
+        if (fill is None or filled is None) and order.get('id'):
             # the create reply may carry no average / filled: the order's own state, never the plan's price
             try:
                 o = await self._call('fetch_order', order['id'], symbol)
-                fill = fill or o.get('average') or o.get('price')
-                filled = filled or o.get('filled')
+                fill = fill or _positive(o.get('average'))
+                filled = filled or _positive(o.get('filled'))
             except Exception as e:
                 errors.report('executor._open', e, f"Demo fill price {symbol}")
         # audit N04: one position per coin (one-way mode, coin checked free above), so the exchange's position IS this
@@ -841,29 +1207,42 @@ class DemoExecutor:
         if pos_qty:
             filled = pos_qty
             fill = fill or pos_px
-        confirmed = bool(fill and filled)
+        confirmed = _positive(fill) is not None and _positive(filled) is not None
         if not confirmed:
-            logger.warning(f"Demo ENTRY {symbol}: fill not confirmed by BingX (price {fill}, size {filled}): the quote / "
-                           f"requested size stand in, the row is marked unconfirmed")
-            self.alert(f"⚠️ Демо {symbol}: биржа не подтвердила цену/объём входа, записано как неподтверждённое")
-        fill = float(fill or fill_est)
+            # Never substitute the decision quote or requested size.  A missing read is either a terminal no-fill or
+            # an unknown outcome; both paths must avoid a synthetic trade row.
+            status = str(order.get('status') or '').lower()
+            if status in {'canceled', 'cancelled', 'rejected', 'expired', 'closed'} and not _positive(filled):
+                raise EntryNotFilled(f"entry order {order.get('id') or cid} ended {status} without a confirmed fill")
+            raise EntryUnknown(f"entry order {order.get('id') or cid} on {symbol}: fill not confirmed")
+        fill = float(fill)
         # the exits use what was FILLED: a stop for the ordered size failed on a partial fill (live INJ 2026-10-03:
         # 'order size must be less than the available amount of 529', the position sat without a stop)
-        qty = float(filled or 0) or qty
+        qty = float(filled)
+        geometry_reason, actual_risk, actual_fee = self._actual_fill_geometry(
+            getattr(s, 'plan', None) or {}, lv, fill, qty, d, (s.sig or {}).get('volume_24h'), s.symbol)
+        if geometry_reason:
+            logger.warning(f"Demo ENTRY {symbol}: confirmed fill violates card geometry: {geometry_reason}")
         self._set_inflight(card_id, 'FILLED', fill=fill, qty=qty)
         trade = {'card_id': card_id, 'symbol': symbol, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
                  'opened_ms': int(time.time() * 1000), 'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty,
                  'sl': lv['sl'], **{k: (None if (getattr(s, 'plan', None) or {}).get('no_tp') else lv[k])
                                     for k in ('tp1', 'tp2', 'tp3')},     # no_tp: placeholders are no targets
                  # the risk the size was computed from (stop distance + the round trip's costs): R = -1 at the stop
-                 'risk_usd': qty * (abs(fill - lv['sl']) + fee), 'no_stop': int(no_stop),
+                 'risk_usd': qty * ((actual_risk if actual_risk is not None else abs(fill - lv['sl'])) +
+                                    (actual_fee if actual_fee is not None else fee)), 'no_stop': int(no_stop),
                  # eng-167 (section 17.2): entry slippage vs the decision quote (positive = adverse), the time from the
                  # card's entry to the order, the leverage used
                  'slip_bps': (d * (fill - fill_est) / fill_est * 1e4) if fill_est else None,
                  'latency_ms': int(time.time() * 1000 - float(getattr(s, 'entered_at', 0) or 0) * 1000)
                  if getattr(s, 'entered_at', None) else None,
                  'leverage': leverage, 'n_units': 1, 'units': int(self._is_unit_card(s)),
-                 'entry_order': str(order.get('id') or '') or None, 'fill_confirmed': int(confirmed),
+                 'entry_order': str(order.get('id') or '') or None, 'client_order_id': cid,
+                 'fill_confirmed': int(confirmed),
+                 'geometry_error': geometry_reason if geometry_reason and not geometry_reason.startswith('low_rr') else None,
+                 'risk_gate_reason': 'low_rr' if geometry_reason and geometry_reason.startswith('low_rr') else None,
+                 'demo_eligible': int((s.sig or {}).get('demo_eligible',
+                                                       int(s.group_key not in CONFIG.executor.demo_off_setups))),
                  'trail': int(bool((getattr(s, 'plan', None) or {}).get('trail_after_tp1'))),
                  'no_tp': int(bool((getattr(s, 'plan', None) or {}).get('no_tp')))}
         # Persist and register the filled entry before placing protection.  A
@@ -874,16 +1253,27 @@ class DemoExecutor:
         self._set_scale(trade['id'], scale)
         self._set_basis(trade['id'], basis)
         self.open[card_id] = trade
+        if geometry_reason:
+            await self._close_invalid_fill(trade, geometry_reason)
+            return
         try:
             self._set_inflight(card_id, 'STOP_PENDING')
+            stop_order = None
+            desired_stop = None
             if not no_stop:
-                await self._place_stop(symbol, d, qty, lv['sl'])
+                desired_stop = lv['sl']
+                stop_order = await self._place_stop(symbol, d, qty, desired_stop)
             elif lv.get('sl'):
-                # eng-144: a perpetual is never left without a stop - a catastrophe stop 3 R units away (Connors trades
-                # without one in his book; the exit stays the SMA5 close, this only caps a gap / delisting tail)
-                far = fill - 3 * (lv['entry'] - lv['sl']) if lv.get('entry') else None
+                # Legacy no-stop cards are still protected, but the stop distance is the explicit contract distance
+                # carried in ``lv['sl']``.  Do not silently turn a one-unit R into a hard-coded 3R loss.  New Connors
+                # cards set no_stop=False and place their declared 2 daily-ATR catastrophe stop through the normal path.
+                distance = abs(float(fill) - float(lv['sl'])) if lv.get('sl') else None
+                far = fill - d * distance if distance else None
                 if far and far > 0:
-                    await self._place_stop(symbol, d, qty, far)
+                    desired_stop = far
+                    stop_order = await self._place_stop(symbol, d, qty, desired_stop)
+            if stop_order is not None:
+                self._record_stop(trade, stop_order, desired_stop)
         except Exception as e:
             # never an unprotected position: recorded and closed at market
             logger.warning(f"Demo ENTRY {symbol}: stop not placed ({e!r}): closed at market")
@@ -893,6 +1283,10 @@ class DemoExecutor:
         plan = getattr(s, 'plan', None) or {}
         # The entry row and in-memory ownership already exist; only exchange
         # targets remain to be installed.
+        trade['protection_state'] = 'PROTECTED' if not no_stop else 'NO_STOP_ALLOWED'
+        with self._db() as c:
+            c.execute("UPDATE demo_trades SET protection_state = ? WHERE id = ?",
+                      (trade['protection_state'], trade['id']))
         self._set_inflight(card_id, 'PROTECTED', trade_id=trade['id'])
         await self._place_tps(trade, self.exit_parts(ex, trade, qty, bool(plan.get('trail_after_tp1')),
                                                      bool(plan.get('no_tp'))), min_qty)
@@ -912,7 +1306,7 @@ class DemoExecutor:
         limits (sweep CE, continuation OTE) rest only inside the London / New York kill zones - outside them the card
         would veto the fill ('killzone'), so the limit is cancelled there (the setup lives within its session).
         """
-        if CONFIG.executor.touch_confirm_close:
+        if CONFIG.executor.touch_confirm_close and not (bool(s.plan) and s.plan.get('prizrak_first_touch')):
             return False                 # eng-105: touch plans enter at a confirming close (market), no resting limit
         if not (bool(s.plan) and s.plan.get('trigger') == 'touch'):
             return False
@@ -952,11 +1346,11 @@ class DemoExecutor:
             errors.report('executor._save_pending', e, "Demo pending state")
 
     async def _place_limit(self, key: str, s) -> None:
-        from strategies import entry_levels_for
+        from core.strategy_engine import StrategyEngine
         d, plan = s.direction, s.plan
         if self.risk_limit() is not None:
             return                                   # eng-58: the day's risk rules - no new resting limit (retried later)
-        if s.group_key in CONFIG.executor.demo_off_setups:
+        if (s.sig or {}).get('demo_eligible', int(s.group_key not in CONFIG.executor.demo_off_setups)) != 1:
             self.pending[key] = {'skip': True, 'reason': f"setup off on demo: {s.group_key}"}
             return
         if self.cluster_hit(d) is not None:
@@ -977,7 +1371,7 @@ class DemoExecutor:
             # marked: the card gets its limit once a slot frees)
             return
         line = plan['zone_hi'] if d > 0 else plan['zone_lo']
-        levels = entry_levels_for(plan, line, None, d)
+        levels = StrategyEngine.evaluate_signal(plan, line, None, d)
         if not levels or levels.get('low_rr'):
             self.pending[key] = {'skip': True, 'reason': 'no plan / low R:R at the line'}
             return
@@ -988,11 +1382,30 @@ class DemoExecutor:
             return
         quote = getattr(self, '_quote', None) or {}
         ratio = float(quote.get('last') or binance_now * scale) / binance_now
-        lv = {k: levels[k] * ratio for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')}
+        # Targetless contracts (Turtle / trailing / custom manager) still use the same limit path.  Preserve NULL
+        # targets instead of multiplying them by the venue scale and turning a valid exit manager into a TypeError.
+        lv = {k: (levels.get(k) * ratio if levels.get(k) is not None else None)
+              for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3')}
+        # Preserve the diagnostic fields needed by the post-fill gate; prices
+        # are translated to BingX while the contract metadata stays intact.
+        lv['rr_tp1'], lv['rr_reason'] = levels.get('rr_tp1'), levels.get('rr_reason')
         cfg = CONFIG.executor
         if basis_reject(ratio / scale - 1):
             # eng-169e: the resting limit of a coin whose BingX price is off the market is not placed either
             self.pending[key] = {'skip': True, 'reason': basis_reject(ratio / scale - 1)}
+            return
+        from strategies.base import geometry_error
+        geometry_code = geometry_error(lv, d, lv['entry'])
+        if geometry_code is not None:
+            self.pending[key] = {'skip': True, 'reason': f'geometry_error: {geometry_code}',
+                                 'geometry_error': geometry_code, 'card_id': key}
+            return
+        pre_reason, _, _ = self._actual_fill_geometry(
+            plan, lv, lv['entry'], 1.0, d, (s.sig or {}).get('volume_24h'), s.symbol)
+        if pre_reason is not None:
+            self.pending[key] = {'skip': True, 'reason': f'pre_trade_gate: {pre_reason}',
+                                 'risk_gate_reason': 'low_rr' if pre_reason.startswith('low_rr') else pre_reason,
+                                 'card_id': key}
             return
         ex = await self._exchange()
         balance = min(await self._balance(), cfg.account_usd)
@@ -1013,15 +1426,24 @@ class DemoExecutor:
             self.pending[key] = {'skip': True, 'reason': f'size {qty} below the minimum'}
             return
         try:
-            await ex.set_leverage(cfg.max_leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
+            await self._demo_set_leverage(ex, cfg.max_leverage, symbol, {'side': 'BOTH'})   # one-way mode: BingX needs the side
         except Exception as e:
             errors.report('executor._place_limit', e, f"Demo leverage {symbol}")
         price = float(ex.price_to_precision(symbol, lv['entry']))
-        order = await ex.create_order(symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
-        self.pending[key] = {'order_id': order['id'], 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio, 'fee': fee,
+        order = await self._demo_create_order(ex, symbol, 'limit', 'buy' if d > 0 else 'sell', qty, price)
+        self.pending[key] = {'order_id': order['id'], 'client_order_id': (order.get('clientOrderId') or
+                                                                          (order.get('info') or {}).get('clientOrderId')),
+                             'card_id': key, 'symbol': symbol, 'qty': qty, 'lv': lv, 'scale': ratio, 'fee': fee,
                              'basis': ratio / scale - 1, 'setup': s.group_key, 'strategy': s.mode, 'direction': d,
                              'placed_ms': int(time.time() * 1000), 'risk_usd': qty * stop_dist,
-                             'trail': bool(plan.get('trail_after_tp1')), 'no_tp': bool(plan.get('no_tp'))}
+                             'trail': bool(plan.get('trail_after_tp1')), 'no_tp': bool(plan.get('no_tp')),
+                             'volume_24h': (s.sig or {}).get('volume_24h'),
+                             'demo_eligible': int((s.sig or {}).get('demo_eligible',
+                                                                   int(s.group_key not in CONFIG.executor.demo_off_setups))),
+                             'geometry_error': None, 'risk_gate_reason': None,
+                             'geometry_plan': {k: plan.get(k) for k in
+                                               ('symbol', 'strategy', 'tf', 'min_rr', 'min_rr_on_tp1',
+                                                'allow_no_targets', 'exit_manager', 'max_loss_pct', 'exit')}}
         self._save_pending()
         logger.info(f"Demo LIMIT {symbol} {s.group_key} {'buy' if d > 0 else 'sell'} {qty} @ {price:.6g} "
                     f"(Binance line {line:.6g}, basis {ratio / scale - 1:+.3%}), SL {lv['sl']:.6g}")
@@ -1033,7 +1455,7 @@ class DemoExecutor:
             return
         ex = await self._exchange()
         try:
-            await ex.cancel_order(p['order_id'], p['symbol'])
+            await self._demo_cancel_order(ex, p['order_id'], p['symbol'])
         except Exception as e:
             errors.report('executor._cancel_limit', e, f"Demo cancel limit {p['symbol']}")
         # the cancel may fail or come after a fill (live ARB / CAP 2026-10-02: 'cancelled' limits filled and sat
@@ -1047,19 +1469,33 @@ class DemoExecutor:
             logger.warning(f"Demo limit {p['symbol']}: still {o.get('status')} after the cancel, retried in 10s")
             return
         filled = _finite(o.get('filled'))
-        if filled is None or filled < 0 or (filled == 0 and o.get('status') == 'closed'):
+        if filled is None or filled < 0:
             logger.warning(f"Demo limit {p['symbol']}: unconfirmed fill after the cancel, state kept")
             return
         self.pending.pop(key, None)
         self._save_pending()
         if filled > 0:
-            trade = self._limit_trade(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']), filled)
+            actual = await self._confirmed_order_fill(o, p)
+            if actual is None:
+                logger.warning(f"Demo limit {p['symbol']}: fill quantity/average unreadable after cancel, state kept")
+                return
+            fill, filled = actual
+            trade = self._limit_trade(key, p, fill, filled)
             if trade is None:
                 return
             logger.warning(f"Demo limit {p['symbol']} {p['setup']} was filled ({filled}) though its card ended "
                            f"({why}): closed at market")
             self.alert(f"⚠️ Демо {p['symbol']}: лимитка исполнилась после конца карточки ({why}), закрыта рынком")
-            await self._close(trade, 'LATE_FILL', None)
+            geometry_reason, actual_risk, actual_fee = self._actual_fill_geometry(
+                p.get('geometry_plan') or {}, p['lv'], fill, filled, p['direction'], p.get('volume_24h'), p['symbol'])
+            if actual_risk is not None:
+                trade['risk_usd'] = filled * (actual_risk + (actual_fee or 0.0))
+                with self._db() as c:
+                    c.execute("UPDATE demo_trades SET risk_usd = ? WHERE id = ?", (trade['risk_usd'], trade['id']))
+            if geometry_reason:
+                await self._close_invalid_fill(trade, geometry_reason)
+            else:
+                await self._close(trade, 'LATE_FILL', None)
             return
         logger.info(f"Demo: limit {p['symbol']} {p['setup']} cancelled: {why}")
         if record:
@@ -1083,14 +1519,14 @@ class DemoExecutor:
                 errors.report('executor.check_limits', e, f"Demo limit status {p['symbol']}")
                 continue
             filled = _finite(o.get('filled'))
-            if filled is None or filled < 0 or (filled == 0 and o.get('status') == 'closed'):
+            if filled is None or filled < 0:
                 logger.warning(f"Demo limit {p['symbol']}: unconfirmed fill {o.get('filled')!r}, state kept")
                 continue
             if filled > 0 and o.get('status') not in terminal:
                 # eng-85: a partly filled limit sat without a stop until limit_wait_min: the rest is cancelled and the
                 # filled part becomes the trade (its stop / targets for the filled size)
                 try:
-                    await ex.cancel_order(p['order_id'], p['symbol'])
+                    await self._demo_cancel_order(ex, p['order_id'], p['symbol'])
                 except Exception as e:
                     errors.report('executor.check_limits', e, f"Demo cancel partial limit {p['symbol']}")
                 try:
@@ -1101,12 +1537,16 @@ class DemoExecutor:
                 if o.get('status') not in terminal:
                     continue
                 filled = _finite(o.get('filled'))
-                if filled is None or filled < 0 or (filled == 0 and o.get('status') == 'closed'):
+                if filled is None or filled < 0:
                     logger.warning(f"Demo limit {p['symbol']}: unconfirmed final fill, state kept")
                     continue
             if o.get('status') in terminal:
                 if filled > 0:
-                    await self._limit_filled(key, p, float(o.get('average') or o.get('price') or p['lv']['entry']), filled)
+                    actual = await self._confirmed_order_fill(o, p)
+                    if actual is None:
+                        logger.warning(f"Demo limit {p['symbol']}: filled order has no confirmed average/size, state kept")
+                        continue
+                    await self._limit_filled(key, p, *actual)
                 else:
                     # Keep the card marked skipped so sync_limits cannot place the same entry again.
                     self.pending[key] = {'skip': True, 'reason': f"limit {o['status']} without a fill"}
@@ -1114,6 +1554,35 @@ class DemoExecutor:
             elif p.get('entered') and now - p['entered_ms'] > CONFIG.executor.limit_wait_min * 60_000:
                 await self._cancel_limit(key, f"Binance touched the line, BingX did not fill within "
                                               f"{CONFIG.executor.limit_wait_min} min", record=True)
+
+    async def _confirmed_order_fill(self, order: Dict, p: Dict) -> Optional[tuple]:
+        """Return an exchange-derived ``(average, amount)``; never use the requested limit as a fill price."""
+        avg, filled = _positive(order.get('average')), _positive(order.get('filled'))
+        if avg is not None and filled is not None:
+            return avg, filled
+        oid, symbol = str(order.get('id') or p.get('order_id') or ''), p['symbol']
+        if oid:
+            try:
+                trades = await self._call('fetch_my_trades', symbol,
+                                          since=int(p.get('placed_ms') or time.time() * 1000) - 5_000)
+                rows = [t for t in (trades or []) if str(t.get('order') or (t.get('info') or {}).get('orderId') or '') == oid]
+                amounts = [_positive(t.get('amount')) for t in rows]
+                prices = [_positive(t.get('price')) for t in rows]
+                if rows and all(v is not None for v in amounts + prices) and sum(amounts) > 0:
+                    amount = sum(amounts)
+                    return sum(a * px for a, px in zip(amounts, prices)) / amount, amount
+            except Exception as e:
+                errors.report('executor._confirmed_order_fill', e, f"Demo limit fills {symbol}")
+        # A one-way account has one position per coin.  This is only a fallback after the order itself reports a
+        # positive fill, so a requested price cannot be mistaken for a trade when both order and position are empty.
+        if _positive(order.get('filled')):
+            try:
+                qty, px = await self._position_of(symbol, p['direction'], strict=True)
+                if _positive(qty) and _positive(px):
+                    return float(px), float(qty)
+            except Exception as e:
+                errors.report('executor._confirmed_order_fill', e, f"Demo limit position {symbol}")
+        return None
 
     def _limit_trade(self, key: str, p: Dict, fill: float, qty: float) -> Optional[Dict]:
         """The demo row of a filled limit, written before its exits are placed (a failure there still leaves it)."""
@@ -1140,10 +1609,14 @@ class DemoExecutor:
         lv = p['lv']
         trade = {'card_id': p.get('card_id') or key, 'symbol': p['symbol'], 'setup': p['setup'],
                  'strategy': p['strategy'], 'direction': p['direction'], 'opened_ms': int(time.time() * 1000),
-                 'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty, 'sl': lv['sl'], 'tp1': lv['tp1'],
-                 'tp2': lv['tp2'], 'tp3': lv['tp3'], 'risk_usd': qty * (abs(fill - lv['sl']) + float(p.get('fee') or 0)),
-                 'entry_order': str(p.get('order_id') or '') or None, 'from_limit': 1,
-                 'trail': int(bool(p.get('trail'))), 'no_tp': int(bool(p.get('no_tp')))}
+                 'entry_plan': lv['entry'], 'entry_fill': fill, 'qty': qty, 'sl': lv['sl'], 'tp1': lv.get('tp1'),
+                 'tp2': lv.get('tp2'), 'tp3': lv.get('tp3'),
+                 'risk_usd': qty * (abs(fill - lv['sl']) + float(p.get('fee') or 0)),
+                 'entry_order': str(p.get('order_id') or '') or None,
+                 'client_order_id': p.get('client_order_id'), 'from_limit': 1,
+                 'trail': int(bool(p.get('trail'))), 'no_tp': int(bool(p.get('no_tp'))), 'fill_confirmed': 1,
+                 'demo_eligible': int(p.get('demo_eligible', 1)),
+                 'geometry_error': None, 'risk_gate_reason': None}
         trade['id'] = self._insert(trade)
         trade['unit_qty'], trade['scale'] = qty, p['scale']
         self._set_scale(trade['id'], p['scale'])
@@ -1166,8 +1639,19 @@ class DemoExecutor:
             return
         self.pending.pop(key, None)
         self._save_pending()
+        geometry_reason, actual_risk, actual_fee = self._actual_fill_geometry(
+            p.get('geometry_plan') or {}, lv, fill, qty, d, p.get('volume_24h'), symbol)
+        if actual_risk is not None:
+            trade['risk_usd'] = qty * (actual_risk + (actual_fee or 0.0))
+            with self._db() as c:
+                c.execute("UPDATE demo_trades SET risk_usd = ? WHERE id = ?", (trade['risk_usd'], trade['id']))
+        if geometry_reason:
+            logger.warning(f"Demo LIMIT FILLED {symbol}: confirmed fill violates card geometry: {geometry_reason}")
+            await self._close_invalid_fill(trade, geometry_reason)
+            return
         try:
-            await self._place_stop(symbol, d, qty, lv['sl'])
+            stop_order = await self._place_stop(symbol, d, qty, lv['sl'])
+            self._record_stop(trade, stop_order, lv['sl'])
         except Exception as e:
             # found filled only after price ran through the stop (live CAP 2026-10-02): out at market, never unprotected
             logger.warning(f"Demo LIMIT FILLED {symbol}: stop not placed ({e!r}): closed at market")
@@ -1209,16 +1693,65 @@ class DemoExecutor:
         if released:
             self._save_unknown()
 
+    async def _restore_db_ownership(self, positions: List[Dict]) -> None:
+        """Rebind exchange positions to an open ledger row after a runtime restart.
+
+        The in-memory card book is intentionally ephemeral.  A single active
+        row for the same venue symbol and direction is enough to recover the
+        owner; ambiguous rows are left for the normal untracked guard instead
+        of being guessed.  ``card_id`` and ``client_order_id`` remain on the
+        restored row for later reconciliation.
+        """
+        slots = {(str(p.get('symbol') or ''), 1 if p.get('side') == 'long' else -1)
+                 for p in positions if _positive(p.get('contracts'))}
+        if not slots:
+            return
+        with self._db() as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute(
+                "SELECT * FROM demo_trades WHERE closed_ms IS NULL AND COALESCE(quarantined, 0) = 0 "
+                "AND entry_fill IS NOT NULL ORDER BY opened_ms"
+            ).fetchall()
+        candidates = {}
+        for row in rows:
+            trade = dict(row)
+            key = (str(trade.get('symbol') or ''), int(trade.get('direction') or 0))
+            if key in slots:
+                candidates.setdefault(key, []).append(trade)
+        async with self._lock:
+            for key, trades in candidates.items():
+                if len(trades) != 1:
+                    continue
+                trade = trades[0]
+                card_id = trade.get('card_id') or f"{trade['symbol']}|{trade.get('setup') or 'RESTORED'}|c{trade['id']}"
+                trade['card_id'] = card_id
+                if trade.get('close_pending_reason') is not None:
+                    trade['close_pending'] = [trade['close_pending_reason'], trade['close_pending_r']]
+                if self._protection_state(trade) == 'INVALID_GEOMETRY':
+                    continue
+                if card_id not in self.open:
+                    self.open[card_id] = trade
+                    with self._db() as c:
+                        c.execute("UPDATE demo_trades SET card_id = ?, protection_state = ? WHERE id = ?",
+                                  (card_id, self._protection_state(trade), trade['id']))
+                    logger.warning("Demo: restored exchange ownership for %s from ledger row %s", key[0], trade['id'])
+                    self.alert(f"⚠️ Демо {key[0]}: позиция восстановлена из ledger, card_id={card_id}")
+
     async def close_untracked(self) -> None:
-        """Safety net: a BingX position no trade or resting limit of ours owns (a lost fill) is closed at market."""
+        """Close only positions with no recoverable ledger owner.
+
+        A missing in-memory card after restart is not proof that the exchange
+        position is чужая: active rows are rebound from SQLite first.
+        """
         ex = await self._exchange()
+        positions = await ex.fetch_positions()
+        await self._restore_db_ownership(positions)
         async with self._lock:
             mine = {t['symbol'] for t in self.open.values()} | {p.get('symbol') for p in self.pending.values()
                                                                  if not p.get('skip')}
             mine_coins = {_coin(symbol) for symbol in mine if symbol} | {
                 item.get('coin') for item in getattr(self, '_inflight', {}).values() if item.get('coin')
             }
-        positions = await ex.fetch_positions()
         await self._release_unknown(ex, positions)
         for pos in positions:
             qty = float(pos.get('contracts') or 0)
@@ -1259,7 +1792,7 @@ class DemoExecutor:
                      'setup': 'UNTRACKED', 'strategy': None, 'direction': d,
                      'opened_ms': int(time.time() * 1000),        # only the closing fill counts (older fills of the coin are other trades)
                      'entry_plan': entry, 'entry_fill': entry, 'qty': qty,
-                     'error': 'a BingX position no card owned (lost limit fill): closed at market'}
+                     'error': 'a BingX position had no recoverable ledger owner after restart reconciliation; closed at market'}
             trade['id'] = self._insert(trade)
             logger.warning(f"Demo: untracked BingX position {pos['symbol']} {pos.get('side')} {qty}: closed at market")
             self.alert(f"⚠️ Демо: чужая позиция {pos['symbol']} {pos.get('side')} {qty} без карточки, закрыта рынком")
@@ -1268,6 +1801,10 @@ class DemoExecutor:
     async def _restore_stop(self, trade: Dict) -> None:
         if trade.get('no_stop') or trade.get('strategy') == 'connors' or not trade.get('sl'):
             return                                   # eng-127: a system without a stop (Connors) - nothing to restore
+        if self._protection_state(trade) != 'PROTECTED':
+            logger.error("Demo %s: refusing to restore invalid stop geometry", trade.get('symbol'))
+            self.alert(f"⛔ Демо {trade.get('symbol')}: invalid stop geometry, automatic re-protection refused")
+            return
         symbol, d, sl = trade['symbol'], trade['direction'], float(trade['sl'])
         left = await self._position_qty(symbol)
         if left <= 0:
@@ -1280,7 +1817,8 @@ class DemoExecutor:
             self.alert(f"⛔ Демо {symbol}: стопа на бирже не было, цена уже за стопом, закрыта рынком")
             await self._close(trade, 'SL', None)
             return
-        await self._place_stop(symbol, d, left, sl)
+        stop_order = await self._place_stop(symbol, d, left, sl)
+        self._record_stop(trade, stop_order, sl)
         logger.warning(f"Demo {symbol}: the position {left} had no stop on BingX: re-placed at {sl:.6g}")
         self.alert(f"⚠️ Демо {symbol}: у позиции не было стопа на бирже, поставлен заново ({sl:.6g})")
 
@@ -1297,6 +1835,14 @@ class DemoExecutor:
             if not stops:
                 await self._restore_stop(trade)
                 continue
+            # A position can have a valid venue stop while the ledger lost its
+            # identity (the historical limit-fill bug).  Rebind the canonical
+            # stop even when there is only one order; dedupe must repair the
+            # database, not only cancel duplicates.
+            ref = float(trade.get('sl') or 0)
+            px = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice') or o.get('triggerPrice') or 0)  # noqa: E731
+            keep = min(stops, key=lambda o: abs(px(o) - ref)) if ref else max(stops, key=lambda o: o.get('timestamp') or 0)
+            self._record_stop(trade, keep, px(keep) or ref, attempt=False)
             # audit B02: a stop that exists is not a stop that covers the position (a grown position kept the old size)
             if not (trade.get('no_stop') or trade.get('strategy') == 'connors' or not trade.get('sl')):
                 try:
@@ -1312,11 +1858,7 @@ class DemoExecutor:
                     trade['qty'] = left
                     with self._db() as c:
                         c.execute("UPDATE demo_trades SET qty = ? WHERE id = ?", (left, trade['id']))
-                ref0 = float(trade.get('sl') or 0)
-                spx = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice')  # noqa: E731
-                                      or o.get('triggerPrice') or 0)
-                stays = min(stops, key=lambda o: abs(spx(o) - ref0)) if ref0 else \
-                    max(stops, key=lambda o: o.get('timestamp') or 0)
+                stays = keep
                 # audit V02: the coverage of the stop that STAYS after the dedupe below (two stops of 1 'covered' a
                 # position of 2, then one was cancelled)
                 covered = float((stays.get('info') or {}).get('origQty') or stays.get('amount') or 0)
@@ -1325,20 +1867,18 @@ class DemoExecutor:
                     self.alert(f"⚠️ Демо {trade['symbol']}: стоп покрывал {covered} из {left}, переставлен")
                     try:
                         new = await self._place_stop(trade['symbol'], trade['direction'], left, float(trade['sl']))
+                        self._record_stop(trade, new, float(trade['sl']))
                         await self._cancel_orders(trade['symbol'], keep=new.get('id'), stops_only=True)
                     except Exception as e:
                         errors.report('executor._dedupe_stops', e, f"Demo stop re-place {trade['symbol']}")
                     continue
             if len(stops) < 2:
                 continue
-            ref = float(trade.get('sl') or 0)
-            px = lambda o: float((o.get('info') or {}).get('stopPrice') or o.get('stopPrice') or o.get('triggerPrice') or 0)  # noqa: E731
-            keep = min(stops, key=lambda o: abs(px(o) - ref)) if ref else max(stops, key=lambda o: o.get('timestamp') or 0)
             for o in stops:
                 if o is keep:
                     continue
                 try:
-                    await ex.cancel_order(o['id'], trade['symbol'])
+                    await self._demo_cancel_order(ex, o['id'], trade['symbol'])
                     logger.warning(f"Demo {trade['symbol']}: extra stop {px(o):.6g} cancelled (kept {px(keep):.6g})")
                 except Exception as e:
                     errors.report('executor._dedupe_stops', e, f"Demo extra stop {trade['symbol']}")
@@ -1358,7 +1898,7 @@ class DemoExecutor:
         for o in await ex.fetch_open_orders(symbol):
             if not self._is_stop(o):
                 try:
-                    await ex.cancel_order(o['id'], symbol)
+                    await self._demo_cancel_order(ex, o['id'], symbol)
                 except Exception as e:
                     errors.report('executor._cancel_targets', e, f"Demo cancel {symbol} {o.get('id')}")
 
@@ -1395,7 +1935,7 @@ class DemoExecutor:
                 except ccxt.InvalidOrder:
                     excess = 0.0
                 if excess > 0 and excess >= min_qty:
-                    await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', excess, None,
+                    await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', excess, None,
                                           {'reduceOnly': True})
                 else:
                     excess = 0.0
@@ -1438,6 +1978,12 @@ class DemoExecutor:
                     scale = float(trade['entry_plan']) / float(s.levels['entry'])
                     trade['scale'] = scale
                 scale = scale or 1.0
+                new_sl = float(s.levels['sl']) * scale
+                # A Prizrak trap is an exchange-fill contract: the BE stop is derived from the actual filled entry,
+                # never from the stale/requested plan quote.  This is what prevents a limit crossing the zone from
+                # leaving the remainder below real BE on the venue.
+                if (getattr(s, 'plan', None) or {}).get('trap_detected') and trade.get('entry_fill'):
+                    new_sl = float(trade['entry_fill']) * (1 + d * CONFIG.strategies.be_cost)
                 ex = await self._exchange()
                 old_stop = trade.get('stop_order_id') or trade.get('stop_id')
                 # Prefer an atomic exchange edit when available: placing a second
@@ -1445,22 +1991,25 @@ class DemoExecutor:
                 if old_stop and hasattr(ex, 'edit_order'):
                     edited = await ex.edit_order(old_stop, symbol, 'STOP_MARKET',
                                                  'sell' if d > 0 else 'buy', left,
-                                                 s.levels['sl'] * scale,
+                                                 new_sl,
                                                  {'reduceOnly': True, 'closePosition': True,
                                                   'workingType': 'MARK_PRICE'})
-                    trade['sl'] = s.levels['sl'] * scale
+                    trade['sl'] = new_sl
+                    self._record_stop(trade, edited or {'id': old_stop, 'stopPrice': new_sl}, new_sl,
+                                      attempt=False)
                     with self._db() as c:
                         c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
                     logger.info(f"Demo RESTOP {symbol}: atomically edited stop {edited.get('id', old_stop)}")
                     return
                 # eng-85: the new stop first, then the old stop(s) by id - the cancel-all first left the position naked
                 # whenever the new stop failed, and took TP2 / TP3 of the thirds plans with it for good
-                new = await self._place_stop(symbol, d, left, s.levels['sl'] * scale)
+                new = await self._place_stop(symbol, d, left, new_sl)
+                self._record_stop(trade, new, new_sl)
                 await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
-                trade['sl'] = s.levels['sl'] * scale
+                trade['sl'] = new_sl
                 with self._db() as c:     # the stop guard restores THIS stop after a restart
                     c.execute("UPDATE demo_trades SET sl = ? WHERE id = ?", (trade['sl'], trade['id']))
-                logger.info(f"Demo RESTOP {symbol}: stop {s.levels['sl'] * scale:.6g} for {left}")
+                logger.info(f"Demo RESTOP {symbol}: stop {new_sl:.6g} for {left}")
             except Exception as e:
                 # eng-169c (audit: COMP 325, FET 302 - BingX 110412, the new stop already on the wrong side of the
                 # price): the old stop stays (placed-first order), but a stop the price already passed is a stop hit -
@@ -1473,6 +2022,8 @@ class DemoExecutor:
         try:
             scale = float(trade.get('scale') or 1.0)
             new_sl = float(s.levels['sl']) * scale
+            if (getattr(s, 'plan', None) or {}).get('trap_detected') and trade.get('entry_fill'):
+                new_sl = float(trade['entry_fill']) * (1 + d * CONFIG.strategies.be_cost)
             ex = await self._exchange()
             ticker = await ex.fetch_ticker(symbol) or {}
             mark = _positive(ticker.get('markPrice') or (ticker.get('info') or {}).get('markPrice') or (ticker.get('info') or {}).get('mark') or ticker.get('mark'))
@@ -1480,7 +2031,7 @@ class DemoExecutor:
             price = mark if mark is not None else last
             left = await self._position_qty(symbol)
             if price and left > 0 and d * (price - new_sl) <= 0:
-                await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
+                await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', left, None, {'reduceOnly': True})
                 logger.info(f"Demo RESTOP {symbol}: price {price} already beyond the new stop {new_sl:.6g}, "
                             f"{left} closed at market")
                 return
@@ -1514,7 +2065,7 @@ class DemoExecutor:
                     for o in await ex.fetch_open_orders(symbol):
                         if not self._is_stop(o):
                             try:
-                                await ex.cancel_order(o['id'], symbol)
+                                await self._demo_cancel_order(ex, o['id'], symbol)
                             except Exception as e:
                                 # eng-175: 109400 'order not exist' = the target filled between the fetch and the
                                 # cancel (live 1000BONK 28.10: 'out by its tp0 meanwhile' a second later) - the
@@ -1531,7 +2082,7 @@ class DemoExecutor:
                         # its half, not 1/6 (live APE 2026-10-24: half of the original closed from 2/3 left)
                         half = float(ex.amount_to_precision(symbol, left - qty * rest_share))
                         if half > 0:
-                            await ex.create_order(symbol, 'market', 'sell' if d > 0 else 'buy', half, None,
+                            await self._demo_create_order(ex, symbol, 'market', 'sell' if d > 0 else 'buy', half, None,
                                                   {'reduceOnly': True})
                         done = f"{half} closed at market"
                     rest = await self._position_qty(symbol)
@@ -1573,7 +2124,7 @@ class DemoExecutor:
                 before, before_px = await self._position_of(symbol, d, strict=True)
                 cid = f"pb{uuid.uuid4().hex[:24]}"
                 try:
-                    order = await ex.create_order(symbol, 'market', 'buy' if d > 0 else 'sell', unit, None,
+                    order = await self._demo_create_order(ex, symbol, 'market', 'buy' if d > 0 else 'sell', unit, None,
                                                   {'clientOrderId': cid})
                 except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
                     logger.warning(f"Demo ADD {symbol}: outcome unknown ({e!r}): resolving by position")
@@ -1599,6 +2150,7 @@ class DemoExecutor:
                     trade['add_unknown'] = True
                     try:
                         new = await self._place_stop(symbol, d, worst, float(trade['sl']))
+                        self._record_stop(trade, new, float(trade['sl']))
                         await self._cancel_orders(symbol, keep=new.get('id'), stops_only=True)
                     except Exception as e:
                         errors.report('executor.on_add', e, f"Demo protective stop after an unknown add {symbol}")
@@ -1633,6 +2185,7 @@ class DemoExecutor:
                     self.alert(f"⛔ Демо {symbol}: стоп после добора не поставлен, закрыта рынком")
                     await self._close(trade, 'NO_STOP', None)
                     return
+                self._record_stop(trade, new, s.levels['sl'] * scale)
                 await self._cancel_orders(symbol, keep=new.get('id'))
                 trade['sl'] = s.levels['sl'] * scale
                 if not ((getattr(s, 'plan', None) or {}).get('no_tp')):
@@ -1691,7 +2244,9 @@ class DemoExecutor:
             return None
         try:
             with self._db() as c:
-                rows = c.execute("SELECT r FROM demo_trades WHERE strategy = ? AND r IS NOT NULL ORDER BY closed_ms DESC "
+                rows = c.execute("SELECT r FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 "
+                                 "AND COALESCE(close_reason, '') NOT IN ('ORPHAN', 'UNTRACKED') "
+                                 "AND strategy = ? AND r IS NOT NULL ORDER BY closed_ms DESC "
                                  "LIMIT ?", (strategy, cfg.strategy_kill_n)).fetchall()
         except sqlite3.Error:
             return None
@@ -1706,14 +2261,16 @@ class DemoExecutor:
             return c.execute(
                 "SELECT COALESCE(strategy, '?'), COUNT(*), SUM(r > 0), SUM(r), "
                 "AVG(CASE WHEN entry_plan > 0 AND entry_fill > 0 THEN direction * (entry_fill - entry_plan) / entry_plan * 1e4 END) "
-                "FROM demo_trades WHERE r IS NOT NULL AND closed_ms >= ? AND closed_ms < ? GROUP BY 1 ORDER BY 4",
+                "FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 "
+                "AND COALESCE(close_reason, '') NOT IN ('ORPHAN', 'UNTRACKED') "
+                "AND r IS NOT NULL AND closed_ms >= ? AND closed_ms < ? GROUP BY 1 ORDER BY 4",
                 (day0_ms, day0_ms + 86_400_000)).fetchall()
 
     def usd_without_r(self, day0_ms: int) -> tuple:
         """(trades, USD) closed in the day with a dollar result but no R (UNTRACKED: no planned stop) - they fell out
         of every R sum (11 rows, -12.54 USD by 15.10)."""
         with self._db() as c:
-            return c.execute("SELECT COUNT(*), COALESCE(SUM(pnl_usd), 0) FROM demo_trades WHERE r IS NULL AND "
+            return c.execute("SELECT COUNT(*), COALESCE(SUM(pnl_usd), 0) FROM demo_trades WHERE COALESCE(quarantined, 0) = 0 AND r IS NULL AND "
                              "pnl_usd IS NOT NULL AND closed_ms >= ? AND closed_ms < ? "
                              "AND COALESCE(error, '') NOT LIKE 'duplicate of%'",
                              (day0_ms, day0_ms + 86_400_000)).fetchone()
@@ -1808,7 +2365,7 @@ class DemoExecutor:
             for o in await ex.fetch_open_orders(symbol):
                 if not self._is_stop(o):
                     try:
-                        await ex.cancel_order(o['id'], symbol)
+                        await self._demo_cancel_order(ex, o['id'], symbol)
                     except Exception as e:
                         errors.report('executor._close', e, f"Demo cancel TP {symbol}")
         except Exception as e:
@@ -1820,13 +2377,13 @@ class DemoExecutor:
             try:
                 t = await ex.fetch_ticker(symbol)
                 px = float((t.get('ask') if d > 0 else t.get('bid')) or t.get('last'))
-                order = await ex.create_order(symbol, 'limit', side, left, px, {'reduceOnly': True})
+                order = await self._demo_create_order(ex, symbol, 'limit', side, left, px, {'reduceOnly': True})
                 for _ in range(5):
                     await asyncio.sleep(3)
                     if await self._position_qty(symbol) == 0:
                         break
                 try:
-                    await ex.cancel_order(order['id'], symbol)
+                    await self._demo_cancel_order(ex, order['id'], symbol)
                 except Exception as e:                  # filled / gone: the position check below decides
                     logger.debug(f"Demo cancel passive close {symbol}: {e!r}")
             except Exception as e:
@@ -1839,7 +2396,7 @@ class DemoExecutor:
             left = await self._position_qty(symbol)
         if left > 0:
             try:
-                await ex.create_order(symbol, 'market', side, left, None, {'reduceOnly': True})
+                await self._demo_create_order(ex, symbol, 'market', side, left, None, {'reduceOnly': True})
             except Exception as e:
                 if '101290' in str(e) and await self._position_qty(symbol) == 0:
                     # BingX's own stop / target filled between the position check and this order (BAT 2026-10-05
@@ -1851,7 +2408,7 @@ class DemoExecutor:
                     # at the touch instead, the stop still resting; the trade stays open, the next pass re-places it
                     t = await ex.fetch_ticker(symbol)
                     px = float((t.get('bid') if d > 0 else t.get('ask')) or t.get('last'))
-                    await ex.create_order(symbol, 'limit', side, left, px, {'reduceOnly': True})
+                    await self._demo_create_order(ex, symbol, 'limit', side, left, px, {'reduceOnly': True})
                     if symbol not in self._band_warned:
                         self._band_warned.add(symbol)
                         logger.warning(f"Demo: {symbol} market close rejected by BingX's price band: reduce-only limit "
@@ -2156,9 +2713,12 @@ class DemoExecutor:
                                 # stop and targets already rested on BingX (live SOL / DOGE PO3: closed -0.5R, then went
                                 # to TP3). A filled limit keeps its exchange stop / targets; only a stale one is closed
                                 pass
-                            elif not trade.get('no_stop') and age_ms < ORPHAN_EXCHANGE_HOLD_MS:
-                                # eng-144: no market close - the position keeps its stop / targets on BingX and ends
-                                # there (EXCHANGE); a market close of 30 orphans cost -9.2R on 11-21.10
+                            elif not trade.get('no_stop') and self._protection_state(trade) == 'PROTECTED':
+                                # P1: a valid stop-protected position stays
+                                # under its exchange exits while the runtime
+                                # card is absent.  Its ledger row is rebound by
+                                # close_untracked after a restart; age alone is
+                                # never a reason for a market ORPHAN close.
                                 if not trade.get('orphan_seen'):
                                     trade['orphan_seen'] = True
                                     logger.warning(f"Demo: {trade['symbol']} has no open card: left to its exchange stop")
@@ -2192,8 +2752,12 @@ class DemoExecutor:
 
     @contextlib.contextmanager
     def _db(self):
-        c = sqlite3.connect(self.db_path)
+        c = sqlite3.connect(self.db_path, timeout=30.0)
         try:
+            c.execute("PRAGMA busy_timeout=30000")
+            if self.db_path != ':memory:':
+                c.execute("PRAGMA journal_mode=WAL")
+                c.execute("PRAGMA synchronous=NORMAL")
             with c:
                 yield c
         finally:
@@ -2225,6 +2789,10 @@ class DemoExecutor:
 
     def _insert(self, row: Dict) -> int:
         row.setdefault('logic_version', CONFIG.journal.logic_version)   # eng-144: demo statistics per logic version
+        row.setdefault('config_logic_version', CONFIG.journal.logic_version)
+        row.setdefault('protection_state', self._protection_state(row))
+        for key, value in provenance_fields().items():
+            row.setdefault(key, value)
         cols = [k for k in row if k != 'id']
         unexpected = set(cols) - self._schema_cols
         if unexpected:
@@ -2241,25 +2809,20 @@ class DemoExecutor:
 
 
 async def _cli(args):
+    if args.test:
+        # The old diagnostic CLI could place a sandbox order directly and
+        # bypass the source-gated executor.  v2 has no approved strategy or
+        # testnet gate, so an order probe is deliberately unavailable.
+        print("Order probes are disabled until the v2 testnet gate is approved")
+        return
     ex = DemoExecutor(db_path=':memory:')
     if not all(credentials()):
-        print("No BINGX_API_KEY / BINGX_API_SECRET in the environment nor [executor] api_key / api_secret in config.local.toml")
+        print("No BINGX_API_KEY / BINGX_API_SECRET in the environment; exchange access is disabled")
         return
     try:
         x = await ex._exchange()
         print(f"BingX demo: {len([m for m in x.markets.values() if m.get('swap')])} swap markets, "
               f"balance {await ex._balance():.2f} VST")
-        if args.test:
-            symbol = args.test
-            price = (await x.fetch_ticker(symbol))['last']
-            qty = float(x.amount_to_precision(symbol, max((x.markets[symbol]['limits']['amount'] or {}).get('min') or 0,
-                                                          6 / price)))
-            o = await x.create_order(symbol, 'market', 'buy', qty)
-            print('opened', o.get('id'), o.get('average'), qty)
-            await asyncio.sleep(3)
-            left = await ex._position_qty(symbol)
-            await x.create_order(symbol, 'market', 'sell', left or qty, None, {'reduceOnly': True})
-            print('closed', left or qty)
     finally:
         await ex.close()
 

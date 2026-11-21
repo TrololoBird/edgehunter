@@ -1,18 +1,9 @@
-"""
-Live pump / dump monitor of small caps (the rules of `research_pumps.py`, on each coin's closed 1h candles).
+"""Candidate price/volume event monitor.
 
-A PUMP: the close >= 15% above the lowest low of the last 6 hours, the hours since that low traded >= 3x the average
-hour of the week before (DUMP: the mirror). Small caps only (not among the 30 most traded coins by 24h volume).
-After the event the monitor follows the first pullback / bounce: the 38.2-61.8% zone of the move, the trigger (a 1h
-close beyond the previous candle's extreme after the zone was touched), stop beyond the pullback's extreme (+ 0.25
-ATR1h), TP1 = the move's extreme, TP2 = its 1.618 extension.
-
-Measured (research/pumps.md, research/pumps_holdout.md; hit rate vs the random-walk rate of the same trade):
-- after a DUMP, short the first bounce: 2023-10..2026-08 +0.17R / +0.16R (older / newer half), the untouched
-  2021-04..2023-09 +0.36R / +0.34R, TP1 hit 62-69% vs 45-57% geometry: the one pre-registered part that held;
-- after a PUMP, buy the first pullback: +0.13R / +0.14R in 2023-26 but -0.04R / +0.13R in 2021-23 with the hit
-  rate AT the geometry: not confirmed.
-Information, never an order; samples are small (a few hundred trades per period).
+The thresholds below are descriptive filters over closed candles.  They are
+not a published pump-and-dump definition, do not establish manipulation, and
+do not produce a strategy or an order.  The v2 registry intentionally rejects
+these candidates until a separately sourced rule and execution contract exist.
 """
 from typing import Dict, List, Optional, Sequence
 
@@ -22,10 +13,8 @@ VOL_X = 3.0
 LOOKBACK = 48
 MAX_RANK = 30
 STATS = {
-    'dump': {'label': 'шорт первого отскока после дампа', 'verdict': 'подтверждено на 2021–23',
-             'r': '+0.16…+0.36R', 'hit': '62–69% при геометрии 45–57%'},
-    'pump': {'label': 'покупка первого отката после пампа', 'verdict': 'НЕ подтверждено на 2021–23',
-             'r': '−0.04…+0.14R', 'hit': '50–58% при геометрии 48–52%'},
+    'dump': {'status': 'UNVERIFIED_CANDIDATE', 'verdict': 'НЕ подтверждено: кандидат без стратегии'},
+    'pump': {'status': 'UNVERIFIED_CANDIDATE', 'verdict': 'НЕ подтверждено: кандидат без стратегии'},
 }
 
 
@@ -69,8 +58,9 @@ def scan(candles_1h: Sequence[Sequence[float]]) -> Optional[Dict]:
     if ex is None:
         # audit N26: the extreme is not confirmed yet (no exhaustion close): no zone drawn from a provisional peak
         return {'kind': 'pump' if d > 0 else 'dump', 'direction': d, 'event_ts': int(c[t][0]), 'move': move,
-                'base': base, 'peak': peak, 'zone': None, 'state': 'ждём истощение (экстремум не подтверждён)',
-                'levels': None, 'trade_dir': d, 'stats': STATS['pump' if d > 0 else 'dump']}
+                'base': base, 'peak': peak, 'zone': None, 'state': 'candidate: extreme not confirmed',
+                'levels': None, 'trade_dir': d, 'candidate_only': True,
+                'stats': STATS['pump' if d > 0 else 'dump']}
     size = abs(peak - base)
     near, far = peak - d * 0.382 * size, peak - d * 0.618 * size
     state, pull, levels = 'ждём откат в зону', None, None
@@ -95,7 +85,8 @@ def scan(candles_1h: Sequence[Sequence[float]]) -> Optional[Dict]:
             break
     return {'kind': 'pump' if d > 0 else 'dump', 'direction': d, 'event_ts': int(c[t][0]), 'move': move,
             'base': base, 'peak': peak, 'zone': sorted((near, far)), 'state': state, 'levels': levels,
-            'trade_dir': d, 'stats': STATS['pump' if d > 0 else 'dump']}
+            'trade_dir': d, 'candidate_only': True,
+            'stats': STATS['pump' if d > 0 else 'dump']}
 
 
 def monitor(markets: Dict, now_ms: float, cache: Dict) -> List[Dict]:
@@ -110,7 +101,7 @@ def monitor(markets: Dict, now_ms: float, cache: Dict) -> List[Dict]:
         if hit is None or hit[0] != key:
             cache[sym] = hit = (key, scan(md.h1))
         if hit[1] is not None:
-            out.append({'symbol': sym, **hit[1]})
+            out.append({'symbol': sym, **hit[1], 'informational': True, 'source': 'pump_monitor_v1'})
     out.sort(key=lambda r: -r['event_ts'])
     return out
 
@@ -126,6 +117,6 @@ def monitor_wide(h1_by_symbol: Dict, cache: Dict) -> List[Dict]:
         if hit is None or hit[0] != h1[-1][0]:
             cache[sym] = hit = (h1[-1][0], scan(h1))
         if hit[1] is not None:
-            out.append({'symbol': sym, **hit[1]})
+            out.append({'symbol': sym, **hit[1], 'informational': True, 'source': 'pump_monitor_v1'})
     out.sort(key=lambda r: -r['event_ts'])
     return out

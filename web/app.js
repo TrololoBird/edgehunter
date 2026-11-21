@@ -97,19 +97,19 @@ const VETO = {
 // map and each setup's mode (on / shadow / off) come from the registry (S.registry), not a hand-kept list
 const FAMILY = {
   continuation: ['продолжение после импульса (ICT OTE)', 'импульс; откат в зону 0.62–0.79 ноги; вход по закрытию свечи, коснувшейся зоны (не лимит); стоп за началом импульса; цели — расширения ноги и уровни карты'],
-  wyckoff: ['Вайкофф', 'SPRING / UTAD: прокол границы диапазона 4h с возвратом и тест; цель — противоположная сторона / P&F. FLUSH / SQUEEZE REVERSAL — только тень (не торгуются)'],
+  wyckoff: ['Вайкофф', 'SPRING / UTAD: прокол границы диапазона 4h с возвратом и тест; FLUSH / SQUEEZE REVERSAL проходят те же проверки данных, плана и геометрии; цель — противоположная сторона / P&F'],
   sweep: ['снятие ликвидности (ICT)', 'SWEEP: 15m прокол пула с возвратом, затем MSS + FVG на младшем ТФ, вход по подтверждающему закрытию. SILVER BULLET: окна NY 03–04, 10–11, 14–15, FVG после снятия ликвидности, новый вход только внутри часа окна'],
   breakout: ['пробой: черепахи и Боллинджер Method I', 'BREAKOUT: дневной канал 20 (S1, пропуск после прибыльного) / 55 (S2), стоп 2N, +1 юнит каждые ½N до 4, выход по 10/20-дневному противоположному каналу. BB1: 4h — первое закрытие за полосой после сжатия (125 баров), подтверждение Intraday Intensity, выход по Parabolic SAR'],
   supply_demand: ['спрос / предложение (Сейден)', 'зона 4h; вход по подтверждающему закрытию после касания ближней границы; стоп за дальней границей; R:R до TP1 ≥ 3 (до ближайшей противоположной зоны); ≥ 8 из 10 баллов'],
   market_profile: ['Market Profile (Далтон)', 'VA80: возврат во вчерашнюю value area (TPO, 30-минутные периоды) двумя закрытиями → противоположный край; AUCTION: неудачный выход за VA с возвратом → противоположный край VA, выход в конце сессии'],
   trendline: ['трендовая линия (Эдвардс и Маги)', 'TL EM: линия через два последних пивота 2/2 на 1h; пробой — два закрытия 1h на ≥ 3% от линии (вверх — с объёмом); вход на ретесте линии и сломе младшего ТФ'],
-  bollinger: ['W / M Боллинджера', '4h BB(20, 2): W-дно / M-вершина; половина на полосе в момент сигнала, остаток — до противоположной полосы 4h. BB3 (Method III) — только тень'],
+  bollinger: ['W / M Боллинджера', '4h BB(20, 2): W-дно / M-вершина; половина на полосе в момент сигнала, остаток — до противоположной полосы 4h. BB3 (Method III) также включён'],
   orb: ['диапазон открытия (Крэбел)', 'Stretch — среднее за 10 дней min(H−O, O−L); диапазон первых 5 минут сессии ± Stretch (три сессии); вход стоп-ордером на касании уровня, стоп — противоположный уровень; выход в конце сессии'],
-  pump: ['памп / дамп', 'DUMP BOUNCE SHORT: дамп ≥ порога на объёме, минимум фиксируется при истощении, отскок к 38.2–61.8%, закрытие 1h под минимумом предыдущей свечи → шорт; TP1 — минимум дампа, TP2 — расширение 1.618. PUMP START / TOP выключены'],
+  pump: ['памп / дамп', 'DUMP BOUNCE SHORT: дамп ≥ порога на объёме, минимум фиксируется при истощении, отскок к 38.2–61.8%, закрытие 1h под минимумом предыдущей свечи → шорт; TP1 — минимум дампа, TP2 — расширение 1.618. PUMP START / TOP также включены и проходят общие проверки данных и геометрии'],
   cup_handle: ['чашка с ручкой (О\'Нил)', 'дневки: чашка 7–65 недель (49–455 дней), глубина 12–33%, U-форма; ручка 1–8 недель в верхней половине ≤ 12% на падающем объёме; вход на закрытии выше пивота на объёме ≥ 1.4×; стоп под ручкой, не дальше 8% (иначе отказ); цели — доля глубины чашки (Булковски)'],
-  connors: ['RSI(2) (Коннорс)', 'дневки, по книге (Connors/Alvarez 2008, гл. 9): выше SMA200 закрытие с RSI(2) < 5 → лонг на закрытии (RSI2X LONG); без стопа, плечо 1×; выход по закрытию выше SMA5. Вход на возврате из зоны (RSI2) и зеркальный шорт — только тень'],
+  connors: ['RSI(2) (Коннорс)', 'дневки, по книге (Connors/Alvarez 2008, гл. 9): выше SMA200 закрытие с RSI(2) < 5 → вход; без стопа, плечо 1×; выход по закрытию выше SMA5. RSI2 и зеркальный шорт включены'],
   po3: ['Power of Three (ICT)', 'азиатский диапазон 20:00–00:00 NY, манипуляция за его границу в Лондоне 02:00–05:00 NY, MSS / FVG; цель — другая сторона Азии'],
-  oi_build: ['рост OI', 'часовой рост OI выше обычного темпа, направление по цене — только тень (не торгуется)'],
+  oi_build: ['рост OI', 'часовой рост OI выше обычного темпа, направление по цене; оба направления включены и доступны для demo execution'],
 };
 const SETUP_RU = {
   'BULL A': 'сжатие + рост OI (не Вайкофф)', 'BULL B': 'spring 15m (старый)', 'BULL E': 'кульминация продаж (не вход по Вайкоффу)',
@@ -221,7 +221,7 @@ const ICT_COLORS = { ob: '#ff8c42', fvg: '#2ec4b6', breaker: '#a06cd5', bpr: '#e
 const ICT_NAMES = { ob: 'ордерблок', fvg: 'FVG', breaker: 'breaker', bpr: 'BPR (наложение FVG)' };
 const KIND_NAMES = {
   equal: 'равные хаи/лои (стопы)', pdhl: 'хай/лоу дня', poc: 'POC', va: 'value area', hvn: 'узел объёма', lvn: 'провал объёма (LVN)',
-  book: 'ликвидность стакана (стояла ≥10м)', liq_est: 'ликвидации (оценка)', liq_hit: 'ликвидации (факт)', swing_1h: 'свинг 1h', swing_15m: 'свинг 15m',
+  book: 'ликвидность стакана (стояла ≥10м)', liq_est: 'ликвидации (оценка)', liq_hit: 'наблюдаемые ликвидации (публичный поток неполный)', swing_1h: 'свинг 1h', swing_15m: 'свинг 15m',
   swing_1d: 'свинг дня', wall: 'стена стакана', vwap: 'VWAP', fib: 'Фибоначчи', range: 'край диапазона', liq_hl: 'ликвидации крупных счетов HL',
   round: 'круглое число', open: 'открытие дня / недели', htf: 'старший ТФ',
 };
@@ -294,7 +294,7 @@ function renderHeader() {
     upbit_delist: ['делистинг Upbit', 'down'], upbit_warning: ['предупреждение Upbit', 'down'], upbit_listing: ['листинг Upbit KRW', 'up'], upbit_unwarn: ['Upbit снял предупреждение', 'up'] };
   const news = (S.news || []).filter(n => n.risk || nowSec() - n.ts < 172800);
   if (news.length) html += `<span title="${esc(news.map(n => `${n.base}: ${(NEWS[n.kind] || [n.kind])[0]}, ${ago(nowSec() - n.ts)} назад${n.risk ? ' — лонги запрещены' : ''}`).join('\n'))}"><b>анонсы</b>${news.slice(0, 6).map(n => `<span class="${(NEWS[n.kind] || ['', ''])[1]}">${esc(n.base)}${n.risk ? '⚠' : ''}</span>`).join(' ')}${news.length > 6 ? ' …' : ''}</span>`;
-  const down = Object.entries(S.venues || {}).filter(([, v]) => v.connected === 0 || v.connected === false).map(([k]) => k);
+  const down = Object.entries(S.venues || {}).filter(([, v]) => ['DISCONNECTED', 'STALE', 'UNKNOWN'].includes(v.health_state)).map(([k]) => k);
   html += `<span class="dim">${S.symbols} монет · скан ${(S.timing?.scan ?? 0).toFixed(2)}с${down.length ? ' · <span class="down">нет связи: ' + esc(down.join(', ')) + '</span>' : ''}</span>`;
   $('#market').innerHTML = html;
   document.documentElement.style.setProperty('--hdr-h', $('#top').offsetHeight + 'px');   // the header wraps on narrow screens
@@ -406,7 +406,9 @@ function hoursPicker() {
 }
 let filterDir = Number(localStorage.getItem('fdir') || 0), filterStrat = localStorage.getItem('fstrat') || '';
 function filterBox() {
-  const strats = [...new Set((S.cards || []).map(c => c.strategy || c.mode).filter(Boolean))].sort();
+  const registryStrats = Object.values(S.registry || {}).map(r => r.strategy).filter(Boolean);
+  const cardStrats = (S.cards || []).map(c => c.strategy || c.mode).filter(Boolean);
+  const strats = [...new Set([...registryStrats, ...cardStrats])].sort();
   return `<input id="filter" placeholder="фильтр: монета или метка" value="${esc(filterText)}">
     <select id="fdir" title="направление"><option value="0">↕ все</option><option value="1" ${filterDir > 0 ? 'selected' : ''}>▲ long</option><option value="-1" ${filterDir < 0 ? 'selected' : ''}>▼ short</option></select>
     <select id="fstrat" title="стратегия"><option value="">все стратегии</option>${strats.map(x => `<option ${x === filterStrat ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
@@ -470,7 +472,8 @@ async function renderAnom() {
       { k: 'Цена 5м', v: r => pct(r.sig.price_change_5m), s: r => r.sig.price_change_5m, num: true },
       { k: 'OI 5м', v: r => pct(r.sig.oi_change_5m), s: r => r.sig.oi_change_5m, num: true },
       { k: 'Киты', v: r => r.sig.whale_net_5m ? `<span class="${r.sig.whale_net_5m > 0 ? 'up' : 'down'}">${r.sig.whale_net_5m.toFixed(1)}</span>` : '—', s: r => r.sig.whale_net_5m, num: true, tip: 'чистые свипы китов за 5м, в размерах кита монеты' },
-      { k: 'Ликв. L/S', v: r => `${usd(r.sig.liq_long_5m || 0)} / ${usd(r.sig.liq_short_5m || 0)}`, s: r => (r.sig.liq_long_5m || 0) + (r.sig.liq_short_5m || 0), num: true },
+      { k: 'Ликв. L/S', v: r => `${usd(r.sig.liq_long_5m)} / ${usd(r.sig.liq_short_5m)}`,
+        s: r => r.sig.liq_long_5m == null || r.sig.liq_short_5m == null ? null : r.sig.liq_long_5m + r.sig.liq_short_5m, num: true },
       { k: 'Длится', v: r => ago(r.last_seen - r.first_seen), s: r => r.last_seen - r.first_seen, num: true },
       { k: 'Контекст', v: r => esc((r.why || []).join(' · ')), wrap: true },
     ], live, { empty: 'Сейчас аномалий нет.' }) +
@@ -507,7 +510,7 @@ async function renderAnom() {
 function pumpsHtml() {
   const rows = (S.pumps || []).filter(matches);
   const st = rows.length ? rows[0].stats : null;
-  return `<h3>Пампы и дампы щитков за 48ч <small>вне топ-30 по объёму; +15% (−15%) за ≤6ч на объёме ×3; первый откат 38.2–61.8%</small></h3>` +
+  return `<h3>Пампы и дампы щитков за 48ч <small>информационный monitor-only контур, не торговый сигнал; вне топ-30 по объёму; +15% (−15%) за ≤6ч на объёме ×3; первый откат 38.2–61.8%</small></h3>` +
     table('pumps', [
       { k: 'Монета', v: r => `<b>${esc(r.name)}</b> ${r.kind === 'pump' ? 'памп' : 'дамп'}`, s: r => r.name },
       { k: 'Когда', v: r => clock(r.event_ts), s: r => r.event_ts },
@@ -602,20 +605,42 @@ function barsSpark(v) {
 
 function renderHealth() {
   const v = S.venues || {};
-  const boxes = Object.entries(v).sort().map(([name, st]) => `<div class="box"><h4>${esc(name)} ${st.connected === 0 || st.connected === false ? '<span class="pill bad">нет связи</span>' : '<span class="pill good">ok</span>'}</h4>
-    <div class="kv">${Object.entries(st).map(([k, x]) => `<span>${esc(k)}</span><span class="mono">${typeof x === 'number' ? (Math.abs(x) >= 1000 ? usd(x) : +x.toFixed(2)) : esc(x)}</span>`).join('')}</div></div>`).join('');
+  const stateLabel = {CONNECTED: 'connected', DISCONNECTED: 'disconnected', NOT_CONFIGURED: 'not configured', STALE: 'stale', UNKNOWN: 'unknown'};
+  const boxes = Object.entries(v).sort().map(([name, st]) => { const state = st.health_state || 'UNKNOWN'; const good = state === 'CONNECTED' || state === 'NOT_CONFIGURED'; return `<div class="box"><h4>${esc(name)} ${good ? '<span class="pill good">' : '<span class="pill bad">'}${esc(stateLabel[state] || state)}</span></h4>
+    <div class="kv">${Object.entries(st).map(([k, x]) => `<span>${esc(k)}</span><span class="mono">${typeof x === 'number' ? (Math.abs(x) >= 1000 ? usd(x) : +x.toFixed(2)) : esc(x && typeof x === 'object' ? JSON.stringify(x) : x)}</span>`).join('')}</div></div>`; }).join('');
   const ml = S.ml || {};
+  const mlPanel = ml.ml_runtime === 'removed'
+    ? '<span>ML</span><span>отключено в v2: нет допущенной модели и контура inference</span>'
+    : `<span>режим</span><span>${esc(ml.regime || '—')}</span>
+      <span>модель аномалий</span><span>${ml.anomaly_ready ? 'обучена ' + Math.round(ml.anomaly_age_min) + 'м назад' : 'копит ' + ml.anomaly_samples + ' сэмплов'}</span>
+      <span>P(edge)</span><span>${ml.p_n} размеченных${ml.p_mature ? '' : ' (показ с 300)'}${ml.p_accuracy ? ', точность ' + (ml.p_accuracy * 100).toFixed(0) + '%' : ''}</span>
+      <span>режимы</span><span>${ml.regime_candles} свечей${ml.regime_age_h != null ? ', модель ' + ml.regime_age_h.toFixed(1) + 'ч' : ''}</span>
+      <span>предобучение</span><span>${ml.pretrained_rows ? ml.pretrained_rows + ' строк, ' + ml.pretrained_coins + ' монет, ' + esc(ml.pretrained_span) + ' (' + ml.pretrained_age_d.toFixed(1) + 'д назад)' : 'нет'}${ml.pretrain_running ? ' · <span class="warn">идёт обучение</span>' : ''}</span>`;
+  const history = (S.data_quality || {}).candle_history || {};
+  const klines = (S.data_quality || {}).kline_stream || {};
+  const hstate = Object.entries(history.states || {}).map(([k, n]) => `${esc(k)}: ${n}`).join(' · ') || 'нет оценки';
+  const repairs = history.recovery || {};
+  const unready = (history.unready || []).slice(0, 12).map(x =>
+    `<div class="hint">${esc(x.symbol)} · ${esc(x.timeframe)} · ${esc(x.state)}${x.missing_bars ? ` · пропусков ${x.missing_bars}` : ''}${x.last_error ? ` · ${esc(x.last_error)}` : ''}</div>`).join('');
   return `<div class="grid">
     <div class="box"><h4>Скан</h4><div class="kv"><span>tier-0</span><span class="mono">${S.timing.tier0.toFixed(2)}с ${spark('tier0', 'var(--cyan)')}</span>
       <span>скан</span><span class="mono">${S.timing.scan.toFixed(2)}с ${spark('scan', 'var(--violet)')}</span><span>тяжёлый проход</span><span class="mono">${S.timing.heavy.toFixed(2)}с ${spark('heavy', 'var(--orange)')}</span>
       <span>монет</span><span class="mono">${S.symbols}</span><span>стаканов</span><span class="mono">${S.hot}</span>
       <span>логика</span><span class="mono">${esc(S.logic_version)}</span></div></div>
-    <div class="box"><h4>ML</h4><div class="kv"><span>режим</span><span>${esc(ml.regime || '—')}</span>
-      <span>модель аномалий</span><span>${ml.anomaly_ready ? 'обучена ' + Math.round(ml.anomaly_age_min) + 'м назад' : 'копит ' + ml.anomaly_samples + ' сэмплов'}</span>
-      <span>P(edge)</span><span>${ml.p_n} размеченных${ml.p_mature ? '' : ' (показ с 300)'}${ml.p_accuracy ? ', точность ' + (ml.p_accuracy * 100).toFixed(0) + '%' : ''}</span>
-      <span>режимы</span><span>${ml.regime_candles} свечей${ml.regime_age_h != null ? ', модель ' + ml.regime_age_h.toFixed(1) + 'ч' : ''}</span>
-      <span>предобучение</span><span>${ml.pretrained_rows ? ml.pretrained_rows + ' строк, ' + ml.pretrained_coins + ' монет, ' + esc(ml.pretrained_span) + ' (' + ml.pretrained_age_d.toFixed(1) + 'д назад)' : 'нет'}${ml.pretrain_running ? ' · <span class="warn">идёт обучение</span>' : ''}</span></div></div>
-  </div><h3>Биржи</h3><div class="grid">${boxes}</div>`;
+    <div class="box"><h4>ML</h4><div class="kv">${mlPanel}</div></div>
+  </div><h3>История свечей Binance</h3><div class="box"><div class="kv">
+    <span>состояния</span><span>${hstate}</span><span>символов оценено / ожидается</span><span>${Number(history.symbols_assessed || 0)} / ${Number(history.symbols_expected || 0)}</span>
+    <span>WS-свечи: валидные / отклонённые</span><span>${Number(klines.events_valid || 0)} / ${Number(klines.events_rejected || 0)}</span>
+    <span>event time E (ms)</span><span>${klines.last_event_ms == null ? '—' : Number(klines.last_event_ms)}</span>
+    <span>candle open t (ms)</span><span>${klines.last_candle_open_ms == null ? '—' : Number(klines.last_candle_open_ms)}</span>
+    <span>candle close T (ms)</span><span>${klines.last_candle_close_ms == null ? '—' : Number(klines.last_candle_close_ms)}</span>
+    <span>local receive time (ms)</span><span>${klines.last_receive_ms == null ? '—' : Number(klines.last_receive_ms)}</span>
+    <span>event → receive latency (ms)</span><span>${klines.last_latency_ms == null ? '—' : Number(klines.last_latency_ms)}</span>
+    <span>baseline: attempted / loading / loaded / validated</span><span>${Number(history.baseline_attempted || 0)} / ${Number(history.baseline_loading || 0)} / ${Number(history.baseline_loaded || 0)} / ${Number(history.baseline_validated || 0)}</span>
+    <span>ошибка recovery</span><span>${history.last_recovery_error ? esc(history.last_recovery_error) : 'нет'}</span>
+    <span>восстановлено</span><span>${Number(repairs.recovered || 0)} · неполных ${Number(repairs.incomplete || 0)} · ошибок ${Number(repairs.failed || 0)}</span>
+    </div>${unready || '<div class="hint">Неисправных свечных окон в последней оценке нет.</div>'}</div>
+    <h3>Биржи</h3><div class="grid">${boxes}</div>`;
 }
 
 // ------------------------------------------------------------------------------------------------ analysis tab
@@ -642,6 +667,7 @@ function anCard(a) {
       <div class="kv"><span>вход</span><span class="mono">${fp(s.entry[0])}–${fp(s.entry[1])}</span><span>стоп</span><span class="mono">${fp(s.stop)}</span>
       <span>цели</span><span class="mono">${s.targets.map(fp).join(' / ')}</span><span>R:R до TP1</span><span class="mono">${s.rr.toFixed(1)}</span>
       <span>безубыточная доля TP1 (с издержками)</span><span class="mono">${s.be_winrate >= 1 ? 'не окупается: цель ближе стопа' : (s.be_winrate * 100).toFixed(0) + '%'}</span>
+      <span>EV net (нейтральная база 50%)</span><span class="mono ${s.trade_gate ? 'good' : 'bad'}">${s.trade_gate ? Number(s.ev_net || 0).toPrecision(4) : 'NO TRADE'}</span>
       <span>базовая вероятность без издержек</span><span class="mono">${(s.rw_prob * 100).toFixed(0)}%</span>${checks}</div></div>`;
   }).join('');
   const T = (a.outcomes && a.outcomes.tally) || {};
@@ -875,8 +901,8 @@ function statsLine(st) {
     `${esc(x.label)} — цель ${Math.round(x.hit * 100)}% при геометрии ${Math.round(x.geo * 100)}%, ${x.r > 0 ? '+' : ''}${x.r.toFixed(2)}R`).join(' · ') + '</div>';
 }
 
-function scenarioHtml(s, price) {
-  if (!s) return '<h3>Сценарии</h3><div class="hint">Нет сценария: мало 1h истории или нет уровней по обе стороны цены.</div>';
+function scenarioHtml(s, price, quality) {
+  if (!s) return `<h3>Сценарии</h3><div class="hint">Нет сценария: ${esc(quality?.scenario_reason || 'обязательная история не подтверждена')}.</div>`;
   const zone = (z, name, hint) => `<span>${name}</span><span>${fp(z.lo)} – ${fp(z.hi)} ${pct(z.price / price - 1)} <span class="src">${esc(hint || z.label)}</span></span>`;
   const names = ['локальное сопротивление', 'сопротивление', 'глобальное сопротивление'];
   let rows = s.above.slice().reverse().map((z, i, a) => zone(z, names[a.length - 1 - i])).join('');
@@ -892,9 +918,15 @@ function scenarioHtml(s, price) {
   const num = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : (v > 0 ? '+' : '') + v.toFixed(d);
   const macro = m.us10y != null ? `<div class="hint">Макро (FRED, дневные, с задержкой в день): US10Y ${m.us10y.toFixed(2)}% (${num(m.us10y_5d_bp, 0)} б.п. за 5 дней) ·
     доллар ${m.dxy != null ? m.dxy.toFixed(1) : '—'} (${num(m.dxy_5d)}%) · Brent ${m.brent != null ? m.brent.toFixed(1) : '—'} (${num(m.brent_5d)}%)</div>` : '';
-  return `<h3>Сценарии <small>1h, ATR 1h ${fp(s.atr_1h)}</small></h3>${macro}
+  const geoSource = String(s.p_source || '').startsWith('геометрия');
+  const probabilityLabel = geoSource
+    ? 'Геометрический baseline расстояний до уровней (не откалиброванная рыночная вероятность)'
+    : 'Оценка первого касания по модели';
+  const qualityHint = s.data_quality?.state === 'VALID_PARTIAL'
+    ? `<div class="hint">Частичный контекст сценария; отсутствуют: ${esc((s.data_quality.missing_optional_context || []).join(', ') || '—')}.</div>` : '';
+  return `<h3>Сценарии <small>1h, ATR 1h ${fp(s.atr_1h)}</small></h3>${macro}${qualityHint}
     <div class="kv">${rows}</div>
-    <div class="hint">Вероятность дойти до первого сопротивления раньше первой поддержки: <b>${Math.round(pu * 100)}%</b>
+    <div class="hint">${probabilityLabel}: <b>${Math.round(pu * 100)}%</b>
       (вниз первой: ${Math.round((1 - pu) * 100)}%) — ${esc(s.p_source)}</div>${warn}
     ${plan(s.long, 'ЛОНГ', 'scen-long')}${plan(s.short, 'ШОРТ', 'scen-short')}
     ${htfLine(s.htf)}${statsLine(s.trigger_stats)}
@@ -1157,8 +1189,12 @@ function drawCoin(fit) {
       ${c.vetoed_triggers ? `<span>отсеяно</span><span>${c.vetoed_triggers}${c.veto_log.length ? ': ' + esc(vetoRu([...new Set(c.veto_log)].join(','))) : ''}</span>` : ''}
       ${(c.veto_notes || []).length ? `<span title="стоп за структурой не окупается целью: почему сигнал возник в этой точке">стоп далеко</span><span class="src">${esc(c.veto_notes[c.veto_notes.length - 1])}</span>` : ''}</div>`;
   }
-  body += scenarioHtml(d.scenario, d.price);
-  body += `<h3>Карта уровней <small>ближайшие к цене; сила = сумма весов источников</small></h3>` +
+  body += scenarioHtml(d.scenario, d.price, d.analytics_quality);
+  const lq = d.analytics_quality || {};
+  const levelHint = lq.level_details?.state === 'VALID_PARTIAL'
+    ? ` · частично: ${esc((lq.level_details.missing_optional_timeframes || []).join(', '))}; 4h ${esc(lq.level_details.four_hour_source || '—')}; профиль ${esc(lq.level_details.volume_profile_source || '—')}`
+    : lq.levels === 'UNAVAILABLE' ? ' · история уровней не подтверждена' : '';
+  body += `<h3>Карта уровней <small>ближайшие к цене; сила = сумма весов источников${levelHint}</small></h3>` +
     table('zones', [
       { k: 'Цена', v: z => fp(z.price), s: z => z.price, num: true },
       { k: 'От цены', v: z => pct(d.price ? z.price / d.price - 1 : null), s: z => d.price ? z.price / d.price - 1 : 0, num: true },

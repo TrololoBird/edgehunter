@@ -152,12 +152,16 @@ def plan(price: float, zones: List[Dict], atr_1d: Optional[float] = None, ath: O
         from config import CONFIG
         cost = worst * (CONFIG.journal.fee_round_trip + 2 * CONFIG.levels.slippage_bps / 1e4)
         rr_ok = side * (tg[0] - worst) - cost >= abs(worst - stop) + cost
+        from core.quant_gate import scenario_gate
+        gate = scenario_gate(0.5, side * (tg[0] - worst), abs(worst - stop), cost)
         return {'entry': (e0, e1), 'targets': tg, 'stop': stop, 'cond': cond, 'note': note, 'tag': tag, 'rr_ok': rr_ok,
                 'conf_tf': tf, 'zone': [zone['lo'], zone['hi']] if zone else None, 'atr1h': atr_1h,
                 # eng-168o / audit #9: the breakeven share on the same basis as the 'as a trade' check - the worst entry,
                 # NET of the round trip: (risk + cost) / (risk + reward)
-                'be_winrate': (abs(worst - stop) + cost) / (abs(worst - stop) + abs(tg[0] - worst)),
-                'rw_prob': abs(worst - stop) / (abs(worst - stop) + abs(tg[0] - worst))}
+                'be_winrate': gate['p_breakeven'],
+                'rw_prob': abs(worst - stop) / (abs(worst - stop) + abs(tg[0] - worst)),
+                'p_base': gate['p_base'], 'p_breakeven': gate['p_breakeven'],
+                'ev_net': gate['ev_net'], 'trade_gate': gate['trade_gate']}
     def bounce():
         """Long from the nearest support below: its test + a bullish 1h reaction candle."""
         if not dn:

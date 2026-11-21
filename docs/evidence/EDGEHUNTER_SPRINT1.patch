@@ -1,0 +1,832 @@
+--- a/fetcher.py
++++ b/fetcher.py
+@@ -32,6 +32,23 @@
+ logger = logging.getLogger(__name__)
+ 
+ MARKETS = ('spot', 'futures')
++
++
++def normalize_binance_liquidation(order: dict) -> Optional[Tuple[int, float, float, int]]:
++    """Return (exchange_ms, avg_execution_price, executed_notional, side_liquidated) for filled force orders only."""
++    if not isinstance(order, dict) or order.get('X') != 'FILLED':
++        return None
++    try:
++        event_ms = int(order['T'])
++        price = float(order['ap'])
++        executed = float(order['z'])
++        side = 1 if order['S'] == 'SELL' else -1 if order['S'] == 'BUY' else 0
++    except (KeyError, TypeError, ValueError, OverflowError):
++        return None
++    if (event_ms <= 0 or side == 0 or not math.isfinite(price) or price <= 0
++            or not math.isfinite(executed) or executed <= 0):
++        return None
++    return event_ms, price, price * executed, side
+ 
+ 
+ @dataclass
+@@ -211,7 +228,7 @@
+         self.ticker_samples.append((now_ms, price, self.quote_volume_24h))
+ 
+     def record_oi(self, ts_ms: float, open_interest: float):
+-        if not open_interest or open_interest <= 0:
++        if not math.isfinite(float(ts_ms)) or not math.isfinite(float(open_interest)) or open_interest <= 0:
+             return
+         if self.oi_samples and self.oi_samples[-1][0] >= ts_ms:
+             return
+@@ -245,12 +262,14 @@
+ 
+     def seed_oi(self, samples: List[Tuple[float, float]]):
+         """Older OI samples (REST history) merged under the live ones: the 5m OI change is known right after start."""
+-        merged = {ts: oi for ts, oi in list(self.oi_samples) + [(float(t), float(v)) for t, v in samples if v]}
++        valid = [(float(t), float(v)) for t, v in samples
++                 if math.isfinite(float(t)) and math.isfinite(float(v)) and float(t) > 0 and float(v) > 0]
++        merged = {ts: oi for ts, oi in list(self.oi_samples) + valid}
+         self.oi_samples.clear()
+         self.oi_samples.extend(sorted(merged.items()))
+         # the day of 5m points under the live ones, one per 5-minute bucket
+         buckets = {}
+-        for ts, oi in sorted(list(self.oi_5m) + [(float(t), float(v)) for t, v in samples if v]):
++        for ts, oi in sorted(list(self.oi_5m) + valid):
+             buckets.setdefault(int(ts) // 300_000, (ts, oi))
+         self.oi_5m.clear()
+         self.oi_5m.extend(buckets[k] for k in sorted(buckets))
+@@ -747,7 +766,7 @@
+             await self._refresh_funding_info()
+             await asyncio.sleep(300)
+ 
+-    async def fetch_open_interest(self, symbol: str) -> Optional[float]:
++    async def fetch_open_interest(self, symbol: str) -> Optional[Tuple[float, float]]:
+         binance_symbol = self._ccxt_to_binance_symbol(symbol)
+         if not binance_symbol:
+             self.quality_state = getattr(self, 'quality_state', {})
+@@ -764,10 +783,22 @@
+                                                         300, 900, 'binance', type(e).__name__)
+             return None
+         now = time.time()
+-        self.oi_last_updated[symbol] = now
+         self.quality_state = getattr(self, 'quality_state', {})
+-        self.quality_state[('oi', symbol)] = quality(now, now, 300, 900, 'binance')
+-        return float(res.get('openInterest', 0.0))
++        previous = self.quality_state.get(('oi', symbol))
++        try:
++            value = float(res['openInterest'])
++            event_ms = float(res['time'])
++            if not math.isfinite(value) or value <= 0 or not math.isfinite(event_ms) or event_ms <= 0:
++                raise ValueError('invalid open-interest value or exchange timestamp')
++        except (KeyError, TypeError, ValueError, OverflowError) as e:
++            self.quality_state[('oi', symbol)] = quality(now, previous.fetched_at if previous else None,
++                                                        300, 900, 'binance', f'invalid_response:{type(e).__name__}')
++            return None
++        self.oi_last_updated[symbol] = event_ms / 1000
++        self.oi_received_at = getattr(self, 'oi_received_at', {})
++        self.oi_received_at[symbol] = now
++        self.quality_state[('oi', symbol)] = quality(now, event_ms / 1000, 300, 900, 'binance')
++        return value, event_ms
+ 
+     async def _oi_loop(self):
+         """
+@@ -792,11 +823,11 @@
+                     await asyncio.sleep(0.5 * (attempt + 1))
+             md = self.markets.get(symbol)
+             if oi and md is not None:
+-                now_ms = time.time() * 1000
++                oi, event_ms = oi
+                 md.open_interest = oi
+-                md.record_oi(now_ms, oi)
++                md.record_oi(event_ms, oi)
+                 if md.last_price:
+-                    self._record_venue_oi(symbol, 'binance', oi * md.last_price, now_ms, native=oi)
++                    self._record_venue_oi(symbol, 'binance', oi * md.last_price, event_ms, native=oi)
+ 
+         while self._running:
+             symbols = list(self.markets)
+@@ -1372,14 +1403,8 @@
+             rows = await self._fetch_klines(market, sym, '1m', limit + 1)
+             md.seed_minutes(market, [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[7]),
+                                       float(k[10]), float(k[5])] for k in rows or []], now_ms)
+-            if market == 'futures' and self.streams_started_ms:
+-                # Binance's taker flow of the 15 minutes the streams did not see (a minute that closed before they
+-                # started): Tier-0's 5m windows are valid at once (the other venues fill in live)
+-                for k in rows or []:
+-                    t = int(k[0])
+-                    if self.streams_started_ms - 15 * 60_000 <= t and t + 60_000 <= self.streams_started_ms:
+-                        buy, total = float(k[10]), float(k[7])
+-                        self.flow.seed_minute('binance', symbol, t, buy, max(0.0, total - buy), int(k[8]))
++            # REST OHLCV taker aggregates stay in candle history and are not
++            # inserted into the event-flow ring as individual executions.
+ 
+     async def _seed_oi(self, symbol: str, md: MarketData):
+         """
+@@ -1399,7 +1424,16 @@
+             errors.report('fetcher._seed_oi', e, f"OI history seed skipped for {symbol}")
+             return
+         # openInterestHist timestamps are period END times: the OI at that moment
+-        points = [(int(r['timestamp']), float(r.get('sumOpenInterest') or 0.0)) for r in rows or []]
++        points = []
++        for row in rows or []:
++            if not isinstance(row, dict):
++                continue
++            try:
++                event_ms, amount = int(row['timestamp']), float(row['sumOpenInterest'])
++            except (KeyError, TypeError, ValueError, OverflowError):
++                continue
++            if event_ms > 0 and math.isfinite(amount) and amount > 0:
++                points.append((event_ms, amount))
+         md.seed_oi(points)
+         # the same hour (coins) under Binance's live samples in the venue aggregate: agg 1h OI works from the start
+         state = self.venue_derivs.setdefault(symbol, {}).setdefault('binance', VenueDeriv())
+@@ -2380,17 +2414,17 @@
+             o = data['o']
+             key = self._binance_keys.get(('futures', o.get('s')))
+             if key is not None:
+-                price = float(o.get('ap') or o.get('p') or 0)
+-                usd = price * float(o.get('z') or o.get('q') or 0)
+-                # S = the liquidation order's side: a forced SELL closes a long
+-                side_liq = 1 if o['S'] == 'SELL' else -1
+-                self.flow.liquidation('binance', key, int(o['T']), usd, side_liq, recv_ms)
++                normalized = normalize_binance_liquidation(o)
++                if normalized is None:
++                    return
++                event_ms, price, usd, side_liq = normalized
++                self.flow.liquidation('binance', key, event_ms, usd, side_liq, recv_ms)
+                 md = self.markets.get(key)
+                 if md is not None and price:
+-                    md.liq_events.append((int(o['T']), price, usd, side_liq, 'binance'))
+-                    self.liq_bucket(int(o['T']), usd, side_liq, live=True)
++                    md.liq_events.append((event_ms, price, usd, side_liq, 'binance'))
++                    self.liq_bucket(event_ms, usd, side_liq, live=True)
+                     if self.log_liquidations:
+-                        self.liq_log.append((key, int(o['T']), price, usd, side_liq, 'binance'))
++                        self.liq_log.append((key, event_ms, price, usd, side_liq, 'binance'))
+         elif event == 'depthUpdate':
+             key = self._binance_keys.get(('futures', data.get('s')))
+             if key is not None:
+@@ -2462,8 +2496,8 @@
+         # A liquidation is executed as a MARKET order and prints in the same trade stream: a "whale buy" during a
+         # short squeeze was the shorts' forced buying (live eng-6: 36% of WHALES BUY / 52% of WHALES SELL rows had the
+         # opposite side liquidated in the same 5 minutes). A sweep whose size is mostly forced flow of its side in
+-        # the same seconds is no whale decision: left out of the whale book (Binance's forceOrder feed is sampled,
+-        # Bybit's / OKX's complete - the check misses some forced flow, never adds any).
++        # the same seconds on the same venue is not an independent whale decision. Public liquidation streams vary in
++        # coverage and are partial observations; unmatched venues never suppress this sweep.
+         # Checked only for sweeps big enough to count (notable / whale size): thousands of small sweeps a second each
+         # read every venue's ring, and with the machine short of RAM those reads paged and stalled the loop
+         whale, notable = self.whales.thresholds(sweep.symbol)
+@@ -2471,7 +2505,7 @@
+             from flow import LIQ_LONG, LIQ_SHORT
+             forced = self.flow.symbol_range(sweep.symbol, LIQ_SHORT if sweep.side > 0 else LIQ_LONG,
+                                             int(sweep.t_first // 1000) - 1, int(sweep.t_last // 1000) + 2,
+-                                            now_sec=int(sweep.t_last // 1000) + 1)
++                                            now_sec=int(sweep.t_last // 1000) + 1, venues=(sweep.venue,))
+             if forced >= CONFIG.sweeps.forced_share * sweep.usd:
+                 return
+         self.whales.add(sweep)
+@@ -2746,14 +2780,37 @@
+ 
+     def venue_status(self) -> Dict[str, Dict]:
+         status = self.flow.venue_status()
++
++        def connection_state(streams, stale):
++            counts = [getattr(stream, 'connected', None) for stream in streams]
++            known = [value for value in counts
++                     if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0]
++            total = sum(known)
++            if stale:
++                return total if len(known) == len(counts) else None, 'STALE'
++            if total > 0:
++                return total, 'CONNECTED'
++            if len(known) == len(counts) and counts:
++                return 0, 'DISCONNECTED'
++            return None, 'UNKNOWN'
++
+         for venue, stream in self.venue_streams.items():
+-            status.setdefault(venue, {}).update(connected=stream.connected, bytes=stream.bytes)
++            entry = status.setdefault(venue, {})
++            stale = entry.get('silent_sec') is not None and entry['silent_sec'] > 120
++            connected, health_state = connection_state([stream], stale)
++            entry.update(connected=connected, bytes=getattr(stream, 'bytes', 0), health_state=health_state)
+         binance = list(self._binance_streams) + self._depth_streams
+         # Binance's forceOrder stream is a sampled public feed, not a complete
+         # liquidation tape.  Counts/sums derived from it are explicitly
+         # partial lower-bound observations.
+-        status.setdefault('binance', {}).update(connected=sum(s.connected for s in self._binance_streams),
+-                                                bytes=sum(s.bytes for s in binance), liq_sampled=True)
++        bentry = status.setdefault('binance', {})
++        stale = bentry.get('silent_sec') is not None and bentry['silent_sec'] > 120
++        connected, health_state = connection_state(self._binance_streams, stale)
++        bentry.update(connected=connected, bytes=sum(getattr(s, 'bytes', 0) for s in binance), liq_sampled=True,
++                      health_state=health_state)
++        for venue in set(self.flow.venues) - set(self.venue_streams) - {'binance'}:
++            entry = status[venue]
++            entry.setdefault('health_state', 'NOT_CONFIGURED')
+         return status
+ 
+     # ------------------------------------------------------------------ stop
+--- a/flow.py
++++ b/flow.py
+@@ -161,6 +161,7 @@
+         self._hour_cache = (0, np.zeros(0))
+         self.rows: Dict[str, int] = {}
+         self._free: List[int] = []
++        self.seed_observations: Dict[Tuple[str, str], deque] = {}
+         self.venues: Dict[str, VenueFlow] = {
+             v: VenueFlow(v, cfg.flow_history_sec if v in long_history else cfg.flow_history_short_sec, capacity)
+             for v in venues
+@@ -195,6 +196,8 @@
+     def unregister(self, symbol: str):
+         row = self.rows.pop(symbol, None)
+         if row is not None:
++            for key in [key for key in self.seed_observations if key[1] == symbol]:
++                self.seed_observations.pop(key, None)
+             self._free.append(row)
+             if self._hour_cache is not None and self._hour_cache[1].size > 0:
+                 if row < self._hour_cache[1].shape[0]:
+@@ -207,18 +210,19 @@
+     # ------------------------------------------------------------------ writes (hot path)
+ 
+     def seed_minute(self, venue: str, symbol: str, minute_ms: int, buy_usd: float, sell_usd: float, trades: int):
+-        """A closed minute from REST (a kline's taker buy / total quote volume) at its middle second: the 5m windows
+-        are valid right after a start instead of 5 minutes later. Only minutes before the streams started."""
+-        row = self.rows.get(symbol)
+-        flow = self.venues.get(venue)
+-        if row is None or flow is None:
++        """Store a REST candle aggregate separately; it is never written into the event-level flow ring."""
++        if symbol not in self.rows or venue not in self.venues:
+             return
+-        sec = int(minute_ms // 1000) + 30
+-        # REST seed points are closed historical candles, not transport messages.  They are often exactly one minute
+-        # apart, so treating their 60-second spacing as a websocket outage would manufacture a gap on every cold start.
+-        flow.add(row, sec, BUY, buy_usd, trades // 2, track_gap=False)
+-        flow.add(row, sec, SELL, sell_usd, trades - trades // 2, track_gap=False)
+-        flow.first_sec = min(flow.first_sec, sec - 30) if flow.first_sec else sec - 30   # the seeded minute is coverage
++        try:
++            minute_ms, buy_usd, sell_usd, trades = int(minute_ms), float(buy_usd), float(sell_usd), int(trades)
++        except (TypeError, ValueError, OverflowError):
++            return
++        if (minute_ms <= 0 or trades < 0 or not math.isfinite(buy_usd) or not math.isfinite(sell_usd)
++                or buy_usd < 0 or sell_usd < 0):
++            return
++        key = (venue, symbol)
++        self.seed_observations.setdefault(key, deque(maxlen=60)).append(
++            (minute_ms, buy_usd, sell_usd, trades, 'rest_ohlcv_aggregate'))
+ 
+     def trade(self, venue: str, symbol: str, ts_ms: int, usd: float, side: int, recv_ms: Optional[float] = None):
+         row = self.rows.get(symbol)
+@@ -269,14 +273,18 @@
+             return 0.0
+         return float(self.net(venues, seconds, now_sec)[row])
+ 
+-    def symbol_range(self, symbol: str, field: int, start_sec: int, end_sec: int, now_sec: Optional[int] = None) -> float:
++    def symbol_range(self, symbol: str, field: int, start_sec: int, end_sec: int,
++                     now_sec: Optional[int] = None, venues: Optional[Sequence[str]] = None) -> float:
+         """One field summed over [start_sec, end_sec) across every venue for one symbol (seconds still buffered)."""
+         row = self.rows.get(symbol)
+         if row is None:
+             return 0.0
+         now_sec = int(now_sec if now_sec is not None else time.time())
+         total = 0.0
+-        for flow in self.venues.values():
++        selected = (self.venues.get(v) for v in venues) if venues is not None else self.venues.values()
++        for flow in selected:
++            if flow is None:
++                continue
+             total += flow.row_range_sum(field, row, start_sec, end_sec, now_sec)
+         return total
+ 
+@@ -295,7 +303,8 @@
+         """
+         Per symbol, the live order-flow metrics used by Tier-0, scoring and the dashboard:
+         cvd_<w> (Binance futures), agg_cvd_<w> (all futures venues), agg_spot_cvd_5m (spot venues),
+-        liq_long_5m / liq_short_5m (all venues, USD), venue shares of the 5m gross flow.
++        liq_long_5m / liq_short_5m (all venues, USD). Legacy top_venue_share / venues_active retain their
++        net-flow definitions; explicitly named top_gross_venue_share / venues_flow_active describe gross activity.
+         """
+         now_sec = int(now_sec if now_sec is not None else time.time())
+         liq_window = CONFIG.liquidations.window_sec
+@@ -307,6 +316,8 @@
+         # Each futures venue's 5m net once: the aggregate, Binance's own and the venue shares all come from it (they
+         # were summed three times over, a third of the Tier-0 pass)
+         per_venue_net = {v: self.net((v,), 300, now_sec) for v in futures}
++        per_venue_gross = {v: self.window((v,), BUY, 300, now_sec) + self.window((v,), SELL, 300, now_sec)
++                           for v in futures}
+         zeros = np.zeros(self.capacity)
+         cols = {
+             'cvd_60s': self.net(('binance',), 60, now_sec),
+@@ -328,7 +339,24 @@
+                 metrics['top_venue_net'] = float(top_net)
+             else:
+                 metrics['top_venue'], metrics['top_venue_share'], metrics['top_venue_net'] = '', 0.0, 0.0
+-            metrics['venues_active'] = int(sum(1 for a in per_venue_net.values() if a[row] != 0))
++            gross_total = sum(a[row] for a in per_venue_gross.values())
++            net_total = sum(a[row] for a in per_venue_net.values())
++            active_gross = [(v, a[row]) for v, a in per_venue_gross.items() if a[row] > 0]
++            if gross_total > 0:
++                gross_leader, gross_leader_value = max(active_gross, key=lambda x: x[1])
++                metrics['top_gross_venue'] = gross_leader
++                metrics['top_gross_venue_share'] = float(gross_leader_value / gross_total)
++            else:
++                metrics['top_gross_venue'] = ''
++                metrics['top_gross_venue_share'] = 0.0
++            metrics['gross_flow_5m'] = float(gross_total)
++            metrics['net_flow_5m'] = float(net_total)
++            metrics['venues_flow_active'] = int(len(active_gross))
++            metrics['net_venues_active'] = int(sum(1 for a in per_venue_net.values() if a[row] != 0))
++            metrics['net_top_venue_share'] = metrics['top_venue_share']
++            # Legacy field retained for API compatibility. Its old net-active definition is documented
++            # by net_venues_active; new consumers should use venues_flow_active for venue participation.
++            metrics['venues_active'] = metrics['net_venues_active']
+             out[symbol] = metrics
+         return out
+ 
+--- a/extdata.py
++++ b/extdata.py
+@@ -12,6 +12,7 @@
+ import io
+ import json
+ import logging
++import math
+ import errors
+ import os
+ from datetime import datetime, timezone
+@@ -127,6 +128,8 @@
+             self.market[f'{k}_chg_1h'] = self.market[f'{k}_chg_24h'] = None
+         self.market.update({'us_session': None, 'vix_prev': None, 'fng': None, 'etf_flow_1d': None, 'etf_flow_3d': None})
+         self.coin: Dict[str, Dict[str, float]] = {}
++        # (symbol, venue) -> transport/API/content/freshness outcomes of the last REST book attempt.
++        self.book_status: Dict[tuple, Dict[str, object]] = {}
+         self._session: Optional[aiohttp.ClientSession] = None
+         self._tradfi_ok: Dict[str, float] = {}
+         self._slow_ok: Dict[str, float] = {}
+@@ -148,8 +151,10 @@
+             try:
+                 if payload is None:
+                     async with self._session.get(url) as r:
++                        r.raise_for_status()
+                         return await r.json(content_type=None)
+                 async with self._session.post(url, data=json.dumps(payload), headers={'Content-Type': 'application/json'}) as r:
++                    r.raise_for_status()
+                     return await r.json(content_type=None)
+             except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError):
+                 if attempt == 2:
+@@ -159,6 +164,18 @@
+     async def close(self):
+         if self._session is not None:
+             await self._session.close()
++
++    def rest_book_status(self, now: Optional[float] = None) -> Dict[tuple, Dict[str, object]]:
++        """Expose the last REST-book stage results and derive freshness from receipt age."""
++        now = time.time() if now is None else now
++        out = {}
++        for key, state in self.book_status.items():
++            row = dict(state)
++            received_at = row.get('received_at')
++            row['age_sec'] = max(0.0, now - received_at) if isinstance(received_at, (int, float)) else None
++            row['fresh'] = bool(row.get('valid_market_data') and row['age_sec'] is not None and row['age_sec'] <= 30)
++            out[key] = row
++        return out
+ 
+     # ------------------------------------------------------------------ eng-133: macro shadow features
+     async def macro_loop(self, running):
+@@ -374,7 +391,7 @@
+ 
+     # ------------------------------------------------------------------ OKX flow seed
+     async def seed_okx_flow(self):
+-        """Once, after the streams started: 5m OKX taker volume of the 15 minutes before them into the flow windows."""
++        """Inspect completed REST taker-volume buckets for diagnostics; do not treat them as event-level prints."""
+         started = self.fetcher.streams_started_ms
+         if not started:
+             return
+@@ -403,18 +420,15 @@
+                     # completed bucket before the stream start.
+                     bucket = okx_completed_bucket(t, started)
+                     if bucket is not None and started - 15 * 60_000 <= bucket and bucket + 300_000 <= started:
+-                        for k in range(5):      # the 5m bucket spread over its minutes
+-                            self.fetcher.flow.seed_minute('okx', key, bucket + k * 60_000,
+-                                                          float(buy) / 5, float(sell) / 5, 0)
++                        # Coarse REST taker aggregates are observations, not trade prints.
+                         seeded += 1
+-                        self.okx_seed_stats['buckets_written'] += 1
+                     else:
+                         self.okx_seed_stats['window_misses'] += 1
+             except Exception as e:
+                 self.okx_seed_stats['errors'] += 1
+                 errors.report('extdata.seed_okx_flow', e, f"OKX taker volume {coin}")
+             await asyncio.sleep(0.45)           # rubik: 5 requests / 2s
+-        logger.info(f"OKX flow seeded: {seeded} 5m buckets for {len(coins)} coins; "
++        logger.info(f"OKX REST taker-flow observations checked (not trade prints): {seeded} completed 5m buckets for {len(coins)} coins; "
+                     f"requests={self.okx_seed_stats['requests']} rows={self.okx_seed_stats['rows']} "
+                     f"buckets={self.okx_seed_stats['buckets_written']} misses={self.okx_seed_stats['window_misses']} "
+                     f"empty={self.okx_seed_stats['empty']} malformed={self.okx_seed_stats['malformed']} "
+@@ -423,12 +437,56 @@
+     # ------------------------------------------------------------------ cross-venue books
+     @staticmethod
+     def _imbalance(bids, asks) -> Optional[float]:
+-        if not bids or not asks:
++        if not ExternalData._valid_book_levels(bids) or not ExternalData._valid_book_levels(asks):
+             return None
+         mid = (float(bids[0][0]) + float(asks[0][0])) / 2
++        if not math.isfinite(mid) or mid <= 0 or float(bids[0][0]) >= float(asks[0][0]):
++            return None
+         bid = sum(float(p) * float(q) for p, q, *_ in bids if float(p) >= mid * 0.995)
+         ask = sum(float(p) * float(q) for p, q, *_ in asks if float(p) <= mid * 1.005)
+         return (bid - ask) / (bid + ask) if bid + ask else None
++
++    @staticmethod
++    def _valid_book_levels(levels) -> bool:
++        if not isinstance(levels, list) or not levels:
++            return False
++        for row in levels:
++            if not isinstance(row, (list, tuple)) or len(row) < 2:
++                return False
++            try:
++                price, size = float(row[0]), float(row[1])
++            except (TypeError, ValueError, OverflowError):
++                return False
++            if not math.isfinite(price) or not math.isfinite(size) or price <= 0 or size <= 0:
++                return False
++        return True
++
++    @staticmethod
++    def _valid_snapshot(bids, asks) -> bool:
++        if not ExternalData._valid_book_levels(bids) or not ExternalData._valid_book_levels(asks):
++            return False
++        return float(bids[0][0]) < float(asks[0][0]) \
++            and all(float(bids[i][0]) >= float(bids[i + 1][0]) for i in range(len(bids) - 1)) \
++            and all(float(asks[i][0]) <= float(asks[i + 1][0]) for i in range(len(asks) - 1))
++
++    @staticmethod
++    def _okx_book(payload):
++        if not isinstance(payload, dict) or payload.get('code') not in ('0', 0):
++            return None
++        rows = payload.get('data')
++        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
++            return None
++        book = rows[0]
++        return book if ExternalData._valid_snapshot(book.get('bids'), book.get('asks')) else None
++
++    @staticmethod
++    def _bybit_book(payload):
++        if not isinstance(payload, dict) or payload.get('retCode') not in (0, '0'):
++            return None
++        book = payload.get('result')
++        if not isinstance(book, dict) or not ExternalData._valid_snapshot(book.get('b'), book.get('a')):
++            return None
++        return book
+ 
+     async def books_loop(self, running):
+         while running():
+@@ -436,18 +494,47 @@
+             for key in self.fetcher.depth.active():
+                 venues = self.fetcher.symbol_map.by_key.get(key, {})
+                 try:
++                    valid_any = False
+                     okx = next((m for m in venues.values() if m.venue == 'okx'), None)
+                     if okx is not None:
++                        state = {'transport_success': False, 'api_success': False,
++                                 'valid_market_data': False, 'fresh': False, 'error': None}
++                        self.book_status[(key, 'okx')] = state
+                         d = await self._json(f"{OKX}/market/books?instId={okx.native}&sz=50")
+-                        book = (d.get('data') or [{}])[0]
+-                        self.coin.setdefault(key, {})['okx_book_imb'] = self._imbalance(book.get('bids'), book.get('asks'))
++                        state['transport_success'] = True
++                        state['api_success'] = isinstance(d, dict) and d.get('code') in ('0', 0)
++                        book = self._okx_book(d)
++                        if book is None:
++                            state['error'] = 'invalid API response or snapshot'
++                            raise ValueError('OKX API response or book snapshot invalid')
++                        state['valid_market_data'] = True
++                        self.coin.setdefault(key, {})['okx_book_imb'] = self._imbalance(book['bids'], book['asks'])
++                        state.update(fresh=True, received_at=time.time())
++                        valid_any = True
+                     byb = next((m for m in venues.values() if m.venue == 'bybit'), None)
+                     if byb is not None:
++                        state = {'transport_success': False, 'api_success': False,
++                                 'valid_market_data': False, 'fresh': False, 'error': None}
++                        self.book_status[(key, 'bybit')] = state
+                         d = await self._json(f"{BYBIT}/market/orderbook?category=linear&symbol={byb.native}&limit=50")
+-                        r = d.get('result') or {}
+-                        self.coin.setdefault(key, {})['bybit_book_imb'] = self._imbalance(r.get('b'), r.get('a'))
++                        state['transport_success'] = True
++                        state['api_success'] = isinstance(d, dict) and d.get('retCode') in (0, '0')
++                        r = self._bybit_book(d)
++                        if r is None:
++                            state['error'] = 'invalid API response or snapshot'
++                            raise ValueError('Bybit API response or book snapshot invalid')
++                        state['valid_market_data'] = True
++                        self.coin.setdefault(key, {})['bybit_book_imb'] = self._imbalance(r['b'], r['a'])
++                        state.update(fresh=True, received_at=time.time())
++                        valid_any = True
++                    if not valid_any:
++                        raise ValueError('no configured venue returned a valid book snapshot')
+                 except Exception as e:
+                     errors.report('extdata.books_loop', e, f"books {key}")
++                    for venue in ('okx', 'bybit'):
++                        state = self.book_status.get((key, venue))
++                        if state is not None and state.get('error') is None:
++                            state['error'] = type(e).__name__
+                     self.quality_state = getattr(self, 'quality_state', {})
+                     previous = self.quality_state.get(('book', key))
+                     self.quality_state[('book', key)] = quality(time.time(), previous.fetched_at if previous else None,
+--- a/scanner.py
++++ b/scanner.py
+@@ -490,10 +490,17 @@
+             for key in ('liq_long_5m', 'liq_short_5m', 'agg_cvd_5m', 'top_venue_share', 'top_venue_net', 'venues_active'):
+                 val = flow.get(key) if has_flow else None
+                 m[key] = float('nan') if val is None else float(val)
++            for key in ('gross_flow_5m', 'net_flow_5m', 'venues_flow_active', 'net_venues_active',
++                        'top_gross_venue_share', 'net_top_venue_share'):
++                val = flow.get(key) if has_flow else None
++                m[key] = float('nan') if val is None else float(val)
+             m['futures_cvd_5m'] = float('nan') if not has_flow or flow.get('cvd_5m') is None else float(flow.get('cvd_5m'))
+             spot_delta = minute_delta(md.spot_minute_klines, now_ms)
+             spot_flow = flow.get('agg_spot_cvd_5m') if has_flow else None
+             m['spot_cvd_5m'] = float('nan') if (not has_flow and spot_delta == 0.0) else (spot_delta + (float(spot_flow) if spot_flow is not None else 0.0))
++            m['spot_delta_candle_5m'] = spot_delta
++            m['spot_cvd_event_5m'] = float('nan') if spot_flow is None else float(spot_flow)
++            m['spot_cvd_source'] = 'flow_snapshot_plus_1m_ohlcv' if spot_flow is not None else '1m_ohlcv_taker_aggregate'
+             m['agg_oi_change_5m'] = self.fetcher.deriv_snapshot(symbol, now_ms)['agg_oi_change_5m']
+             # eng-88: OI over 15 / 60 minutes beside the 5m one (an OI build is a fast 5m step or a running hour)
+             from strategies.oi_build import _oi_change
+@@ -509,6 +516,7 @@
+             ratio = self.fetcher.depth.sweep_vs_depth(symbol, abs(cvd), 1 if cvd > 0 else -1, band=0.01) if cvd else None
+             m['flow_depth_5m'] = float('nan') if ratio is None else float(ratio) * (1 if cvd > 0 else -1)
+             m['top_venue'] = flow.get('top_venue', '')
++            m['top_gross_venue'] = flow.get('top_gross_venue', '')
+             out[symbol] = m
+             self._journal_rush(symbol, md, m, now_ms)
+         return out
+@@ -1526,10 +1534,17 @@
+         sig['volume_24h'] = md.quote_volume_24h or None
+         sig['tier2_active'] = md.trades_subscribed
+         sig['futures_cvd'] = sig.get('futures_cvd_5m', 0.0)
++        sig['spot_cvd_source'] = md.tier0.get('spot_cvd_source')
++        for key in ('spot_delta_candle_5m', 'spot_cvd_event_5m'):
++            sig[key] = md.tier0.get(key)
+         sig['whales'] = self.fetcher.whales.flow(symbol, CONFIG.sweeps.window_sec)
+         sig['whale_size'] = self.fetcher.whales.whale_size(symbol)
+         sig['has_spot'] = bool(md.spot_symbol)
+         sig['top_venue'] = md.tier0.get('top_venue', '')
++        for key in ('gross_flow_5m', 'net_flow_5m', 'venues_flow_active', 'net_venues_active',
++                    'top_gross_venue_share', 'net_top_venue_share'):
++            sig[key] = md.tier0.get(key)
++        sig['top_gross_venue'] = md.tier0.get('top_gross_venue', '')
+         ratios = self.positioning.ratios.get(symbol, {})
+         sig['top_ratio'] = ratios.get('binance_top_pos')
+         sig['ls_global'] = ratios.get('binance_global')
+@@ -2045,8 +2060,9 @@
+                 kb = (st.get('bytes', 0) - last_bytes.get(venue, 0)) / 60 / 1024
+                 last_bytes[venue] = st.get('bytes', 0)
+                 rate = f"{venue} {(count - last_counts.get(venue, 0)) / 60:.0f}/s {kb:.0f}KB/s"
+-                if not st.get('connected', 1):
+-                    rate += " DOWN"
++                state = st.get('health_state', 'UNKNOWN')
++                if state in ('DISCONNECTED', 'STALE', 'UNKNOWN'):
++                    rate += f" {state}"
+                 if lag > 1.5:
+                     rate += f" lag {lag:.1f}s"
+                 rates.append(rate)
+@@ -2070,7 +2086,8 @@
+             # the same reading for /api/health (external monitoring, the dashboard's health tab)
+             self.health = {'ts': time.time(), 'tier0_sec': self.last_tier0_sec, 'scan_sec': self.last_scan_sec,
+                            'heavy_sec': self.last_heavy_sec, 'books': len(self._hot), 'streams': rates,
+-                           'down': [r.split()[0] for r in rates if ' DOWN' in r],
++                           'down': [venue for venue, st in sorted(status.items())
++                                    if st.get('health_state', 'UNKNOWN') in ('DISCONNECTED', 'STALE', 'UNKNOWN')],
+                            'cpu_pct': cpu, 'rss_mb': rss,
+                            'backfill': dict(getattr(self.fetcher, 'backfill_stats', {})),
+                            'okx_flow_seed': dict(getattr(self.ext, 'okx_seed_stats', {})),
+--- a/webui.py
++++ b/webui.py
+@@ -92,7 +92,8 @@
+         parts.append("algo " + ("buying" if sig['cluster'] > 0 else "selling"))
+     spot, perp = sig.get('spot_delta_1h'), sig.get('perp_delta_1h')
+     if spot is not None and perp:
+-        parts.append(f"spot {'+' if spot >= 0 else '-'}{_usd(abs(spot))} / perp {'+' if perp >= 0 else '-'}{_usd(abs(perp))} 1h")
++        source = " (spot includes 1m OHLCV taker aggregates)" if sig.get('spot_cvd_source') else ''
++        parts.append(f"spot {'+' if spot >= 0 else '-'}{_usd(abs(spot))} / perp {'+' if perp >= 0 else '-'}{_usd(abs(perp))} 1h{source}")
+     liq_l, liq_s = sig.get('liq_long_5m') or 0.0, sig.get('liq_short_5m') or 0.0
+     if liq_l + liq_s >= 10_000:
+         parts.append(f"force-order observations long-side {_usd(liq_l)} / short-side {_usd(liq_s)} 5m")
+@@ -118,8 +119,9 @@
+         parts.append(f"market 1h {sig['mkt_1h'] * 100:+.2f}%" + (f", BTC {sig['btc_1h'] * 100:+.2f}%" if sig.get('btc_1h') is not None else ''))
+     if (sig.get('market_crowd') or 0) >= CONFIG.market.cluster_min:
+         parts.append(f"market move: {sig['market_crowd']} coins with the same-side setup in 5m")
+-    if (sig.get('venues_active') or 0) >= 2 and (sig.get('top_venue_share') or 0) >= 0.8:
+-        parts.append(f"{sig.get('top_venue') or '?'}-only flow")
++    if (sig.get('venues_flow_active') or 0) >= 2 and (sig.get('top_gross_venue_share') or 0) >= 0.8:
++        parts.append(f"gross flow concentration: {sig.get('top_gross_venue') or '?'} "
++                     f"{sig['top_gross_venue_share']:.0%} of active venues")
+     return parts
+ 
+ 
+@@ -141,7 +143,10 @@
+ # ---------------------------------------------------------------------------------------------------- state
+ 
+ SIG_FIELDS = ('rvol_1m', 'rvol_15m', 'price_change_5m', 'oi_change_5m', 'oi_change_1h', 'delta_ratio', 'funding_rate',
+-              'whale_net_5m', 'liq_long_5m', 'liq_short_5m', 'top_venue', 'top_venue_share', 'ml_score', 'long_score',
++              'whale_net_5m', 'liq_long_5m', 'liq_short_5m', 'top_venue', 'top_venue_share',
++              'top_gross_venue', 'top_gross_venue_share', 'gross_flow_5m', 'net_flow_5m', 'venues_flow_active',
++              'net_venues_active', 'net_top_venue_share', 'spot_cvd_source', 'spot_delta_candle_5m',
++              'spot_cvd_event_5m', 'ml_score', 'long_score',
+               'short_score', 'p_edge', 'spot_delta_1h', 'perp_delta_1h', 'depth_imb', 'top_ratio', 'regime',
+               'ls_global', 'ls_top', 'ls_bybit', 'ls_okx', 'hl_long_usd', 'hl_short_usd', 'hl_net_usd', 'cb_premium')
+ 
+--- a/web/app.js
++++ b/web/app.js
+@@ -294,7 +294,7 @@
+     upbit_delist: ['делистинг Upbit', 'down'], upbit_warning: ['предупреждение Upbit', 'down'], upbit_listing: ['листинг Upbit KRW', 'up'], upbit_unwarn: ['Upbit снял предупреждение', 'up'] };
+   const news = (S.news || []).filter(n => n.risk || nowSec() - n.ts < 172800);
+   if (news.length) html += `<span title="${esc(news.map(n => `${n.base}: ${(NEWS[n.kind] || [n.kind])[0]}, ${ago(nowSec() - n.ts)} назад${n.risk ? ' — лонги запрещены' : ''}`).join('\n'))}"><b>анонсы</b>${news.slice(0, 6).map(n => `<span class="${(NEWS[n.kind] || ['', ''])[1]}">${esc(n.base)}${n.risk ? '⚠' : ''}</span>`).join(' ')}${news.length > 6 ? ' …' : ''}</span>`;
+-  const down = Object.entries(S.venues || {}).filter(([, v]) => v.connected === 0 || v.connected === false).map(([k]) => k);
++  const down = Object.entries(S.venues || {}).filter(([, v]) => ['DISCONNECTED', 'STALE', 'UNKNOWN'].includes(v.health_state)).map(([k]) => k);
+   html += `<span class="dim">${S.symbols} монет · скан ${(S.timing?.scan ?? 0).toFixed(2)}с${down.length ? ' · <span class="down">нет связи: ' + esc(down.join(', ')) + '</span>' : ''}</span>`;
+   $('#market').innerHTML = html;
+   document.documentElement.style.setProperty('--hdr-h', $('#top').offsetHeight + 'px');   // the header wraps on narrow screens
+@@ -604,8 +604,9 @@
+ 
+ function renderHealth() {
+   const v = S.venues || {};
+-  const boxes = Object.entries(v).sort().map(([name, st]) => `<div class="box"><h4>${esc(name)} ${st.connected === 0 || st.connected === false ? '<span class="pill bad">нет связи</span>' : '<span class="pill good">ok</span>'}</h4>
+-    <div class="kv">${Object.entries(st).map(([k, x]) => `<span>${esc(k)}</span><span class="mono">${typeof x === 'number' ? (Math.abs(x) >= 1000 ? usd(x) : +x.toFixed(2)) : esc(x)}</span>`).join('')}</div></div>`).join('');
++  const stateLabel = {CONNECTED: 'connected', DISCONNECTED: 'disconnected', NOT_CONFIGURED: 'not configured', STALE: 'stale', UNKNOWN: 'unknown'};
++  const boxes = Object.entries(v).sort().map(([name, st]) => { const state = st.health_state || 'UNKNOWN'; const good = state === 'CONNECTED' || state === 'NOT_CONFIGURED'; return `<div class="box"><h4>${esc(name)} ${good ? '<span class="pill good">' : '<span class="pill bad">'}${esc(stateLabel[state] || state)}</span></h4>
++    <div class="kv">${Object.entries(st).map(([k, x]) => `<span>${esc(k)}</span><span class="mono">${typeof x === 'number' ? (Math.abs(x) >= 1000 ? usd(x) : +x.toFixed(2)) : esc(x)}</span>`).join('')}</div></div>`; }).join('');
+   const ml = S.ml || {};
+   return `<div class="grid">
+     <div class="box"><h4>Скан</h4><div class="kv"><span>tier-0</span><span class="mono">${S.timing.tier0.toFixed(2)}с ${spark('tier0', 'var(--cyan)')}</span>
+--- a/tests/test_regressions.py
++++ b/tests/test_regressions.py
+@@ -1,5 +1,6 @@
+ import pytest
+ import asyncio
++import time
+ 
+ from sqlsafe import identifier
+ from security import safe_urlopen
+@@ -9,11 +10,165 @@
+ from extdata import okx_completed_bucket, okx_taker_rows
+ from levels import simulate
+ from executor import credentials, DemoExecutor
+-from fetcher import DataFetcher
++from fetcher import DataFetcher, normalize_binance_liquidation
++from flow import FlowStore, LIQ_SHORT, Sweep
++from data_quality import QualityState
++from extdata import ExternalData
+ from core.quant_gate import scenario_gate
+ from signal_book import SignalBook, TrackedSignal
+ import pumps
+ from iceberg import IcebergDetector
++
++
++def test_open_interest_uses_exchange_timestamp_and_rejects_invalid_values(monkeypatch):
++    fetcher = DataFetcher.__new__(DataFetcher)
++    fetcher._ccxt_to_binance_symbol = lambda symbol: 'BTCUSDT'
++    fetcher.futures_exchange = object()
++    fetcher.quality_state = {}
++    fetcher.oi_last_updated = {}
++    event_ms = int(time.time() * 1000) - 1000
++    response = {'openInterest': '12.5', 'time': event_ms}
++
++    async def rest(*args, **kwargs):
++        return response
++
++    fetcher._rest_call = rest
++    value, measured_ms = asyncio.run(fetcher.fetch_open_interest('BTC/USDT:USDT'))
++    assert (value, measured_ms) == (12.5, event_ms)
++    assert fetcher.oi_last_updated['BTC/USDT:USDT'] == event_ms / 1000
++    assert fetcher.oi_received_at['BTC/USDT:USDT'] >= event_ms / 1000
++    assert fetcher.quality_state[('oi', 'BTC/USDT:USDT')].fetched_at == event_ms / 1000
++
++    for invalid in ({'openInterest': '0', 'time': event_ms + 1},
++                    {'openInterest': '-1', 'time': event_ms + 2},
++                    {'openInterest': 'nan', 'time': event_ms + 3},
++                    {'openInterest': '12', 'time': None}):
++        response.update(invalid)
++        assert asyncio.run(fetcher.fetch_open_interest('BTC/USDT:USDT')) is None
++        state = fetcher.quality_state[('oi', 'BTC/USDT:USDT')]
++        assert state.state is QualityState.INVALID
++        assert state.fetched_at == event_ms / 1000
++
++
++def test_cross_venue_gross_activity_survives_zero_net_flow():
++    store = FlowStore(capacity=2)
++    store.register(['BTC/USDT:USDT'])
++    store.trade('binance', 'BTC/USDT:USDT', 1_000_000, 50, 1, 1_000_000)
++    store.trade('binance', 'BTC/USDT:USDT', 1_000_000, 50, -1, 1_000_000)
++    row = store.snapshot(now_sec=1_000)['BTC/USDT:USDT']
++    assert row['net_flow_5m'] == 0
++    assert row['gross_flow_5m'] == 100
++    assert row['venues_flow_active'] == 1
++    assert row['net_venues_active'] == 0
++    assert row['top_gross_venue'] == 'binance'
++    assert row['top_gross_venue_share'] == 1
++
++
++def test_rest_minute_seed_stays_out_of_event_flow_ring():
++    store = FlowStore(capacity=2)
++    store.register(['BTC/USDT:USDT'])
++    store.seed_minute('binance', 'BTC/USDT:USDT', 1_000_000, 75, 25, 8)
++    metrics = store.snapshot(now_sec=1_000)['BTC/USDT:USDT']
++    assert metrics['cvd_5m'] == 0
++    assert metrics['venues_flow_active'] == 0
++    assert store.venues['binance'].messages == 0
++    assert store.seed_observations[('binance', 'BTC/USDT:USDT')][0] == (
++        1_000_000, 75.0, 25.0, 8, 'rest_ohlcv_aggregate')
++
++
++def test_liquidation_attribution_can_be_limited_to_matching_venue():
++    store = FlowStore(capacity=2)
++    store.register(['BTC/USDT:USDT'])
++    store.liquidation('binance', 'BTC/USDT:USDT', 1_000_000, 100, -1, 1_000_000)
++    store.liquidation('bybit', 'BTC/USDT:USDT', 1_000_000, 10, -1, 1_000_000)
++    assert store.symbol_range('BTC/USDT:USDT', LIQ_SHORT, 999, 1001, 1000,
++                              venues=('binance',)) == 100
++    assert store.symbol_range('BTC/USDT:USDT', LIQ_SHORT, 999, 1001, 1000,
++                              venues=('bybit',)) == 10
++
++
++def test_other_venue_liquidations_do_not_suppress_sweep():
++    class Whales:
++        def __init__(self):
++            self.added = []
++
++        def thresholds(self, symbol):
++            return 1, 1
++
++        def add(self, sweep):
++            self.added.append(sweep)
++
++    fetcher = DataFetcher.__new__(DataFetcher)
++    fetcher.flow = FlowStore(capacity=2)
++    fetcher.flow.register(['BTC/USDT:USDT'])
++    fetcher.flow.liquidation('binance', 'BTC/USDT:USDT', 1_000_000, 100, -1, 1_000_000)
++    fetcher.whales = Whales()
++    sweep = Sweep('bybit', 'BTC/USDT:USDT', 1_000_000, 1_000_000, 1, 100, 100, 100, 1, 1)
++    fetcher._on_sweep(sweep)
++    assert fetcher.whales.added == [sweep]
++
++
++def test_binance_liquidation_uses_filled_executed_quantity():
++    event = {'X': 'FILLED', 'T': 1_700_000_000_000, 'ap': '100', 'z': '2', 'q': '20', 'S': 'SELL'}
++    assert normalize_binance_liquidation(event) == (1_700_000_000_000, 100.0, 200.0, 1)
++    assert normalize_binance_liquidation({**event, 'X': 'NEW'}) is None
++    assert normalize_binance_liquidation({k: v for k, v in event.items() if k != 'X'}) is None
++    assert normalize_binance_liquidation({**event, 'z': '0'}) is None
++
++
++def test_rest_book_validation_rejects_bad_structure_values_and_crossed_book():
++    valid_bids, valid_asks = [['100', '2']], [['101', '3']]
++    assert ExternalData._valid_snapshot(valid_bids, valid_asks)
++    assert not ExternalData._valid_snapshot([], valid_asks)
++    assert not ExternalData._valid_snapshot([['nan', '1']], valid_asks)
++    assert not ExternalData._valid_snapshot([['100', '0']], valid_asks)
++    assert not ExternalData._valid_snapshot([['102', '1']], valid_asks)
++    assert ExternalData._bybit_book({'retCode': 10001, 'result': {'b': valid_bids, 'a': valid_asks}}) is None
++    assert ExternalData._okx_book({'code': '51000', 'data': [{'bids': valid_bids, 'asks': valid_asks}]}) is None
++    assert ExternalData._bybit_book({'retCode': 0, 'result': {'b': valid_bids, 'a': valid_asks}})
++    assert ExternalData._okx_book({'code': '0', 'data': [{'bids': valid_bids, 'asks': valid_asks}]})
++
++
++def test_rest_book_status_separates_stages_and_expires_freshness():
++    ext = ExternalData.__new__(ExternalData)
++    ext.book_status = {
++        ('BTC/USDT:USDT', 'okx'): {'transport_success': True, 'api_success': True,
++                                   'valid_market_data': True, 'received_at': 100.0},
++        ('ETH/USDT:USDT', 'bybit'): {'transport_success': True, 'api_success': False,
++                                     'valid_market_data': False, 'received_at': 100.0},
++    }
++    view = ext.rest_book_status(now=131.0)
++    assert view[('BTC/USDT:USDT', 'okx')]['fresh'] is False
++    assert view[('BTC/USDT:USDT', 'okx')]['age_sec'] == 31
++    assert view[('ETH/USDT:USDT', 'bybit')]['fresh'] is False
++
++
++def test_missing_websocket_connection_information_is_unknown():
++    fetcher = DataFetcher.__new__(DataFetcher)
++    fetcher.flow = FlowStore(venues=['bybit'])
++    fetcher.venue_streams = {'bybit': type('Stream', (), {'bytes': 0})()}
++    fetcher._binance_streams = []
++    fetcher._depth_streams = []
++    assert fetcher.venue_status()['bybit']['health_state'] == 'UNKNOWN'
++
++
++def test_configured_websocket_with_zero_connections_is_disconnected():
++    fetcher = DataFetcher.__new__(DataFetcher)
++    fetcher.flow = FlowStore(venues=['bybit'])
++    fetcher.venue_streams = {'bybit': type('Stream', (), {'connected': 0, 'bytes': 0})()}
++    fetcher._binance_streams = []
++    fetcher._depth_streams = []
++    status = fetcher.venue_status()['bybit']
++    assert status['connected'] == 0
++    assert status['health_state'] == 'DISCONNECTED'
++
++    fetcher.flow = FlowStore(venues=['binance'])
++    fetcher.venue_streams = {}
++    fetcher._binance_streams = [type('Stream', (), {'connected': 0, 'bytes': 0})(),
++                                type('Stream', (), {'connected': 0, 'bytes': 0})()]
++    status = fetcher.venue_status()['binance']
++    assert status['connected'] == 0
++    assert status['health_state'] == 'DISCONNECTED'
+ 
+ 
+ def test_sql_identifier_requires_allowlist():

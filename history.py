@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from security import safe_urlopen
 import zipfile
 from storage import atomic_write
 from datetime import date, timedelta
@@ -81,7 +82,7 @@ class Archive:
         url = f"{BASE_URL}/{urllib.parse.quote(path)}"          # non-ASCII tickers exist (e.g. Chinese names)
         for attempt in range(5):
             try:
-                with urllib.request.urlopen(url, timeout=60) as resp:
+                with safe_urlopen(url, timeout=60) as resp:
                     expected = int(resp.headers.get('Content-Length') or 0)
                     chunks = []
                     while True:
@@ -291,7 +292,7 @@ class Archive:
                    + (f"&marker={urllib.parse.quote(marker)}" if marker else ''))
             for attempt in range(5):
                 try:
-                    with urllib.request.urlopen(url, timeout=60) as resp:
+                    with safe_urlopen(url, timeout=60) as resp:
                         text = resp.read().decode('utf-8')
                     break
                 except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:

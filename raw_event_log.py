@@ -27,12 +27,23 @@ class RawEventLog:
         self.root = Path(configured) if configured else None
         self.parser_version = parser_version
         self._lock = threading.Lock()
+        self._stats_lock = threading.Lock()
         self._queue = Queue(maxsize=20_000)
         self._writer_started = False
+        self.dropped_queue_full = 0
+        self.write_errors = 0
 
     @property
     def enabled(self) -> bool:
         return self.root is not None
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Operational counters for this optional, lossy evidence recorder."""
+        with self._stats_lock:
+            dropped, errors_count = self.dropped_queue_full, self.write_errors
+        return {'enabled': self.enabled, 'queued': self._queue.qsize(),
+                'queue_capacity': self._queue.maxsize,
+                'dropped_queue_full': dropped, 'write_errors': errors_count}
 
     def append(self, *, source: str, venue: str, channel: str, connection_id: str,
                payload: bytes, exchange_event_time: Any = None,
@@ -63,9 +74,11 @@ class RawEventLog:
         try:
             self._queue.put_nowait((path, line))
         except Full:
-            # Evidence capture must never stall market ingestion. Dropped raw records
-            # are visible through the queue capacity and do not affect parsed signals.
-            pass
+            # Evidence capture must never stall market ingestion. The loss is
+            # explicit and does not affect already parsed market signals.
+            with self._stats_lock:
+                self.dropped_queue_full += 1
+            return None
         return event_id
 
     def _start_writer(self) -> None:
@@ -89,7 +102,8 @@ class RawEventLog:
                 with gzip.open(path, 'ab') as fh:
                     fh.write(line)
             except OSError:
-                pass
+                with self._stats_lock:
+                    self.write_errors += 1
             finally:
                 self._queue.task_done()
 

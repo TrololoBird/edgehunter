@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""
-EdgeHunter crypto market analysis and signal system (Binance USD-M perpetuals).
+"""EdgeHunter v2 runtime boundary.
 
-- Phases on 15m candles (scorer.py): long = A accumulation / B spring / E capitulation, short = C distribution /
-  D breakdown; Tier-0 raw anomalies every 2s (RVOL 1m, OI 5m, price 5m, whale flow).
-- Trade model (levels.py + zones.py): the 15m leg gives the context, the coin's level map (support / resistance,
-  liquidity pools, liquidation clusters, volume profile, Fibonacci) the zone, stop and targets; the entry is a 5m
-  structure shift, confirmed by order flow (flow.py); Binance + Bybit / OKX / Hyperliquid / Bitget / Coinbase
-  streams (venues.py).
-- Journal (journal.py) records every setup, entry and finished card; `python stats.py` shows how they played out.
-- Browser dashboard (webui.py) on http://127.0.0.1:8765; the console shows the log.
-Ctrl+C stops gracefully (press again after 3s to force).
+The working process may collect and display timestamped market observations,
+but it has no admitted strategy until ``core.source_manifest`` contains a
+reviewed primary-source contract.  Legacy strategy names, historical rows,
+models and replay results are forensic artifacts and are not loaded into the
+v2 signal or execution path.  The executor is disabled by default and this
+entry point never treats a reference or replay price as an exchange fill.
 """
 
 import os
@@ -31,7 +27,9 @@ import signal
 import sys
 import time
 import queue
+import re
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from dataclasses import replace
 
 from config import CONFIG
 from journal import SignalJournal
@@ -39,6 +37,44 @@ from netstate import NETWORK
 from scanner import Scanner
 
 logger = logging.getLogger(__name__)
+
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)(\b(?:BINGX_API_KEY|BINGX_API_SECRET|TELEGRAM_BOT_TOKEN|API[_-]?KEY|API[_-]?SECRET|"
+    r"ACCESS[_-]?TOKEN|REFRESH[_-]?TOKEN|BOT[_-]?TOKEN|TOKEN|SECRET|KEY|PASSWORD|PRIVATE[_-]?KEY)\b\s*[=:]\s*)"
+    r"([^\s,;&]+)"
+)
+_URL_SECRET = re.compile(r"(?i)([?&](?:api[_-]?key|key|signature|token|secret|access[_-]?token)=)[^&\s]+")
+_TELEGRAM_CREDENTIAL = re.compile(r"(?i)(/bot)\d{6,}:[A-Za-z0-9_-]{20,}")
+
+
+def redact_secrets(message: str) -> str:
+    """Redact common credential assignments and Telegram bot tokens in log text."""
+    message = _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", str(message))
+    message = _URL_SECRET.sub(r"\1[REDACTED]", message)
+    return _TELEGRAM_CREDENTIAL.sub(r"\1[REDACTED]", message)
+
+
+class SecretRedactionFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            record.msg = redact_secrets(record.getMessage())
+            record.args = ()
+        except (TypeError, ValueError):
+            record.msg = "[unrenderable log message redacted]"
+            record.args = ()
+        return True
+
+
+def apply_data_only_mode() -> bool:
+    """Disable order, strategy and outbound-message paths for an analytics collection run."""
+    if os.environ.get('EDGEHUNTER_DATA_ONLY', '').strip().lower() not in {'1', 'true', 'yes'}:
+        return False
+    object.__setattr__(CONFIG, 'executor', replace(CONFIG.executor, enabled=False))
+    object.__setattr__(CONFIG, 'strategies', replace(CONFIG.strategies, enabled=()))
+    object.__setattr__(CONFIG, 'notify', replace(CONFIG.notify, enabled=False, toast=False))
+    object.__setattr__(CONFIG, 'briefing', replace(CONFIG.briefing, enabled=False))
+    logger.info('Data-only mode active: executor, strategy admission, and outbound notifications disabled')
+    return True
 
 
 def setup_logging() -> QueueListener:
@@ -48,6 +84,10 @@ def setup_logging() -> QueueListener:
     paged out (measured: the loop stalled 2s inside StreamHandler.emit).
     """
     cfg = CONFIG.logging
+    level_name = os.environ.get('EDGEHUNTER_LOG_LEVEL', 'INFO').strip().upper()
+    level = getattr(logging, level_name, None)
+    if not isinstance(level, int):
+        raise ValueError(f"invalid EDGEHUNTER_LOG_LEVEL: {level_name!r}")
     formatter = logging.Formatter('%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s', datefmt='%H:%M:%S')
     handlers = [logging.StreamHandler(sys.stdout),
                 RotatingFileHandler(cfg.file, maxBytes=cfg.max_bytes, backupCount=cfg.backups, encoding='utf-8')]
@@ -56,7 +96,12 @@ def setup_logging() -> QueueListener:
     records = queue.SimpleQueue()
     queued = QueueHandler(records)
     queued.setFormatter(logging.Formatter('%(message)s'))   # prepare() bakes this into the record: the message only
-    logging.basicConfig(level=logging.INFO, handlers=[queued])
+    queued.addFilter(SecretRedactionFilter())
+    logging.basicConfig(level=level, handlers=[queued])
+    # DEBUG is for Edgehunter's data path. Keep dependency protocol chatter
+    # bounded and prevent libraries from logging complete request URLs.
+    for name in ('aiohttp', 'asyncio', 'ccxt', 'websockets', 'urllib3'):
+        logging.getLogger(name).setLevel(logging.WARNING)
     listener = QueueListener(records, *handlers, respect_handler_level=True)
     listener.start()
     return listener
@@ -208,6 +253,7 @@ def keep_awake(on: bool) -> None:
 
 
 async def main(use_web: bool = True):
+    apply_data_only_mode()
     print("EdgeHunter - loading markets and starting streams (Ctrl+C to stop)")
     # the streams allocate millions of short-lived tuples a minute: the default gen-0 threshold (2000) promoted them
     # into gen 2 and its full collections paused the loop 0.3s+ (watchdog 'gc (gen 2)', 100+ a day); fewer, younger

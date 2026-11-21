@@ -17,19 +17,29 @@ previous day / week and session highs / lows, the 8-day volume profile of the 1h
 import errors
 import math
 import os
-import pickle
+import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence
 
 from config import CONFIG
 from levels import atr_of, resample_htf
 from zones import RawLevel, Zone, day_levels, equal_pools, merge, round_levels, swings, volume_profile
+from security import safe_pickle_load
+from core.model_provenance import manifest_path, validate_manifest
 
 MODEL_PATH = os.path.join('models', 'scenario_prob.pkl')
 HOUR_MS = 3_600_000
 FEATURES = ('d_up', 'd_down', 's_up', 's_down', 'p_geo', 'trend_1h', 'trend_4h', 'ret_24h', 'ret_7d', 'range_pos',
             'vol_ratio', 'btc_ret_24h', 'btc_ret_7d', 'btc_trend_4h', 'n_up', 'n_down')
 _model_cache: Dict = {}
+SCENARIO_MODEL_STATUS = {'status': 'not_loaded', 'reason': None}
+if os.path.isfile(MODEL_PATH):
+    try:
+        with open(manifest_path(MODEL_PATH), encoding='utf-8') as _manifest_file:
+            if json.load(_manifest_file).get('quarantine'):
+                SCENARIO_MODEL_STATUS.update(status='rejected', reason='legacy_quarantine')
+    except FileNotFoundError:
+        SCENARIO_MODEL_STATUS.update(status='rejected', reason='manifest_missing')
 # Measured on the archive (research/level_triggers.md: 478 coins, 2024-01..2026-08, 772k trades, the newer half):
 # TP1 hit rate, the geometric (random-walk) rate of the same entry / stop / target, net R to TP1
 TRIGGER_STATS = {
@@ -130,10 +140,10 @@ def _ema(xs: Sequence[float], span: int) -> List[float]:
     return out
 
 
-def _trend(closes: Sequence[float], span: int = 20) -> float:
+def _trend(closes: Sequence[float], span: int = 20) -> Optional[float]:
     """EMA slope over the last 5 bars, in % of price."""
     if len(closes) < span + 5:
-        return 0.0
+        return None
     e = _ema(closes, span)
     return (e[-1] / e[-6] - 1) * 100
 
@@ -185,11 +195,18 @@ def ladder(zones: List[Zone], price: float, atr: float) -> Optional[Dict]:
 
 
 def features(lad: Dict, price: float, atr: float, closes_1h: Sequence[float],
-             btc_closes_1h: Optional[Sequence[float]]) -> Dict[str, float]:
+             btc_closes_1h: Optional[Sequence[float]],
+             candles_1h: Optional[Sequence[Sequence[float]]] = None,
+             btc_candles_1h: Optional[Sequence[Sequence[float]]] = None) -> Dict[str, Optional[float]]:
     up, down = lad['above'][0], lad['below'][0]
     d_up = (up['lo'] - price) / atr
     d_down = (price - down['hi']) / atr
-    c4 = list(closes_1h[3::4]) if len(closes_1h) >= 4 else list(closes_1h)
+    # The 4h feature must use complete UTC-aligned candles. Sampling every
+    # fourth value from a rolling close array makes its phase depend on the
+    # buffer's starting index and does not describe exchange 4h bars.
+    from levels import resample_htf
+    c4 = [c[4] for c in resample_htf(candles_1h if candles_1h is not None else (), 4)]
+    btc_c4 = [c[4] for c in resample_htf(btc_candles_1h if btc_candles_1h is not None else (), 4)]
     hi, lo = max(closes_1h[-192:]), min(closes_1h[-192:])
     tr = [abs(closes_1h[i] - closes_1h[i - 1]) for i in range(1, len(closes_1h))]
     recent = sum(tr[-6:]) / 6 if len(tr) >= 6 else 0.0
@@ -198,11 +215,11 @@ def features(lad: Dict, price: float, atr: float, closes_1h: Sequence[float],
     return {
         'd_up': d_up, 'd_down': d_down, 's_up': up['strength'], 's_down': down['strength'],
         'p_geo': d_down / (d_up + d_down) if d_up + d_down > 0 else 0.5,
-        'trend_1h': _trend(closes_1h), 'trend_4h': _trend(c4), 'ret_24h': _ret(closes_1h, 24),
+        'trend_1h': _trend(closes_1h), 'trend_4h': _trend(c4[-25:]), 'ret_24h': _ret(closes_1h, 24),
         'ret_7d': _ret(closes_1h, 168), 'range_pos': (price - lo) / (hi - lo) if hi > lo else 0.5,
         'vol_ratio': recent / base if base else 1.0,
         'btc_ret_24h': _ret(b, 24) if b else 0.0, 'btc_ret_7d': _ret(b, 168) if b else 0.0,
-        'btc_trend_4h': _trend(list(b[3::4])) if b else 0.0,
+        'btc_trend_4h': _trend(btc_c4[-25:]),
         'n_up': float(len(lad['above'])), 'n_down': float(len(lad['below'])),
     }
 
@@ -210,26 +227,60 @@ def features(lad: Dict, price: float, atr: float, closes_1h: Sequence[float],
 # ---------------------------------------------------------------------------------------------------- model
 
 def load_model(path: str = MODEL_PATH) -> Optional[Dict]:
-    """The trained model when it beat the geometric baseline out of sample (cached by file mtime)."""
+    """Load a provenance-compatible model; cache against both artifact and manifest metadata."""
     try:
-        mtime = os.path.getmtime(path)
+        model_stat = os.stat(path)
     except OSError:
+        SCENARIO_MODEL_STATUS.update(status='missing', reason='artifact_missing')
         return None
-    if _model_cache.get('mtime') != mtime:
+    sidecar = manifest_path(path)
+    try:
+        manifest_stat = os.stat(sidecar)
+        manifest_signature = (manifest_stat.st_mtime_ns, manifest_stat.st_size, manifest_stat.st_ino)
+    except OSError:
+        manifest_signature = None
+    signature = (model_stat.st_mtime_ns, model_stat.st_size, model_stat.st_ino, manifest_signature)
+    if _model_cache.get('signature') != signature:
         try:
-            with open(path, 'rb') as fh:
-                _model_cache.update(mtime=mtime, model=pickle.load(fh))
+            if not os.path.isfile(sidecar):
+                SCENARIO_MODEL_STATUS.update(status='rejected', reason='manifest_missing')
+                _model_cache.update(signature=signature, model=None)
+                return None
+            with open(sidecar, encoding='utf-8') as manifest_file:
+                if json.load(manifest_file).get('quarantine'):
+                    SCENARIO_MODEL_STATUS.update(status='rejected', reason='legacy_quarantine')
+                    _model_cache.update(signature=signature, model=None)
+                    return None
+            model = safe_pickle_load(path, os.path.dirname(path))
+            valid, reason = validate_manifest(path, model, require=True)
+            if not valid:
+                SCENARIO_MODEL_STATUS.update(status='rejected', reason=reason)
+                _model_cache.update(signature=signature, model=None)
+                return None
+            _model_cache.update(signature=signature, model=model)
+            SCENARIO_MODEL_STATUS.update(status='accepted', reason='manifest_valid')
         except Exception as e:
             errors.report('scenarios.model', e, f"{path} unreadable: scenario cards without the model")
-            _model_cache.update(mtime=mtime, model=None)
+            SCENARIO_MODEL_STATUS.update(status='rejected', reason=type(e).__name__)
+            _model_cache.update(signature=signature, model=None)
     m = _model_cache.get('model')
     return m if m and m.get('passed') else None
 
 
-def probability(feats: Dict[str, float], model: Optional[Dict]) -> Dict:
+def probability(feats: Dict[str, Optional[float]], model: Optional[Dict]) -> Dict:
     if model is None:
         return {'p_up': feats['p_geo'], 'source': 'геометрия (без модели)'}
-    x = [[feats.get(k, float('nan')) for k in model['features']]]
+    values = []
+    for key in model['features']:
+        value = feats.get(key)
+        try:
+            value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return {'p_up': feats['p_geo'], 'source': 'геометрия (без модели: недостаточно признаков)'}
+        if not math.isfinite(value):
+            return {'p_up': feats['p_geo'], 'source': 'геометрия (без модели: недостаточно признаков)'}
+        values.append(value)
+    x = [values]
     p = float(model['clf'].predict_proba(x)[0, 1])
     if model.get('calibrator') is not None:
         p = float(model['calibrator'].predict([p])[0])
@@ -243,7 +294,8 @@ def build(candles_1h: Sequence[Sequence[float]], price: Optional[float], now_ms:
           model=None, macro_feats: Optional[Dict[str, float]] = None,
           candles_1d: Optional[Sequence[Sequence[float]]] = None,
           candles_1h_30d: Optional[Sequence[Sequence[float]]] = None,
-          symbol: Optional[str] = None, volume_24h: Optional[float] = None) -> Optional[Dict]:
+          symbol: Optional[str] = None, volume_24h: Optional[float] = None,
+          btc_candles_1h: Optional[Sequence[Sequence[float]]] = None) -> Optional[Dict]:
     """
     The scenario card of one coin from its 1h candles (>= 50) and the live price. model: None = the saved model when it
     passed, False = the geometric baseline (training), a dict = that model.
@@ -265,7 +317,7 @@ def build(candles_1h: Sequence[Sequence[float]], price: Optional[float], now_ms:
     if lad is None:
         return None
     closes = [c[4] for c in candles_1h]
-    feats = features(lad, price, atr, closes, btc_closes_1h)
+    feats = features(lad, price, atr, closes, btc_closes_1h, candles_1h, btc_candles_1h)
     feats.update(macro_feats or {})
     feats.update(htf)
     prob = probability(feats, None if model is False else model if model is not None else load_model())

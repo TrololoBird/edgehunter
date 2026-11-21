@@ -26,6 +26,14 @@ FIVE_MS = 300_000
 FIRST_MAX_R = float('inf')  # eng-110: no cap - the source's target (the Asian range's far side) stands; the 3R was ours
 
 
+def _complete_grid(rows: Sequence[Sequence[float]], start: int, end: int, interval: int = FIVE_MS) -> bool:
+    """Strictly contiguous closed bars for a session window."""
+    if end <= start:
+        return False
+    expected = list(range(start, end, interval))
+    return bool(expected) and [int(b[0]) for b in rows] == expected
+
+
 def displacement_bar(bar: Sequence[float], direction: int) -> bool:
     """ICT displacement confirmation: directional body must occupy at least half of the candle range."""
     span = float(bar[2] - bar[3])
@@ -37,9 +45,12 @@ def london_window(ts_ms: int) -> Optional[tuple]:
     local = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone(NY)
     if not 2 <= local.hour < 5:
         return None
-    day = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Build each civil-time boundary explicitly.  This avoids carrying a stale pre/post-DST offset through
+    # aware-datetime arithmetic on the spring/fall transition dates.
+    day = datetime(local.year, local.month, local.day, tzinfo=NY)
     ms = lambda t: int(t.timestamp() * 1000)               # noqa: E731
-    asia_start = (day - timedelta(days=1)).replace(hour=20)
+    prev = local.date() - timedelta(days=1)
+    asia_start = datetime(prev.year, prev.month, prev.day, 20, tzinfo=NY)
     return ms(day.replace(hour=2)), ms(day.replace(hour=5)), ms(asia_start), ms(day)
 
 
@@ -52,10 +63,11 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
     if w is None:
         return None
     start, _, a0, a1 = w
-    asia = [b for b in bars5 if a0 <= b[0] < a1]
-    inside = [b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms]
+    asia = sorted((b for b in bars5 if a0 <= b[0] < a1), key=lambda b: b[0])
+    inside = sorted((b for b in bars5 if b[0] >= start and b[0] + FIVE_MS <= now_ms), key=lambda b: b[0])
     # eng-138: the whole Asian range (48 final 5m bars, 20:00-00:00 NY): a missing bar may hold its high / low
-    if len(asia) < 48 or len(inside) < 3:
+    inside_end = (inside[-1][0] + FIVE_MS) if inside else start
+    if not _complete_grid(asia, a0, a1) or len(inside) < 3 or not _complete_grid(inside, start, inside_end):
         return None
     a_hi, a_lo = max(b[2] for b in asia), min(b[3] for b in asia)
     for d in (1, -1):
@@ -107,7 +119,7 @@ def po3(bars5: Sequence[Sequence[float]], now_ms: int, pdh: Optional[float] = No
 
 
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan          # noqa: E402
-from zones import merge                                              # noqa: E402
+from zones import liq_only, merge                                              # noqa: E402
 
 
 def _po3_targets(zones, anchor, direction, atr, first, fillers):
@@ -121,7 +133,8 @@ def _po3_targets(zones, anchor, direction, atr, first, fillers):
             targets.append(price); sources.append("day's draw (PDH / PDL)")
     candidates = sorted((direction * ((z.lo if direction > 0 else z.hi) - targets[-1]),
                          z.lo if direction > 0 else z.hi, z.label)
-                        for z in zones if direction * ((z.lo if direction > 0 else z.hi) - targets[-1]) >= gap)
+                        for z in zones if not liq_only(z)
+                        and direction * ((z.lo if direction > 0 else z.hi) - targets[-1]) >= gap)
     for _, price, label in candidates:
         if len(targets) >= 3:
             break
@@ -193,7 +206,7 @@ class Po3Strategy(Strategy):
                          invalid=sig['anchor_extreme'], fix_invalid=True, missable=True,
                          stop_ref=sig['anchor_extreme'],
                          # system_levels takes TP1 from exit['tp'] (eng-94)
-                         exit={'stop': ['ref', 0.0], 'atr': atr,
+                         exit={'stop': ['price', sig['anchor_extreme']], 'atr': atr,
                                'tp': ['level', sig['po3_target'], 1.0, None],
                                'stop_src': "beyond the Judas swing's extreme",
                                'tp_src': "the Asian range's other side"},

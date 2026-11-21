@@ -42,3 +42,5 @@ demo_unknown.json
 notify_outbox.json
 smallcap_coins.json
 .claude/*.bak
+# Runtime-fetched official macro calendar; the tracked model is an immutable seed.
+data/official_calendar.json

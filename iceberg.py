@@ -1,13 +1,10 @@
-"""
-Iceberg detection: how a whale really accumulates (resting limit orders refilled at one price), not the aggressive
-market sweeps the old "whales" counted (measured x1.0: those were liquidations, stops and chasers).
+"""Detect a *replenishment-like* public L2 pattern.
 
-For the hot coins with a live Binance book (depth20 @500ms): at one price level of one side, the volume EXECUTED
-against it (aggTrades whose taker hit that side at that price) exceeds `multiple` x the largest size ever VISIBLE there
-while the level held (no trade through it), and is at least `min_usd`. A bid iceberg = a hidden buyer absorbing sells
-("whale buying"), an ask iceberg the hidden seller. Journaled as features (`iceberg_net_5m`: bid - ask iceberg USD over
-5 minutes, `iceberg_n_5m`) and logged; measured before anything trades on it.
-Sources: Bookmap's iceberg tracker, the usual definition (executed > displayed at a level that refills).
+The detector compares executions and aggregate displayed size at one price.
+Binance public depth messages do not contain order identifiers or a complete
+queue, so the result cannot identify an iceberg order, a hidden participant or
+an intent. The feature is observational and is unavailable when book
+coverage/sequence continuity is not valid.
 """
 import logging
 import time
@@ -38,27 +35,27 @@ class _Level:
 
 
 class IcebergDetector:
-    """
-    Bids and asks are kept apart so a trade only touches its own side: scanning every tracked level on every aggTrade
-    stalled the event loop on ETH / BTC (live 2026-10-01, watchdog: iceberg.on_trade). A level must REFILL - be shown
-    again in >= `min_refills` book snapshots after trades hit it - before it counts: depth20 arrives every 500 ms, so
-    "executed > the largest size ever shown" alone fired on every busy ETH level where new orders simply arrived
-    between two snapshots (112 of 157 events on ETH, "$61k executed vs $212 shown").
-    """
+    """Track aggregate level replenishment without attributing an order."""
 
     def __init__(self):
         # symbol -> side (+1 bid / -1 ask) -> price -> level
         self.levels: Dict[str, Dict[int, Dict[float, _Level]]] = {}
         self.events: Dict[str, Deque[Tuple[int, int, float, float]]] = {}   # symbol -> (ts, side, price, usd)
+        self.coverage: Dict[str, Tuple[bool, int, str]] = {}
     def invalidate(self, symbol: str):
         self.levels.pop(symbol, None)
         self.events.pop(symbol, None)
+        self.coverage[symbol] = (False, 0, 'sequence_resync_or_no_book')
 
     def clear_symbol(self, symbol: str):
         self.invalidate(symbol)
 
     def on_book(self, symbol: str, bids, asks, ts_ms: int):
         """Largest size seen at each price of the live book (USD); a level traded against and shown again = a refill."""
+        if not bids or not asks:
+            self.coverage[symbol] = (False, int(ts_ms), 'insufficient_l2_coverage')
+            return
+        self.coverage[symbol] = (True, int(ts_ms), 'ok')
         book = self.levels.setdefault(symbol, {1: {}, -1: {}})
         for side, rows in ((1, bids), (-1, asks)):
             levels = book[side]
@@ -115,14 +112,19 @@ class IcebergDetector:
         if not lvl.fired and lvl.visible > 0 and lvl.refills >= cfg.min_refills and lvl.executed >= cfg.min_usd and                 lvl.executed >= cfg.multiple * lvl.visible:
             lvl.fired = True
             self.events.setdefault(symbol, deque(maxlen=200)).append((ts_ms, side, price, lvl.executed))
-            logger.info(f"Iceberg {'BID' if side > 0 else 'ASK'} {symbol} @ {price:.6g}: ${lvl.executed:,.0f} "
+            logger.info(f"Replenishment-like {'BID' if side > 0 else 'ASK'} {symbol} @ {price:.6g}: ${lvl.executed:,.0f} "
                         f"executed vs ${lvl.visible:,.0f} ever shown, {lvl.refills} refills "
                         f"({max(0, ts_ms - lvl.first_ms) / 1000:.0f}s)")
 
     def features(self, symbol: str, window_sec: int = 300, now_ms: float = None) -> Dict[str, float]:
         now_ms = now_ms or time.time() * 1000
+        valid, last_book, reason = self.coverage.get(symbol, (False, 0, 'insufficient_l2_coverage'))
+        if not valid or not last_book or now_ms - last_book > CONFIG.depth.stale_sec * 1000:
+            return {'iceberg_net_5m': None, 'iceberg_n_5m': None,
+                    'iceberg_reason': reason if not valid else 'stale_l2_coverage'}
         ev = [e for e in self.events.get(symbol, ()) if now_ms - e[0] <= window_sec * 1000]
-        return {'iceberg_net_5m': sum(e[1] * e[3] for e in ev), 'iceberg_n_5m': float(len(ev))}
+        return {'iceberg_net_5m': sum(e[1] * e[3] for e in ev), 'iceberg_n_5m': float(len(ev)),
+                'iceberg_reason': 'ok'}
 
     def prune(self, now_ms: float = None):
         now_ms = now_ms or time.time() * 1000

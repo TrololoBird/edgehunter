@@ -1,21 +1,9 @@
-"""
-B9 (eng-59): the archive replay of the LIVE card lifecycle for every strategy - the live SignalBook stepped minute by
-minute over the Binance public archive, fed by the live detectors (strategies.structure.build_maps / build_context and
-LiveDetector for the 15m-close events, strategies.loopside.LoopDetectors for the loop-side ones, the scorer's phases and
-Tier-0 rules for the continuation), with the scanner's hooks rebuilt from history. Its output is what pretraining /
-meta-labeling and the per-strategy archive studies (plan 2.3-2.9, 3.1) need: every card and every entry (passed and
-vetoed) with the card's own net result (`final_r`, eng-58: fees, slippage by liquidity, funding).
+"""Quarantined historical replay utility.
 
-What the archive cannot give (the live bot has it, the replay runs without - an estimate, not the live result):
-- other venues' flows / OI / funding, liquidations (so no liquidation-cascade setups: FLUSH / SQUEEZE REVERSAL), order
-  books (no walls / liquidity bands / book confirmations), Hyperliquid accounts, Coinbase premium, whale sweeps;
-- confirmations are Binance-only (futures / spot taker delta from the 1m candles, OI from the 5-minute metrics, VSA,
-  CVD divergence); the footprint order-flow reading does not exist;
-- pools / the crowd limit / BTC's bias across coins hold only for the coins replayed together (one SignalBook);
-- prices are final 1m candles (the live bot sees each trade); a scan runs once per minute (live: every few seconds).
-
-Run:  .venv\\Scripts\\python replay.py --months 6 --coins 20 [--workers 1] [--days N for a smoke test]
-Writes data/replay/<run>/cards.parquet and entries.parquet (resumable per coin group).
+This module is not a live-equivalent replay: public OHLCV does not contain
+queue position, order-book history, complete liquidation flow, venue state, or
+release-time revisions. It is disabled while the v2 strategy registry is empty
+and must not write working journal rows or train models.
 """
 import argparse
 import logging
@@ -461,8 +449,13 @@ class _Frames:
 
 def _entry_row(e, now_ms: int) -> Dict:
     lv = e.levels or {}
+    reason = e.vetoed
+    is_benchmark = bool(getattr(e, 'is_benchmark_variant', False) or
+                        (isinstance(reason, str) and (reason.startswith('variant_') or
+                                                     reason in {'flow_entry', 'reclaim_entry', 'weak_mss'})))
     return {'ts': now_ms, 'symbol': e.symbol, 'setup': e.group_key, 'strategy': e.mode, 'direction': e.direction,
-            'stage': 'entry', 'vetoed': e.vetoed, 'entry': lv.get('entry'), 'sl': lv.get('sl'), 'tp1': lv.get('tp1'),
+            'stage': 'entry', 'vetoed': reason, 'is_benchmark_variant': int(is_benchmark),
+            'entry': lv.get('entry'), 'sl': lv.get('sl'), 'tp1': lv.get('tp1'),
             'tp2': lv.get('tp2'), 'tp3': lv.get('tp3'), 'rr_tp1': lv.get('rr_tp1'), 'sl_src': lv.get('sl_src'),
             'limit_entry': lv.get('limit_entry'), 'volume_24h': (e.sig or {}).get('volume_24h'),
             'funding': (e.sig or {}).get('funding_rate'),
@@ -518,7 +511,7 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
                         f"{len(rp.entries)} entries / vetoes, {time.time() - started:.0f}s")
     # every entry - passed or vetoed - replayed like the journal does (levels.simulate over the trade's lifetime, net
     # of the round-trip fee): the veto's effect is measured on the same geometry (stats.vetoes_table's question)
-    from levels import simulate
+    from core.strategy_engine import MarketSnapshot, StrategyEngine
     from stats import net_r
     ttl = CONFIG.levels.trade_ttl_sec * 1000
     for e in rp.entries:
@@ -530,8 +523,10 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
         a = int(np.searchsorted(c.m_ts, e['ts'], side='left'))
         b = int(np.searchsorted(c.m_ts, e['ts'] + ttl, side='left'))
         lv = {k: e.get(k) for k in ('entry', 'sl', 'tp1', 'tp2', 'tp3', 'limit_entry', 'volume_24h', 'symbol')}
-        res = simulate(lv, e['direction'], c.fut[a:b, :6].tolist(), funding_8h=e.get('funding'),
-                       funding_hours=e.get('funding_hours'))
+        snapshot = MarketSnapshot(int(e['ts'] + MINUTE_MS), e['symbol'],
+                                  tuple(tuple(x) for x in c.fut[a:b, :6].tolist()))
+        res = StrategyEngine.manage_position(snapshot, lv, e['direction'], funding_8h=e.get('funding'),
+                                             funding_hours=e.get('funding_hours'))
         e['outcome'] = res.get('outcome')
         for col in ('r_tp1', 'r_tp2', 'r_be'):
             e[col] = net_r({col: res.get(col), 'entry': lv['entry'], 'entry_fill': res.get('entry_fill'),
@@ -543,6 +538,9 @@ def run(coins: List[Tuple[str, str, Optional[str]]], start: date, end: date, out
 
 
 def main():
+    from strategies import STRATEGIES
+    if not STRATEGIES:
+        raise SystemExit("v2 historical replay is disabled; public OHLCV is not a live-equivalent execution source")
     from history import Archive
     from pretrain import _spot_pair
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', datefmt='%H:%M:%S')

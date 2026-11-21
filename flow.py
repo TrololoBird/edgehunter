@@ -91,13 +91,13 @@ class VenueFlow:
                     self.counts[lo:hi] = 0
         self.last_sec = sec
 
-    def add(self, row: int, sec: int, field: int, usd: float, count: int = 0):
+    def add(self, row: int, sec: int, field: int, usd: float, count: int = 0, track_gap: bool = True):
         if sec > self.last_sec:
             self.advance(sec)
         elif sec <= self.last_sec - self.H:
             return  # older than the buffer
         if sec > self.last_msg_sec:
-            if self.last_msg_sec and sec - self.last_msg_sec > GAP_SEC:
+            if track_gap and self.last_msg_sec and sec - self.last_msg_sec > GAP_SEC:
                 # a whole venue silent for this long is a dropped / stalled feed, not a quiet market: the stretch is
                 # unknown coverage (zeros in the ring there are 'no data', never 'no trades')
                 self.gaps = (self.gaps + [(self.last_msg_sec, sec)])[-100:]
@@ -161,6 +161,7 @@ class FlowStore:
         self._hour_cache = (0, np.zeros(0))
         self.rows: Dict[str, int] = {}
         self._free: List[int] = []
+        self.seed_observations: Dict[Tuple[str, str], deque] = {}
         self.venues: Dict[str, VenueFlow] = {
             v: VenueFlow(v, cfg.flow_history_sec if v in long_history else cfg.flow_history_short_sec, capacity)
             for v in venues
@@ -195,6 +196,8 @@ class FlowStore:
     def unregister(self, symbol: str):
         row = self.rows.pop(symbol, None)
         if row is not None:
+            for key in [key for key in self.seed_observations if key[1] == symbol]:
+                self.seed_observations.pop(key, None)
             self._free.append(row)
             if self._hour_cache is not None and self._hour_cache[1].size > 0:
                 if row < self._hour_cache[1].shape[0]:
@@ -207,16 +210,19 @@ class FlowStore:
     # ------------------------------------------------------------------ writes (hot path)
 
     def seed_minute(self, venue: str, symbol: str, minute_ms: int, buy_usd: float, sell_usd: float, trades: int):
-        """A closed minute from REST (a kline's taker buy / total quote volume) at its middle second: the 5m windows
-        are valid right after a start instead of 5 minutes later. Only minutes before the streams started."""
-        row = self.rows.get(symbol)
-        flow = self.venues.get(venue)
-        if row is None or flow is None:
+        """Store a REST candle aggregate separately; it is never written into the event-level flow ring."""
+        if symbol not in self.rows or venue not in self.venues:
             return
-        sec = int(minute_ms // 1000) + 30
-        flow.add(row, sec, BUY, buy_usd, trades // 2)
-        flow.add(row, sec, SELL, sell_usd, trades - trades // 2)
-        flow.first_sec = min(flow.first_sec, sec - 30) if flow.first_sec else sec - 30   # the seeded minute is coverage
+        try:
+            minute_ms, buy_usd, sell_usd, trades = int(minute_ms), float(buy_usd), float(sell_usd), int(trades)
+        except (TypeError, ValueError, OverflowError):
+            return
+        if (minute_ms <= 0 or trades < 0 or not math.isfinite(buy_usd) or not math.isfinite(sell_usd)
+                or buy_usd < 0 or sell_usd < 0):
+            return
+        key = (venue, symbol)
+        self.seed_observations.setdefault(key, deque(maxlen=60)).append(
+            (minute_ms, buy_usd, sell_usd, trades, 'rest_ohlcv_aggregate'))
 
     def trade(self, venue: str, symbol: str, ts_ms: int, usd: float, side: int, recv_ms: Optional[float] = None):
         row = self.rows.get(symbol)
@@ -267,14 +273,18 @@ class FlowStore:
             return 0.0
         return float(self.net(venues, seconds, now_sec)[row])
 
-    def symbol_range(self, symbol: str, field: int, start_sec: int, end_sec: int, now_sec: Optional[int] = None) -> float:
+    def symbol_range(self, symbol: str, field: int, start_sec: int, end_sec: int,
+                     now_sec: Optional[int] = None, venues: Optional[Sequence[str]] = None) -> float:
         """One field summed over [start_sec, end_sec) across every venue for one symbol (seconds still buffered)."""
         row = self.rows.get(symbol)
         if row is None:
             return 0.0
         now_sec = int(now_sec if now_sec is not None else time.time())
         total = 0.0
-        for flow in self.venues.values():
+        selected = (self.venues.get(v) for v in venues) if venues is not None else self.venues.values()
+        for flow in selected:
+            if flow is None:
+                continue
             total += flow.row_range_sum(field, row, start_sec, end_sec, now_sec)
         return total
 
@@ -293,7 +303,8 @@ class FlowStore:
         """
         Per symbol, the live order-flow metrics used by Tier-0, scoring and the dashboard:
         cvd_<w> (Binance futures), agg_cvd_<w> (all futures venues), agg_spot_cvd_5m (spot venues),
-        liq_long_5m / liq_short_5m (all venues, USD), venue shares of the 5m gross flow.
+        liq_long_5m / liq_short_5m (all venues, USD). Legacy top_venue_share / venues_active retain their
+        net-flow definitions; explicitly named top_gross_venue_share / venues_flow_active describe gross activity.
         """
         now_sec = int(now_sec if now_sec is not None else time.time())
         liq_window = CONFIG.liquidations.window_sec
@@ -305,6 +316,8 @@ class FlowStore:
         # Each futures venue's 5m net once: the aggregate, Binance's own and the venue shares all come from it (they
         # were summed three times over, a third of the Tier-0 pass)
         per_venue_net = {v: self.net((v,), 300, now_sec) for v in futures}
+        per_venue_gross = {v: self.window((v,), BUY, 300, now_sec) + self.window((v,), SELL, 300, now_sec)
+                           for v in futures}
         zeros = np.zeros(self.capacity)
         cols = {
             'cvd_60s': self.net(('binance',), 60, now_sec),
@@ -326,9 +339,54 @@ class FlowStore:
                 metrics['top_venue_net'] = float(top_net)
             else:
                 metrics['top_venue'], metrics['top_venue_share'], metrics['top_venue_net'] = '', 0.0, 0.0
-            metrics['venues_active'] = int(sum(1 for a in per_venue_net.values() if a[row] != 0))
+            gross_total = sum(a[row] for a in per_venue_gross.values())
+            net_total = sum(a[row] for a in per_venue_net.values())
+            active_gross = [(v, a[row]) for v, a in per_venue_gross.items() if a[row] > 0]
+            if gross_total > 0:
+                gross_leader, gross_leader_value = max(active_gross, key=lambda x: x[1])
+                metrics['top_gross_venue'] = gross_leader
+                metrics['top_gross_venue_share'] = float(gross_leader_value / gross_total)
+            else:
+                metrics['top_gross_venue'] = ''
+                metrics['top_gross_venue_share'] = 0.0
+            metrics['gross_flow_5m'] = float(gross_total)
+            metrics['net_flow_5m'] = float(net_total)
+            metrics['venues_flow_active'] = int(len(active_gross))
+            metrics['net_venues_active'] = int(sum(1 for a in per_venue_net.values() if a[row] != 0))
+            metrics['net_top_venue_share'] = metrics['top_venue_share']
+            # Legacy field retained for API compatibility. Its old net-active definition is documented
+            # by net_venues_active; new consumers should use venues_flow_active for venue participation.
+            metrics['venues_active'] = metrics['net_venues_active']
             out[symbol] = metrics
         return out
+
+    def quality(self, symbol: str, now_sec: Optional[int] = None, window_sec: int = 300) -> Dict[str, object]:
+        """Return a real coverage verdict for a symbol's futures flow window.
+
+        ``snapshot`` intentionally emits zero-valued metric keys for every registered symbol.  Key presence therefore
+        cannot mean that a venue actually delivered data.  This method checks the ring-buffer start, per-symbol first
+        print, transport gaps and the freshness bound for the requested window. ``ok`` is the legacy minimum gate
+        (Binance when present, otherwise at least half of the configured futures venues). ``aggregate_ok`` is stricter:
+        every configured futures venue included in cross-venue sums must be covered.
+        """
+        now_sec = int(now_sec if now_sec is not None else time.time())
+        row = self.rows.get(symbol)
+        if row is None:
+            return {'ok': False, 'coverage': 0.0, 'reason': 'unregistered symbol', 'venues': []}
+        start, end = now_sec - int(window_sec), now_sec + 1
+        configured = set(CONFIG.venues.enabled) | {'binance'}
+        active = [v for v in FUTURES_VENUES if v in self.venues and v in configured]
+        covered = [v for v in active if self.venues[v].covers(start, end, row)]
+        coverage = len(covered) / len(active) if active else 0.0
+        binance_ok = 'binance' not in active or 'binance' in covered
+        enough = bool(covered) and (binance_ok if 'binance' in active else coverage >= 0.5)
+        reason = None if enough else ('binance coverage missing' if not binance_ok else 'insufficient venue coverage')
+        aggregate_ok = bool(active) and len(covered) == len(active)
+        return {'ok': bool(enough), 'coverage': float(coverage), 'reason': reason, 'venues': covered,
+                'binance_ok': bool('binance' not in active or 'binance' in covered),
+                'aggregate_ok': aggregate_ok,
+                'aggregate_reason': None if aggregate_ok else 'incomplete configured venue coverage',
+                'configured_venues': active}
 
     def micro_features(self, symbol: str, minutes: Sequence[Sequence[float]], now_sec: Optional[int] = None,
                        window: int = 3600, buckets: int = 50) -> Dict[str, Optional[float]]:
@@ -402,9 +460,12 @@ class FlowStore:
         best = None
         for venue, net in per_venue.items():
             f = net[:window // 60 * 60].reshape(-1, 60).sum(axis=1)
-            # flow of minute k vs the return of minute k + 1 (rets[k] is already the minute after t's candle: rets[1:]
-            # compared it with the return two minutes later)
-            x, y = f[:-1], rets[:-1]
+            # ``rets[k]`` is the return during the same minute as ``f[k]``.
+            # A lead statistic must use the following complete minute, so
+            # flow at k is paired with return k+1.  Pairing f[k] with rets[k]
+            # leaks the contemporaneous return into a feature labelled
+            # "next-minute".
+            x, y = f[:-1], rets[1:]
             ok = ~np.isnan(y) & (x != 0)
             if ok.sum() < 20 or x[ok].std() == 0 or y[ok].std() == 0:
                 continue
@@ -415,9 +476,10 @@ class FlowStore:
             out['lead_venue'], out['lead_corr'] = best
         return out
 
-    def venue_status(self, now_ms: Optional[float] = None) -> Dict[str, Dict[str, float]]:
+    def venue_status(self, now_ms: Optional[float] = None) -> Dict[str, Dict[str, object]]:
         now_ms = now_ms if now_ms is not None else time.time() * 1000
-        return {v: {'messages': f.messages, 'lag_ms': f.lag_ms,
+        return {v: {'messages': f.messages, 'flow_event_count': f.messages, 'lag_ms': f.lag_ms,
+                    'last_event_ms': f.last_event_ms or None, 'last_receive_ms': f.last_recv_ms or None,
                     'silent_sec': (now_ms - f.last_recv_ms) / 1000 if f.last_recv_ms else None}
                 for v, f in self.venues.items()}
 

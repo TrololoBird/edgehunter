@@ -1,14 +1,4 @@
-"""
-ICT / SMC readings of a plan (hypotheses, measured by the journal - never proven edges; Osler's NY Fed SR150 backs only
-the stop clustering beyond round numbers / levels):
-
-- protected swing: the last 15m pivot on the stop side that produced a break of structure (a later close beyond the
-  opposite pivot before it). While it holds, the idea holds: the stop goes beyond it, not right behind an obvious
-  unswept pool (equal lows, the day's low: the stops a raid takes before the move).
-- premium / discount: where the entry sits in the dealing range (the last 48 1h candles' high - low), for the trade's
-  direction: 0 = the cheapest end (a long at the range low), 1 = the dearest. ICT buys only in discount (< 0.5).
-  Journaled as `range_pos`, split in stats.py; a filter only if the journal proves it.
-"""
+'Computes configured market-structure readings and a premium/discount position within a dealing\nrange. These are project labels and hypotheses; no external attribution is asserted.'
 from typing import Optional, Sequence, Tuple
 
 PIVOT = 3
@@ -18,7 +8,7 @@ RANGE_HOURS = 48
 
 def protected_swing(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
                     direction: int) -> Optional[float]:
-    """The price of the protected swing (the most recent one), None without a break of structure in the window."""
+    'Returns the most recent protected-swing price under the configured pivot and structure rule.'
     n = len(closes)
     start = max(PIVOT, n - LOOKBACK)
     piv_hi = [i for i in range(start, n - PIVOT)
@@ -38,11 +28,7 @@ def protected_swing(highs: Sequence[float], lows: Sequence[float], closes: Seque
 
 
 def dealing_range(h1: Sequence[Sequence[float]], k: int = 3) -> Optional[Tuple[float, float]]:
-    """
-    ICT's dealing range (eng-51): the leg between the latest significant swing low and swing high (1h pivots with k
-    candles on each side), equilibrium at its 50%. Was the 48h high / low window - a time box is not ICT's definition.
-    Falls back to the window while the 1h history holds no pivot pair.
-    """
+    'Builds a dealing range from configured pivots, with a window fallback and midpoint equilibrium.\nNo external attribution is claimed.'
     rows = list(h1)
     if len(rows) < 12:
         return None
@@ -67,7 +53,7 @@ def dealing_range(h1: Sequence[Sequence[float]], k: int = 3) -> Optional[Tuple[f
 
 
 def range_position(rng: Optional[Sequence[float]], price: float, direction: int) -> Optional[float]:
-    """0 = the cheapest end of the dealing range for this direction, 1 = the dearest (clipped)."""
+    'Returns the clipped position of price within the configured dealing range for the trade direction.'
     if not rng:
         return None
     lo, hi = rng
@@ -77,12 +63,7 @@ def range_position(rng: Optional[Sequence[float]], price: float, direction: int)
 
 
 def fvg_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int) -> Optional[dict]:
-    """
-    ICT entry after a liquidity sweep: displacement (a candle with a body >= half its range in the trade's direction)
-    that leaves a fair value gap (long: low[i] > high[i-2]) and shifts structure (a close beyond the highest high /
-    lowest low since the sweep, before the displacement); the entry is the first later candle that retraces into the
-    gap and closes without closing through it. A close through the gap kills it; the next displacement is searched.
-    """
+    'Evaluates a configured sweep/displacement/gap/structure-shift trigger. The exact thresholds are\nproject rules, not a verified published model.'
     start = next((k for k, x in enumerate(ltf) if x[0] + interval_ms > since_ms), None)
     if start is None or len(ltf) - start < 4:
         return None
@@ -128,7 +109,7 @@ def fvg_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, i
 
 
 def _contiguous(ltf: Sequence[Sequence[float]], interval_ms: int):
-    """The run of time-contiguous bars ending at the last one (a gap / MSS across a hole is no structure)."""
+    'Returns the contiguous bar run ending at the latest bar; time gaps break the run.'
     k0 = len(ltf) - 1
     while k0 > 0 and int(ltf[k0][0]) - int(ltf[k0 - 1][0]) == interval_ms:
         k0 -= 1
@@ -136,8 +117,7 @@ def _contiguous(ltf: Sequence[Sequence[float]], interval_ms: int):
 
 
 def raid_swing(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int) -> Optional[float]:
-    """The swing the raid came from: the last 3-candle pivot high (long; low for a short) of the bars before the sweep
-    at `since_ms` (up to 48 bars back) - the level fvg_setup's structure shift must close beyond. None without one."""
+    'Returns the configured pre-sweep pivot used as the structure reference.'
     ltf = _contiguous(ltf, interval_ms)
     start = next((k for k, x in enumerate(ltf) if x[0] + interval_ms > since_ms), None)
     if start is None or start < 3:
@@ -151,13 +131,7 @@ def raid_swing(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, in
 
 
 def fvg_setup(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int) -> Optional[dict]:
-    """
-    ICT's 2022 model after a liquidity sweep at `since_ms` (eng-58): a displacement candle (body >= half its range, in
-    the trade's direction) that CLOSES BEYOND THE SWING THE RAID CAME FROM - the last 3-candle swing high (long; low
-    for a short) of the bars before the sweep, the market structure shift - and leaves a fair value gap. Returns the
-    gap and its consequent encroachment (CE, 50%) for a resting limit; the entry is that limit's fill (touch_trigger),
-    not a later candle's close. eng-36..57 took any close above the highest high SINCE the sweep as the shift.
-    """
+    'Evaluates a configured sweep/displacement/FVG candidate and returns its gap and CE reference.\nAny limit fill is a simulation assumption; this is not claimed as an original published model.'
     # review V02: resample drops an incomplete bar, so neighbours in the list can be hours apart - only the run of
     # time-contiguous bars ending at the last one is read (a gap / MSS across a hole is no structure)
     k0 = len(ltf) - 1
@@ -200,10 +174,7 @@ def fvg_setup(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, int
 
 def touch_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int,
                   zone_lo: float, zone_hi: float) -> Optional[dict]:
-    """
-    Sam Seiden's entry: a resting limit at the fresh zone's PROXIMAL line, filled by the first candle that trades into
-    it (at the open if it gapped past the line); the extreme is that candle's wick.
-    """
+    'Models a limit entry at the configured proximal line when a candle trades into it. A price touch is\nnot evidence of actual queue execution; no external attribution is asserted.'
     for x in ltf:
         if x[0] + interval_ms <= since_ms:
             continue
@@ -217,12 +188,7 @@ def touch_trigger(ltf: Sequence[Sequence[float]], direction: int, since_ms: int,
 
 def touch_confirm(ltf: Sequence[Sequence[float]], direction: int, since_ms: int, interval_ms: int,
                   zone_lo: float, zone_hi: float) -> Optional[dict]:
-    """
-    eng-105, the owner: the touch confirmed by a CLOSE - the first closed trigger candle (since the zone was reached)
-    that traded into the zone and closed back beyond its proximal line on the trade's side (a long: low <= zone_hi and
-    close > zone_hi; a 'zone' of one price - a CE - the same with that price). The entry is that close; the extreme
-    is the lowest low (highest high) since the zone was reached. A close through the zone's far side is no entry.
-    """
+    'Evaluates a close-confirmed zone touch under the configured rule. Owner and engineering provenance\nare removed; the returned entry is a model reference price.'
     seen = [x for x in ltf if x[0] + interval_ms > since_ms]
     for k, x in enumerate(seen):
         hi, lo, close = x[2], x[3], x[4]

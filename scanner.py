@@ -2,6 +2,7 @@ import asyncio
 import html
 import json
 import logging
+import math
 import errors
 import os
 import platform
@@ -33,6 +34,7 @@ from indicators import (TIER0_COLUMNS, calculate_tier0_metrics, compute_indicato
                         seasonal_scale)
 from notifier import Notifier
 from scorer import PhaseScorer, score_closed, signals_from_rows
+from strategies import STRATEGIES
 from strategies import confirm
 from strategies.detect import LiveDetector
 from strategies.structure import PART_COLUMNS, build_maps, part_candles, trend_w_of
@@ -71,7 +73,7 @@ def _orb_shadow_row(found: Dict):
                                             'tp1': None, 'tp2': None, 'tp3': None},
                            plan={'no_tp': True, 'tf': '15m'}, entered_at=found['event_ts'] / 1000,
                            created=found['anchor_ts'] / 1000, vetoed='variant_orb_open', confirms={},
-                           of_confirm=None, limit_variant=False)
+                           of_confirm=None, limit_variant=False, is_benchmark_variant=True)
 
 
 def make_entry_intent(s):
@@ -85,12 +87,13 @@ def make_entry_intent(s):
         plan=copy.deepcopy(getattr(s, 'plan', None)),
         sig=dict(getattr(s, 'sig', None) or {}),
         units=list(getattr(s, 'units', None) or []),
+        is_benchmark_variant=bool(getattr(s, 'is_benchmark_variant', False)),
     )
 
 class _FrameLookup:
     """
-    dict-like .get(symbol) for the tracked cards: the symbol's closed 15m futures candles with indicators plus
-    the in-progress candle's OHLC (so the 15m leg follows the live high / low between candle closes).
+    dict-like .get(symbol, include_live=False) for the tracked cards.  Closed 15m candles are the default; only a
+    strategy that explicitly opts into ``follows_live_candle`` receives the in-progress OHLC.
     `parts` = the closed frame split per symbol once per heavy pass: filtering the whole universe's frame for every
     card on every scan blocked the event loop for over a second with ~40 cards.
     """
@@ -98,24 +101,25 @@ class _FrameLookup:
     def __init__(self, parts: Dict[str, pl.DataFrame], markets: Dict[str, MarketData]):
         self.parts = parts
         self.markets = markets
-        self._memo: Dict[str, Optional[pl.DataFrame]] = {}
+        self._memo: Dict[tuple, Optional[pl.DataFrame]] = {}
 
-    def get(self, symbol: str) -> Optional[pl.DataFrame]:
+    def get(self, symbol: str, include_live: bool = False) -> Optional[pl.DataFrame]:
         # one lookup serves one scan: a coin's frame is built once however many cards / gates ask for it
-        if symbol in self._memo:
-            return self._memo[symbol]
+        cache_key = (symbol, bool(include_live))
+        if cache_key in self._memo:
+            return self._memo[cache_key]
         part = self.parts.get(symbol)
         if part is None or part.is_empty():
-            self._memo[symbol] = None
+            self._memo[cache_key] = None
             return None
         md = self.markets.get(symbol)
-        live = md.live_candle('futures') if md else None
+        live = md.live_candle('futures') if include_live and md else None
         if live and live['timestamp'] > part['timestamp'][-1]:
             # (measured: this diagonal concat ~2 ms; part.clear(1) + vstack of the ~110-column frame 67 ms)
             row = {c: live.get(c) for c in ('timestamp', 'open', 'high', 'low', 'close')}
             row.update(symbol=symbol, atr=part['atr'][-1])
             part = pl.concat([part, pl.DataFrame([row])], how='diagonal_relaxed')
-        self._memo[symbol] = part
+        self._memo[cache_key] = part
         return part
 
 
@@ -164,7 +168,9 @@ class Scanner:
         self.ext = ExternalData(self.fetcher)
         self.book = SignalBook()
         from smallcap import SmallCapWatch
-        self.smallcap = SmallCapWatch(self.fetcher) if CONFIG.strategies.smallcap_watch else None
+        # Small-cap pump/dump detection is legacy strategy logic.  It is not
+        # constructed while the source-gated v2 registry is empty.
+        self.smallcap = SmallCapWatch(self.fetcher) if CONFIG.strategies.smallcap_watch and STRATEGIES else None
         self.market_data: Dict[str, MarketData] = {}
         self._running = False
         self._tasks: List[asyncio.Task] = []
@@ -214,7 +220,7 @@ class Scanner:
         self.book.tracked_of = self.fetcher.tracked_of
         self.book.untrack = self.fetcher.untrack
         self.book.plan_key_of = self._plan_key
-        self.book.map_ready_of = lambda symbol: symbol in self._level_raw
+        self.book.map_ready_of = self._level_map_ready
         self.book.btc_bias_of = self._btc_bias
         self.book.market_state_of = lambda: self.market_state
         self._micro: Dict[str, tuple] = {}
@@ -233,6 +239,11 @@ class Scanner:
         self._context_task: Optional[asyncio.Task] = None
         self._maps_pool = None          # ProcessPoolExecutor (one worker) for level maps: see _maps_executor
         self._recorder_pool = None      # isolated from maps: recording must survive a map-worker crash
+        self._pool_metrics = {
+            'maps_passes': 0, 'maps_jobs': 0, 'maps_payload_bytes': 0,
+            'maps_wall_ms': 0.0, 'maps_max_payload_bytes': 0,
+            'maps_max_wall_ms': 0.0, 'maps_broken': 0,
+        }
         self._blind_at: Dict[Tuple[str, str], float] = {}   # (symbol, strategy) -> when a history gate last stopped it
         from strategies.loopside import LoopDetectors
         # eng-59: the loop-side detectors live in strategies/loopside.py (the archive replay runs the same code)
@@ -464,32 +475,51 @@ class Scanner:
                                         ret_std=md.ret_std * ret_scale if md.ret_std else md.ret_std, oi_std=md.oi_std,
                                         avg_minute_usd=md.avg_minute_usd * vol_scale if md.avg_minute_usd else md.avg_minute_usd)
             flow = snapshot.get(symbol) or {}
-            has_flow = len(flow) > 0
-            m['data_quality_ok'] = has_flow
-            m['whale_net_5m'] = whales.net_units(symbol, CONFIG.tier0.window_sec, now_ms)
-            m['cluster'] = float(whales.cluster(symbol, now_ms))
+            flow_quality = self.fetcher.flow.quality(symbol, int(now_ms // 1000), CONFIG.tier0.window_sec)
+            has_flow = bool(flow_quality.get('ok'))
+            has_aggregate_flow = bool(flow_quality.get('aggregate_ok'))
+            ticker_fresh = bool(md.ticker_samples and now_ms - md.ticker_samples[-1][0] <= 60_000)
+            minute_fresh = bool(md.minute_klines and now_ms - md.minute_klines[-1][0] <= 120_000)
+            oi_interval = CONFIG.timeframe.oi_update_interval_sec * 1000
+            oi_fresh = bool(md.oi_samples and now_ms - md.oi_samples[-1][0] <= 3 * oi_interval)
+            m['flow_quality_ok'] = 1.0 if has_flow else 0.0
+            m['flow_aggregate_quality_ok'] = 1.0 if has_aggregate_flow else 0.0
+            m['oi_quality_ok'] = 1.0 if oi_fresh else 0.0
+            # Core quality is deliberately conservative: a zero-valued snapshot is not evidence of a healthy feed.
+            # OI has its own flag because methods that do not use OI remain journalable while OI-required methods veto.
+            m['data_quality_ok'] = 1.0 if ticker_fresh and minute_fresh and has_flow else 0.0
+            m['whale_net_5m'] = whales.net_units(symbol, CONFIG.tier0.window_sec, now_ms) if has_aggregate_flow else None
+            m['cluster'] = float(whales.cluster(symbol, now_ms)) if has_aggregate_flow else None
             for key in ('liq_long_5m', 'liq_short_5m', 'agg_cvd_5m', 'top_venue_share', 'top_venue_net', 'venues_active'):
-                val = flow.get(key) if has_flow else None
-                m[key] = float('nan') if val is None else float(val)
-            m['futures_cvd_5m'] = float('nan') if not has_flow or flow.get('cvd_5m') is None else float(flow.get('cvd_5m'))
+                val = flow.get(key) if has_aggregate_flow else None
+                m[key] = val
+            for key in ('gross_flow_5m', 'net_flow_5m', 'venues_flow_active', 'net_venues_active',
+                        'top_gross_venue_share', 'net_top_venue_share'):
+                val = flow.get(key) if has_aggregate_flow else None
+                m[key] = val
+            m['futures_cvd_5m'] = flow.get('cvd_5m') if flow_quality.get('binance_ok') else None
             spot_delta = minute_delta(md.spot_minute_klines, now_ms)
             spot_flow = flow.get('agg_spot_cvd_5m') if has_flow else None
-            m['spot_cvd_5m'] = float('nan') if (not has_flow and spot_delta == 0.0) else (spot_delta + (float(spot_flow) if spot_flow is not None else 0.0))
+            m['spot_cvd_5m'] = None if (not has_flow and spot_delta == 0.0) else (spot_delta + (float(spot_flow) if spot_flow is not None else 0.0))
+            m['spot_delta_candle_5m'] = spot_delta
+            m['spot_cvd_event_5m'] = spot_flow
+            m['spot_cvd_source'] = 'flow_snapshot_plus_1m_ohlcv' if spot_flow is not None else '1m_ohlcv_taker_aggregate'
             m['agg_oi_change_5m'] = self.fetcher.deriv_snapshot(symbol, now_ms)['agg_oi_change_5m']
             # eng-88: OI over 15 / 60 minutes beside the 5m one (an OI build is a fast 5m step or a running hour)
             from strategies.oi_build import _oi_change
             samples = list(md.oi_samples)
             for label, minutes in (('oi_chg_15m', 15), ('oi_chg_60m', 60)):
                 v = _oi_change(samples, now_ms, minutes)
-                m[label] = float('nan') if v is None else float(v)
+                m[label] = v
             # eng-89: rush orders of the last 10 / 30 s; the 5m futures flow against the visible book within 1% on its
             # side (Cont-Kukanov-Stoikov: short-horizon impact scales with the order-flow imbalance over the depth)
             m.update(self.fetcher.rush.stats(symbol, now_ms))
             from journal import present
             cvd = present(m.get('agg_cvd_5m'), m.get('futures_cvd_5m')) or 0.0      # audit N12: a measured 0 stays 0
             ratio = self.fetcher.depth.sweep_vs_depth(symbol, abs(cvd), 1 if cvd > 0 else -1, band=0.01) if cvd else None
-            m['flow_depth_5m'] = float('nan') if ratio is None else float(ratio) * (1 if cvd > 0 else -1)
-            m['top_venue'] = flow.get('top_venue', '')
+            m['flow_depth_5m'] = None if ratio is None else float(ratio) * (1 if cvd > 0 else -1)
+            m['top_venue'] = flow.get('top_venue', '') if has_aggregate_flow else ''
+            m['top_gross_venue'] = flow.get('top_gross_venue', '') if has_aggregate_flow else ''
             out[symbol] = m
             self._journal_rush(symbol, md, m, now_ms)
         return out
@@ -530,8 +560,17 @@ class Scanner:
         metrics = self._tier0_metrics(now_ms)
         symbols = list(metrics)
         await self._score_anomalies(symbols, metrics, now_ms / 1000)
+        def finite_or_none(value):
+            if value is None:
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            return number if math.isfinite(number) else None
+
         frame = pl.DataFrame(
-            {c: [float(metrics[s].get(c, 0.0) or 0.0) for s in symbols] for c in TIER0_COLUMNS},
+            {c: [finite_or_none(metrics[s].get(c)) for s in symbols] for c in TIER0_COLUMNS},
             schema={c: pl.Float64 for c in TIER0_COLUMNS},
         )
         flagged = self.scorer.flag_tier_0_anomaly(frame)
@@ -551,10 +590,15 @@ class Scanner:
             held = is_anomaly or check_time - md.tier0_last_trigger < CONFIG.tier0.anomaly_hold_sec
             if held and not md.is_tier_0_anomaly:
                 reasons = ','.join(c[3:] for c, on in zip(trigger_cols, fired) if on)
+                liq_text = '/'.join(
+                    f'{float(value):,.0f}' if value is not None and math.isfinite(float(value)) else '—'
+                    for value in (m.get('liq_long_5m'), m.get('liq_short_5m')))
+                whale_value = m.get('whale_net_5m')
+                whale_text = f'{float(whale_value):+.1f}' if whale_value is not None else '—'
                 logger.info(
                     f"Tier-0 anomaly [{reasons}]: {symbol} | RVOL_1m={m['rvol_1m']:.2f} | OI_5m={m['oi_change_5m']:+.2%} | "
-                    f"Price_5m={m['price_change_5m']:+.2%} (z {m['price_z']:+.1f}) | whales {m['whale_net_5m']:+.1f} | "
-                    f"liq L/S {m['liq_long_5m']:,.0f}/{m['liq_short_5m']:,.0f}"
+                    f"Price_5m={m['price_change_5m']:+.2%} (z {m['price_z']:+.1f}) | whales {whale_text} | "
+                    f"liq L/S {liq_text}"
                 )
             md.tier0 = m
             md.is_tier_0_anomaly = held
@@ -651,6 +695,19 @@ class Scanner:
             out.append((df, needs))
         return out
 
+    def _frame_quality(self, symbol: str, frame: Optional[pl.DataFrame]) -> Dict:
+        from history_coverage import coverage
+
+        if frame is None or frame.is_empty():
+            return {'state': 'LOADING', 'ready': False, 'missing_bars': 0}
+        tf = CONFIG.timeframe.rest_timeframe
+        required, calculation_bars = self.fetcher._history_requirements(tf)
+        rows = frame.select(['timestamp', 'open', 'high', 'low', 'close', 'volume']).iter_rows()
+        md = self.market_data.get(symbol)
+        return coverage(rows, tf, int(time.time() * 1000), required=required,
+                        calculation_bars=calculation_bars,
+                        listed_ms=getattr(md, 'listed_ms', None))
+
     async def _merge_rows(self) -> Tuple[Dict, Dict, Dict, Dict, tuple]:
         """Merge stream kline rows into the frames; returns closed-only frames, funding, closed_until, signature."""
         spot_frames, futures_frames, funding, closed_until = {}, {}, {}, {}
@@ -687,34 +744,35 @@ class Scanner:
                         df, needs = merge_live_candle(df, row, finalized)
                         needs_backfill = needs_backfill or needs
                 md.set_frame(market, df)
+                md.history_version += 1  # cache keys change even when a closed candle was corrected in place
                 if needs_backfill:
                     self.fetcher.request_backfill(symbol, market)
         for symbol, md in self.market_data.items():
             if not md.baseline_ready:
                 continue
+            frame_quality_states = {}
             for market, target in (('spot', spot_frames), ('futures', futures_frames)):
                 df = md.frame(market)
                 if df is None or df.is_empty():
+                    frame_quality_states[market] = 'LOADING'
+                    continue
+                frame_quality = self._frame_quality(symbol, df)
+                if md.incomplete[market]:
+                    self.fetcher.request_backfill(symbol, market, max(md.incomplete[market]))
+                    frame_quality = {**frame_quality, 'state': 'DATA_GAP', 'ready': False,
+                                     'missing_bars': max(frame_quality['missing_bars'], len(md.incomplete[market]))}
+                frame_quality_states[market] = frame_quality['state']
+                if market == 'futures':
+                    self.fetcher.update_base_frame_quality(symbol, frame_quality)
+                if frame_quality['state'] not in ('READY', 'LISTING_TOO_RECENT'):
                     continue
                 final = md.finalized_until[market]
-                if md.incomplete[market]:
-                    # A candle built from missing minutes waits for its REST replacement: score the history before it
-                    # (request_backfill ignores repeats while one is running and waits 10 min after a failed one).
-                    # The cut frame is cached until the frame or the gap set changes: after every start all ~600
-                    # frames have such a candle, and filtering them on every scan blocked the loop for ~5s.
-                    self.fetcher.request_backfill(symbol, market, max(md.incomplete[market]))
-                    key = (id(df), df.height, frozenset(md.incomplete[market]))
-                    cached = md.scored_cut.get(market)
-                    if cached is None or cached[0] != key:
-                        cached = (key, df.filter(pl.col('timestamp') < min(md.incomplete[market])))
-                        md.scored_cut[market] = cached
-                    target[symbol] = cached[1]
-                    continue
                 # The in-progress candle is always the last row: slicing it off is free (no copy)
                 target[symbol] = df if df['timestamp'][-1] <= final else df.head(df.height - 1)
             funding[symbol] = (md.funding_rate, md.predicted_funding)
             closed_until[symbol] = md.closed_until
             signature.append((symbol, md.finalized_until['spot'], md.finalized_until['futures'], md.history_version,
+                              tuple((m, frame_quality_states.get(m, 'LOADING')) for m in ('spot', 'futures')),
                               len(md.incomplete['spot']), len(md.incomplete['futures'])))
         return spot_frames, futures_frames, funding, closed_until, tuple(signature)
 
@@ -766,6 +824,35 @@ class Scanner:
         rows = score_closed(spot_all, futures_all, tier0, closed_until, extras)
         return futures_all, rows
 
+    @staticmethod
+    def _filter_candle_signals(signals, futures_frames):
+        """A queued structured signal expires when its candle inputs become unavailable."""
+        return [(symbol, signal) for symbol, signal in signals
+                if not signal['is_structured'] or symbol in futures_frames]
+
+    @staticmethod
+    def _closed_range_breakout(frame, now_ms):
+        step = 900_000
+        if frame.height < 21:
+            return None
+        rows = frame.tail(21).select('timestamp', 'high', 'low', 'close').rows()
+        ts, _, _, close = rows[-1]
+        if not ts + step <= now_ms < ts + 2 * step:
+            return None
+        if any(row[0] != ts - (20 - i) * step for i, row in enumerate(rows)):
+            return None
+        if any(not all(v is not None and math.isfinite(v) and v > 0 for v in row[1:])
+               or not row[2] <= row[3] <= row[1] for row in rows):
+            return None
+        high = max(row[1] for row in rows[:-1])
+        low = min(row[2] for row in rows[:-1])
+        if low <= close <= high:
+            return None
+        up = close > high
+        return {'range_breakout': 'RANGE BREAK UP' if up else 'RANGE BREAK DOWN',
+                'setup_ts_ms': ts, 'reference_price': close, 'range_boundary': high if up else low,
+                'contract_id': 'closed_15m_range_20_v1'}
+
     async def _perform_scan(self):
         spot_frames, futures_frames, funding, closed_until, signature = await self._merge_rows()
         self._accumulate_agg()
@@ -799,7 +886,13 @@ class Scanner:
             self._context_poll = time.time()
             await self._schedule_context_refresh()
 
+        invalidated = self._rows.keys() - futures_frames.keys()
+        for symbol in invalidated:
+            self._rows.pop(symbol)
+        if invalidated:
+            self._heavy_signature = None
         signals = signals_from_rows(self._rows, tier0)
+        candidates = len(signals)
         if not hasattr(self, '_signal_batcher'):
             self._signal_batcher = SignalBatcher(500)
         premiums = [p for md in self.market_data.values() if (p := self._coinbase_premium(md)) is not None]
@@ -843,7 +936,7 @@ class Scanner:
                 if sig.get('setup') in ('PUMP START', 'DUMP START'):
                     await self._pd_enrich(symbol, sig)
         current_keys = {(symbol, sig['alert_type']) for symbol, sig in signals if not sig.get('is_setup')}
-        signals = self._signal_batcher.add(signals)
+        signals = self._filter_candle_signals(self._signal_batcher.add(signals), futures_frames)
         persistent = [(symbol, sig) for symbol, sig in signals
                       if sig['is_structured'] or sig.get('is_setup') or (symbol, sig['alert_type']) in self._previous_keys]
         self._previous_keys = current_keys
@@ -853,15 +946,23 @@ class Scanner:
             persistent if warmed_up else [], _FrameLookup(self._frame_parts, self.market_data), self._price_of,
             self._minute_candles, now, confirm_of=self.fetcher.confirmations,
         )
+        written = None
         if self.journal:
             if warmed_up:
-                await self.journal.arecord(persistent, {symbol: self._price_of(symbol) for symbol, _ in persistent})
+                written = await self.journal.arecord(persistent, {symbol: self._price_of(symbol) for symbol, _ in persistent})
+                if CONFIG.timeframe.rest_timeframe == '15m':
+                    breakout_signals = [(symbol, signal) for symbol, frame in futures_frames.items()
+                                        if (signal := self._closed_range_breakout(frame, int(now * 1000))) is not None]
+                    if breakout_signals:
+                        written += await self.journal.arecord(
+                            breakout_signals, {symbol: sig['reference_price'] for symbol, sig in breakout_signals})
                 for tracked in entries:
                     await self.journal.arecord_entry(tracked)
                 # eng-150: the shadow ORB from a fixed 13:30 UTC open - a journal row only, never a card
                 shadow, self.loopside.orb_shadow = self.loopside.orb_shadow, []
-                for found in shadow:
-                    await self.journal.arecord_entry(_orb_shadow_row(found))
+                if STRATEGIES:
+                    for found in shadow:
+                        await self.journal.arecord_entry(_orb_shadow_row(found))
             for tracked in self.book.finished_now:
                 logger.info(f"Card {tracked.symbol} {tracked.group_key}: {tracked.status} - {tracked.finish_reason}")
                 await self.journal.arecord_card(tracked)
@@ -875,6 +976,17 @@ class Scanner:
                 events, self.fetcher.liq_log = self.fetcher.liq_log, []
                 await self.journal.arecord_liquidations(events)
         await self._output(created, [e for e in entries if not e.vetoed])
+        self.signal_diagnostics = {
+            'state': ('WARMING_UP' if not warmed_up else
+                      'CANDLE_INPUTS_READY' if self._rows else 'CANDLE_INPUTS_UNAVAILABLE'),
+            'assessed_ms': int(time.time() * 1000),
+            'candle_scored_symbols': len(self._rows), 'tier0_symbols': len(tier0),
+            'candidates': candidates, 'passed_persistence': len(persistent) if warmed_up else 0,
+            'journal_written': written,
+            'journal_written_since_start': getattr(self, 'signal_diagnostics', {}).get(
+                'journal_written_since_start', 0) + (written or 0),
+            'registered_strategies': len(STRATEGIES),
+        }
         if self.demo.enabled:
             # Demo orders off the scan: each call is a few REST round trips
             for tracked in entries:
@@ -926,7 +1038,16 @@ class Scanner:
         return ', '.join(f"{s} {n} coins" for s, n in sorted(per.items(), key=lambda x: -x[1]) if n >= min_coins)
 
     def _detect_setups(self) -> List[Tuple[str, Dict]]:
-        """Detected setups of this scan as signals (the coin's live Tier-0 metrics + the setup's leg / note)."""
+        """Return only source-verified setups.
+
+        The legacy detector modules are still present for forensic analysis, but
+        an empty v2 registry is an intentional hard stop.  This prevents an old
+        detector from creating a setup row merely because a class or name still
+        exists in the checkout.
+        """
+        if not STRATEGIES:
+            self._drain_history_skips()
+            return []
         out: List[Tuple[str, Dict]] = []
         now_ms = int(time.time() * 1000)
         for symbol, md in self.market_data.items():
@@ -981,6 +1102,12 @@ class Scanner:
         and the dump-bounce rule; its events are JOURNALED (vetoed 'outside_universe': no streams there, so no card /
         demo trade) - the forward test of the research rule on the whole market it was measured on.
         """
+        if not STRATEGIES:
+            # The old pump/dump monitor is not a source-verified strategy and
+            # must not emit journal rows or feed the card lifecycle in v2.
+            while self._running:
+                await asyncio.sleep(3600)
+            return
         from strategies.pump import MAJORS, dump_bounce
         cfg = CONFIG.strategies
         await asyncio.sleep(600)
@@ -1008,9 +1135,7 @@ class Scanner:
                 async def one(sym, bid, last):
                     async with sem:
                         try:
-                            k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
-                                                              {'symbol': bid, 'interval': '1h', 'limit': 200},
-                                                              priority=2, weight=2)
+                            k = await self.fetcher._fetch_klines('futures', sym, '1h', 200, priority=2)
                         except Exception as e:
                             logger.debug(f"wide watch: 1h candles failed for {sym}: {e}")
                             return
@@ -1097,17 +1222,116 @@ class Scanner:
         sent as its few needed columns and turned into candles in the worker.
         """
         md = self.market_data[symbol]
+        history = self._level_history_status(symbol)
+        qualities = history.get('timeframes') or {}
+        good = lambda tf: (qualities.get(tf) or {}).get('quality') == 'VALID_COMPLETE'
         # What crosses to the process is pickled on a feeder thread (GIL): only liquidations of the 24h the map reads,
         # and no 4-day 5m history for a quick map of a coin whose full map (levels_loop) already has it
         liq = [e for e in md.liq_events if now_ms - e[0] <= 86_400_000]
-        candles_4d = list(md.htf_5m) if not with_context or symbol not in self._level_raw else []
+        candles_4d = list(md.htf_5m) if good('5m') and (not with_context or symbol not in self._level_raw) else []
         # crypto_maniac's systems read 499 15m / 1h candles: sent as numpy arrays (pickled as one buffer, not ~3500
         # float objects per coin on the feeder thread)
-        long_15m = np.asarray(md.m15_long, dtype=np.float64) if with_context and len(md.m15_long) else ()
-        long_1h = np.asarray(md.h1_long, dtype=np.float64) if with_context and len(md.h1_long) else ()
-        return (symbol, part.select(PART_COLUMNS), list(md.h1), list(md.htf_klines), list(md.htf_oi), liq, now_ms,
-                candles_4d, with_context, long_15m, long_1h, list(md.d1), list(md.h4), list(md.w1),
-                list(md.day_pocs))
+        long_15m_ready = (qualities.get('15m') or {}).get('long_history_quality') == 'VALID_COMPLETE'
+        long_15m = np.asarray(md.m15_long, dtype=np.float64) if with_context and long_15m_ready else ()
+        long_1h = np.asarray(md.h1_long, dtype=np.float64) if with_context and good('1h') and len(md.h1_long) else ()
+        h1 = list(md.h1) if good('1h') else []
+        htf_klines = list(md.htf_klines) if good('1h') else []
+        daily = list(md.d1) if good('1d') else []
+        h4 = list(md.h4) if good('4h') else []
+        weekly = list(md.w1) if good('1w') else []
+        day_pocs = list(md.day_pocs) if good('5m') else []
+        return (symbol, part.select(PART_COLUMNS), h1, htf_klines, list(md.htf_oi), liq, now_ms,
+                candles_4d, with_context, long_15m, long_1h, daily, h4, weekly, day_pocs)
+
+    LEVEL_HISTORY_TIMEFRAMES = ('15m', '1h', '4h', '1d', '1w')
+
+    def _level_history_status(self, symbol: str) -> Dict:
+        return self.fetcher.history_status(symbol)
+
+    def _level_history_signature(self, symbol: str, status: Optional[Dict] = None) -> tuple:
+        md = self.market_data.get(symbol)
+        status = status or self._level_history_status(symbol)
+        parts = status.get('timeframes') or {}
+        return (getattr(md, 'history_version', 0), status.get('state'),
+                tuple((tf, (parts.get(tf) or {}).get('quality'), (parts.get(tf) or {}).get('latest_closed_ms'))
+                      for tf in self.LEVEL_HISTORY_TIMEFRAMES))
+
+    def _level_history_ready(self, symbol: str, status: Optional[Dict] = None) -> bool:
+        status = status or self._level_history_status(symbol)
+        parts = status.get('timeframes') or {}
+        if any((parts.get(tf) or {}).get('quality') != 'VALID_COMPLETE' for tf in ('15m', '1h')):
+            return False
+        # The active frame itself feeds level construction. Validate it too;
+        # the independent long-history buffer alone is not proof of continuity.
+        return self._frame_quality(symbol, self._frame_parts.get(symbol))['state'] == 'READY'
+
+    def _level_quality(self, symbol: str, status: Optional[Dict] = None) -> Dict:
+        status = status or self._level_history_status(symbol)
+        parts = status.get('timeframes') or {}
+        if not self._level_history_ready(symbol, status):
+            return {'state': 'UNAVAILABLE', 'required': ['15m', '1h']}
+        optional = ('4h', '1d', '1w', '5m')
+        unavailable = [tf for tf in optional if (parts.get(tf) or {}).get('quality') != 'VALID_COMPLETE']
+        return {'state': 'VALID_PARTIAL' if unavailable else 'VALID_COMPLETE',
+                'missing_optional_timeframes': unavailable,
+                'four_hour_source': '4h' if '4h' not in unavailable else 'derived_from_validated_1h',
+                'volume_profile_source': '5m' if '5m' not in unavailable else '1h_approximation'}
+
+    def _level_map_ready(self, symbol: str) -> bool:
+        return symbol in self._level_raw and self._level_history_ready(symbol)
+
+    def _scenario_history_ready(self, symbol: str) -> bool:
+        """The scenario's required 1h ladder must have 200 contiguous, fresh bars."""
+        from history_coverage import coverage
+
+        md = self.market_data.get(symbol)
+        if md is None:
+            return False
+        status = self.fetcher.history_status(symbol).get('timeframes') or {}
+        if (status.get('1h') or {}).get('quality') != 'VALID_COMPLETE':
+            return False
+        now_ms = int(time.time() * 1000)
+        listed_ms = getattr(md, 'listed_ms', None)
+        return coverage(md.h1, '1h', now_ms, required=200, calculation_bars=200,
+                        listed_ms=listed_ms)['state'] == 'READY'
+
+    def _scenario_context_inputs(self, symbol: str) -> Dict:
+        """Optional daily/30d contexts are included only when their own bars are contiguous and fresh."""
+        from history_coverage import coverage
+
+        md = self.market_data.get(symbol)
+        if md is None or not self._scenario_history_ready(symbol):
+            return {'ready': False, 'daily': None, 'hourly_30d': None, 'state': 'UNAVAILABLE'}
+        now_ms = int(time.time() * 1000)
+        listed_ms = getattr(md, 'listed_ms', None)
+        daily = md.htf_1d or md.d1
+        daily_ok = bool(daily) and coverage(daily, '1d', now_ms, required=20,
+                                              calculation_bars=20, listed_ms=listed_ms)['state'] == 'READY'
+        hourly_30d = md.htf_1h_30d
+        hourly_30d_ok = bool(hourly_30d) and coverage(
+            hourly_30d, '1h', now_ms, required=720, calculation_bars=200,
+            listed_ms=listed_ms)['state'] == 'READY'
+        partial = not daily_ok or not hourly_30d_ok
+        return {'ready': True, 'daily': daily if daily_ok else None,
+                'hourly_30d': hourly_30d if hourly_30d_ok else None,
+                'state': 'VALID_PARTIAL' if partial else 'VALID_COMPLETE',
+                'missing_optional_timeframes': [tf for tf, ok in (('1d', daily_ok), ('30d_1h', hourly_30d_ok)) if not ok]}
+
+    async def _build_scenario_if_history_stable(self, guard_symbol: str, *args, **kwargs):
+        """Build a scenario from a stable history snapshot.
+
+        ``scenarios.build`` also accepts ``symbol`` as a keyword. Keep the
+        guard key separate so forwarding that keyword does not bind the same
+        argument twice.
+        """
+        md = self.market_data.get(guard_symbol)
+        if md is None or not self._scenario_history_ready(guard_symbol):
+            return None
+        version = md.history_version
+        result = await asyncio.to_thread(scenarios.build, *args, **kwargs)
+        if md.history_version != version or not self._scenario_history_ready(guard_symbol):
+            return None
+        return result
 
     def _correlates(self) -> Dict[str, np.ndarray]:
         """The SMT correlates' 15m histories (BTC for every coin, ETH for BTC): the long REST history + the frame."""
@@ -1117,11 +1341,13 @@ class Scanner:
             md = self.market_data.get(symbol)
             if md is None:
                 continue
-            candles, _ = part_candles(self._frame_parts.get(symbol))
+            part = self._frame_parts.get(symbol)
+            if self._frame_quality(symbol, part)['state'] != 'READY':
+                continue
+            candles, _ = part_candles(part)
             # 8 fields each (the base volume NaN when absent): the long REST rows and the frame's candles differ in
             # width across versions, and one ragged row failed every quick map ('inhomogeneous shape')
-            merged = {int(c[0]): _row8(c) for c in md.m15_long}
-            merged.update({int(c[0]): _row8(c) for c in candles})
+            merged = {int(c[0]): _row8(c) for c in candles}
             if merged:
                 out[name] = np.asarray([merged[t] for t in sorted(merged)], dtype=np.float64)
         return out
@@ -1131,14 +1357,32 @@ class Scanner:
             return {}
         corr = self._correlates() if any(job[8] for job in jobs) else None
         from concurrent.futures.process import BrokenProcessPool
-        try:
-            out = await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, jobs, corr)
-            for err in out.pop('__errors__', ()):
-                errors.report('scanner.maps', RuntimeError(err), f"Level map failed: {err}")
-            return out
-        except BrokenProcessPool:
-            logger.warning(f"Maps worker died during a pass of {len(jobs)} maps: retried on the next pass")
-            return {}
+        out_all: Dict[str, tuple] = {}
+        for offset in range(0, len(jobs), 30):
+            batch = jobs[offset:offset + 30]
+            started = time.perf_counter()
+            try:
+                # Keep IPC bounded. A full universe payload reached 38 MB and
+                # held both parent and worker copies during a context refresh.
+                payload_bytes = await asyncio.to_thread(
+                    lambda: len(__import__('pickle').dumps((batch, corr), protocol=5)))
+                out = await asyncio.get_running_loop().run_in_executor(self._maps_executor(), build_maps, batch, corr)
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                metrics = self._pool_metrics
+                metrics['maps_passes'] += 1
+                metrics['maps_jobs'] += len(batch)
+                metrics['maps_payload_bytes'] = payload_bytes
+                metrics['maps_max_payload_bytes'] = max(metrics['maps_max_payload_bytes'], payload_bytes)
+                metrics['maps_wall_ms'] = elapsed_ms
+                metrics['maps_max_wall_ms'] = max(metrics['maps_max_wall_ms'], elapsed_ms)
+                for err in out.pop('__errors__', ()):
+                    errors.report('scanner.maps', RuntimeError(err), f"Level map failed: {err}")
+                out_all.update(out)
+            except BrokenProcessPool:
+                self._pool_metrics['maps_broken'] += 1
+                logger.warning(f"Maps worker died during a pass of {len(batch)} maps: retried on the next pass")
+                return {}
+        return out_all
 
     async def _schedule_context_refresh(self) -> None:
         """Replace a context refresh only after the previous writer has stopped."""
@@ -1163,10 +1407,20 @@ class Scanner:
                 if symbol not in self.market_data or part.is_empty():
                     continue
                 md = self.market_data[symbol]
+                history = self._level_history_status(symbol)
+                if not self._level_history_ready(symbol, history):
+                    self._quick_raw.pop(symbol, None)
+                    self._context_sig.pop(symbol, None)
+                    self._level_raw.pop(symbol, None)
+                    self._level_sig.pop(symbol, None)
+                    self.detector.forget(symbol)
+                    continue
                 # + the higher-timeframe histories: after a start the first quick map is built before the 1h / 4h /
                 # daily / weekly candles load and held no level of theirs until the next 15m close (eng-69)
                 # audit D04: the newest bar of each timeframe too - a full buffer replaces a bar without changing its length
-                signature = (part['timestamp'][-1], part.height, len(md.h1), len(md.h4), len(md.d1), len(md.w1),
+                history_signature = self._level_history_signature(symbol, history)
+                signature = (md.history_version, history_signature, part['timestamp'][-1], part.height,
+                             len(md.h1), len(md.h4), len(md.d1), len(md.w1),
                              len(md.day_pocs), md.h1[-1][0] if md.h1 else 0, md.h4[-1][0] if md.h4 else 0,
                              md.d1[-1][0] if md.d1 else 0, md.w1[-1][0] if md.w1 else 0)
                 if self._context_sig.get(symbol) == signature:
@@ -1181,6 +1435,8 @@ class Scanner:
             for symbol, (raw, context) in results.items():
                 if symbol not in self.market_data:
                     continue
+                if self._level_history_signature(symbol) != signatures[symbol][1]:
+                    continue  # history changed while the process worker was building the map
                 self._context_sig[symbol] = signatures[symbol]
                 self._quick_raw[symbol] = raw
                 self.detector.set_context(symbol, context, int(time.time() * 1000))
@@ -1473,10 +1729,18 @@ class Scanner:
         sig['volume_24h'] = md.quote_volume_24h or None
         sig['tier2_active'] = md.trades_subscribed
         sig['futures_cvd'] = sig.get('futures_cvd_5m', 0.0)
+        sig['flow_aggregate_quality_ok'] = md.tier0.get('flow_aggregate_quality_ok')
+        sig['spot_cvd_source'] = md.tier0.get('spot_cvd_source')
+        for key in ('spot_delta_candle_5m', 'spot_cvd_event_5m'):
+            sig[key] = md.tier0.get(key)
         sig['whales'] = self.fetcher.whales.flow(symbol, CONFIG.sweeps.window_sec)
         sig['whale_size'] = self.fetcher.whales.whale_size(symbol)
         sig['has_spot'] = bool(md.spot_symbol)
         sig['top_venue'] = md.tier0.get('top_venue', '')
+        for key in ('gross_flow_5m', 'net_flow_5m', 'venues_flow_active', 'net_venues_active',
+                    'top_gross_venue_share', 'net_top_venue_share'):
+            sig[key] = md.tier0.get(key)
+        sig['top_gross_venue'] = md.tier0.get('top_gross_venue', '')
         ratios = self.positioning.ratios.get(symbol, {})
         sig['top_ratio'] = ratios.get('binance_top_pos')
         sig['ls_global'] = ratios.get('binance_global')
@@ -1502,6 +1766,9 @@ class Scanner:
         derivs = self.fetcher.deriv_snapshot(symbol)
         sig['agg_oi_change_1h'] = derivs['agg_oi_change_1h']
         sig['agg_funding_8h'] = derivs['agg_funding_8h']
+        # Keep settled/predicted/mixed funding provenance beside the numeric
+        # aggregate; a rate without its settlement kind is not decision-safe.
+        sig['agg_funding_kind'] = derivs.get('agg_funding_kind', 'unknown')
         sig['oi_venues'] = derivs['oi_venues']
         trend = sig.get('mkt_1h') or sig.get('btc_1h')
         vol = sig.get('vol_ratio')
@@ -1533,11 +1800,17 @@ class Scanner:
         return coinbase / binance - 1 if binance else None
 
     async def _minute_hole_pass(self) -> None:
-        """eng-161: which coins miss closed 1m candles (the source of '1m gaps dropped'), refilled from REST - at most
-        15 coins a pass, the worst first; one log line with the worst offenders."""
+        """Repair missing closed minutes, prioritising the worst symbols.
+
+        The old fixed 15-symbol/10-minute cadence could not catch up after a
+        reconnect wave across the universe.  The budget is configurable and
+        the per-symbol retry interval is short enough to keep the queue moving
+        while the REST gate still controls exchange weight.
+        """
         try:
             now_ms = int(time.time() * 1000)
-            holes = {s: len(self.fetcher.minute_holes(md.minute_klines, md.minute_closed_until))
+            holes = {s: len(self.fetcher.minute_holes(md.minute_klines, md.minute_closed_until,
+                                                       listed_ms=md.listed_ms))
                      for s, md in list(self.market_data.items())}
             bad = sorted(((n, s) for s, n in holes.items() if n), reverse=True)
             if not bad:
@@ -1545,11 +1818,11 @@ class Scanner:
             left, done = 0, 0
             last = self.__dict__.setdefault('_hole_patched', {})
             for n, s in bad:
-                if done >= 15:
+                if done >= CONFIG.timeframe.hole_repair_coins_per_pass:
                     break
                 md = self.market_data.get(s)
-                if md is None or now_ms - last.get(s, 0) < 600_000:
-                    continue                    # one refill per coin per 10 minutes
+                if md is None or now_ms - last.get(s, 0) < CONFIG.timeframe.hole_repair_retry_sec * 1000:
+                    continue
                 last[s] = now_ms
                 done += 1
                 left += await self.fetcher.patch_minute_holes(s, md, now_ms)
@@ -1568,8 +1841,9 @@ class Scanner:
         if cached and int(now // 300_000) == int(cached[0] // 300_000):
             return cached[1]                 # eng-163 (audit F-06): refreshed at each 5m boundary, not 300 s after a fetch
         try:
-            k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
-                                              {'symbol': 'BTCUSDT', 'interval': '5m', 'limit': 290}, priority=1, weight=2)
+            k = await self.fetcher._fetch_klines('futures', 'BTC/USDT:USDT', '5m', 290, priority=1)
+            if not k:
+                raise ValueError('BTC 5m candles failed validation')
             rows = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4])] for x in k or [] if int(x[6]) < now]
             self._btc_m5_cache = (now, rows)
             return rows
@@ -1582,9 +1856,9 @@ class Scanner:
         per PUMP / DUMP START) + the 1m ring; the activation lead time found by the detector is kept."""
         try:
             from strategies import pd_features as pdf
-            bid = self.fetcher.futures_exchange.market(symbol)['id']
-            k = await self.fetcher._rest_call(self.fetcher.futures_exchange, 'fapiPublicGetKlines',
-                                              {'symbol': bid, 'interval': '5m', 'limit': 290}, priority=1, weight=2)
+            k = await self.fetcher._fetch_klines('futures', symbol, '5m', 290, priority=1)
+            if not k:
+                raise ValueError(f'{symbol} 5m candles failed validation')
             now = time.time() * 1000
             m5 = [[int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]), float(x[7]), float(x[10]), float(x[8])]
                   for x in k or [] if int(x[6]) < now]
@@ -1659,6 +1933,8 @@ class Scanner:
         candles, atr = self._candles_15m(symbol)
         if md is None or not candles or not atr:
             return [], atr, candles
+        if not self._level_history_ready(symbol):
+            return [], atr, candles
         # the map the plans use (worker-built: 1h swings, previous day / week, sessions, 4h / daily / weekly FVG / OB /
         # breakers); the page built its own map from the card-only 1h history - for a coin without a card it held no
         # 1h / 4h / daily / weekly level at all (BTC 2026-10-05: only 15m zones next to the weekly levels of the owner's
@@ -1692,7 +1968,14 @@ class Scanner:
                     if md is None:
                         continue
                     await self.fetcher.load_htf(symbol)
-                    signature = (md.closed_until, md.htf_loaded, int(time.time() // CONFIG.zones.refresh_sec))
+                    history = self._level_history_status(symbol)
+                    if not self._level_history_ready(symbol, history):
+                        self._level_raw.pop(symbol, None)
+                        self._level_sig.pop(symbol, None)
+                        continue
+                    history_signature = self._level_history_signature(symbol, history)
+                    signature = (md.closed_until, md.htf_loaded, md.history_version, history_signature,
+                                 int(time.time() // CONFIG.zones.refresh_sec))
                     if self._level_sig.get(symbol) == signature:
                         continue
                     part = self._frame_parts.get(symbol)
@@ -1701,7 +1984,8 @@ class Scanner:
                         signatures[symbol] = signature
                 # Full maps of the card coins in the maps worker process (pure Python: off the GIL of the loop)
                 for symbol, (raw, _) in (await self._build_maps(jobs)).items():
-                    if raw and symbol in self.market_data:
+                    if (raw and symbol in self.market_data and
+                            self._level_history_signature(symbol) == signatures[symbol][3]):
                         self._level_raw[symbol], self._level_sig[symbol] = raw, signatures[symbol]
                         # Snapshot of the liquidation levels this map expects (forward test, see journal.py)
                         levels = [(l.kind, l.price, l.side, l.size) for l in raw + self._live_levels(symbol)
@@ -1739,7 +2023,9 @@ class Scanner:
         depth = self.fetcher.depth.metrics(symbol) or {}
         walls = (depth.get('bid_wall'), depth.get('ask_wall'))
         return (id(part), live.get('timestamp'), live.get('high'), live.get('low'),
-                self._level_sig.get(symbol), self._context_sig.get(symbol), md.htf_loaded, self.positioning.hl_ts, walls,
+                md.history_version, self._level_history_signature(symbol),
+                self._level_sig.get(symbol), self._context_sig.get(symbol), md.htf_loaded,
+                self.positioning.hl_ts, walls,
                 self.fetcher.depth.bands_version(symbol))
 
     def _levels_of(self, symbol: str) -> Optional[List[RawLevel]]:
@@ -1747,19 +2033,25 @@ class Scanner:
         # eng-105: without order-book WALLS - of ~1000 walls tracked on BTC / ETH / SOL / XRP / BNB in 10 minutes ~800
         # were pulled, ~170 shrank, 2 were traded through and NONE was filled (30-60 s lives): no target / level for a
         # plan (the chart still draws them)
-        levels = (self._level_raw.get(symbol) or self._quick_raw.get(symbol, [])) + \
-            [l for l in self._live_levels(symbol) if l.kind != 'wall']
+        live = [l for l in self._live_levels(symbol) if l.kind != 'wall']
+        if not self._level_history_ready(symbol):
+            return live or None
+        levels = (self._level_raw.get(symbol) or self._quick_raw.get(symbol, [])) + live
         return levels or None
 
     async def coin_detail(self, symbol: str) -> Dict:
         """One coin for the web page: candles, the level map (the card's plan when there is one), open cards."""
         md = self.market_data[symbol]
+        start_history_version = md.history_version
         # The page must not wait for REST (3 requests, one of weight 10, queued behind the rate budget: ~40s when
         # many coins were opened): answer with what is in memory, load the history in the background, and the page
         # asks again while htf_loaded is 0
         if not md.htf_loaded:
             self.fetcher.load_htf_background(symbol)
         raw, atr, candles = await asyncio.to_thread(self._build_levels, symbol)
+        level_inputs_ready = self._level_history_ready(symbol)
+        if md.history_version != start_history_version or not level_inputs_ready:
+            raw = []
         minutes = list(md.minute_klines)            # closed minutes + the forming one (updated in place)
 
         def forming(rows, tf_ms):
@@ -1780,7 +2072,7 @@ class Scanner:
         # the full map (all timeframes) on every chart; the card's own zone / targets / levels are drawn over it (the
         # card plan's zone list held a handful of zones - TAO 4 - and the chart lost its levels)
         zones = merge(raw + self._live_levels(symbol), atr, symbol=symbol) if atr else []
-        if not zones:
+        if level_inputs_ready and not zones:
             for s in cards:
                 if s.plan and s.plan.get('zones'):
                     zones = s.plan['zones']
@@ -1812,19 +2104,56 @@ class Scanner:
         # the two-sided scenario card (1h ladder; the same level code the probability model was trained with)
         btc = self.market_data.get('BTC/USDT:USDT')
         btc_closes = [c[4] for c in btc.h1] if btc and btc.h1 else None
+        scenario_inputs = self._scenario_context_inputs(symbol)
+        scenario_ready = scenario_inputs['ready']
+        scenario_state = scenario_inputs['state'] if scenario_ready else 'UNAVAILABLE'
+        scenario_missing = list(scenario_inputs.get('missing_optional_timeframes', []))
+        btc_valid = bool(btc and self._scenario_history_ready(btc.symbol))
+        if not symbol.startswith('BTC/') and not btc_valid:
+            scenario_missing.append('BTC 1h context')
+            scenario_state = 'VALID_PARTIAL' if scenario_ready else 'UNAVAILABLE'
+        scenario_reason = None if scenario_ready else 'required_1h_history_not_valid_complete'
         try:
-            scenario = await asyncio.to_thread(scenarios.build, list(md.h1), price, now * 1000, btc_closes,
-                                               (), None, self.macro.features(now * 1000),
-                                               list(md.htf_1d) or list(md.d1) or None,
-                                               list(md.htf_1h_30d) or list(md.h1) or None,
-                                               symbol=symbol, volume_24h=md.quote_volume_24h or None)
-            if scenario is not None:
-                scenario['macro'] = self.macro.snapshot(now * 1000)
+            if scenario_ready:
+                scenario_reason = 'valid_history_but_no_scenario_levels'
+                scenario = await self._build_scenario_if_history_stable(
+                    symbol, list(md.h1), price, now * 1000,
+                    btc_closes if btc_valid or symbol.startswith('BTC/') else None,
+                    (), None, self.macro.features(now * 1000), scenario_inputs['daily'],
+                    scenario_inputs['hourly_30d'], symbol=symbol,
+                    volume_24h=md.quote_volume_24h or None,
+                    btc_candles_1h=list(btc.h1) if btc_valid and btc else None)
+                if md.history_version != start_history_version or not self._scenario_history_ready(symbol):
+                    scenario = None
+                    scenario_reason = 'history_changed_during_calculation'
+                if scenario is not None:
+                    scenario_reason = None
+                    scenario['macro'] = self.macro.snapshot(now * 1000)
+                    scenario['data_quality'] = {'state': scenario_state,
+                                                'missing_optional_context': scenario_missing}
+            else:
+                scenario = None
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.warning(f"scenario for {symbol} failed: {e}")
             scenario = None
+            scenario_reason = f'scenario_calculation_error:{type(e).__name__}'
         return {
             'scenario': scenario,
+            'analytics_quality': {
+                'levels': self._level_quality(symbol).get('state') if level_inputs_ready and
+                           md.history_version == start_history_version else 'UNAVAILABLE',
+                'level_details': self._level_quality(symbol) if level_inputs_ready and
+                                 md.history_version == start_history_version else {'state': 'UNAVAILABLE'},
+                'scenario': (scenario_state if scenario is not None else 'UNAVAILABLE'),
+                'scenario_reason': scenario_reason,
+                'history_version': md.history_version,
+                'baseline_attempted': md.baseline_attempted,
+                'baseline_loaded': md.baseline_loaded,
+                'baseline_validated': md.baseline_validated,
+                'history_validated': md.history_validated,
+            },
             'symbol': symbol, 'price': price, 'atr': atr,
             'candles_15m': candles,
             'candles_5m': candles_5m,
@@ -1984,8 +2313,9 @@ class Scanner:
                 kb = (st.get('bytes', 0) - last_bytes.get(venue, 0)) / 60 / 1024
                 last_bytes[venue] = st.get('bytes', 0)
                 rate = f"{venue} {(count - last_counts.get(venue, 0)) / 60:.0f}/s {kb:.0f}KB/s"
-                if not st.get('connected', 1):
-                    rate += " DOWN"
+                state = st.get('health_state', 'UNKNOWN')
+                if state in ('DISCONNECTED', 'STALE', 'UNKNOWN'):
+                    rate += f" {state}"
                 if lag > 1.5:
                     rate += f" lag {lag:.1f}s"
                 rates.append(rate)
@@ -2006,18 +2336,49 @@ class Scanner:
             if blind:
                 failed = (failed + '; ' if failed else '') + f"history gate stopped: {blind}"
             gc_line = self.watchdog.gc_text()
+            candle_history = self.fetcher.history_diagnostics()
             # the same reading for /api/health (external monitoring, the dashboard's health tab)
             self.health = {'ts': time.time(), 'tier0_sec': self.last_tier0_sec, 'scan_sec': self.last_scan_sec,
                            'heavy_sec': self.last_heavy_sec, 'books': len(self._hot), 'streams': rates,
-                           'down': [r.split()[0] for r in rates if ' DOWN' in r],
+                           'venue_status': status,
+                           'rest_book_status': {f"{key[0]}|{key[1]}": value
+                                                for key, value in self.ext.rest_book_status().items()},
+                           'open_interest_status': self.fetcher.oi_diagnostics(),
+                           'kline_stream_status': self.fetcher.kline_diagnostics(),
+                           'candle_history': candle_history,
+                           'signals': getattr(self, 'signal_diagnostics', {'state': 'INITIALIZING'}),
+                           'recorder_status': dict(getattr(__import__('recorder'), 'RECORDER_STATUS', {})),
+                           'down': [venue for venue, st in sorted(status.items())
+                                    if st.get('health_state', 'UNKNOWN') in ('DISCONNECTED', 'STALE', 'UNKNOWN')],
                            'cpu_pct': cpu, 'rss_mb': rss,
+                           'backfill': dict(getattr(self.fetcher, 'backfill_stats', {})),
+                           'okx_flow_seed': dict(getattr(self.ext, 'okx_seed_stats', {})),
+                           'model_status': dict(getattr(self.journal, 'model_status', {})),
+                           'scenario_model_status': dict(__import__('scenarios').SCENARIO_MODEL_STATUS),
+                           'raw_event_log': self.fetcher.raw_log.diagnostics(),
+                           'depth_diagnostics': dict(self.fetcher.depth.diagnostics()),
+                           'pool_metrics': dict(getattr(self, '_pool_metrics', {})),
+                           'backfill_jobs': {
+                               'counts': dict(__import__('collections').Counter(
+                                   str(v.get('state')) for v in getattr(self.fetcher, '_backfill_state', {}).values())),
+                               'active': {
+                                   f'{k[0]}|{k[1]}': v for k, v in getattr(self.fetcher, '_backfill_state', {}).items()
+                                   if v.get('state') in ('queued', 'running')
+                               },
+                           },
                            'gc': gc_line, 'errors': failed}
             await self._minute_hole_pass()
+            bf = getattr(self.fetcher, 'backfill_stats', {})
+            hr = getattr(self.fetcher, 'history_recovery_stats', {})
+            bf_text = (f"; backfill req {bf.get('requested', 0)} attempted {bf.get('attempted', 0)} "
+                       f"verified {bf.get('verified', 0)} failed {bf.get('failed', 0)}")
             logger.info(f"Health: tier0 {self.last_tier0_sec:.2f}s, scan {self.last_scan_sec:.2f}s "
                         f"(heavy {self.last_heavy_sec:.2f}s), books {len(self._hot)}{process}, "
                         f"smt pairs {pairs}/{len(ctxs)}, 1m gaps patched {RESAMPLE_QUALITY['patched']} / dropped "
                         f"{RESAMPLE_QUALITY['dropped']} (main process), streams " + ", ".join(rates)
-                        + (f"; {gc_line}" if gc_line else '') + (f"; {failed}" if failed else '')
+                        + bf_text + (f"; {gc_line}" if gc_line else '') + (f"; {failed}" if failed else '')
+                        + (f"; candle recovery {hr.get('recovered', 0)} verified / {hr.get('incomplete', 0)} partial / "
+                           f"{hr.get('failed', 0)} failed" if hr else '')
                         + (f"; {self.smallcap.health()}" if self.smallcap is not None else ''))
             if time.time() - last_memory >= 1800:
                 # where the memory sits (process classes + the bot's own structures), every 30 minutes (the walk holds

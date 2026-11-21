@@ -1,33 +1,11 @@
-"""
-Order books of the hot symbols, built the way Binance documents a local book ("How to manage a local order book
-correctly"): the <sym>@depth@500ms diff stream, buffered until a 1000-level REST snapshot arrives, events with
-u < lastUpdateId dropped, the first applied one spanning lastUpdateId, then every event's `pu` must equal the
-previous `u` (else the book is re-synced from a new snapshot). Each event carries absolute quantities: 0 removes a
-level. Within a minute of streaming the book reaches far beyond the 1000 levels of the snapshot (any level that
-changes is sent): 2026-10-05 the 500-level snapshots of the old design covered BTC only +-0.07% (less than one 0.1%
-heat bucket) and ETH +-0.2%.
+"""Maintain a sequence-checked local order-book observation.
 
-COVERAGE (eng-80): the REST snapshot holds 1000 levels per side (BTC ~+-0.07%); beyond it the local book knows only
-the levels that CHANGED since the sync - a large order that just rests far from the price never appears, which is
-exactly what walls / bands look for. So heat snapshots, walls and bands use only the price range the last snapshot
-covered (`cov_lo` .. `cov_hi`), and a book whose mid left that range is re-synced (at most every 5 minutes)
-from a fresh snapshot (Binance's guidance: keep the book to the depth you actually hold).
-
-Every decrease of a level is split into FILLED (taker trades at that price on that side, from the aggTrade stream,
-within ATTRIBUTION_MS) and PULLED (cancelled): liquidity that disappears without trades is the spoofing signature
-(~31% of large crypto orders could spoof, arXiv 2504.15908); liquidity that is traded into and stays / refills is
-absorption. Additions are counted as ADDED. Per heat bucket and minute: [added, pulled, filled] of each side.
-
-Heatmap (as Bookmap draws it): a snapshot of the whole local book within +-heat_range_pct every heat_snapshot_sec,
-bucketed by heat_bucket_pct of price on a grid fixed per coin. Walls: single levels >= wall_multiple x the median
-level notional within +-wall_range_pct that stood wall_min_age_sec (book depth refills within 5-10s after a trade -
-arXiv 1602.00731 - so a 10s-old order said little). Liquidity bands: heat buckets that held heat_band_multiple x the
-snapshot's median bucket in >= heat_band_presence of the snapshots of heat_band_window_sec AND were not mostly
-pulled (pulled USD over the window < the band's average resting USD, or fills >= half of the pulls).
-
-What the book is used for is decided elsewhere and measured: depth is context, sweep sizing and the slippage of an
-entry; bands / walls are not support or resistance by themselves (no study shows resting depth holds price on an
-hours horizon; order-flow imbalance explains price over seconds - Cont, Kukanov & Stoikov 2014).
+The implementation applies exchange depth snapshots and incremental updates,
+tracks coverage and records additions, reductions and trades that can be
+temporally associated with a level. A reduction is not proof of cancellation,
+spoofing or absorption, and a local book does not provide order identity or
+complete market depth. Heat, wall and band outputs are diagnostics only; the
+v2 signal path does not treat them as support, resistance, intent or fills.
 """
 import heapq
 import statistics
@@ -46,7 +24,8 @@ ADDED, PULLED, FILLED = 0, 1, 2
 class BookState:
     """One coin's local book and everything derived from it."""
 
-    __slots__ = ('bids', 'asks', 'last_u', 'synced', 'buffer', 'ts_ms', 'recv', 'resyncs', 'executed', 'flow',
+    __slots__ = ('bids', 'asks', 'last_u', 'synced', 'buffer', 'ts_ms', 'recv', 'resyncs', 'sequence_gaps',
+                 'buffer_drops', 'executed', 'flow',
                  'heat', 'heat_step', 'heat_ts', 'walls', 'bands', 'bands_ts', 'deep_bids', 'deep_asks', 'deep_ts',
                  'snapshot_wanted', 'pending', 'cov_lo', 'cov_hi', 'cov_ts', 'wall_info', 'wall_log', 'wall_ended', 'unexplained')
 
@@ -61,6 +40,8 @@ class BookState:
         self.ts_ms = 0                 # exchange time of the last applied event
         self.recv = 0.0                # epoch seconds of the last applied event
         self.resyncs = 0
+        self.sequence_gaps = 0
+        self.buffer_drops = 0
         # (side +1 bid / -1 ask, price) -> [quantity executed, last trade ms]
         self.executed: Dict[Tuple[int, float], List[float]] = {}
         # audit N09: book decreases no trade explained YET: (side, price) -> [qty, ts, flow cell, offset, wall] - a
@@ -144,11 +125,13 @@ class DepthBook:
         if not book.synced:
             book.buffer.append(event)
             if len(book.buffer) > 2000:           # the snapshot is late: keep the newest
+                book.buffer_drops += 1000
                 del book.buffer[:1000]
             if book.pending is not None and int(event.get('u', 0)) >= int(book.pending.get('lastUpdateId') or 0):
                 self.set_snapshot(symbol, book.pending, now)
             return
         if event.get('pu') != book.last_u:
+            book.sequence_gaps += 1
             self._resync_book(book)
             book.buffer.append(event)
             return
@@ -280,6 +263,11 @@ class DepthBook:
         if best_bid is None or best_ask is None:
             return
         mid = (best_bid + best_ask) / 2
+        self._prune(book, mid)
+        best_bid, best_ask = book.best()
+        if best_bid is None or best_ask is None:
+            return
+        mid = (best_bid + best_ask) / 2
         # the grid is fixed per coin so snapshots line up; a move of > 20% re-bases it (old snapshots no longer fit)
         if not book.heat_step or abs(mid / (book.heat_step / cfg.heat_bucket_pct) - 1) > 0.2:
             book.heat_step = mid * cfg.heat_bucket_pct
@@ -357,6 +345,30 @@ class DepthBook:
         book.walls = {w: book.walls.get(w, now) for w in current}
         book.bands = self._bands(book)
         book.bands_ts = now
+
+    @staticmethod
+    def _prune(book: BookState, mid: float) -> None:
+        """Bound changed-depth levels that are outside the actionable window.
+
+        Binance diff streams can report a level after the initial snapshot has
+        moved far away.  Those levels are useful only while they are near the
+        current market; retaining every changed price makes the Python dicts
+        grow with uptime.  Keep the nearest configured levels as a second
+        bound, so a thin book cannot be emptied by the percentage filter.
+        """
+        cfg = CONFIG.depth
+        pct = max(0.0, float(cfg.prune_range_pct))
+        lo, hi = mid * (1 - pct), mid * (1 + pct)
+        bids = [(p, q) for p, q in book.bids.items() if lo <= p <= mid]
+        asks = [(p, q) for p, q in book.asks.items() if mid <= p <= hi]
+        cap = max(1, int(cfg.max_levels_per_side))
+        bids.sort(key=lambda x: x[0], reverse=True)
+        asks.sort(key=lambda x: x[0])
+        book.bids = dict(bids[:cap])
+        book.asks = dict(asks[:cap])
+        allowed = {(1, p) for p in book.bids} | {(-1, p) for p in book.asks}
+        book.executed = {k: v for k, v in book.executed.items() if k in allowed}
+        book.unexplained = {k: v for k, v in book.unexplained.items() if k in allowed}
 
     @staticmethod
     def _bands(book: BookState) -> List[Tuple[float, int, float]]:
@@ -465,7 +477,9 @@ class DepthBook:
             return {}
         mid = (best_bid + best_ask) / 2
         out: Dict[str, float] = {'mid': mid, 'spread_bps': (best_ask - best_bid) / mid * 1e4, 'deep': 1.0,
-                                 'levels': float(len(book.bids) + len(book.asks)), 'resyncs': float(book.resyncs)}
+                                 'levels': float(len(book.bids) + len(book.asks)), 'resyncs': float(book.resyncs),
+                                 'sequence_gaps': float(book.sequence_gaps),
+                                 'buffer_drops': float(book.buffer_drops)}
         for band in CONFIG.depth.band_pcts:
             bid = sum(p * q for p, q in book.bids.items() if p >= mid * (1 - band))
             ask = sum(p * q for p, q in book.asks.items() if p <= mid * (1 + band))
@@ -497,6 +511,17 @@ class DepthBook:
             out.update(bid_pulled_5m=sums[PULLED], bid_filled_5m=sums[FILLED],
                        ask_pulled_5m=sums[3 + PULLED], ask_filled_5m=sums[3 + FILLED])
         return out
+
+    def diagnostics(self) -> Dict[str, int]:
+        """Aggregate sequence/resync counters for health and external diagnostics."""
+        return {
+            'books': len(self.books),
+            'synced': sum(1 for book in self.books.values() if book.synced),
+            'resyncs': sum(book.resyncs for book in self.books.values()),
+            'sequence_gaps': sum(book.sequence_gaps for book in self.books.values()),
+            'buffer_drops': sum(book.buffer_drops for book in self.books.values()),
+            'levels': sum(len(book.bids) + len(book.asks) for book in self.books.values()),
+        }
 
     def wall_history(self, symbol: str) -> List[Dict]:
         """eng-105: the walls that ended recently and how: broken / eaten (filled) / pulled (cancelled) / faded."""

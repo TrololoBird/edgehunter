@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Sequence
 from config import CONFIG
 from strategies.base import CardLevels, PlanInput, Strategy, base_plan
 from strategies.structure import Pool
-from zones import merge, stop_beyond
+from zones import liq_only, merge, stop_beyond
 
 
 def _contract_pad(measured: Optional[float], work_atr: Optional[float], moved: bool):
@@ -39,6 +39,8 @@ def _sweep_targets(zones, start: float, direction: int, atr: float):
     gap = CONFIG.zones.min_target_atr * atr
     candidates = []
     for zone in zones:
+        if liq_only(zone):
+            continue
         price = zone.lo if direction > 0 else zone.hi
         if direction * (price - start) >= gap:
             candidates.append((direction * (price - start), price, zone.label))
@@ -113,6 +115,17 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
             depth, back = c[2] - price, c[4] < price
         else:
             depth, back = price - c[3], c[4] > price
+        # A level is fresh only until its first post-formation wick interaction.  A later interaction is still
+        # journaled, but the Prizrak contract will require a lower-TF PP instead of another blind limit.
+        in_touch = False
+        prior_touches = 0
+        for old in candles_15m[:-1]:
+            if old[0] <= formed:
+                continue
+            touched = old[2] >= price if side > 0 else old[3] <= price
+            if touched and not in_touch:
+                prior_touches += 1
+            in_touch = touched
         # one candle can take several pools: the most significant one names the sweep (a week low taken with a
         # minor 1h swing is a week-low sweep), the shallowest among equals
         # the deepest a sweep may go: the usual pierce of this kind of level on this coin (p90, pierce.py), not
@@ -124,10 +137,10 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
         # filter weak pokes - the 0.1 ATR minimum only without the pierce model
         floor = 0.0 if measured is not None else lo_depth
         if back and floor < depth <= limit and (best is None or (pool_rank(label), -depth) > (pool_rank(best[3]), -best[0])):
-            best = (depth, price, side, label, formed)
+            best = (depth, price, side, label, formed, prior_touches)
     if best is None:
         return None
-    depth, price, side, label, formed = best
+    depth, price, side, label, formed, prior_touches = best
     direction = -side
     extreme = c[2] if side > 0 else c[3]
     return {'setup': 'SWEEP LOW' if direction > 0 else 'SWEEP HIGH', 'direction': direction,
@@ -135,6 +148,7 @@ def sweep_at_close(candles_15m: Sequence[Sequence[float]], pools: List[Pool], at
                           f"closed back {'above' if direction > 0 else 'below'}",
             'anchor_level': price, 'anchor_label': label, 'anchor_extreme': extreme, 'anchor_ts': int(c[0]),
             'anchor_close': c[4], 'pool_formed_ms': int(formed), 'event_ts': int(c[0]) + QUARTER_MS,
+            'pool_touch_count': prior_touches, 'pool_fresh': prior_touches == 0,
             # eng-108: the values the removed thresholds read, journaled for a later look at them
             'sweep_rvol': c[5] / avg_volume if avg_volume else None, 'sweep_depth_atr': depth / atr,
             'pool_age_h': (c[0] - formed) / 3_600_000}
@@ -271,18 +285,18 @@ class SweepStrategy(Strategy):
         sig['mss_level'] = mss
         start = reached if mss is None else (max(reached, mss) if d > 0 else min(reached, mss))
         targets, sources = _sweep_targets(zones, start, d, atr)
-        # ICT: the sweep is only the setup, a wick is not yet a reversal: the entry waits for the displacement's FVG
-        # (trigger 'fvg') inside the sweep's area
+        # Legacy base plan: the sweep detector still supplies the historical FVG/CE fallback.  SignalBook's Prizrak
+        # overlay replaces this with a fresh-pool limit or, after a prior touch, a lower-TF PP confirmation.
         close = sig.get('anchor_close', level)
         # the sweep candle itself is the area: its wick to its close (or the level, whichever is further); no ATR pad
         edge = max(close, level) if d > 0 else min(close, level)
         zone = sorted((extreme, edge))
-        # ICT: after the sweep, displacement with a fair value gap and a structure shift; the entry is the retrace into
-        # that gap (5m), not the shift's close
+        # Preserve the historical zone metadata for replay and benchmark variants.  The live structural overlay may
+        # replace the FVG zone with the swept POC/level before the plan is executed.
         # eng-84: the structure shift is read on the timeframe that matches the swept pool (the sweep write-ups: 1h
         # levels -> 5m, 4h / session / daily levels -> 15m, daily / weekly levels -> 1h; below 30m most sweeps are
         # false): the plan's timeframe sets the trigger's (levels.TRIGGER_MINUTES 15m -> 5, 1h -> 15, 4h -> 60)
-        zone_src = f"sweep of {sig.get('anchor_label', 'the level')} (5m FVG retrace)"
+        zone_src = f"sweep of {sig.get('anchor_label', 'the level')} (legacy FVG fallback)"
         plan = base_plan(x, self.name, _level_anchor(sig, tf), tf, entry='pullback', trigger='fvg',
                          entry_mode='limit', zone_lo=zone[0],
                          zone_hi=zone[1], zone_src=zone_src,
